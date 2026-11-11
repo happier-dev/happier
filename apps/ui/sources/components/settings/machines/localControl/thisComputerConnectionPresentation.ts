@@ -124,3 +124,16 @@ export function presentThisComputerServiceRow(
                 : t('machine.thisComputer.servers.attention'),
     };
 }
+
+/** The repair operation names the repair the current state needs, when it needs one (Settings › This machine and every summary). */
+export function resolveThisComputerRepairTitle(connection: ThisComputerConnection | null): string {
+    switch (connection?.status) {
+        case 'daemon_url_mismatch':
+        case 'daemon_account_mismatch':
+        case 'daemon_needs_auth':
+        case 'daemon_not_configured':
+            return presentThisComputerConnection(connection)?.actionLabel ?? t('machine.repairBackgroundServiceAction');
+        default:
+            return t('machine.repairBackgroundServiceAction');
+    }
+}

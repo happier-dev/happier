@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isConnectSheetKeyRequest, isConnectSheetNpmRegistryRequest, resolveConnectSheetOpening } from './connectSheetOpening';
+import { isConnectSheetKeyRequest, isConnectSheetNpmRegistryRequest, resolveConnectSheetOpening, resolveConnectSheetTarget } from './connectSheetOpening';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const otherService = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
@@ -7,6 +7,17 @@ const first = { service, accountId: 'personal' };
 const current = { service, accountId: 'work' };
 
 describe('Connect sheet opening choice', () => {
+    it('opens the one way to connect directly instead of a catalog of one, and keeps a real choice', () => {
+        const vercel = { serviceKey: 'happier.deploy.vercel/vercel-account', canAdd: true };
+        const github = { serviceKey: 'happier.scm.forge.github/github-account', canAdd: true };
+        expect(resolveConnectSheetTarget({ kind: 'catalog' }, [vercel])).toEqual({ kind: 'service', serviceKey: vercel.serviceKey });
+        expect(resolveConnectSheetTarget({ kind: 'catalog' }, [vercel, github])).toEqual({ kind: 'catalog' });
+        // A service that cannot add an account here stays in the catalog, where it says why.
+        expect(resolveConnectSheetTarget({ kind: 'catalog' }, [{ ...vercel, canAdd: false }])).toEqual({ kind: 'catalog' });
+        const chosen = { kind: 'service' as const, serviceKey: github.serviceKey };
+        expect(resolveConnectSheetTarget(chosen, [vercel])).toBe(chosen);
+    });
+
     it('routes npm profiles to their Machine owner rather than Saved Secrets', () => {
         const request = { service: { kind: 'npm-registry-profile' as const } };
         expect(isConnectSheetKeyRequest(request)).toBe(false);

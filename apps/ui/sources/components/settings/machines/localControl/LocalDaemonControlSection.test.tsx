@@ -656,7 +656,8 @@ describe('LocalDaemonControlSection', () => {
         const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
         const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner: manual.runner }));
 
-        expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'settings.localDaemonControl.repair' })?.props.title).toBe('machine.repairBackgroundServiceAction');
+        const { resolveThisComputerRepairTitle } = await import('./thisComputerConnectionPresentation');
+        expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'settings.localDaemonControl.repair' })?.props.title).toBe(resolveThisComputerRepairTitle(null));
 
         await renderer.act(async () => manual.emitResult('personal-home-task-1', {
             protocolVersion: 1, taskId: 'personal-home-task-1', ok: true,
@@ -771,6 +772,27 @@ describe('LocalDaemonControlSection', () => {
         expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'settings.localDaemonControl.status' })?.props.subtitle).toBe('machine.daemonStatus.unknown');
         expect(screen.findByProps({ subtitle: 'daemon status request failed' })).toBeTruthy();
         expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'settings.localDaemonControl.repair' })?.props.disabled).toBe(false);
+    });
+
+    it('summarizes a service whose status cannot be read as needing repair, for compact surfaces (owner 11-11)', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const runner = createSystemTaskRunner({
+            bridge: {
+                start: vi.fn(async () => { throw new Error("Cannot find module 'proper-lockfile'"); }),
+                async subscribe() { return () => {}; },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+        const { useThisComputerServiceSummary } = await import('./useThisComputerServiceSummary');
+        const { resolveThisComputerRepairTitle } = await import('./thisComputerConnectionPresentation');
+        let summary: ReturnType<typeof useThisComputerServiceSummary> | undefined;
+        function Probe() { summary = useThisComputerServiceSummary({ runner }); return null; }
+        await renderScreen(React.createElement(Probe));
+        await renderer.act(async () => {});
+        expect(summary).toMatchObject({ needsYou: true,
+            error: "Cannot find module 'proper-lockfile'", action: { label: resolveThisComputerRepairTitle(null), disabled: false } });
+        expect(summary?.title).toBeTruthy();
     });
 
     it('uses the latest active relay url when starting a repair after a server switch', async () => {

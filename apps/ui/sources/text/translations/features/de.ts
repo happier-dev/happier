@@ -12326,6 +12326,10 @@ const de: typeof en = {
     connectFirst: 'Verbinde zuerst einen Rechner',
     thisComputerNotWorking: 'Der Hintergrunddienst funktioniert nicht',
     thisComputerNotConnected: 'Noch nicht verbunden',
+    emptyTitle: 'Noch keine Rechner',
+    connectFirst: 'Verbinde zuerst einen Rechner',
+    thisComputerNotWorking: 'Der Hintergrunddienst funktioniert nicht',
+    thisComputerNotConnected: 'Noch nicht verbunden',
 };
 
 const settingsMachinesTranslations = { de };

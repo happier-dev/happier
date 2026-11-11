@@ -12319,6 +12319,10 @@ const zhHant: typeof en = {
     connectFirst: '請先連接一台機器',
     thisComputerNotWorking: '背景服務無法運作',
     thisComputerNotConnected: '尚未連接',
+    emptyTitle: '還沒有機器',
+    connectFirst: '請先連接一台機器',
+    thisComputerNotWorking: '背景服務無法運作',
+    thisComputerNotConnected: '尚未連接',
 };
 
 const settingsMachinesTranslations = { zhHant };

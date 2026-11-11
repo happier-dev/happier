@@ -66,6 +66,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
+import { useThisComputerServiceSummary } from '../localControl/useThisComputerServiceSummary';
 
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
@@ -359,22 +360,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     };
 
     const thisComputerRow = isDesktop ? (
-        <Item
-            rowRole="catalogRow"
-            testID="settings.machines.thisComputer"
-            title={t('settingsMachines.thisComputerTitle')}
-            subtitle={t('settingsMachines.thisComputerRowSubtitle')}
-            icon={(
-                <HappierCollectionListMark rowRole="catalogRow">
-                    <Icon name="laptop" size={20} color={theme.colors.text.secondary} />
-                </HappierCollectionListMark>
-            )}
-            selected={rail ? selectedKey === 'thisComputer' : undefined}
-            density={rail ? 'compact' : undefined}
-            showChevron={!rail}
-            pressableStyle={rail ? collectionListStyles.row : undefined}
-            onPress={() => openHref(router, MACHINES_THIS_COMPUTER_ROUTE, replaceConfiguration, 'MachineCollectionList.thisComputer')}
-        />
+        <ThisComputerCollectionRow rail={rail} selected={rail && selectedKey === 'thisComputer'} replace={replaceConfiguration} />
     ) : null;
 
     // Machine defaults (D21) open from the top of the list, above the machines they apply to.
@@ -383,7 +369,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             rowRole="catalogRow"
             testID="settings.machines.defaults"
             title={t('managedRetention.defaults')}
-            detail={rail ? t('managedRetention.keepIt') : undefined}
             subtitle={t('managedRetention.pageDescriptionShort')}
             icon={(
                 <HappierCollectionListMark rowRole="catalogRow">
@@ -509,7 +494,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                             renderUnreadable({ serverId: section.serverId, serverName: section.title ?? '' }, false)
                         ) : section.rows.length === 0 ? (
                             <Item
-                                title={noMatches ? t('common.noMatches') : t('newSession.noMachinesFound')}
+                                title={noMatches ? t('common.noMatches') : t('settingsMachines.emptyTitle')}
                                 subtitle={noMatches ? undefined : sectionStatusLabel(section)}
                                 showChevron={false}
                                 mode="info"
@@ -544,24 +529,22 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 selected={selectedKey === 'allMachines'}
                 onPress={() => openHref(router, doorRoot, onDetailRoute, 'MachineCollectionList.allMachines')}
             />
-            <MachineDraftRow selected={selectedKey === 'machineDraft'} replace={replaceConfiguration} />
-            {selectedKey?.startsWith('poolDraft:') ? <MachinePoolDraftRow /> : null}
             {/* Defaults head the list, above the machines they apply to (lab m-defaults). */}
             {defaultsRow}
             {renderManagedReadFailures()}
             {managedReadApprovals}
+            {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. */}
+            <CollectionListGroupLabel testID="settings.machines.rail.machinesLabel" title={t('settings.machines')} />
+            <MachineDraftRow selected={selectedKey === 'machineDraft'} replace={replaceConfiguration} />
+            {thisComputerRow}
             {loading ? (
                 <CollectionSkeletonRows count={Math.max(3, Math.min(unfiltered.machineCount, 6))} rowRole="catalogRow" />
             ) : unreadableGroup ? (
                 renderUnreadable(unreadableGroup, true)
             ) : empty && managedReadFailures.length > 0 ? null : empty ? (
-                <Item
-                    testID="settings.machines.rail.empty"
-                    title={t('newSession.noMachinesFound')}
-                    density="compact"
-                    showChevron={false}
-                    mode="info"
-                />
+                // On the desktop app "This machine" stands above and says its own state; elsewhere the section
+                // says it is empty and leads to adding one.
+                thisComputerRow ? null : <MachinesEmptyLine draftSelected={selectedKey === 'machineDraft'} replace={replaceConfiguration} />
             ) : collection.sections.map((section) => section.archived ? (
                 <ArchivedMachineSection key={section.key} section={section} rail
                     selectedKey={selectedKey} query={searchable ? query : ''} renderRow={renderMachineRow} />
@@ -569,6 +552,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 <React.Fragment key={section.key}>
                     {section.title ? (
                         <CollectionListGroupLabel
+                            // A Home's machines are a group inside the Machines section.
+                            level="subgroup"
                             title={section.title}
                             // One group already has its count in the header: say it once.
                             count={collection.sections.length > 1 ? section.rows.length : undefined}
@@ -578,7 +563,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                         renderUnreadable({ serverId: section.serverId, serverName: section.title ?? '' }, true)
                     ) : section.rows.length === 0 ? (
                         <Item
-                            title={noMatches ? t('common.noMatches') : (sectionStatusLabel(section) ?? t('newSession.noMachinesFound'))}
+                            title={noMatches ? t('common.noMatches') : (sectionStatusLabel(section) ?? t('settingsMachines.emptyTitle'))}
                             density="compact"
                             showChevron={false}
                             mode="info"
@@ -587,8 +572,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 </React.Fragment>
             ))}
             {/* The column fills top-down: what follows the machines waits for them, so nothing lands above them and moves. */}
+            {selectedKey?.startsWith('poolDraft:') ? <MachinePoolDraftRow /> : null}
             {loading ? null : <>
-                {thisComputerRow}
                 <MachinePoolsSection groups={viewModel.visibleMachineGroups} variant="rail" selectedKey={selectedKey} />
                 {presetSections}
             </>}
@@ -762,7 +747,7 @@ export function MachinePresetCollectionSectionView(props: Readonly<{
                 />) : null}
     </>;
     if (!props.rail) return <ItemGroup title={title} action={add}>{rows}</ItemGroup>;
-    return <><CollectionListGroupLabel title={title} trailing={add} />
+    return <><CollectionListGroupLabel title={title} actions={add ?? undefined} />
         {rows}</>;
 }
 
@@ -800,6 +785,52 @@ const MachineDraftRow = React.memo(function MachineDraftRow(props: Readonly<{ se
             pressableStyle={collectionListStyles.row}
             onPress={() => openHref(router, MACHINES_ADD_ROUTE, props.replace, 'MachineCollectionList.draft')}
         />
+    );
+});
+
+/**
+ * This computer (desktop app): its row says the background service's state from the one summary owner, so an empty
+ * Machines list never claims there is no machine while this one waits to be set up or repaired.
+ */
+const ThisComputerCollectionRow = React.memo(function ThisComputerCollectionRow(props: Readonly<{
+    rail: boolean;
+    selected: boolean;
+    replace: boolean;
+}>) {
+    const { theme } = useUnistyles();
+    const router = useRouter();
+    const summary = useThisComputerServiceSummary();
+    const needsYou = summary?.needsYou === true;
+    return (
+        <Item
+            rowRole="catalogRow"
+            testID="settings.machines.thisComputer"
+            title={t('settingsMachines.thisComputerTitle')}
+            subtitle={needsYou ? summary.title ?? undefined : t('settingsMachines.thisComputerRowSubtitle')}
+            subtitleLeading={needsYou ? <StatusDot testID="settings.machines.thisComputer.attention" color={theme.colors.status.actionRequired} /> : undefined}
+            icon={(
+                <HappierCollectionListMark rowRole="catalogRow">
+                    <Icon name="laptop" size={20} color={theme.colors.text.secondary} />
+                </HappierCollectionListMark>
+            )}
+            selected={props.rail ? props.selected : undefined}
+            density={props.rail ? 'compact' : undefined}
+            showChevron={!props.rail}
+            pressableStyle={props.rail ? collectionListStyles.row : undefined}
+            onPress={() => openHref(router, MACHINES_THIS_COMPUTER_ROUTE, props.replace, 'MachineCollectionList.thisComputer')}
+        />
+    );
+});
+
+/** An empty Machines section says so and leads to adding one, unless the machine being added already stands there. */
+const MachinesEmptyLine = React.memo(function MachinesEmptyLine(props: Readonly<{ draftSelected: boolean; replace: boolean }>) {
+    const router = useRouter();
+    const draft = useMachineAddDraftRow();
+    if (draft || props.draftSelected) return null;
+    return (
+        <EmptyState testID="settings.machines.rail.empty" layout="line" title={t('settingsMachines.emptyTitle')}
+            primaryAction={{ label: t('settings.addMachine'), testID: 'settings.machines.rail.empty.add',
+                onPress: () => openHref(router, MACHINES_ADD_ROUTE, props.replace, 'MachineCollectionList.emptyAdd') }} />
     );
 });
 

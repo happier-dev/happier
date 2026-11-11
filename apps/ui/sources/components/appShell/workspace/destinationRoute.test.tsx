@@ -99,6 +99,27 @@ describe('destination route Stack declarations', () => {
         expect(screen.root.findAllByType('StackScreen')).toHaveLength(0);
     });
 
+    it('keeps a hosted layout mounted while its next leaf loads, so only the detail waits', async () => {
+        // A leaf's chunk that has not arrived yet (first visit to a route) suspends.
+        const pending = new Promise<never>(() => {});
+        function LoadingLeaf(): React.ReactNode { throw pending; }
+        function CollectionLayout() {
+            return <>{React.createElement('CollectionRail')}<Stack><Stack.Screen name="index" /></Stack></>;
+        }
+        const screen = await renderScreen(<DestinationInstanceHost tabId="machines-tab"
+            ref={{ kind: 'settings', params: { pageId: 'machines/defaults' } }}
+            pathname="/settings/machines/defaults" focused visible>
+            <React.Suspense fallback={React.createElement('WholeDestinationFallback')}>
+                <WorkspaceRouteOutlet.Provider value={<LoadingLeaf />}>
+                    <CollectionLayout />
+                </WorkspaceRouteOutlet.Provider>
+            </React.Suspense>
+        </DestinationInstanceHost>);
+        expect(screen.root.findAllByType('WholeDestinationFallback')).toHaveLength(0);
+        expect(screen.root.findAllByType('CollectionRail')).toHaveLength(1);
+        expect(screen.root.findAllByProps({ testID: 'workspace-destination-body-loading' }).length).toBeGreaterThan(0);
+    });
+
     it('draws a hosted phone header subtitle the same way the native stack header does', async () => {
         // Project pages normally own their chrome. This synthetic subtitle scene
         // explicitly opts into a stack header, as an actual leaf declaration can.

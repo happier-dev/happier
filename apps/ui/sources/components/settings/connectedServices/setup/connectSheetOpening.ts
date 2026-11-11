@@ -2,6 +2,7 @@ import { isConnectedServiceCredentialHealthStatusUsable, type ConnectedServiceCr
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { ConnectSheetAccountRequest, ConnectSheetRequest, ConnectSheetKeyRequest, ConnectSheetNpmRegistryRequest } from './ConnectedServiceSetupModal';
+import type { ConnectedServiceSetupTarget } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 
 type SavedKey = Readonly<{ ref: string; kind?: 'apiKey' | 'token' | 'password' | 'other' | null }>;
 
@@ -43,4 +44,14 @@ export function resolveConnectSheetOpening<Key extends SavedKey>(request: Connec
     const matching = request.intent === 'add' ? undefined
         : usable.find(account => request.account && sameQualifiedConnectedAccountRef(account.ref, request.account)) ?? usable[0];
     return matching ? { initialMode: 'saved', preselected: matching.ref } : { initialMode: 'new', preselected: null };
+}
+
+/**
+ * Where an account sheet opens: a catalog holding one service that can add an account here is that service's own
+ * form, never a list of one to press through (owner 2026-11-11). Several ways keep the catalog; a chosen target stays.
+ */
+export function resolveConnectSheetTarget(target: ConnectedServiceSetupTarget,
+    catalog: readonly Readonly<{ serviceKey: string; canAdd: boolean }>[]): ConnectedServiceSetupTarget {
+    if (target.kind !== 'catalog' || catalog.length !== 1 || !catalog[0]!.canAdd) return target;
+    return { kind: 'service', serviceKey: catalog[0]!.serviceKey };
 }

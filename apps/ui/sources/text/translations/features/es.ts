@@ -12343,6 +12343,10 @@ const es: typeof en = {
     connectFirst: 'Conecta primero una máquina',
     thisComputerNotWorking: 'El servicio en segundo plano no funciona',
     thisComputerNotConnected: 'Aún no está conectada',
+    emptyTitle: 'Aún no hay máquinas',
+    connectFirst: 'Conecta primero una máquina',
+    thisComputerNotWorking: 'El servicio en segundo plano no funciona',
+    thisComputerNotConnected: 'Aún no está conectada',
 };
 
 const settingsMachinesTranslations = { es };

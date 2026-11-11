@@ -14,7 +14,7 @@ import { t } from '@/text';
 import type { ThisComputerConnection } from '@/sync/domains/server/relayDrift/thisComputerConnection';
 import { resolveHomeDisplayNameForRelayUrl } from '@/components/settings/server/homeDisplayName';
 
-import { presentThisComputerConnection } from './thisComputerConnectionPresentation';
+import { presentThisComputerConnection, resolveThisComputerRepairTitle } from './thisComputerConnectionPresentation';
 import { ThisComputerServersGroup } from './ThisComputerServersGroup';
 import { readKeptCliUpdateCommand, useLocalDaemonControl, type LocalCliUpdateStatus, type LocalDaemonStatusData } from './useLocalDaemonControl';
 import { useThisComputerConnection } from './useThisComputerConnection';
@@ -47,19 +47,6 @@ function resolveCliVersionTitle(cliUpdate: LocalCliUpdateStatus | null): string 
             latestVersion: cliUpdate.latestVersion,
         })
         : t('machine.thisComputer.cli.version', { version: cliUpdate.currentVersion });
-}
-
-/** The repair row names the repair the current state needs, when it needs one. */
-function resolveRepairTitle(connection: ThisComputerConnection | null): string {
-    switch (connection?.status) {
-        case 'daemon_url_mismatch':
-        case 'daemon_account_mismatch':
-        case 'daemon_needs_auth':
-        case 'daemon_not_configured':
-            return presentThisComputerConnection(connection)?.actionLabel ?? t('machine.repairBackgroundServiceAction');
-        default:
-            return t('machine.repairBackgroundServiceAction');
-    }
 }
 
 /**
@@ -205,7 +192,7 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
                             testID="settings.localDaemonControl.repair"
                             size="small"
                             display="secondary"
-                            title={resolveRepairTitle(connection)}
+                            title={resolveThisComputerRepairTitle(connection)}
                             onPress={() => {
                                 void handleRepair();
                             }}

@@ -12319,6 +12319,10 @@ const zhHans: typeof en = {
     connectFirst: '请先连接一台机器',
     thisComputerNotWorking: '后台服务无法运行',
     thisComputerNotConnected: '尚未连接',
+    emptyTitle: '还没有机器',
+    connectFirst: '请先连接一台机器',
+    thisComputerNotWorking: '后台服务无法运行',
+    thisComputerNotConnected: '尚未连接',
 };
 
 const settingsMachinesTranslations = { zhHans };

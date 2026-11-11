@@ -191,6 +191,20 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  it('ends a plain label\'s own operation ("+") on the header\'s edge, and a trailing state on the rows\' text edge', () => {
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionListGroupLabel host={host} testID="group" title="Presets" actions={<View testID="add" />}
+        trailing={<Text testID="state">Loaded when used</Text>} />,
+    );
+    const add = mount.container.querySelector<HTMLElement>('[data-testid="add"]');
+    const state = mount.container.querySelector<HTMLElement>('[data-testid="state"]');
+    expect(add).not.toBeNull();
+    // The header's "+" ends its square on the gutter (the label's own padding); the label's operation does too.
+    expect(getComputedStyle(add!.parentElement!).marginRight).toBe('0px');
+    expect(getComputedStyle(state!.parentElement!).marginRight).not.toBe('0px');
+    mount.unmount();
+  });
+
   it('labels a group with its title and count', () => {
     const mount = mountThroughReactNativeWeb(
       <HappierCollectionListGroupLabel host={host} title="Available to install" count={4} first />,

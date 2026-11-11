@@ -12359,6 +12359,10 @@ const pl: typeof en = {
     connectFirst: 'Najpierw połącz maszynę',
     thisComputerNotWorking: 'Usługa w tle nie działa',
     thisComputerNotConnected: 'Jeszcze niepołączona',
+    emptyTitle: 'Nie ma jeszcze maszyn',
+    connectFirst: 'Najpierw połącz maszynę',
+    thisComputerNotWorking: 'Usługa w tle nie działa',
+    thisComputerNotConnected: 'Jeszcze niepołączona',
 };
 
 const settingsMachinesTranslations = { pl };

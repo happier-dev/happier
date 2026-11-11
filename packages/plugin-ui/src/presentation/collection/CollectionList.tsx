@@ -721,7 +721,11 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
   indentPx?: number;
   /** What the folded rows hold (their strongest state, how many need the person): shown only while collapsed. */
   rollup?: ReactNode;
-  /** The group's own operations (New session here, ⋯): revealed while the pointer rests on it, always on touch. */
+  /**
+   * The group's own operations (New session here, ⋯, a section's "+"). They end on the gutter, where the header's "+"
+   * ends, so their glyphs share its edge. On a disclosure they show while the pointer rests on it (always on touch);
+   * on a plain label they always show.
+   */
   actions?: ReactNode;
   /** Keeps the actions showing after the pointer leaves (one of their menus is open). */
   actionsHeld?: boolean;
@@ -842,8 +846,9 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
           <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text>
         </View>
       ) : null}
-      {/* A trailing state or "+" ends on the rows' trailing text edge too, so it shares their one end column. */}
+      {/* A trailing state ends on the rows' trailing text edge too, so it shares their one end column. */}
       {props.trailing != null ? <View style={pageSection || props.presentation === 'menu' ? null : groupLabelEndCountStyle}>{props.trailing}</View> : null}
+      {props.actions ? <View style={groupLabelActionsStyle}>{props.actions}</View> : null}
     </View>
   );
 }

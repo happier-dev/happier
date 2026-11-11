@@ -12341,6 +12341,10 @@ const fr: typeof en = {
     connectFirst: 'Connectez d’abord une machine',
     thisComputerNotWorking: 'Le service d’arrière-plan ne fonctionne pas',
     thisComputerNotConnected: 'Pas encore connectée',
+    emptyTitle: 'Aucune machine pour l’instant',
+    connectFirst: 'Connectez d’abord une machine',
+    thisComputerNotWorking: 'Le service d’arrière-plan ne fonctionne pas',
+    thisComputerNotConnected: 'Pas encore connectée',
 };
 
 const settingsMachinesTranslations = { fr };

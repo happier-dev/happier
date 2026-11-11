@@ -32,6 +32,13 @@ export function resolveHappierStateAnnouncement(semantics?: 'status' | 'alert') 
   };
 }
 
+/**
+ * How the container around a sized state is sized: `fill` (a pane or page, the default) has room to spare, so the
+ * state sits a little above its centre (`liftPx`); `content` (a popover or window that shrink-wraps the state) has
+ * none, so the lift would only read as slack below it. The container declares it; the frame decides the lift.
+ */
+export const HappierSurfaceStateFit = createContext<'fill' | 'content'>('fill');
+
 /** The container owns placement; adapters supply themed content, never a second frame. */
 export function HappierSurfaceStateFrame(props: Readonly<{
   size?: HappierStateSize;
@@ -40,9 +47,10 @@ export function HappierSurfaceStateFrame(props: Readonly<{
   children: ReactNode;
 }>) {
   const metrics = props.size ? HAPPIER_STATE_SIZE_METRICS[props.size] : null;
+  const lift = useContext(HappierSurfaceStateFit) === 'content' ? 0 : metrics?.liftPx ?? 0;
   return (
     <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={metrics
-      ? { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24 + metrics.liftPx }
+      ? { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24 + lift }
       : { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <View testID={props.testID ? `${props.testID}-card` : undefined} style={metrics
         ? { width: '100%', alignItems: 'center', maxWidth: metrics.measurePx }

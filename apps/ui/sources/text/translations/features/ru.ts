@@ -12371,6 +12371,10 @@ const ru: typeof en = {
     connectFirst: 'Сначала подключите машину',
     thisComputerNotWorking: 'Фоновая служба не работает',
     thisComputerNotConnected: 'Ещё не подключена',
+    emptyTitle: 'Машин пока нет',
+    connectFirst: 'Сначала подключите машину',
+    thisComputerNotWorking: 'Фоновая служба не работает',
+    thisComputerNotConnected: 'Ещё не подключена',
 };
 
 const settingsMachinesTranslations = { ru };

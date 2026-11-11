@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { HAPPIER_STATE_SIZE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HappierSurfaceStateFit } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
@@ -59,6 +59,8 @@ export function CaptureWindowStates(props: Readonly<{
 }>) {
     const { state } = props;
     return (
+        // The window shrink-wraps its state: no pane lift below it.
+        <HappierSurfaceStateFit.Provider value="content">
         <View style={styles.body} testID={`capture-window-state-${state.kind}`}>
             <View style={styles.close}>
                 <AnnotatorPaperCapsule>
@@ -128,6 +130,7 @@ export function CaptureWindowStates(props: Readonly<{
                 />
             )}
         </View>
+        </HappierSurfaceStateFit.Provider>
     );
 }
 
@@ -148,8 +151,6 @@ function ShortcutSentence(props: Readonly<{ label: string }>) {
 
 const styles = StyleSheet.create((theme) => ({
     body: {
-        // The state lifts itself in a pane; this window shrink-wraps it, so the lift would read as slack.
-        marginBottom: -HAPPIER_STATE_SIZE_METRICS.details.liftPx,
         paddingHorizontal: theme.space.s16,
     },
     inlineKey: {

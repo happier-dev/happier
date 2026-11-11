@@ -128,6 +128,24 @@ describe('ProjectsAddMenu "New app…" (plan 60 §5.1)', () => {
     expect(onNewApp).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps Add a folder with no connected Machine and leads it to adding one (owner 11-11)', async () => {
+    const onAdd = vi.fn(async () => {});
+    const screen = await renderScreen(
+      <ProjectsAddMenu testID="add" machines={[]} onAdd={onAdd} onClone={() => {}} />,
+    );
+    const menu = () => screen.findAllByType(DropdownMenu)[0]!;
+    const folder = menu().props.items.find((item: { testID?: string }) => item.testID === 'add:folder');
+    // It never vanishes: it says what it needs first.
+    expect(folder).toBeDefined();
+    expect(folder.subtitle).toBeTruthy();
+    expect(folder.submenu).toBeUndefined();
+    await act(async () => { menu().props.onSelect(folder.id); });
+    expect(onAdd).not.toHaveBeenCalled();
+    const { router } = await import('expo-router');
+    const href = String(vi.mocked(router.push).mock.calls.at(-1)?.[0] ?? '');
+    expect(href.startsWith('/settings/machines/add')).toBe(true);
+  });
+
   it('still offers New app to someone with no Machine yet', async () => {
     const screen = await renderScreen(
       <ProjectsAddMenu testID="add" machines={[]} onAdd={async () => {}} onNewApp={() => {}} />,

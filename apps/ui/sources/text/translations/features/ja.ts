@@ -12324,6 +12324,10 @@ const ja: typeof en = {
     connectFirst: '先にマシンを接続してください',
     thisComputerNotWorking: 'バックグラウンドサービスが動作していません',
     thisComputerNotConnected: 'まだ接続されていません',
+    emptyTitle: 'マシンはまだありません',
+    connectFirst: '先にマシンを接続してください',
+    thisComputerNotWorking: 'バックグラウンドサービスが動作していません',
+    thisComputerNotConnected: 'まだ接続されていません',
 };
 
 const settingsMachinesTranslations = { ja };

@@ -6,7 +6,7 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import { buildConnectedServiceSetupCatalog } from './buildConnectedServiceSetupCatalog';
 import { useConnectedAccountPurposeSetup } from './useConnectedAccountPurposeSetup';
-import { resolveConnectSheetOpening } from './connectSheetOpening';
+import { resolveConnectSheetOpening, resolveConnectSheetTarget } from './connectSheetOpening';
 import type { ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
 import type { ConnectSheetAccountRequest, ConnectSheetAccountResult } from './ConnectedServiceSetupModal';
 import type { MachineAdministrationTargetSelectorProps } from '@/components/settings/machines/MachineAdministrationTargetSelector';
@@ -23,26 +23,30 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     const purposeSetup = useConnectedAccountPurposeSetup({ request: request.purposeRequest ?? null,
         selectedTarget, onClose: close,
         ...(request.purposeSettlement === 'resourceDefault' ? { onSettled: settle } : { onSelected: settle }) });
-    const [target, setTarget] = React.useState<ConnectedServiceSetupTarget>(() => {
+    const [chosenTarget, setTarget] = React.useState<ConnectedServiceSetupTarget>(() => {
         if (!request.service) return { kind: 'catalog' };
         const serviceKey = buildQualifiedPluginContributionKey(request.service);
         return request.intent === 'reconnect' && request.account
             ? { kind: 'reconnect', serviceKey, accountId: request.account.accountId } : { kind: 'service', serviceKey };
     });
-    const demandKey = JSON.stringify([viewer, target]);
     const [machineDemand, setMachineDemand] = React.useState<Readonly<{ key: string; required: boolean;
         availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'] }> | null>(null);
+    // A chosen service is the shown one, so its machine demand is read before the catalog resolves the target.
+    const chosenNeedsMachine = machineDemand?.key === JSON.stringify([viewer, chosenTarget]) && machineDemand.required;
+    const { indexModel, targetSelection } = useConnectedServicesIndex({
+        agents: chosenNeedsMachine || chosenTarget.kind === 'catalog' ? 'load' : 'cached', registry: purposeSetup.registry,
+        targetSelection: request.targetSelection, initialMachineTarget: request.initialMachineTarget,
+        serviceKey: chosenTarget.kind === 'catalog' ? undefined : chosenTarget.serviceKey });
+    const catalog = React.useMemo(() => purposeSetup.filterCatalog(buildConnectedServiceSetupCatalog(indexModel)),
+        [indexModel, request.purposeRequest, purposeSetup.declaration]);
+    // One way to connect opens its form directly; the catalog is for a real choice.
+    const target = React.useMemo(() => resolveConnectSheetTarget(chosenTarget, catalog), [chosenTarget, catalog]);
+    const demandKey = JSON.stringify([viewer, target]);
     const machineRequired = machineDemand?.key === demandKey ? machineDemand.required : false;
     const machineAvailability = machineDemand?.key === demandKey ? machineDemand.availability : undefined;
     const onMachineRequirementChange = React.useCallback((required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => setMachineDemand(current =>
         current?.key === demandKey && current.required === required && current.availability === availability
             ? current : { key: demandKey, required, availability }), [demandKey]);
-    const { indexModel, targetSelection } = useConnectedServicesIndex({
-        agents: machineRequired || target.kind === 'catalog' ? 'load' : 'cached', registry: purposeSetup.registry,
-        targetSelection: request.targetSelection, initialMachineTarget: request.initialMachineTarget,
-        serviceKey: target.kind === 'catalog' ? undefined : target.serviceKey });
-    const catalog = React.useMemo(() => purposeSetup.filterCatalog(buildConnectedServiceSetupCatalog(indexModel)),
-        [indexModel, request.purposeRequest, purposeSetup.declaration]);
     const selectedService = React.useMemo(() => target.kind === 'catalog' ? null : parseQualifiedPluginContributionKey(target.serviceKey), [target]);
     const services = React.useMemo(() => selectedService ? [selectedService]
         : request.service ? [request.service] : purposeSetup.declaration?.serviceRefs,

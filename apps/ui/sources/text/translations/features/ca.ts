@@ -12339,6 +12339,10 @@ const ca: typeof en = {
     connectFirst: 'Connecta primer una màquina',
     thisComputerNotWorking: 'El servei en segon pla no funciona',
     thisComputerNotConnected: 'Encara no està connectada',
+    emptyTitle: 'Encara no hi ha màquines',
+    connectFirst: 'Connecta primer una màquina',
+    thisComputerNotWorking: 'El servei en segon pla no funciona',
+    thisComputerNotConnected: 'Encara no està connectada',
 };
 
 const settingsMachinesTranslations = { ca };

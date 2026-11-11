@@ -4,6 +4,7 @@ import type { LinkProps, RedirectProps } from 'expo-router';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { NavigatorSafeAreaBleed, ScreenSafeAreaFrame } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { composeAppStackScreenLayout } from '@/components/navigation/appStackScreenLayout';
+import { DestinationBodyLoading } from './DestinationBodyLoading';
 
 import {
     useDestinationFocus,
@@ -45,17 +46,25 @@ function StackRoot(props: React.ComponentProps<typeof ExpoRouter.Stack>) {
     const screenLayout = React.useMemo(() => composeAppStackScreenLayout(props.screenLayout), [props.screenLayout]);
     return <NavigatorSafeAreaBleed>
         {hosted
-            ? <ScreenSafeAreaFrame presentation={undefined}>{outlet}</ScreenSafeAreaFrame>
+            ? <ScreenSafeAreaFrame presentation={undefined}><HostedOutlet outlet={outlet} /></ScreenSafeAreaFrame>
             : <ExpoRouter.Stack {...props} screenLayout={screenLayout}>{mapStackScreens(props.children)}</ExpoRouter.Stack>}
     </NavigatorSafeAreaBleed>;
 }
 
 export const Stack = Object.assign(StackRoot, { Screen });
 
+/**
+ * A hosted layout's leaf: while its chunk loads (a route's first visit), only the leaf waits. Without this
+ * boundary the destination's own Suspense took the whole layout, so a collection's rail blanked and remounted.
+ */
+function HostedOutlet(props: Readonly<{ outlet: React.ReactNode }>) {
+    return <React.Suspense fallback={<DestinationBodyLoading />}>{props.outlet}</React.Suspense>;
+}
+
 export function Slot(props: React.ComponentProps<typeof ExpoRouter.Slot>) {
     const hosted = useDestinationInstanceKey() !== null;
     const outlet = React.useContext(WorkspaceRouteOutlet);
-    return hosted ? <>{outlet}</> : <ExpoRouter.Slot {...props} />;
+    return hosted ? <HostedOutlet outlet={outlet} /> : <ExpoRouter.Slot {...props} />;
 }
 
 export function Redirect(props: RedirectProps) {

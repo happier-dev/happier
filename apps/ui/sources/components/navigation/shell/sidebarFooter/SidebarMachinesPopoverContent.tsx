@@ -39,7 +39,9 @@ import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetri
 import { useMachineResourceRefreshing, useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { HappierSurfaceStateFit } from '@happier-dev/plugin-ui/presentation';
+import { useThisComputerServiceSummary } from '@/components/settings/machines/localControl/useThisComputerServiceSummary';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
@@ -163,27 +165,14 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
         const thisComputer = addPaths.find(path => path.id === 'thisComputer' && !path.connectedMachineId) ?? null;
         return (
             <View testID="sidebar-machines-popover-content" style={styles.invitation}>
-                <EmptyState
-                    testID="sidebar-machines-empty"
-                    layout="inline"
-                    iconName="desktop"
-                    title={t('sidebarFooter.machinesEmptyTitle')}
-                    subtitle={t('sidebarFooter.machinesEmptyBody')}
-                    primaryAction={thisComputer ? {
-                        testID: 'sidebar-machines-add-this-computer',
-                        label: t('sidebarFooter.machinesAddThisComputer'),
-                        onPress: () => open(buildMachineAddHref({ path: 'thisComputer' }), 'SidebarMachines.addThisComputer'),
-                    } : {
-                        testID: 'sidebar-machines-add-machine',
-                        label: t('settings.addMachine'),
-                        onPress: () => open(MACHINES_ADD_ROUTE, 'SidebarMachines.addMachine'),
-                    }}
-                    secondaryAction={thisComputer ? {
-                        testID: 'sidebar-machines-add-another',
-                        label: t('sidebarFooter.machinesAddAnotherMachine'),
-                        onPress: () => open(MACHINES_ADD_ROUTE, 'SidebarMachines.addMachine'),
-                    } : undefined}
+                {/* The popover shrink-wraps the state: no pane lift below it. */}
+                <HappierSurfaceStateFit.Provider value="content">
+                <MachinesPopoverEmpty
+                    hasThisComputer={thisComputer !== null}
+                    addThisComputer={() => open(buildMachineAddHref({ path: 'thisComputer' }), 'SidebarMachines.addThisComputer')}
+                    addMachine={() => open(MACHINES_ADD_ROUTE, 'SidebarMachines.addMachine')}
                 />
+                </HappierSurfaceStateFit.Provider>
             </View>
         );
     }
@@ -428,6 +417,31 @@ function SignedOutHomeLine(props: Readonly<{ serverId: string; home: string; onS
                 onPress={() => props.onSignIn(props.serverId)}
             />
         </View>
+    );
+}
+
+/**
+ * No machine yet: the shared centred empty state with the Machines scene. "This machine" is named by the one service
+ * summary owner, as the Machines list says it: set it up while its service needs you, otherwise add it.
+ */
+function MachinesPopoverEmpty(props: Readonly<{ hasThisComputer: boolean; addThisComputer: () => void; addMachine: () => void }>) {
+    const summary = useThisComputerServiceSummary();
+    const thisComputerLabel = summary?.needsYou ? t('addFlows.setUpThisComputer') : t('sidebarFooter.machinesAddThisComputer');
+    return (
+        <SurfaceStateCard
+            testID="sidebar-machines-empty"
+            kind="empty"
+            size="details"
+            scene="noMachines"
+            title={t('sidebarFooter.machinesEmptyTitle')}
+            reason={t('sidebarFooter.machinesEmptyBody')}
+            action={props.hasThisComputer
+                ? { testID: 'sidebar-machines-add-this-computer', label: thisComputerLabel, onPress: props.addThisComputer }
+                : { testID: 'sidebar-machines-add-machine', label: t('settings.addMachine'), onPress: props.addMachine }}
+            secondaryAction={props.hasThisComputer
+                ? { testID: 'sidebar-machines-add-another', label: t('sidebarFooter.machinesAddAnotherMachine'), onPress: props.addMachine }
+                : undefined}
+        />
     );
 }
 

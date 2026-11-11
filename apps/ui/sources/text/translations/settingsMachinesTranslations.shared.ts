@@ -24,6 +24,10 @@ export const en = {
     unreadableTitle: ({ home }: { home: string }) => `Couldn’t read the machines on ${home}`,
     indexViewTitle: 'All machines view',
     indexViewDescription: 'Show All machines as a list or as one card per machine. Saved on this device.',
+    emptyTitle: 'No machines yet',
+    connectFirst: 'Connect a machine first',
+    thisComputerNotWorking: 'Background service isn’t working',
+    thisComputerNotConnected: 'Not connected yet',
 };
 
 

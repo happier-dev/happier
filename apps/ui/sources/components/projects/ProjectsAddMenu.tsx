@@ -6,6 +6,9 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import type { ProjectsListModel } from './useProjectsListModel';
 import { describeProjectSourceRow } from './sources/projectSourceAddress';
@@ -59,7 +62,11 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
     const full = Boolean(onClone || onNewApp || sources || fromSessions);
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => {
         if (!full) return machineItems;
-        const folder: DropdownMenuItem = machines.length === 1
+        // With no Machine that can act, the folder flow stays and says what it needs first; it leads to adding one.
+        const folder: DropdownMenuItem = machines.length === 0
+            ? { id: 'addMachine', testID: `${props.testID}:folder`, title: t('projects.identity.addFolder'),
+                subtitle: t('settingsMachines.connectFirst'), icon: <Icon name="folder-open" size={16} /> }
+            : machines.length === 1
             ? { id: `machine:${machines[0]!.id}`, testID: `${props.testID}:folder`, title: t('projects.identity.addFolder'), icon: <Icon name="folder-open" size={16} /> }
             : { id: 'folder', testID: `${props.testID}:folder`, title: t('projects.identity.addFolder'), icon: <Icon name="folder-open" size={16} />, submenu: { items: machineItems } };
         const sourceItem = (category: string) => (source: ProjectSourceV1): DropdownMenuItem => ({
@@ -89,7 +96,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
         return [
             ...(onNewApp ? [{ id: 'newApp', testID: `${props.testID}:new-app`, title: t('newApp.menuTitle'),
                 subtitle: t('newApp.menuSubtitle'), icon: <Icon name="sparkle" size={16} />, category: '' }] : []),
-            ...(machines.length > 0 ? [{ ...folder, category: '' }] : []),
+            { ...folder, category: '' },
             ...(onClone ? [{ id: 'clone', testID: `${props.testID}:clone`, title: t('projects.identity.addClone'), icon: <Icon name="download" size={16} />, category: '' }] : []),
             ...(sessionItems.length > 0 ? [{ id: 'sessions', testID: `${props.testID}:sessions`, title: t('projects.identity.fromYourSessions'),
                 icon: <Icon name="chat-circle" size={16} />, category: '',
@@ -99,8 +106,11 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             ...(sources ? [{ id: 'manage', testID: `${props.testID}:manage`, title: t('projects.identity.manageSources'), icon: <Icon name="books" size={16} />, category: lastSourceGroup }] : []),
         ];
     }, [fromSessions, full, machineItems, machines, onClone, onNewApp, open, props.testID, sources]);
+    const router = useRouter();
     const select = React.useCallback((itemId: string) => {
         setOpen(false);
+        // A desktop opens on this computer's own setup; elsewhere, every way to add a machine.
+        if (itemId === 'addMachine') { router.push(buildMachineAddHref(isDesktopHost() ? { path: 'thisComputer' } : {})); return; }
         if (itemId.startsWith('machine:')) { void onAdd(itemId.slice('machine:'.length)); return; }
         if (itemId === 'newApp') { onNewApp?.(); return; }
         if (itemId === 'clone') { onClone?.(); return; }
@@ -110,7 +120,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             const source = sourceById.get(itemId.slice('source:'.length));
             if (source?.repository) sources?.onOpen(source);
         }
-    }, [fromSessions, onAdd, onClone, onNewApp, sourceById, sources]);
+    }, [fromSessions, onAdd, onClone, onNewApp, router, sourceById, sources]);
     if (!full && machines.length === 0) return null;
     const soleMachine = !full && machines.length === 1 ? machines[0]! : null;
     const renderTrigger = (toggle: () => void) => {

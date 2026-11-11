@@ -12,6 +12,7 @@ import { OsCommandBlock } from '@/components/ui/code/blocks/OsCommandBlock';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { ThisComputerServiceNotice } from '@/components/settings/machines/localControl/ThisComputerServiceNotice';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SetupPathPanel, type SetupPath } from '@/components/ui/setupBlocks/SetupPathPanel';
@@ -386,6 +387,10 @@ function MachineAddPane(props: Readonly<{
                             secondaryAction={{ label: t('addFlows.keepOnOtherHome'), onPress: () => flow.resolveOnAnotherHome('keep'), testID: `${testID}.onAnotherHome.keep` }}
                         />
                     ) : null}
+                    {/* Signing in, pairing or a broken service is the background service's own state: it says it and its one
+                        operation here (owner 11-11), never an empty pane. */}
+                    {!run && (state.kind === 'needsAuth' || state.kind === 'pairingRequired')
+                        ? <ThisComputerServiceNotice testID={`${testID}.service`} /> : null}
                     {run ? <MachineAddStepList testID={`${testID}.steps`} steps={run.steps} /> : state.kind === 'ready' ? (
                         <Item
                             testID={`${testID}.machine`}

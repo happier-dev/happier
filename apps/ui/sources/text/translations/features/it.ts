@@ -12340,6 +12340,10 @@ const it: typeof en = {
     connectFirst: 'Collega prima una macchina',
     thisComputerNotWorking: 'Il servizio in background non funziona',
     thisComputerNotConnected: 'Non ancora collegata',
+    emptyTitle: 'Ancora nessuna macchina',
+    connectFirst: 'Collega prima una macchina',
+    thisComputerNotWorking: 'Il servizio in background non funziona',
+    thisComputerNotConnected: 'Non ancora collegata',
 };
 
 const settingsMachinesTranslations = { it };
