@@ -144,14 +144,17 @@ describe('HappierReleasePreviewCard', () => {
 });
 
 describe('HappierReleaseOutcomePill', () => {
-  it('uses the shared loading mark for a pending release outcome', () => {
+  it.each([false, true])('keeps the pending loading mark visible with reduced motion %s', (reducedMotion) => {
     const mounted = mountThroughReactNativeWeb(
-      <HappierReleaseOutcomePill outcome={{ tone: 'pending', title: 'Moving Review' }} colors={colors} host={host} reducedMotion />,
+      <HappierReleaseOutcomePill outcome={{ tone: 'pending', title: 'Moving Review' }} colors={colors} host={host} reducedMotion={reducedMotion} />,
     );
     try {
       const spinner = mounted.container.querySelector<HTMLElement>('[data-happier-activity-spinner]');
       expect(spinner).toBeTruthy();
-      expect(spinner!.style.animationName).toBe('happierActivitySpinnerBreath');
+      const animationName = getComputedStyle(spinner!).animationName;
+      if (reducedMotion) expect(animationName === '' || animationName === 'none').toBe(true);
+      else expect(animationName).not.toMatch(/^(?:none)?$/);
+      expect(mounted.container.textContent).toContain('Moving Review');
     } finally {
       mounted.unmount();
     }

@@ -255,6 +255,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
             // Touch: the whole track is one platform-height target. Press and drag selects the run nearest
             // the finger (the chart's scrub), and assistive technology steps through its runs.
             const touchTrack = nativeTarget !== undefined;
+            const trackAccessible = track.some(interval => interval.datum?.keyboard !== false);
             const trackSelected = touchTrack ? track.find((interval) => interval.id === selectedId) : undefined;
             const pick = (locationX: number) => {
               if (plotWidth === null || plotWidth <= 0) return;
@@ -266,7 +267,9 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
             style={{ height: trackHeight }}
             {...(touchTrack ? {
               hitSlop: { top: trackGap / 2, bottom: trackGap / 2 },
-              accessible: true, accessibilityRole: 'adjustable' as const,
+              accessible: trackAccessible, accessibilityRole: 'adjustable' as const,
+              'aria-hidden': trackAccessible ? undefined : true,
+              importantForAccessibility: trackAccessible ? undefined : 'no-hide-descendants' as const,
               accessibilityLabel: `${lane.label}${lane.tracks.length > 1 ? ` ${trackIndex + 1}` : ''}`,
               accessibilityValue: { text: trackSelected ? describe(trackSelected) : `${trackStops(track).length}` },
               accessibilityActions: [{ name: 'increment' }, { name: 'decrement' }],
@@ -302,6 +305,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
                     datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
                     renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
                   accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
+                  accessible={interval.datum?.keyboard !== false} tabIndex={interval.datum?.keyboard === false ? -1 : 0}
+                  describedById={interaction.describedBy}
                   hitTarget={trackStep}
                   hitReach={{ top: trackGap / 2, bottom: trackGap / 2, left: 0, right: 0 }}
                   onPress={() => { setSelectedId(interval.id); interaction.onPress(); }} onHoverChange={interaction.onHoverChange}
@@ -339,6 +344,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
           datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
           renderTrigger={interaction => <HappierPressable testID={props.testID ? `${props.testID}-select-${interval.id}` : undefined}
           accessibilityRole="button" accessibilityLabel={describe(interval)} selected={selectedId === interval.id}
+          accessible={interval.datum?.keyboard !== false} tabIndex={interval.datum?.keyboard === false ? -1 : 0}
+          describedById={interaction.describedBy}
           onPress={() => { setSelectedId(interval.id); interaction.onPress(); }} onHoverChange={interaction.onHoverChange}
           onFocusChange={(focused) => { if (focused) setSelectedId(interval.id); interaction.onFocusChange(focused); }}
           hitReach={{ top: 0, bottom: 0 }}

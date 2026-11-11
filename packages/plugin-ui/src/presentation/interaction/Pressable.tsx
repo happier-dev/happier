@@ -148,7 +148,7 @@ export type HappierPressableProps = Readonly<{
   accessibilityPositionInSet?: number;
   /** Total size for a list-like composite role, projected to native/RNW ARIA. */
   accessibilitySetSize?: number;
-  hasPopup?: 'dialog' | 'menu';
+  hasPopup?: 'dialog' | 'menu' | 'listbox';
   /** Checked state; `mixed` announces a partially checked checkbox or checkbox menu item. */
   checked?: boolean | 'mixed';
   accessibilityRole?: HappierPressableRole;
@@ -160,6 +160,8 @@ export type HappierPressableProps = Readonly<{
   /** Nesting level of a tree item (1-based), projected to `aria-level`. */
   accessibilityLevel?: number;
   accessibilityLabel?: string;
+  /** Pointer-only chart marks retain inspection without a duplicate accessible control. */
+  accessible?: boolean;
   accessibilityHint?: string;
   /** The control's current value, announced by native assistive technology and RNW ARIA. */
   accessibilityValue?: Readonly<{ min?: number; max?: number; now?: number; text?: string }>;
@@ -284,6 +286,7 @@ export function HappierPressable({
   webRole,
   accessibilityLevel,
   accessibilityLabel,
+  accessible,
   accessibilityHint,
   accessibilityValue,
   accessibilityActions,
@@ -317,7 +320,6 @@ export function HappierPressable({
   }, []);
   const pendingRef = useRef(false);
   const controlNodeRef = useRef<HappierFocusable | null>(null);
-  const pendingKeyboardFocusRestoreRef = useRef(false);
   // RNW's PressResponder processes keydown before its caller hook. A compound
   // widget that consumed Enter has already published its outcome, so ignore
   // the paired deferred press once: RNW calls it from document keyup for a
@@ -329,19 +331,22 @@ export function HappierPressable({
   const isDisabled = disabled === true || isBusy;
   // Disabled but explaining itself: reachable (focus, hover, press) while every action stays refused.
   const explainsDisabled = disabled === true && !isBusy && onDisabledPress !== undefined;
+  // Admission may open a dialog asynchronously. Keep its opener focused so the modal owner
+  // can capture it; the existing pending guard still refuses every repeated activation.
+  const keepsDisabledReachable = explainsDisabled || (Platform.OS === 'web' && isBusy);
   // React Native Web writes `aria-disabled` from its own `disabled` prop, which stays false here so the
   // control keeps its tab stop and press. The element still has to announce itself disabled, so the
-  // one attribute RNW overwrote is restored on the node while the control explains itself.
+  // one attribute RNW overwrote is restored while the control is busy or explains its refusal.
   // On leaving that state the node gets the value the next render owns, read from a ref updated during
   // render (cleanup runs after the next commit).
   const isDisabledRef = useRef(isDisabled);
   isDisabledRef.current = isDisabled;
   useEffect(() => {
-    if (Platform.OS !== 'web' || !explainsDisabled) return;
+    if (Platform.OS !== 'web' || !keepsDisabledReachable) return;
     const node = controlNodeRef.current as unknown as { setAttribute?: (name: string, value: string) => void } | null;
     node?.setAttribute?.('aria-disabled', 'true');
     return () => node?.setAttribute?.('aria-disabled', String(isDisabledRef.current));
-  }, [explainsDisabled]);
+  }, [keepsDisabledReachable]);
 
   useEffect(() => {
     // StrictMode probes setup -> cleanup -> setup. Reasserting this in setup
@@ -351,16 +356,6 @@ export function HappierPressable({
       mountedRef.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (isBusy || !pendingKeyboardFocusRestoreRef.current) return;
-    pendingKeyboardFocusRestoreRef.current = false;
-    // A pending keyboard activation can make a native web button lose focus.
-    // Restore only when no later focus destination replaced it; pointer actions
-    // and explicit focus moves stay owned by their original caller.
-    if (Platform.OS === 'web' && document.activeElement !== document.body) return;
-    controlNodeRef.current?.focus?.();
-  }, [isBusy]);
 
   const setControlRef = useCallback((node: HappierFocusable | null) => {
     controlNodeRef.current = node;
@@ -390,15 +385,12 @@ export function HappierPressable({
     if (!isThenable(result)) return;
 
     pendingRef.current = true;
-    pendingKeyboardFocusRestoreRef.current = focused && (
-      key !== null || isKeyboardGeneratedClick(event)
-    );
     setPendingPress(true);
     void Promise.resolve(result).catch(() => undefined).finally(() => {
       pendingRef.current = false;
       if (mountedRef.current) setPendingPress(false);
     });
-  }, [busy, disabled, focused, onDisabledPress, onPress, runPress]);
+  }, [busy, disabled, onDisabledPress, onPress, runPress]);
 
   const handleKeyDown = useCallback((event: unknown) => {
     // RNW still forwards custom keys while disabled. Admit them through the
@@ -516,6 +508,8 @@ export function HappierPressable({
       testID={testID}
       {...platformRoleProps}
       accessibilityLabel={accessibilityLabel}
+      accessible={accessible}
+      aria-hidden={accessible === false ? true : undefined}
       accessibilityHint={accessibilityHint}
       accessibilityValue={accessibilityValue}
       // RNW ignores the native value object; project its fields from the same caller-owned value.
@@ -553,8 +547,8 @@ export function HappierPressable({
       aria-haspopup={hasPopup}
       aria-controls={controls}
       aria-keyshortcuts={keyboardShortcuts}
-      tabIndex={isDisabled && !explainsDisabled ? -1 : tabIndex}
-      disabled={isDisabled && !explainsDisabled}
+      tabIndex={isDisabled && !keepsDisabledReachable ? -1 : tabIndex}
+      disabled={isDisabled && !keepsDisabledReachable}
       // A touch target is a hit area, never a drawn size: native reaches it with hitSlop, the web
       // (whose Pressable ignores hitSlop) with the invisible frame above, and the box keeps its size.
       hitSlop={hitArea.hitSlop}
