@@ -12,6 +12,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema,
   type ActionExecutorDeps } from '@happier-dev/protocol';
 import { handleActionsCommand } from './actions';
+import { dispatchCli } from '@/cli/dispatch';
 import { reloadConfiguration } from '@/configuration';
 import { writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -82,6 +83,18 @@ afterEach(async () => {
 });
 
 describe('emitted deployment CI step through the Actions command', () => {
+  it('dispatches the documented helper option to its Environment argument validation', async () => {
+    const output = captureConsoleLogAndMuteStdout();
+    const args = ['actions', 'get', 'deployments.deploy', '--github-actions', '--json'];
+    try {
+      await dispatchCli({ args, rawArgv: args, terminalRuntime: null });
+      expect(JSON.parse(output.logs.join('\n'))).toMatchObject({
+        ok: false, error: { code: 'invalid_arguments', message: expect.stringContaining('--environment') },
+      });
+      expect(process.exitCode).toBe(1);
+    } finally { output.restore(); }
+  });
+
   it.each([
     'https://ci.example.test',
     'https://ci.example.test/$ordinary',

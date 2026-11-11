@@ -1,4 +1,5 @@
 import { showHelp } from '../actions/discoveryHelp';
+import { isDeploymentCiStepCommand } from '../actions/discoveryRouting';
 import { randomUUID } from 'node:crypto';
 import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
@@ -293,7 +294,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     || subcommand === 'help'
     || ACTION_CLI_HELP_FLAGS.includes(subcommand as typeof ACTION_CLI_HELP_FLAGS[number])
   ) { showHelp(); return; }
-  if (subcommand === 'get' && hasInvokeOption(args, '--github-actions')) {
+  if (isDeploymentCiStepCommand(['actions', ...args])) {
     if (sessionMcp) throwActionFailure({ ok: false, errorCode: 'client_required',
       error: 'Generate a deployment CI step from a person CLI outside the Session.' });
     const usage = 'Usage: happier actions get deployments.deploy --github-actions --environment <id> --server-id <id>';
@@ -611,7 +612,7 @@ export async function handleActionsCommand(
   signal?: AbortSignal,
 ): Promise<void> {
   const subcommand = args[0];
-  if (subcommand === 'search' || subcommand === 'get' && !hasInvokeOption(args, '--github-actions')) {
+  if (subcommand === 'search' || subcommand === 'get' && !isDeploymentCiStepCommand(['actions', ...args])) {
     const command = findCompiledActionCliCommand(
       ['actions', subcommand],
       listCompiledActionCliCommands(),

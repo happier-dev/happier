@@ -32,6 +32,7 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { CompiledActionCliCommand } from '@/cli/actions/compiledCommands';
 import { resolveCommandPathCompletionCandidates } from './commandCompletionPaths';
 import { findActionCliCommandPattern, resolveActionCliCommandPathCompletionCandidates } from './actions/commandPatterns';
+import { isDeploymentCiStepCommand } from './actions/discoveryRouting';
 import { findPluginCommandCompletionCommand } from './pluginCommandMetadata';
 import type { PluginCommandActionInputRegistry } from './pluginCommandFields';
 import type { EphemeralResolvedServerSelection } from '@/server/serverSelection';
@@ -318,6 +319,7 @@ function readLeadingCommandWords(args: readonly string[]): readonly string[] {
 export async function resolveAdmittedActionCliCommand(
   args: readonly string[],
 ): Promise<CompiledActionCliCommand | null> {
+  if (isDeploymentCiStepCommand(args)) return null;
   const words = readLeadingCommandWords(args);
   if (words.length === 0) return null;
   if (!BUNDLED_ACTION_CLI_COMMAND_PATHS.some(({ path }) => (

@@ -213,6 +213,21 @@ describe('compiled Action commands in the one command registry', () => {
     );
   });
 
+  it('leaves the documented GitHub Actions step variant to the Actions command owner', async () => {
+    expect(await resolveAdmittedActionCliCommand([
+      'actions', 'get', 'deployments.deploy', '--github-actions', '--environment', 'env-1', '--server-id', 'home-1',
+    ])).toBeNull();
+    expect(await resolveAdmittedActionCliCommand(['actions', 'get', 'machines.list']))
+      .toMatchObject({ actionId: 'action.spec.get' });
+  });
+
+  it('keeps positional helper-looking values and other discovery subcommands on their compiled owner', async () => {
+    expect(await resolveAdmittedActionCliCommand(['actions', 'get', '--', '--github-actions']))
+      .toMatchObject({ actionId: 'action.spec.get' });
+    expect(await resolveAdmittedActionCliCommand(['actions', 'search', '--github-actions']))
+      .toMatchObject({ actionId: 'action.spec.search' });
+  });
+
   it('routes memory document commands through the generated Account Action leaves', async () => {
     for (const leaf of ['remember', 'update', 'forget', 'read', 'list']) {
       expect(await resolveAdmittedActionCliCommand(['memory', leaf])).toMatchObject({
