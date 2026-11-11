@@ -8,6 +8,8 @@ import {
 } from "vitest";
 
 import { db } from "@/storage/db";
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { sealProviderAccountUsageSnapshot, openSealedProviderAccountUsageSnapshot } from "@happier-dev/protocol/connect/accountUsage";
 import { ConnectedServiceQuotaSnapshotV1Schema } from "@happier-dev/protocol";
@@ -97,6 +99,25 @@ describe("qualified Connected Account usage stored identity", () => {
         }
         return { credential, ref };
     }
+
+    it('returns no_usage_observed for a connected account before its first sample, preserving missing-account refusal', async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const { ref, credential } = await createCredential(account.id);
+        expect(await readQualifiedConnectedAccountQuota({ accountId: account.id, ref })).toEqual({ status: 'no_usage_observed' });
+        expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id, ref })).toBe('no_usage_observed');
+        expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id,
+            ref: { ...ref, accountId: 'missing' } })).toBe('not_found');
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const response = await app.inject({ method: 'POST', url: '/v4/connect/qualified/quotas/refresh',
+                headers: { 'x-test-user-id': account.id }, payload: { ref } });
+            expect(response.statusCode, response.body).toBe(404);
+            expect(response.json()).toEqual({ error: 'no_usage_observed' });
+        });
+        const write = buildUsageWrite(account.id, { credentialRevision: credential.credentialRevision,
+            source: { ref, bindingKind: 'account' }, fetchedAt: Date.now(), planLabel: 'observed' });
+        await writeQualifiedProviderAccountUsageRecord(write);
+        expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id, ref })).toBe('written');
+    });
 
     function buildUsageWrite(
         accountId: string,

@@ -1599,7 +1599,8 @@ async function readFirstQualifiedSourceForRef(
                     staleAfterMs: record.staleAfterMs,
                 };
             }
-            return null;
+            // Credential binding succeeded, but no matching provider observation exists yet.
+            return { status: 'no_usage_observed' as const };
         };
         return await (storage ? readInStorage(storage) : inReadSnapshot(readInStorage));
     } catch (error) {
@@ -1638,10 +1639,11 @@ export async function readQualifiedConnectedAccountUsageRecordWithSource(
     status: "resolved";
     sourceResolution: QualifiedConnectedServiceUsageSourceResolutionV4;
     record: StoredProviderAccountUsageRecord;
-}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "storage_mode_mismatch" }>> {
+}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "no_usage_observed" }> | Readonly<{ status: "storage_mode_mismatch" }>> {
     return await inReadSnapshot(async (tx) => {
         const source = await readFirstQualifiedSourceForRef(params, tx);
         if (!source) return { status: "not_found" as const };
+        if ("status" in source) return source;
         const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
             accountId: params.accountId,
             recordId: source.recordId,
@@ -1675,7 +1677,7 @@ export async function readLegacyConnectedServiceQuotaCompatibilityRecordWithSour
             ...params,
             allowLegacyUnfencedCredential: true,
         }, tx);
-        if (!source) return { status: "not_found" as const };
+        if (!source || "status" in source) return { status: "not_found" as const };
         const admitted = await admitQualifiedProviderAccountUsageRecordInTx(
             tx,
             {
@@ -1855,10 +1857,11 @@ export async function requestQualifiedConnectedAccountQuotaRefresh(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"written" | "not_found" | "storage_mode_mismatch"> {
+): Promise<"written" | "not_found" | "no_usage_observed" | "storage_mode_mismatch"> {
     return await inTx(async (tx) => {
         const source = await readFirstQualifiedSourceForRef(params, tx);
         if (!source) return "not_found";
+        if ("status" in source) return source.status;
         const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
             accountId: params.accountId,
             recordId: source.recordId,
@@ -1883,7 +1886,7 @@ export async function requestLegacyConnectedServiceQuotaCompatibilityRefresh(
             ...params,
             allowLegacyUnfencedCredential: true,
         }, tx);
-        if (!source) return "not_found";
+        if (!source || "status" in source) return "not_found";
         const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
             accountId: params.accountId,
             recordId: source.recordId,

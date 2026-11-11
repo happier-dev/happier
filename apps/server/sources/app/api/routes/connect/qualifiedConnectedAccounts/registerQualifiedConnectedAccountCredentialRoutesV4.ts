@@ -100,6 +100,7 @@ const NotFoundResponseSchema = z.strictObject({
     error: z.enum([
         "connect_credential_not_found",
         "connect_quotas_not_found",
+        "no_usage_observed",
         "connect_group_not_found",
         "provider_account_usage_source_not_found",
         "provider_account_usage_not_found",
@@ -599,6 +600,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "provider_account_usage_storage_mode_mismatch",
             });
         }
+        if ("status" in quota && quota.status === "no_usage_observed") {
+            return reply.code(404).send({ error: quota.status });
+        }
         if ("status" in quota && quota.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_quotas_not_found",
@@ -665,6 +669,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(409).send({
                 error: "provider_account_usage_storage_mode_mismatch",
             });
+        }
+        if (result === "no_usage_observed") {
+            return reply.code(404).send({ error: result });
         }
         if (result === "not_found") {
             return reply.code(404).send({
