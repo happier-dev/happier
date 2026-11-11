@@ -51,6 +51,8 @@ export function readBundledPluginPackageNames(
     if (!existsSync(pkgJsonPath)) continue;
     const pkgJson = readJson(pkgJsonPath) as { name?: unknown; happier?: unknown };
     if (isReservationOnlyPluginPackage(pkgJson)) continue;
+    // First-party opt-in packages ship independently through npm.
+    if (isRecord(pkgJson.happier) && pkgJson.happier.bundled === false) continue;
 
     const manifestPath = resolve(pluginsRoot, pluginPackageId, 'src/manifest.ts');
     if (requireManifestSource && !existsSync(manifestPath)) {
