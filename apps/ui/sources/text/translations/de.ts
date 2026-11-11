@@ -18631,8 +18631,6 @@ settingsSession: {
             domainsEmpty: "Noch keine Domains",
             domainAdd: "Domain hinzufügen",
             domainAddTitle: "Domain hinzufügen",
-            domainIngressMissing: "Kein Zugang gespeichert. Happier verwendet die Bereitstellungstopologie; mehrere Maschinen benötigen einen ausdrücklich gewählten Zugang.",
-      domainIngressZoneHint: "Zonen können über diese Verbindung nicht aufgelistet werden. Gib die Zonen-ID aus Cloudflare ein.",
       domainIngressRouting: "Zugang",
       domainIngressEnvironment: "Bereitstellungstopologie verwenden",
       domainIngressReadZones: "Zonen suchen",

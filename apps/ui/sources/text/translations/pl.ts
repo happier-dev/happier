@@ -18349,8 +18349,6 @@ settingsSession: {
         domainsEmpty: "Brak domen",
         domainAdd: "Dodaj domenę",
         domainAddTitle: "Dodaj domenę",
-        domainIngressMissing: "Brak zapisanego punktu wejścia. Happier użyje topologii wdrożenia; wiele maszyn wymaga jawnego wyboru punktu wejścia.",
-      domainIngressZoneHint: "Lista stref jest niedostępna dla tego połączenia. Wpisz identyfikator strefy z Cloudflare.",
       domainIngressRouting: "Punkt wejścia",
       domainIngressEnvironment: "Użyj topologii wdrożenia",
       domainIngressReadZones: "Znajdź strefy",

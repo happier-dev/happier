@@ -18438,8 +18438,6 @@ settingsSession: {
         domainsEmpty: "ドメインはまだありません",
         domainAdd: "ドメインを追加",
         domainAddTitle: "ドメインを追加",
-        domainIngressMissing: "受信経路が記録されていません。Happier はデプロイの構成を使用します。マシンが複数ある場合は受信経路を明示的に選択してください。",
-      domainIngressZoneHint: "この接続ではゾーン一覧を取得できません。Cloudflare のゾーン ID を入力してください。",
       domainIngressRouting: "受信経路",
       domainIngressEnvironment: "デプロイの構成を使用",
       domainIngressReadZones: "ゾーンを検索",

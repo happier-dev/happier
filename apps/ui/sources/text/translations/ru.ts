@@ -18477,8 +18477,6 @@ settingsSession: {
         domainsEmpty: "Доменов пока нет",
         domainAdd: "Добавить домен",
         domainAddTitle: "Добавить домен",
-        domainIngressMissing: "Входящий маршрут не записан. Happier использует топологию развёртывания; для нескольких машин нужен явный выбор маршрута.",
-      domainIngressZoneHint: "Список зон недоступен для этого подключения. Введите идентификатор зоны из Cloudflare.",
       domainIngressRouting: "Входящий маршрут",
       domainIngressEnvironment: "Использовать топологию развёртывания",
       domainIngressReadZones: "Найти зоны",

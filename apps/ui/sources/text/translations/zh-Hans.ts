@@ -18143,8 +18143,6 @@ settingsSession: {
         domainsEmpty: "还没有域名",
         domainAdd: "添加域名",
         domainAddTitle: "添加域名",
-        domainIngressMissing: "未记录入口。Happier 将使用部署拓扑；多台机器需要明确选择入口。",
-      domainIngressZoneHint: "此连接无法列出区域。请输入 Cloudflare 的区域 ID。",
       domainIngressRouting: "入口",
       domainIngressEnvironment: "使用部署拓扑",
       domainIngressReadZones: "查找区域",

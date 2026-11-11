@@ -18630,8 +18630,6 @@ settingsSession: {
         domainsEmpty: "Ainda não há domínios",
         domainAdd: "Adicionar domínio",
         domainAddTitle: "Adicionar um domínio",
-        domainIngressMissing: "Nenhuma entrada registrada. O Happier usará a topologia da implantação; várias máquinas precisam de uma entrada explícita.",
-      domainIngressZoneHint: "A listagem de zonas não está disponível nesta conexão. Insira o ID da zona do Cloudflare.",
       domainIngressRouting: "Entrada",
       domainIngressEnvironment: "Usar a topologia da implantação",
       domainIngressReadZones: "Buscar zonas",
