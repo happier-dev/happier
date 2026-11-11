@@ -44,6 +44,9 @@ const filterControllerState = vi.hoisted(() => ({
 }));
 
 installSessionShellCommonModuleMocks({
+    // The testkit storage stub: the pane's data hooks are mocked here, and passing the real store through hits the
+    // storage → hooks → scm → apiSocket → storage import cycle under vi.mock (sessionShellTestHelpers.ts:134).
+    storage: async () => ({}),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -86,7 +89,8 @@ vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseMode
 
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsListView: (props: any) => React.createElement('SessionsListView', props),
-    SessionsListViewWithFilterController: (props: any) => React.createElement('SessionsListViewWithFilterController', props),
+    // The list draws its own title row; an empty body it is given stands in for its rows.
+    SessionsListViewWithFilterController: (props: any) => React.createElement('SessionsListViewWithFilterController', props, props.emptyBody ?? null),
 }));
 
 vi.mock('@/components/sessions/shell/SessionsListEmptyState', () => ({
@@ -194,7 +198,6 @@ describe('SessionsListPaneContent (loading)', () => {
         );
 
         expect(screen.findByType('ExternalSessionsEmptyState' as any)).toBeTruthy();
-        expect(screen.findAllByType('SessionsListViewWithFilterController' as any)).toHaveLength(0);
     });
 
     it('shows the hidden inactive sessions empty state when the inactive filter hides every persisted session', async () => {
@@ -216,6 +219,28 @@ describe('SessionsListPaneContent (loading)', () => {
         );
 
         expect(screen.findByType('HiddenInactiveSessionsEmptyState' as any)).toBeTruthy();
-        expect(screen.findAllByType('SessionsListViewWithFilterController' as any)).toHaveLength(0);
+    });
+
+    it('keeps an empty sidebar column under its own title row: the list stays, its rows under the title, the empty state inside it (owner 1208 #08)', async () => {
+        filterControllerState.controller.filters.source = 'persisted';
+        sessionListState.paneState = {
+            summary: { sessionsReady: true, sessionCount: 0 },
+            visibleSessionListViewData: [],
+            hasHiddenInactiveSessions: false,
+            showLoading: false,
+            showEmptyState: true,
+        };
+        const leading = React.createElement('ColumnRows');
+
+        const screen = await renderScreen(
+            <SessionsListPaneContent fallbackGuidanceVariant="sidebar" leading={leading} />,
+        );
+
+        const list = screen.findByType('SessionsListViewWithFilterController' as any);
+        expect(list.props.paneState).toBe(sessionListState.paneState);
+        expect(list.props.leading).toBe(leading);
+        // The first-run state is the list's body, under its title and the column's rows, never a page without them.
+        expect(list.findByType('SessionsListEmptyState' as any)).toBeTruthy();
+        expect(screen.findAllByType('ColumnRows' as any)).toHaveLength(0);
     });
 });

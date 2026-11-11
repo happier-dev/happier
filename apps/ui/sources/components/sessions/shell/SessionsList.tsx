@@ -147,6 +147,11 @@ export function SessionsListViewWithFilterController(props: Readonly<{
     releaseRetentionOnRouteRemoval?: boolean;
     /** The column's own rows (pinned boards, its destinations): under the list's title, above its sessions. */
     leading?: React.ReactNode;
+    /**
+     * A first-run body that stands in for the rows (owner 1208 #08): the list keeps its title row and the column's
+     * own rows above it, so an empty column still reads as My work.
+     */
+    emptyBody?: React.ReactNode;
 }>) {
     const attentionInteraction = useSessionListAttentionInteractionOwner();
     React.useEffect(() => {
@@ -167,6 +172,7 @@ export function SessionsListViewWithFilterController(props: Readonly<{
                 pathname={props.pathname}
                 surfaceOwnership={props.surfaceOwnership}
                 leading={props.leading}
+                emptyBody={props.emptyBody}
             />
             </SessionListAttentionInteractionContext.Provider>
         );
@@ -182,6 +188,7 @@ export function SessionsListViewWithFilterController(props: Readonly<{
             surfaceOwnership={props.surfaceOwnership}
             releaseRetentionOnRouteRemoval={props.releaseRetentionOnRouteRemoval}
             leading={props.leading}
+            emptyBody={props.emptyBody}
         />
         </SessionListAttentionInteractionContext.Provider>
     );
@@ -195,6 +202,7 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     releaseRetentionOnRouteRemoval?: boolean;
     leading?: React.ReactNode;
+    emptyBody?: React.ReactNode;
 }>) {
     const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
     const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
@@ -260,6 +268,7 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
                 pathname={props.pathname}
                 surfaceOwnership={surfaceOwnership}
                 leading={props.leading}
+                emptyBody={props.emptyBody}
             />
         </>
     );
@@ -318,6 +327,7 @@ type SessionsListViewContentProps = Readonly<{
     pathname?: string;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     leading?: React.ReactNode;
+    emptyBody?: React.ReactNode;
 }>;
 
 function SessionsListViewContent(props: SessionsListViewContentProps) {
@@ -583,12 +593,14 @@ function VisibleSessionsListViewContent(
                 />
                 {/* The title leads the column on the shell's title row; the column's own rows follow it. */}
                 {props.leading ?? null}
-                {queryVisibleSessionCount > 0 ? (
+                {props.emptyBody != null ? props.emptyBody : null}
+                {props.emptyBody == null && queryVisibleSessionCount > 0 ? (
                     <HomeReachabilityGate
                         variant="line"
                         relevantServerIds={queryPresentationState?.selectedHomeServerIds}
                     >{null}</HomeReachabilityGate>
                 ) : null}
+                {props.emptyBody != null ? null : (
                 <SessionListRowFactsProvider value={viewState.rowFacts}>
                 <SyncPerformanceReactProfiler id="sessions.list.virtualized">
                     <SessionListVirtualizedContent
@@ -624,6 +636,7 @@ function VisibleSessionsListViewContent(
                     />
                 </SyncPerformanceReactProfiler>
                 </SessionListRowFactsProvider>
+                )}
                 <SessionListDropOverlay
                     active={viewState.dropOverlayActive}
                     shared={viewState.dropOverlayShared}

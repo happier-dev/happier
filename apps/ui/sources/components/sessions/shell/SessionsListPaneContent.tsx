@@ -230,6 +230,29 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
         );
     }
 
+    if (props.sessionListPaneState.showEmptyState && props.fallbackGuidanceVariant === 'sidebar') {
+        // A desktop column keeps its title row (My work, its controls) and its own rows when it has no sessions yet:
+        // the first-run state is the list's body, under them (owner 1208 #08).
+        return (
+            <SessionsListViewWithFilterController
+                storageKind={props.storageKind}
+                corpusStorage="active"
+                filterController={props.filterController}
+                paneState={props.sessionListPaneState}
+                pathname={props.pathname}
+                surfaceOwnership={props.surfaceOwnership}
+                leading={props.leading}
+                emptyBody={(
+                    <SessionsListPaneEmptyState
+                        fallbackGuidanceVariant={props.fallbackGuidanceVariant}
+                        sessionListPaneState={props.sessionListPaneState}
+                        storageKind={props.storageKind}
+                    />
+                )}
+            />
+        );
+    }
+
     if (props.sessionListPaneState.showEmptyState) {
         return (
             <>
