@@ -3,6 +3,7 @@ import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/s
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { logger } from '@/ui/logger';
+import type { ExactTrackedRunnerStopWitness } from '@/daemon/sessions/stopSession';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { isSessionSpawnBrokerUnavailable } from '@happier-dev/protocol/spawnSession';
@@ -26,6 +27,16 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             ...(local.operationCancellation ? { operationCancellation: local.operationCancellation } : {}),
             ...(local.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: local.requesterWorkAttributionV1 } : {}) }
         : undefined;
+    const retireRefusedRunner = async (sessionId: string, expectedTrackedRunner: ExactTrackedRunnerStopWitness) => {
+        try {
+            const stopped = await input.stopSession!(sessionId, { expectedTrackedRunner });
+            if (stopped !== true && (typeof stopped === 'boolean' || stopped.status !== 'stopped')) {
+                logger.infoFile('[SESSION STARTUP] Refused runner retirement incomplete', { sessionId, stopResult: stopped });
+            }
+        } catch {
+            logger.infoFile('[SESSION STARTUP] Refused runner retirement failed', { sessionId });
+        }
+    };
     return async options => {
         // Webhook acknowledgement and native open consume one startup budget.
         const startupDeadline = operation ? Date.now() + resolveSessionStartupTimeoutMs() : null;
@@ -54,18 +65,7 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             // original input. Retire it through the daemon's normal Stop owner,
             // which also suppresses respawn, before releasing startup custody.
             // Native-fork children retain their existing fork cleanup scope above.
-            try {
-                const stopped = await input.stopSession!(result.sessionId, {
-                    expectedTrackedRunner: opened.expectedTrackedRunner,
-                });
-                if (stopped !== true && (typeof stopped === 'boolean' || stopped.status !== 'stopped')) {
-                    logger.infoFile('[SESSION STARTUP] Refused runner retirement incomplete', {
-                        sessionId: result.sessionId, stopResult: stopped,
-                    });
-                }
-            } catch {
-                logger.infoFile('[SESSION STARTUP] Refused runner retirement failed', { sessionId: result.sessionId });
-            }
+            await retireRefusedRunner(result.sessionId, opened.expectedTrackedRunner);
             throw new SessionStartupInputRefusalError({ code: opened.code,
                 message: 'The selected native Agent mode is not available in this Session.' });
         }
@@ -93,6 +93,9 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             // the existing Pending activation owner owns subsequent launches.
             if (operation.operationAcceptance?.actionId === 'session.spawn_new'
                 && isSessionSpawnBrokerUnavailable(failure)) return result;
+            if (opened.status === 'construction_failed') {
+                await retireRefusedRunner(result.sessionId, opened.expectedTrackedRunner);
+            }
             return failure;
         }
         return result;
