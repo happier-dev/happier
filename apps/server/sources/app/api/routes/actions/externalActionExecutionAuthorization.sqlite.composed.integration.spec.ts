@@ -1104,7 +1104,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it('refuses a sealed Manage root at replay after the grantee is downgraded to Use', async () => {
+    it('admits a guest Manage root at signed verification and drops Manage only at the next mint after downgrade to Use', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
@@ -1135,12 +1135,24 @@ describe("external Action execution authorization", () => {
             const replay = () => app.inject({ method: 'POST', url: path, payload: body,
                 headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                     method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
-            expect((await replay()).statusCode).toBe(200);
+            // A guest (requester != custodian) spends its admitted root; the daemon's
+            // requester verify is not a second Machine admission (A1, 2026-11-11).
+            const admitted = await replay();
+            expect(admitted.statusCode, admitted.body).toBe(200);
             await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } },
                 data: { accessLevel: 'view' } });
-            const downgraded = await replay();
-            expect(downgraded.statusCode, downgraded.body).not.toBe(200);
-            expect(downgraded.json()).not.toEqual({ ok: true });
+            // Already admitted work finishes; the downgrade applies at the next admission.
+            expect((await replay()).statusCode).toBe(200);
+            const mint = (bearer: string) => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${bearer}` }, payload: { v: 1, machineId: fixture.machine.id,
+                    envelope: { ...fixture.envelope, input: { ...input, requestKey: crypto.randomUUID() } } } });
+            // The next admission sees the downgrade: no sealed Manage role is re-issued.
+            const remint = await mint(token);
+            expect(remint.statusCode, remint.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(remint.json()).binding.admittedMachineRole).not.toBe('manage');
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const outsiderMint = await mint(await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user' }));
+            expect(outsiderMint.statusCode, outsiderMint.body).not.toBe(200);
         } finally { await app.close(); }
     });
 
