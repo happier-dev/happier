@@ -8,6 +8,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx } from '@/app/projects/sources/projectSourceService';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
@@ -58,6 +59,40 @@ import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/de
 type TemplateAdmission = Extract<DeploymentPreparationAdmissionV1, { operation: 'template' }>;
 type SetupDeployment = Extract<DeploymentPreparationAdmissionV1, { operation: 'setup' }>['deployments'][number];
 type CreateAdmission = Extract<DeploymentPreparationAdmissionV1, { operation: 'create' }>;
+
+/** One projection of the signed preparation operands used by declared read transports. */
+export async function readAdmittedDeploymentPreparationScopeInTx(tx: Tx,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'deploymentPreparationAdmission'>): Promise<Readonly<{
+        environmentIds: readonly string[]; sourceIds: readonly string[]; artifactIds: readonly string[];
+    }> | null> {
+    const admission = binding.deploymentPreparationAdmission;
+    if (!admission) return null;
+    const environmentIds = new Set<string>();
+    const sourceIds = new Set<string>();
+    const artifactIds = new Set<string>();
+    const visit = (value: unknown, key = ''): void => {
+        if (typeof value === 'string') {
+            if (key.endsWith('environmentId') || key === 'environment') environmentIds.add(value);
+            else if (key.endsWith('sourceId') || key === 'source') sourceIds.add(value);
+            else if (key.endsWith('artifactId') || key.includes('contentArtifactId')) artifactIds.add(value);
+            return;
+        }
+        if (Array.isArray(value)) { for (const item of value) visit(item, key); return; }
+        if (value && typeof value === 'object') {
+            for (const [childKey, child] of Object.entries(value)) visit(child, childKey);
+        }
+    };
+    visit(admission);
+    for (const ids of portableQueryChunks({ values: [...environmentIds], bindingsPerValue: 1 })) {
+        const environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...ids] } },
+            select: { id: true, projectSourceId: true, contentArtifactId: true } });
+        for (const environment of environments) {
+            sourceIds.add(environment.projectSourceId);
+            artifactIds.add(environment.contentArtifactId);
+        }
+    }
+    return { environmentIds: [...environmentIds], sourceIds: [...sourceIds], artifactIds: [...artifactIds] };
+}
 
 // Template scope adds only pending captures to the existing public operand grammar.
 const templateCreateStorageInputSchema = lazyZodSchema(() => z.safeExtend(DeploymentEnvironmentCreateInputV1Schema, {

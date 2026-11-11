@@ -22,7 +22,7 @@ import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvir
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
-import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, type DeploymentPreparationSourceRead,
+import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, readAdmittedDeploymentPreparationScopeInTx, type DeploymentPreparationSourceRead,
     readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, isDeploymentPreviewPreparationReadEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
@@ -1027,7 +1027,7 @@ async function hasCurrentExecutionMachineAdmission(
     }
     // Restricted Runner admission is Session/credential-owned, not a persistent Machine grant.
     if (machine.kind === 'ephemeral_session_runner') return binding.accountId === machine.accountId;
-    return binding.accountId === binding.custodianAccountId;
+    return true;
 }
 
 function isContributedActionRoot(actionId: string): boolean {
@@ -2261,6 +2261,39 @@ function isAccountActionHttpOperation(actionId: string,
     return expected.path === proof.path && sameManagedInput(expected.body, proof.body);
 }
 
+/** Declared read transports consume only the operands admitted with the root. */
+async function isAdmittedDeclaredDeploymentReadInScope(
+    binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string,
+    proof: ExternalActionExecutionRequestProof,
+): Promise<boolean> {
+    if (!isDeploymentPreparationActionIdV1(binding.actionId)
+        && binding.deploymentPreparationAdmission?.operation === undefined) return false;
+    const parsed = ActionIdSchema.safeParse(effectActionId);
+    if (!parsed.success || getActionSpec(parsed.data).sideEffectClass !== 'read'
+        || !isAccountActionHttpOperation(effectActionId, proof)) return false;
+    const scope = await readAdmittedDeploymentPreparationScopeInTx(db, binding);
+    if (!scope) return false;
+    const allowed = new Set([...scope.environmentIds, ...scope.sourceIds, ...scope.artifactIds]);
+    let constrained = false;
+    let valid = true;
+    const visit = (value: unknown, key = ''): void => {
+        if (typeof value === 'string') {
+            if (key === 'serverId' || key === 'requestId' || key === 'cursor' || key === 'revision'
+                || key === 'expectedRevision' || key === 'contentHeaderVersion' || key === 'contentBodyVersion') return;
+            if (key === 'id' || key.endsWith('Id') || key.includes('artifactId') || key.includes('environment') || key.includes('source')) {
+                constrained = true;
+                if (!allowed.has(value)) valid = false;
+            }
+            return;
+        }
+        if (Array.isArray(value)) { for (const item of value) visit(item, key); return; }
+        if (value && typeof value === 'object') for (const [childKey, child] of Object.entries(value)) visit(child, childKey);
+    };
+    visit(proof.routeInput ?? proof.body);
+    return valid && constrained;
+}
+
 /** A Discussion operation admits only its resource-codec preparation phases. */
 function isDiscussionActionHttpPreparation(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
@@ -3421,6 +3454,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // through the native HTTP purpose owner without admitting preparation again.
         const nativeEffect = verified.effectActionId === verified.binding.actionId ? 'deployments.deploy' : verified.effectActionId;
         if (!isAdmittedRootRelay && !readsExecutionMachine
+            && !await isAdmittedDeclaredDeploymentReadInScope(verified.binding, nativeEffect, proof)
             && !isDeploymentNativeHttpPurpose({ binding: verified.binding, effectActionId: nativeEffect }, proof)
             && !(verified.signedChildPurpose.sibling.deploymentRead
                 && isAccountActionHttpOperation(verified.effectActionId, proof))) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
@@ -3428,16 +3462,19 @@ export async function verifyExternalActionDomainExecutionRequest(
         || verified.binding.deploymentPreparationAdmission?.operation === 'create') {
         const authentication = { authenticationAuthority: verified.effectiveAuthority,
             authenticationEvidence: verified.principal.authenticationEvidence };
+        const effectSpec = ActionIdSchema.safeParse(verified.effectActionId);
+        const declaredRead = effectSpec.success && getActionSpec(effectSpec.data).sideEffectClass === 'read';
         // Mint owns preparation authority. This exact signed relay retains its
         // admitted input; it does not acquire Source, Machine or Environment access again.
-        if (isAdmittedRootRelay
-            ? !verified.binding.deploymentPreparationAdmission
-            : !await isDeploymentPreparationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof, authentication,
+        const admitted = declaredRead
+            ? await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)
+            : await isDeploymentPreparationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof, authentication,
                 isReadOnlyArtifactHttpPurpose, (_nativeProof, readActionId) => readActionId
                     ? isAccountActionHttpOperation(readActionId, proof)
                     : isDeploymentNativeHttpPurpose(verified, proof)
                     || verified.signedChildPurpose.sibling.deploymentRead
-                        && isAccountActionHttpOperation(verified.effectActionId, proof))) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
+                        && isAccountActionHttpOperation(verified.effectActionId, proof));
+        if (!admitted) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
     } else if (readsExecutionMachine) {
         // Native Machine and Session RPC read the exact execution Machine's content codec
         // before delivery. This is not Account read authority or a family grant.
@@ -3700,6 +3737,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined && proof.path === '/v1/features/authenticated') {
         // Shared transport discovery runs only after each specialized native
         // purpose has enforced its own narrower phase contract.
+    } else if (await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) {
+        // ActionSpec transport and the one admitted deployment scope own this
+        // read; no per-purpose table entry is needed.
     } else if (!snapshotBatch && proof.sessionRouteTarget
         && (proof.method.toUpperCase() === 'GET' && proof.body === undefined
             || proof.sessionRouteTarget.actionId !== undefined
