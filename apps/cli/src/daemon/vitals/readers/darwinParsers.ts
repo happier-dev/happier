@@ -8,8 +8,8 @@ export function parseDarwinVmStat(raw: string, usedBytes: number): Memory['compo
     const wiredPages = pages.get('Pages wired down');
     const cachedPages = pages.get('File-backed pages');
     if (!Number.isSafeInteger(pageSize) || pageSize <= 0 || compressedPages === undefined || wiredPages === undefined || cachedPages === undefined) return undefined;
-    // The kernel's available percentage and VM page categories have different bases.
-    // Preserve resident wired/compressor bytes first; clip cache to the in-use total.
+    // Preserve resident wired/compressor bytes first; clip cache to the in-use total
+    // because VM composition and free memory are sampled at separate instants.
     const compressed = Math.min(usedBytes, compressedPages * pageSize);
     const wired = Math.min(usedBytes - compressed, wiredPages * pageSize);
     const cached = Math.min(usedBytes - compressed - wired, cachedPages * pageSize);

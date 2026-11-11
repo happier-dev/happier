@@ -1,11 +1,36 @@
-import { describe, expect, it, vi } from 'vitest';
+import { freemem } from 'node:os';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWindowsMachineVitalsReader } from './windows';
 import { createDarwinMachineVitalsReader } from './darwin';
 import { createNativeMachineVitalsReader } from './native';
 import { type ProcessCustodyExecFile } from '@/subprocess/supervision/processCustody';
 import { nativeVitalsOutputFixture as output } from './native.testkit';
 
+// OS memory counters are the system boundary; keep native decoding/accounting real.
+vi.mock('node:os', async importOriginal => ({ ...await importOriginal<typeof import('node:os')>(), freemem: vi.fn(() => 10_000) }));
+beforeEach(() => { vi.mocked(freemem).mockReturnValue(10_000); });
+
 describe('native vitals reader contract', () => {
+    it.each(['darwin', 'win32'] as const)('uses allocation headroom rather than pressure percentage on %s', async platform => {
+        const totalBytes = 137_438_953_472;
+        const pressureBytes = 129_192_616_263; // R113: 94% pressure accounting, not free RAM.
+        const raw = JSON.parse(output(0));
+        raw.sample.memory.totalBytes = totalBytes;
+        raw.sample.memory.availableBytes = pressureBytes;
+        const execFile = vi.fn<ProcessCustodyExecFile>().mockResolvedValue({ stdout: JSON.stringify(raw), stderr: '' });
+        const reader = createNativeMachineVitalsReader(platform, { executablePath: '/helper', execFile });
+        const availableBytes = platform === 'darwin' ? 10_000 : pressureBytes;
+        expect(await reader.read({ sampledAt: 0, monotonicMs: 0, intervalMs: 2_000, overviewExtras: false }))
+            .toMatchObject({ state: 'reporting', sample: { memory: { availableBytes, usedBytes: totalBytes - availableBytes } } });
+    });
+    it.each(['darwin', 'win32'] as const)('requires native available bytes only on Windows (%s)', async platform => {
+        const raw = JSON.parse(output(0));
+        delete raw.sample.memory.availableBytes;
+        const execFile = vi.fn<ProcessCustodyExecFile>().mockResolvedValue({ stdout: JSON.stringify(raw), stderr: '' });
+        const reader = createNativeMachineVitalsReader(platform, { executablePath: '/helper', execFile });
+        expect((await reader.read({ sampledAt: 0, monotonicMs: 0, intervalMs: 2_000, overviewExtras: false })).state)
+            .toBe(platform === 'darwin' ? 'reporting' : 'unavailable');
+    });
     it.each(['darwin', 'win32'] as const)('keeps %s multicore busy time independent of normalized load and omits Windows load', async (platform) => {
         let step = 0;
         const readCpuTimes = () => Array.from({ length: 4 }, () => ({
@@ -45,6 +70,7 @@ describe('native vitals reader contract', () => {
             if (command === '/helper') {
                 const raw = JSON.parse(output(0));
                 raw.sample.memory.availableBytes = raw.sample.memory.totalBytes - usedBytes;
+                vi.mocked(freemem).mockReturnValue(raw.sample.memory.totalBytes - usedBytes);
                 return { stdout: JSON.stringify(raw), stderr: '' };
             }
             if (command === '/usr/bin/vm_stat') {

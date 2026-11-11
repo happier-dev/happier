@@ -1,4 +1,4 @@
-import { cpus, loadavg, uptime } from 'node:os';
+import { cpus, freemem, loadavg, uptime } from 'node:os';
 import { readdir } from 'node:fs/promises';
 import type { MachineVitalsHostFactsV1, MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { createProcessCustodySamplingInvoker, resolveProcessCustodySupportExecutable, type ProcessCustodyExecFile } from '@/subprocess/supervision/processCustody';
@@ -27,7 +27,10 @@ export function createNativeMachineVitalsReader(platform: 'darwin' | 'win32', op
         if (outcome.state !== 'ready') return outcome;
         let raw: NativeVitalsSample;
         try { raw = NativeVitalsSampleSchema.parse(JSON.parse(outcome.stdout)).sample; } catch { return { state: 'unavailable', reason: 'reader_failed' }; }
-        if (raw.memory.availableBytes > raw.memory.totalBytes || raw.memory.totalBytes === 0) return { state: 'unavailable', reason: 'reader_failed' };
+        // Share Lume's OS free-memory owner. Darwin's memorystatus percentage
+        // includes active pages for pressure accounting, not allocation headroom.
+        const availableBytes = platform === 'darwin' ? freemem() : raw.memory.availableBytes;
+        if (availableBytes === undefined || availableBytes > raw.memory.totalBytes || raw.memory.totalBytes === 0) return { state: 'unavailable', reason: 'reader_failed' };
         const cpu = platform === 'darwin' ? (options.readCpuTimes ?? (() => cpus().map(({ times }) => ({ user: times.user + times.nice, system: times.sys + times.irq, idle: times.idle }))))() : raw.cpu;
         if (!cpu?.length) return { state: 'unavailable', reason: 'reader_failed' };
         const counters = cpu.flatMap((core) => [core.user, core.system, core.idle]);
@@ -61,7 +64,7 @@ export function createNativeMachineVitalsReader(platform: 'darwin' | 'win32', op
             cpu: { reported: true, busyPct: delta ? pct(summed(0) + summed(1), totalDelta) : null, perCore,
                 userPct: delta ? pct(summed(0), totalDelta) : null, systemPct: delta ? pct(summed(1), totalDelta) : null,
                 ...(raw.clusters?.length === cpu.length ? { clusters: raw.clusters } : {}), ...(load ? { load1: load[0], load5: load[1], load15: load[2] } : {}) },
-            memory: { reported: true, totalBytes: raw.memory.totalBytes, availableBytes: raw.memory.availableBytes, usedBytes: raw.memory.totalBytes - raw.memory.availableBytes,
+            memory: { reported: true, totalBytes: raw.memory.totalBytes, availableBytes, usedBytes: raw.memory.totalBytes - availableBytes,
                 pressure: { level: raw.memory.pressureLevel, source: raw.memory.pressureSource },
                 ...(raw.memory.lowMemorySignal !== undefined ? { lowMemorySignal: raw.memory.lowMemorySignal } : {}),
                 ...(swap ? { swap: { kind: swap.kind, totalBytes: swap.totalBytes, usedBytes: swap.usedBytes, swapping: sd ? Object.values(sd.deltas).some((value) => value > 0) : false },

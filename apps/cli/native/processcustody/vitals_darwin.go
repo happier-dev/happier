@@ -20,11 +20,9 @@ func readNativeVitals(extras bool) (vitalsNativeSample, error) {
 	if err != nil {
 		return s, err
 	}
-	availablePercent, err := unix.SysctlUint32("kern.memorystatus_level")
-	if err != nil || availablePercent > 100 {
-		return s, fmt.Errorf("invalid kern.memorystatus_level: %d: %v", availablePercent, err)
-	}
-	s.Memory = vitalsMemory{TotalBytes: total, AvailableBytes: total * uint64(availablePercent) / 100, PressureLevel: "not_reported", PressureSource: "none"}
+	// The JS host reads allocation headroom through os.freemem(), also used by
+	// Lume. kern.memorystatus_level includes active pages; it is not free RAM.
+	s.Memory = vitalsMemory{TotalBytes: total, PressureLevel: "not_reported", PressureSource: "none"}
 	if level, err := unix.SysctlUint32("kern.memorystatus_vm_pressure_level"); err == nil {
 		switch level {
 		case 1:

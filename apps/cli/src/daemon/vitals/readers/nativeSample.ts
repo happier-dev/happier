@@ -10,7 +10,7 @@ export const NativeVitalsSampleSchema = z.strictObject({
         cpu: z.optional(z.array(z.strictObject({ user: counter(), system: counter(), idle: counter() }))),
         clusters: z.optional(z.array(z.enum(['p', 'e']))),
         memory: z.strictObject({
-            totalBytes: counter(), availableBytes: counter(),
+            totalBytes: counter(), availableBytes: z.optional(counter()),
             pressureLevel: z.enum(['calm', 'elevated', 'critical', 'not_reported']), pressureSource: z.enum(['kernel_level', 'none']),
             lowMemorySignal: z.optional(z.boolean()),
             swap: z.optional(z.strictObject({ kind: z.enum(['swap', 'page_file']), totalBytes: counter(), usedBytes: counter(), in: z.optional(counter()), out: z.optional(counter()) })),
