@@ -243,6 +243,8 @@ export type AgentAcpRuntimeDefinition = Readonly<{
   toolUpdates?: AgentAcpToolUpdatePolicy;
   /** Native metadata codec only; the host retains tool accumulation and lifecycle ownership. */
   sessionUpdates?: Readonly<{
+    /** Interpret an exact native diagnostic emitted as assistant text, once at terminal completion. */
+    projectOutputDiagnostic?(text: string): PluginDiagnosticData | null;
     /** Translate an Agent extension to ACP v1; null leaves an unknown reason unclassified. */
     projectStopReason?(stopReason: string): 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled' | null;
     project(update: JsonValue): Readonly<{

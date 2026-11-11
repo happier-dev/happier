@@ -29,6 +29,19 @@ export function projectAcpSessionUpdate(
   }
 }
 
+export function projectAcpOutputDiagnostic(codec: UpdateCodec | undefined, text: string) {
+  const projected = codec?.projectOutputDiagnostic?.(text);
+  if (!projected) return null;
+  const parsed = AgentRuntimeDiagnosticDataV1Schema.safeParse(projected);
+  if (!parsed.success) {
+    logger.debug('[ACP] Native output projection returned an invalid diagnostic');
+    return null;
+  }
+  return { ...parsed.data, ...(parsed.data.message === undefined ? {} : {
+    message: redactBugReportSensitiveText(parsed.data.message),
+  }) };
+}
+
 export async function publishAcpSessionUpdateDiagnostic(
   projection: ReturnType<UpdateCodec['project']>,
   publisher: AcpSessionDiagnosticPublisher | undefined,

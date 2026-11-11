@@ -43,6 +43,20 @@ export type SessionModelState = {
   availableModels: SessionModel[];
 };
 
+/** Returns the positive ACP authority for config-option ids, when a catalog was observed. */
+export function resolveAdvertisedSessionConfigOptionIds(
+  configOptions: ReadonlyArray<SessionConfigOption> | null,
+  modelState: SessionModelState | null,
+): ReadonlySet<string> | null {
+  if (configOptions === null && modelState === null) return null;
+  return new Set([
+    ...(configOptions ?? []).map(option => option.id),
+    ...(modelState?.availableModels
+      .find(model => model.id === modelState.currentModelId)?.modelOptions ?? [])
+      .map(option => option.id),
+  ]);
+}
+
 export type SessionModelProjector = (
   rawModel: Readonly<Record<string, unknown>>,
   normalizedModel: SessionModel,

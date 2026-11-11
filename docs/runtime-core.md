@@ -62,6 +62,15 @@ transcript projector preserve provider messages and typed usage limits for
 Session, UI, Voice and finite Run consumers. Nonterminal provider retry activity
 does not establish turn completion.
 
+An ACP Agent may project an exact native error emitted as assistant text through
+`sessionUpdates.projectOutputDiagnostic`. The host applies that Agent-owned codec
+once to the final assistant segment at terminal completion, validates its existing
+diagnostic carrier and publishes a failed Session turn or finite Run while retaining
+the original text. Copilot uses this for native HTTP errors returned with `end_turn`;
+ordinary prose, quoted errors and code examples remain assistant content. This
+executable development-source contract requires matching SDK, host and plugin
+source; older hosts do not consume the optional codec.
+
 Native configuration refusals retain their typed diagnostic through Role policy
 preparation. The host's runtime-issue classifier supplies the same sanitized
 cause to the Session issue and Pending input settlement. Preparing input before

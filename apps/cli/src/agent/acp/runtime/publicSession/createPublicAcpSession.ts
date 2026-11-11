@@ -100,6 +100,7 @@ import {
 import {
   readSessionModelStateFromSessionResponse,
   readSessionModelStateFromSessionResponseAwaitable,
+  resolveAdvertisedSessionConfigOptionIds,
 } from '@/agent/acp/sessionSettings/sessionSettingsState';
 
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -115,7 +116,7 @@ import {
 import { createPublicAcpPreAcknowledgementBuffer } from './publicAcpPreAcknowledgementBuffer';
 import { deliverAcpSteer, prepareAcpSteer } from './deliverAcpSteer';
 import { createAcpToolUpdatePolicy } from './acpToolUpdatePolicy';
-import { projectAcpSessionUpdate, publishAcpSessionUpdateDiagnostic, type AcpSessionDiagnosticPublisher } from './sessionUpdateProjection';
+import { projectAcpOutputDiagnostic, projectAcpSessionUpdate, publishAcpSessionUpdateDiagnostic, type AcpSessionDiagnosticPublisher } from './sessionUpdateProjection';
 import { buildUsageObservedMeasurementFromTokenCountMessage } from '../tokenCountForwarding';
 import { createPublicAcpSessionCatalogs } from './publicAcpSessionCatalogs';
 import { createAcpSessionInfoTitleUpdater, type AcpSessionTitleTarget } from './sessionInfoTitle';
@@ -903,7 +904,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     switch (message.type) {
       case 'model-output': {
         const text = message.textDelta ?? message.fullText ?? '';
-        if (usageLimitDeclaration) {
+        if (usageLimitDeclaration || options.definition?.sessionUpdates?.projectOutputDiagnostic) {
           turn.assistantSegmentText += text;
           turn.lastModelOutputText = text;
         }
@@ -1151,11 +1152,12 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         const outcome = backend.getLastTurnOutcome();
         const current = activeTurn;
         if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
-        const usageLimitFailure = !current.cancelCause
+        const failure = !current.cancelCause
           && (!outcome || outcome.kind === 'completed' || outcome.kind === 'refused')
-          ? classifyDeclaredUsageLimitDiagnostic(current) : null;
-        if (usageLimitFailure) {
-          publish({ kind: 'turn-failed', turnId: turn.turnId, diagnostic: usageLimitFailure });
+          ? classifyDeclaredUsageLimitDiagnostic(current)
+            ?? projectAcpOutputDiagnostic(options.definition?.sessionUpdates, current.assistantSegmentText) : null;
+        if (failure) {
+          publish({ kind: 'turn-failed', turnId: turn.turnId, diagnostic: failure });
         } else if (outcome?.kind === 'aborted') {
           publish({
             kind: 'turn-cancelled',
@@ -1862,8 +1864,15 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       }
       if (modeChanged) changed.push('mode');
       if (permissionChanged && permissionMapping) changed.push('permissionIntent');
-      const applicableOptions = changedOptions.filter(([, value]) => value.value !== null);
+      const configOptionsState = backend.getSessionConfigOptionsState();
       const priorModelState = backend.getSessionModelState();
+      // ACP configuration is admitted only from the Agent's current advertised
+      // catalog. A null catalog means the Agent has not made an advertisement,
+      // so retain legacy pass-through behavior; an observed catalog is positive
+      // authority and unknown ids must not reach session/set_config_option.
+      const advertisedOptionIds = resolveAdvertisedSessionConfigOptionIds(configOptionsState, priorModelState);
+      const applicableOptions = changedOptions.filter(([id, value]) => value.value !== null
+        && (advertisedOptionIds === null || advertisedOptionIds.has(id)));
       const scopedOptionIds = new Set(priorModelState?.availableModels
         .find(model => model.id === priorModelState.currentModelId)?.modelOptions?.map(option => option.id));
       const standaloneOptionIds = new Set(backend.getSessionConfigOptionsState()
