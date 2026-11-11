@@ -1234,6 +1234,15 @@ remains diagnostic evidence about that read, not about Session creation. The
 preflight issues no create and has no spawn operation to observe. A lost reply
 after the actual create was issued still retains the existing pending/unknown
 settlement and creation key; this classification adds no retry or effect replay.
+In unreleased 0.3, after an uncertain Session creation invocation retires, and
+on a later operation get/wait, the admitted creator observes birth once through
+its existing tag/correspondence and nonce readers. An authenticated Session,
+including an archived or inactive one, settles creation successfully. A missing
+row with a pending or unavailable nonce remains uncertain; only the nonce
+owner's typed refusal settles failure. Observation does not restore, relaunch or
+send input. A later failed turn cannot undo birth. Initial input may remain
+unconfirmed: the person can open the created Session and resend it. Explicit
+same-key resume retains its launch/input completion behavior.
 In 0.3 development, a terminal pre-effect refusal stays in the UI's existing
 local spawn custody under its Home, Account, Machine and request identity. The
 canonical manual-attempt waiter returns that typed outcome in the same browser

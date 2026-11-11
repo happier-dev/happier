@@ -2769,6 +2769,48 @@ describe('createSpawnedSession replay-seeded creation', () => {
     expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
   });
 
+  it.each([null, 123])('observes authenticated birth without restoring or delivering input (archivedAt=%s)', async archivedAt => {
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'lost-birth' });
+    const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag, recipe: {
+      execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/repo' } },
+      organization: { folderId: null, tagIds: [] },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+      connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+      agentSessionStartupInstructionsMarkerV1: null, checkout: null,
+    } });
+    let observe: (() => Promise<import('@happier-dev/protocol').SessionSpawnNewResultV1 | null>) | undefined;
+    lookupSessionsByTags.mockRejectedValueOnce(new Error('lost creation response'));
+    await expect(createSpawnedSession({ credentials, directory: '/repo', serverId: 'home', machineId: 'machine-1',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      sessionCreationTag, sessionCreationCorrespondence, initialInput: { text: 'Do not resend' },
+      buildInitialInputHandoff: localId => buildSessionSpawnInitialInputAdmissionForLocalIdV1({
+        actionCaller: { kind: 'host' }, callerSurface: 'cli', localId }),
+      observeSessionBirth: observer => { observe = observer; },
+    })).rejects.toThrow('lost creation response');
+    expect(observe).toBeDefined();
+    lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [sessionCreationTag], sessions: [{
+      id: 'born-child', createdAt: 1, updatedAt: 1, active: false, archivedAt, latestTurnStatus: 'failed',
+      activeAt: 1, pendingCount: 0, metadataVersion: 1, encryptionMode: 'plain', metadataLayoutVersion: 1,
+      metadata: JSON.stringify({ v: 1 }), ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+        SessionOwnerMetadataV1Schema.parse({ v: 1, workspace: { path: '/repo', host: 'host' },
+          system: { sessionCreationCorrespondenceV1: sessionCreationCorrespondence } })),
+    }] });
+    expect(await observe!()).toMatchObject({ type: 'success', sessionId: 'born-child',
+      initialInput: { status: 'outcomeUnknown' } });
+    expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
+    expect(sendSessionMessage).not.toHaveBeenCalled();
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
+    lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [sessionCreationTag], sessions: [] });
+    callMachineRpc.mockResolvedValue({ status: 'pending' });
+    expect(await observe!()).toBeNull();
+    callMachineRpc.mockResolvedValue({ status: 'not_found' });
+    expect(await observe!()).toBeNull();
+    callMachineRpc.mockResolvedValue({ status: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Native launch refused' });
+    expect(await observe!()).toMatchObject({ type: 'error', code: 'spawn_failed' });
+    expect(sendSessionMessage).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
+  });
   it('rejoins a latest sourceContext through persisted lineage without recomputing its cutoff', async () => {
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',

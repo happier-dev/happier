@@ -765,6 +765,8 @@ export type ActionExecutorContext = Readonly<{
     previousSessionCreationFailure?: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>>;
     /** Provider outcome retained by this exact held restore; never Action input or RPC authority. */
     previousRestoreSnapshot?: import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerSnapshotResultV1;
+    /** Host-private passive birth observation, retained after an uncertain creation returns. Never transported. */
+    observeSessionBirth?(observe: () => Promise<SessionSpawnNewResultV1 | null>): void;
     accept(result: unknown): void;
   }>;
   /** Receiving host's in-process runner port. Never serialized or accepted from Action input. */

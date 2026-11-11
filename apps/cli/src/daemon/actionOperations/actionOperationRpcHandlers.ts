@@ -40,7 +40,7 @@ export async function resolveActionOperationScope(
 
 export function createActionOperationRpcHandlers(deps: Readonly<{
   store: ActionOperationStore;
-  runner: Pick<ActionOperationRunner, 'requestCancellation'> & Partial<Pick<ActionOperationRunner, 'waitForTerminal' | 'refreshSetupReview' | 'claimServiceMoveStart'>>;
+  runner: Pick<ActionOperationRunner, 'requestCancellation'> & Partial<Pick<ActionOperationRunner, 'waitForTerminal' | 'refreshSetupReview' | 'claimServiceMoveStart' | 'reconcileSessionBirth'>>;
   owner?: () => ActionOperationDomainOwner | null;
   /** Domain-owned durable intent can remain after this host's runner reloads. */
   onMissingCancellation?: (scope: ActionOperationScope, operationId: string, context: ActionOperationCancellationContext)
@@ -145,6 +145,7 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
         if (projected) deps.store.project(projected);
         else deps.store.removeOwnerProjections(owner.actionIds, scope, request.operationId);
       }
+      await deps.runner.reconcileSessionBirth?.(scope, request.operationId).catch(() => undefined);
       const inspected = deps.store.get(scope, request.operationId);
       if (inspected?.domainRef?.kind === 'projectCommand') deps.onInspection?.(inspected);
       const domainOwner = projected && owner && deps.owner?.() === owner ? owner : null;

@@ -974,6 +974,44 @@ describe('finite host operation custody', () => {
     expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'actual-spawn-operation'))
       .not.toHaveProperty('observation');
   });
+  it.each(['born', 'pending', 'refused'] as const)('observes uncertain Session birth on retirement and read: %s', async outcome => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
+      generateOperationId: () => 'birth-observation' });
+    let visible = false;
+    let reads = 0;
+    let launches = 0;
+    const input = { executionTarget: { serverId: 'home', machineId: 'guest' }, directory: { kind: 'managed' as const },
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'coding' } } };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew: async native => {
+      launches += 1;
+      native.context?.operationAcceptance?.observeSessionBirth?.(async () => {
+        reads += 1;
+        if (!visible || outcome === 'pending') return null;
+        if (outcome === 'refused') return { type: 'error', code: 'spawn_failed', retryable: false };
+        return { type: 'success', disposition: 'rejoined', sessionId: 'born-before-failed-turn',
+          executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+          initialInput: { status: 'notRequested' } };
+      });
+      return { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' };
+    } });
+    await runtime.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'lost-birth-response',
+      execute: context => executor.execute('session.spawn_new', input, { ...context, surface: 'cli', authority: 'present_user',
+        presentUserConfirmation: { actionId: 'session.spawn_new' } }) });
+    expect(reads).toBe(1);
+    visible = true;
+    const [read] = await Promise.all([runtime.handlers.getV2({ operationId: 'birth-observation' }),
+      runtime.handlers.get({ operationId: 'birth-observation' })]);
+    expect(read).toMatchObject({ kind: 'found', operation: {
+      state: outcome === 'born' ? 'succeeded' : outcome === 'refused' ? 'failed' : 'running',
+      ...(outcome === 'born' ? { result: { sessionId: 'born-before-failed-turn' } } : {}),
+    } });
+    expect(reads).toBe(2);
+    expect(launches).toBe(1);
+    if (outcome !== 'pending') {
+      await runtime.handlers.getV2({ operationId: 'birth-observation' });
+      expect(reads).toBe(2);
+    }
+  });
   it.each(['opted', 'terminal'] as const)('selects committed Session acceptance separately for every observer when the first caller is %s', async first => {
     const runtime = createHostActionOperationRuntime({ serverId: 'home', machineId: 'guest', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'committed-spawn-operation' });

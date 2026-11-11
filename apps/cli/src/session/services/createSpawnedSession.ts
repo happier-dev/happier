@@ -60,6 +60,7 @@ import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, type SpawnSessi
 import { archiveSessionOnceInactive } from './archiveSessionOnceInactive';
 import { requestSessionStop } from './requestSessionStop';
 import { createSessionCreationSpawnNonce } from '@/session/shared/spawnNonce';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { seedForkVisualsBestEffort } from '@/session/fork/seedForkVisuals';
 import {
   createConnectedServiceChildLaunchContext,
@@ -143,6 +144,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   backendTarget?: BackendTargetRefV2;
   sessionCreationTag?: SessionCreationTagV1;
   sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
+  /** Retain only the admitted creator's read capability; never resume launch or input. */
+  observeSessionBirth?: NonNullable<import('@happier-dev/protocol/actions').ActionExecutorContext['operationAcceptance']>['observeSessionBirth'];
   /** Informational origin persisted only by the fresh canonical creator. */
   placementOrigin?: MachinePoolSelectionOriginV1;
   authoringOrigin?: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedOriginV1;
@@ -1070,7 +1073,7 @@ export async function createSpawnedSession(
   const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
   if (!params.authorizeRequest) await assertStoredAuthTokenValidForSpawn(params.credentials.token);
   params.signal?.throwIfAborted();
-  const rejoinExistingCreation = async (afterSpawnFailure = false): Promise<Awaited<ReturnType<typeof createSpawnedSession>> | null> => {
+  const rejoinExistingCreation = async (afterSpawnFailure = false, observeBirthOnly = false): Promise<Awaited<ReturnType<typeof createSpawnedSession>> | null> => {
     if (!params.sessionCreationTag || !params.sessionCreationCorrespondence) return null;
     const lookup = await lookupSessionsByTags({
       token: params.credentials.token,
@@ -1135,6 +1138,15 @@ export async function createSpawnedSession(
           'creation_conflict',
           { sessionId: existing.id },
         );
+      }
+      if (observeBirthOnly) {
+        return { disposition: 'rejoined', sessionId: existing.id,
+          organizationPlacement: params.sessionCreationCorrespondence.recipe.organization,
+          initialInput: initialInputRequested
+            ? { status: 'outcomeUnknown', localId: initialInputLocalId, code: 'outcome_unknown' }
+            : { status: 'notRequested' },
+          ...(attestedContext.success ? { attestedContext: attestedContext.data } : {}),
+        };
       }
       // Only the exact unstarted baseline authorizes automatic launch. A
       // retained same-input refusal prevents runnerless input admission, but
@@ -1280,6 +1292,19 @@ export async function createSpawnedSession(
     }
     return null;
   };
+  const observationServerId = params.serverId;
+  if (observationServerId && params.sessionCreationTag && params.sessionCreationCorrespondence) {
+    params.observeSessionBirth?.(async () => {
+      const existing = await rejoinExistingCreation(false, true);
+      if (existing) return { type: 'success', ...existing,
+        executionTarget: { serverId: observationServerId, machineId: exactMachineId } };
+      // An absent tag row is not a negative. This is a snapshot read of the
+      // existing nonce authority, with no wait, launch, restoration or input.
+      const nonce = await resolveSpawnSessionByNonce(spawnNonce, 0);
+      if (nonce.status !== 'error') return null;
+      return projectSessionSpawnFailure(nonce);
+    });
+  }
   const existingCreation = await rejoinExistingCreation();
   if (existingCreation) return existingCreation;
   // Rejoined and nonce-resumed Sessions retain their birth context. Only a

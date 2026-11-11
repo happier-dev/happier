@@ -1111,6 +1111,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           ...(agentSessionStartupInstructionsV1
             ? { agentSessionStartupInstructionsV1 }
             : {}),
+          ...(context?.operationAcceptance?.actionId === 'session.spawn_new'
+            ? { observeSessionBirth: context.operationAcceptance.observeSessionBirth } : {}),
           ...(spawnNonce ? { spawnNonce } : {}),
           ...(resumeActionRequest === true ? { resumeOnly: true } : {}),
           ...(signal ? { signal } : {}),

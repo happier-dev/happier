@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createPendingSessionBirth } from './pendingSessionBirth';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
@@ -111,6 +112,7 @@ export function createActionOperationRunner(deps: Readonly<{
 }>) {
   const generateOperationId = deps.generateOperationId ?? randomUUID;
   const active = new Map<string, ActiveInvocation>();
+  const sessionBirth = createPendingSessionBirth(deps.store, id => active.has(id));
   let finiteRetirement: Promise<void> | undefined;
 
   const observe = async (request: Readonly<{
@@ -296,6 +298,9 @@ export function createActionOperationRunner(deps: Readonly<{
               lastEffect = effect;
             },
             operationAcceptance: { operationId, actionId: action.actionId,
+              ...(action.actionId === 'session.spawn_new' ? {
+                observeSessionBirth: (read: () => Promise<import('@happier-dev/protocol').SessionSpawnNewResultV1 | null>) => sessionBirth.retain(operationId, read),
+              } : {}),
               ...(previousSessionCreationFailure ? { previousSessionCreationFailure } : {}),
               ...(resumeActionRequest && previousRestoreSnapshot ? { previousRestoreSnapshot } : {}), accept: (result) => {
               if (isFiniteProjectCommand(action.actionId)) acceptFinite();
@@ -532,6 +537,9 @@ export function createActionOperationRunner(deps: Readonly<{
           // native instance; do not advertise a cancellation owner that is gone.
           if (action.actionId === 'projects.service.relocate') deps.store.updateCancellation(operationId, 'unsupported');
           active.delete(operationId);
+          // Retired pending creation observes birth once; transport failure is
+          // still uncertainty and must not replace the original pending reply.
+          await sessionBirth.reconcile(request.scope, operationId).catch(() => undefined);
           const publish = deps.publishSnapshotAcknowledged;
           const effect = lastEffect;
           const snapshot = terminalSuccess;
@@ -705,6 +713,7 @@ export function createActionOperationRunner(deps: Readonly<{
 
   return Object.freeze({
     observe,
+    reconcileSessionBirth: sessionBirth.reconcile,
     cancel,
     requestCancellation,
     claimServiceMoveStart(scope: ActionOperationQueryScope, requestId: string, input: ProjectServiceRelocateInputV1): ProjectServiceMoveStartClaimResultV1 {
