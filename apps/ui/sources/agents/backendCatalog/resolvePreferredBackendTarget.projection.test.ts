@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
-import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
