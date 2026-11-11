@@ -38,6 +38,17 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains content-free finite command failure facts in V2 and omits them for V1 readers', () => {
+    const details = { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 };
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
+      state: 'failed', startedAt: 110, settledAt: 120,
+      error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed', details } });
+    expect(ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(snapshot))).error?.details).toEqual(details);
+    expect(projectActionOperationSnapshotForV1Reader(snapshot).error).not.toHaveProperty('details');
+    for (const extra of [{ body: 'PRIVATE_COMMAND' }, { env: { TOKEN: 'PRIVATE_ENV' } }, { stdout: 'PRIVATE_OUTPUT' }]) {
+      expect(ActionOperationFailureV1Schema.safeParse({ ...snapshot.error, details: { ...details, ...extra } }).success).toBe(false);
+    }
+  });
   it('retains only the matching public contributed refusal and omits it for predecessor readers', () => {
     const result = { ok: false, code: 'connection_required', retryable: false,
       remediation: { kind: 'openSettings', path: '/settings/plugins/acme.review/connections' } };

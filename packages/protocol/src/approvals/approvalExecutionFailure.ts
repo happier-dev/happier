@@ -32,7 +32,7 @@ import { MachinePoolResolveResultV1Schema } from '../machines/pools/v1.js';
 import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema,
   MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
 import { ProjectWorkerActionOutputSchemasV1 } from '../actions/specs/projectWorkers.js';
-import { ActionOperationCancelV1ResponseSchema, ManagedNativeFailureDetailsV1Schema } from '../actions/operations/v1.js';
+import { ActionOperationCancelV1ResponseSchema, ManagedNativeFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema } from '../actions/operations/v1.js';
 import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
 import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } from '../widgets/actionsV1.js';
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
@@ -76,6 +76,13 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  const finiteCommand = (storedRead ? createStoredReadSchema(FiniteCommandFailureDetailsV1Schema)
+    : FiniteCommandFailureDetailsV1Schema).safeParse(input.failure.details);
+  if (finiteCommand.success) {
+    const schema = getActionSpec(input.request.actionId).inputSchema;
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    return args.success ? { ...input.failure, details: finiteCommand.data } : null;
+  }
   if (input.request.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
     || WorkflowActionIdV1Schema.safeParse(input.request.actionId).success) {
     const workflow = (storedRead ? createStoredReadSchema(WorkflowActionFailureV1Schema) : WorkflowActionFailureV1Schema)

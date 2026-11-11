@@ -1709,6 +1709,9 @@ const enApprovals = {
   failureFileOther: "Couldn't finish the file operation",
   technicalDetails: 'Technical details',
   failureTechnicalLabels: {
+    step: "Step",
+    signal: "Signal",
+    requestId: "Request ID",
     reason: "Reason",
     phase: "Failure phase",
     causePhase: "Cause phase",
@@ -8536,6 +8539,7 @@ const enErrors = {
   clientRequired: 'Open this action on a signed-in device, then retry.',
   secretSaveClientRequired: 'Open this action on a signed-in device with this account’s encryption keys, then retry saving the secret.',
   secretUseClientRequired: 'Open this action on a signed-in device with this account’s encryption keys, then retry using the secret.',
+  rolePolicyUnenforceable: "This Agent cannot enforce this role's access restrictions. Choose another Agent for this role.",
   machineAdminAccessRequired: 'Set up administrator access for this machine, then try adding the domain again.',
   machineNetworkReviewRequired: "Review this machine’s Network settings, then try adding the domain again.",
   machineManagedCliUnavailable: "Install or update Happier on this machine, then try adding the domain again.",
@@ -11388,6 +11392,8 @@ const enDirectSessions = {
     `${service} connected services`,
   browseSourceClaudeDefault: 'Default Claude config',
   browseSourceOpenCodeDefault: 'Default OpenCode server',
+  browseSourceCursorCli: 'Cursor CLI',
+  browseSourceCursorApp: 'Cursor app',
   browseCandidates: 'Available sessions',
   browseNoMachines: 'No machines are available for direct sessions yet.',
   browseNoCandidates:
@@ -19386,21 +19392,22 @@ const enMessage = {
   discarded: 'Discarded',
   recoveredHistory: 'Recovered history',
   pluginAttribution: ({ pluginId }: { pluginId: string }) =>
-    `From plugin ${pluginId}`,
+    `From ${pluginId}`,
+  pluginAttributionSource: 'an integration',
   pluginAttributionExternal: ({
     sender,
     pluginId,
   }: {
     sender: string;
     pluginId: string;
-  }) => `From ${sender} via plugin ${pluginId}`,
+  }) => `From ${sender} via ${pluginId}`,
   pluginAttributionExternalForwarded: ({
     sender,
     pluginId,
   }: {
     sender: string;
     pluginId: string;
-  }) => `Forwarded by ${sender} via plugin ${pluginId}`,
+  }) => `Forwarded by ${sender} via ${pluginId}`,
   pluginAttributionExternalSender: 'an external sender',
   pluginAttributionExternalBot: 'an external bot',
   forgeEvidence: {
@@ -19575,6 +19582,12 @@ const enMarkdown = {
   codeCopied: 'Code copied',
   copyFailed: 'Failed to copy',
   mermaidRenderFailed: 'Failed to render mermaid diagram',
+  table: {
+    open: 'Open table',
+    copyCsv: 'Copy as CSV',
+    copyMarkdown: 'Copy as Markdown',
+    viewerTitle: 'Table',
+  },
   diffLabel: 'Diff',
   codeLabel: 'Code',
 
@@ -19955,6 +19968,8 @@ const enUsage = {
       pricesFetchDisabled: "Fetching is off on this Home, so built-in prices are used.",
       pricesFetchFailed: "Couldn't refresh. Showing the last prices.",
       pricesRefresh: "Refresh",
+      pricesEmptyTitle: "No models yet",
+      pricesEmptyReason: "Models appear here once sessions record usage. Then you can check their prices or set your own.",
       priceCatalog: "Catalog price",
       priceYours: "Your price",
       priceMapped: ({ model }: { model: string | number }) => `Priced as ${model}`,
@@ -19976,8 +19991,6 @@ const enUsage = {
       filterAllOf: ({ what }: { what: string | number }) => `All ${what}`,
       drillFilterTo: ({ name }: { name: string | number }) => `Show only ${name}`,
       drillRemove: ({ name }: { name: string | number }) => `Show everything, not only ${name}`,
-      pricesEmptyTitle: "No models yet",
-      pricesEmptyReason: "Models appear here once sessions record usage. Then you can check their prices or set your own.",
       askAgent: "Ask an agent about this",
       askUnavailable: "Couldn't open a new session for this.",
       askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `About my usage: ${widget} · ${period}.\nRead it with the usage.query action using exactly this query, then answer my question.\n\n${query}\n\nMy question: `,
@@ -20504,6 +20517,9 @@ const enUsage = {
       caption: ({ checks, period }: { checks: string | number; period: string | number }) => `${checks} checks · ${period}`,
       findingsCount: ({ count }: { count: string | number }) => `${count} worth a look`,
       insufficientCount: ({ count }: { count: string | number }) => `${count} need more evidence`,
+      firstUseTitle: "Not enough work to check yet",
+      firstUseReason: "The Coach reads your sessions. Its checks start once agents have done some work in this period.",
+      firstUseAction: "Start a session",
       clearCount: ({ count }: { count: string | number }) => `${count} clear`,
       emptyTitle: "Nothing needs you right now",
       emptyReason: "Every check ran on this period's evidence.",
@@ -20525,9 +20541,6 @@ const enUsage = {
       nextStep_approval_friction: "Allow commands you always approve",
       applied: "Applied",
       undo: "Undo",
-      firstUseTitle: "Not enough work to check yet",
-      firstUseReason: "The Coach reads your sessions. Its checks start once agents have done some work in this period.",
-      firstUseAction: "Start a session",
       undone: "Undone",
       notReversible: "Applied · can't be undone here",
       noChange: "Already set · nothing changed",
@@ -23634,6 +23647,8 @@ const enExternalSessions = {
     `${service} connected services`,
   browseSourceClaudeDefault: 'Default Claude config',
   browseSourceOpenCodeDefault: 'Default OpenCode server',
+  browseSourceCursorCli: 'Cursor CLI',
+  browseSourceCursorApp: 'Cursor app',
   browseCandidates: 'Available sessions',
   browseNoMachines: 'No machines are available for direct sessions yet.',
   browseNoCandidates:
@@ -23676,17 +23691,6 @@ const enExternalSessions = {
   browseContentMore: 'Search more conversations',
   browseContentBack: 'Back to Search',
   browseNoSearchResults: 'No loaded sessions match this search yet.',
-  browseIndexing: 'Indexing external sessions…',
-  browseIndexingProgress: ({
-    scanned,
-    total,
-  }: {
-    scanned: number;
-    total: number;
-  }) => `Indexing external sessions · ${scanned.toLocaleString()} of ${total.toLocaleString()}`,
-  browseIndexingScanned: ({ scanned }: { scanned: number }) =>
-    `Indexing external sessions · ${scanned.toLocaleString()} so far`,
-  browseIndexingCancelled: 'Indexing stopped. Retry when you’re ready.',
   browseLoadMore: 'Load more sessions',
   browseFailedToLoad: 'Failed to load external sessions.',
   browseLinkFailed: 'Failed to link the selected external session.',

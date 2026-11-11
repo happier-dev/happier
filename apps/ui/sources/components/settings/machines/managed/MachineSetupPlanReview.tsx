@@ -31,7 +31,7 @@ import {
 } from './machineSetupReviewChanges';
 import { MachineSetupChangeGroupRow } from './MachineSetupChangeGroupRow';
 import { describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
-import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { describeActionExecutionPrerequisite, describeMachineNativeFailureCode } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export type MachineSetupPreparedReview = Extract<
   MachineSetupPreparedApply,
@@ -388,7 +388,8 @@ export function describeMachineSetupAllOffline(failure: ActionExecuteFailure, na
 export function describeMachineSetupPlanFailure(failure: ActionExecuteFailure, nameOf: (machineId: string) => string): string {
   const offline = describeMachineSetupAllOffline(failure, nameOf);
   if (offline) return offline;
-  const diagnostic = describeManagedOperationDiagnostic({ errorCode: failure.errorCode, error: failure.error });
+  const diagnostic = describeMachineNativeFailureCode(failure.errorCode)
+    ?? describeManagedOperationDiagnostic({ errorCode: failure.errorCode, error: failure.error });
   const details = failure.details;
   const target = details && typeof details === 'object' && 'target' in details ? details.target : undefined;
   return target && typeof target === 'object' && 'machineId' in target && typeof target.machineId === 'string'

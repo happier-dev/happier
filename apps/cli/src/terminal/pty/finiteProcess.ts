@@ -1,6 +1,6 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionOperationDomainRefV1 } from '@happier-dev/protocol';
-import { ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1, type FiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { TerminalPtyCustody, TerminalPtyEnsureInput, TerminalPtySessionManager } from './sessions';
 
 export type HostFiniteTerminalOperation = Pick<ActionExecutorContext,
@@ -25,12 +25,14 @@ export async function executeHostFiniteTerminalProcess(input: Readonly<{
   signal?: AbortSignal;
   progress: Readonly<{ phase: string; label: string; current?: number; total?: number }>;
   failureCode: string;
-  failureDetails?: Readonly<Record<string, unknown>>;
+  failureStep?: number;
   attachment(observation: Readonly<{ terminalId: string; exitCode?: number }>): ActionOperationDomainRefV1;
 }>): Promise<HostFiniteTerminalOutcome> {
   const signal = input.signal ?? input.operation.signal;
   const failure = (kind: HostFiniteTerminalOutcome['kind'], code: string, terminalId?: string, details?: unknown): HostFiniteTerminalOutcome => ({
-    kind, result: { ok: false, errorCode: code, error: code, ...(details === undefined ? {} : { details }) }, ...(terminalId ? { terminalId } : {}),
+    kind, result: { ok: false, errorCode: code, error: code,
+      ...(input.operation.actionRequestId ? { requestId: input.operation.actionRequestId } : {}),
+      ...(details === undefined ? {} : { details }) }, ...(terminalId ? { terminalId } : {}),
   });
   if (signal.aborted) return failure('no_launch', 'cancelled');
   let terminal: Awaited<ReturnType<TerminalPtySessionManager['ensure']>>;
@@ -90,7 +92,10 @@ export async function executeHostFiniteTerminalProcess(input: Readonly<{
     ...(observation.exit.exitCode !== null ? { exitCode: observation.exit.exitCode } : {}) }) });
   if (signal.aborted || observation.terminationCause === 'stop_requested') return failure('process_settled', 'cancelled', terminal.terminalId);
   if (observation.exit.exitCode !== 0 || observation.exit.signal !== null && observation.exit.signal !== 0) {
-    return failure('process_settled', input.failureCode, terminal.terminalId, { ...input.failureDetails, ...observation.exit });
+    const details: FiniteCommandFailureDetailsV1 = { kind: 'finiteCommand', phase: input.progress.phase,
+      ...(input.failureStep === undefined ? {} : { step: input.failureStep }),
+      exitCode: observation.exit.exitCode, signal: observation.exit.signal };
+    return failure('process_settled', input.failureCode, terminal.terminalId, details);
   }
   return { kind: 'process_settled', terminalId: terminal.terminalId, result: { ok: true, result: { kind: 'success' } } };
 }

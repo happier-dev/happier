@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "Добавить ещё скрипт",
             removeScript: ({ index }: { index: number }) => `Удалить скрипт ${index}`,
             itemConflict: "В этом шаблоне уже есть другая версия, поэтому элемент не добавлен. Сначала удалите её, а затем добавьте снова.",
+            sourceConflict: "В настройке есть конфликтующие варианты. В настройке этой машины удалите существующий рецепт и проверьте снова. Если он добавлен из шаблона, измените шаблон и примените его заново.",
             itemsGroupSetup: "Настройка",
             itemsGroupSoftware: "Программы",
             itemsGroupApps: "Приложения",

@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "Dodaj kolejny skrypt",
             removeScript: ({ index }: { index: number }) => `Usuń skrypt ${index}`,
             itemConflict: "To ustawienie ma już inną wersję tego elementu, więc go nie dodano. Najpierw usuń tamtą wersję, a potem dodaj go ponownie.",
+            sourceConflict: "Konfiguracja zawiera sprzeczne wybory. W konfiguracji tej maszyny usuń istniejącą recepturę i sprawdź ponownie. Jeśli pochodzi z ustawienia wstępnego, edytuj je i zastosuj ponownie.",
             itemsGroupSetup: "Konfiguracja",
             itemsGroupSoftware: "Oprogramowanie",
             itemsGroupApps: "Aplikacje",

@@ -27,6 +27,36 @@ it('names the refused setup target and keeps its typed reason in the error prese
   expect(description).toContain('Machine access was refused.');
 });
 
+it('explains a second package configuration conflict before any native work or approval', async () => {
+  const { getMachineSetupDesiredV1 } = await import('@happier-dev/protocol/machines/setup/machineSetupSourcesV1');
+  const { prepareMachineSetupPlanV1 } = await import('../../../../../../cli/src/machines/setup/prepareMachineSetupPlan');
+  const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
+  const { t } = await import('@/text');
+  const packageChoice = (name: string) => ({ kind: 'softwareRecipe' as const, selection: {
+    ref: { pluginId: 'happier.machine.recipes', recipeId: 'install-package', revision: '1' },
+    inputs: { package: { manager: 'apt', apt: { name } } },
+  } });
+  const installed = packageChoice('docker.io');
+  const current = await getMachineSetupDesiredV1({
+    read: async () => ({ status: 'ready', metadataVersion: 4, metadata: {
+      setup: { version: 1, revision: 4, sources: [{ kind: 'direct', setup: { items: [installed] } }], exclusions: [] },
+    } }),
+    compareAndSwap: async () => { throw new Error('Review cannot publish setup'); },
+  });
+  const refusal = await prepareMachineSetupPlanV1({ current,
+    input: { homeId: 'home', machineId: 'shop', mode: 'effects', sources: [
+      { kind: 'direct', setup: { items: [installed, packageChoice('curl')] } },
+    ] },
+    runNative: async () => { throw new Error('Conflicting intent must not run a process'); },
+  });
+  expect(refusal).toMatchObject({ ok: false, errorCode: 'machine_setup_conflict' });
+  if (refusal.ok) throw new Error('Expected conflicting package configurations');
+  const { resolveActionExecutionFailureMessage } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+  expect(resolveActionExecutionFailureMessage(refusal, 'fallback')).toBe(t('machinePresets.setup.sourceConflict'));
+  expect(describeMachineSetupPlanFailure({ ...refusal, details: { target: { homeId: 'home', machineId: 'shop' } } },
+    () => 'shop-prod')).toBe(`shop-prod · ${t('machinePresets.setup.sourceConflict')}`);
+});
+
 const target = (machineId: string) => ({
   homeId: 'home',
   machineId,

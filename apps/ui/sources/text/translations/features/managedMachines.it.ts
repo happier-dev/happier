@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "Aggiungi un altro script",
             removeScript: ({ index }: { index: number }) => `Rimuovi lo script ${index}`,
             itemConflict: "Questo preset ne contiene già un’altra versione, quindi non è stato aggiunto. Rimuovi prima quella, poi aggiungilo di nuovo.",
+            sourceConflict: "La configurazione contiene scelte in conflitto. Nella configurazione di questa macchina, rimuovi la ricetta esistente e riesamina. Se proviene da un preset, modifica il preset e applicalo di nuovo.",
             itemsGroupSetup: "Configurazione",
             itemsGroupSoftware: "Software",
             itemsGroupApps: "App",

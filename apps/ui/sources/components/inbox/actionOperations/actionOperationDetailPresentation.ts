@@ -6,7 +6,7 @@ import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs
 import { isActionOperationTerminal, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
 import { canRequestActionOperationStop, readProjectCommandStepExitCode } from './actionOperationPresentation';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
-import { presentApprovalFailure } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { t } from '@/text';
@@ -40,7 +40,7 @@ export type ActionOperationDetailRecovery =
 
 /** The owner's typed isolation review, with the original request identity a newly approved set resumes on. */
 export type AgentIsolationReviewDetail = Readonly<{
-    review: Pick<Extract<NonNullable<ActionOperationSnapshot['observation']>, { kind: 'review_required' }>, 'machineId' | 'enabled' | 'current'>;
+    review: Pick<Extract<NonNullable<ActionOperationSnapshot['observation']>, { kind: 'review_required'; code: 'agent_isolation_effect_changed' }>, 'machineId' | 'enabled' | 'current'>;
     requestId: string | null;
 }>;
 
@@ -169,13 +169,10 @@ export function presentFailure(snapshot: ActionOperationSnapshot): ActionOperati
     const sentence = observedStepExit !== null
         ? t('localServices.actions.failure.exitCode', { code: String(observedStepExit) })
         : resolveSystemTaskFailureMessage({ code: errorCode, message: error }) ?? error;
-    const presented = presentApprovalFailure({ errorCode, error }, sentence, t('inbox.actionOperations.failureGeneric'));
-    const details = snapshot.error.details;
-    const failure = details && 'kind' in details && details.kind === 'machineSetup' ? details.failure : undefined;
-    const remedy = failure && 'remedy' in failure ? failure.remedy : undefined;
+    const presented = presentActionFailureOutcome({ ...snapshot.error, requestId: snapshot.requestId }, undefined, sentence);
     return {
-        reason: remedy ?? presented.reason,
-        technicalLines: presented.code ? [{ key: 'failure-code', label: t('common.error'), value: presented.code }] : [],
+        reason: presented.reason || t('inbox.actionOperations.failureGeneric'),
+        technicalLines: presented.technicalDetails,
     };
 }
 
@@ -409,7 +406,7 @@ export function projectActionOperationDetail(
     const review = snapshot.observation;
     return {
         ...detail,
-        agentIsolationReview: review?.kind === 'review_required' && snapshot.actionId === 'machines.agentIsolation.set'
+        agentIsolationReview: review?.kind === 'review_required' && review.code === 'agent_isolation_effect_changed' && snapshot.actionId === 'machines.agentIsolation.set'
             && !isActionOperationTerminal(snapshot.state)
             ? { review, requestId: snapshot.requestId ?? null } : null,
         failure: detail.failure ?? presentFailure(snapshot),

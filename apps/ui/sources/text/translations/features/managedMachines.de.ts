@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "Weiteres Skript hinzufügen",
             removeScript: ({ index }: { index: number }) => `Skript ${index} entfernen`,
             itemConflict: "Diese Vorlage enthält schon eine andere Version davon, deshalb wurde es nicht hinzugefügt. Entferne zuerst diese Version und füge es dann erneut hinzu.",
+            sourceConflict: "Die Einrichtung enthält widersprüchliche Auswahlen. Entferne in der Einrichtung dieser Maschine das vorhandene Rezept und prüfe die Auswahl erneut. Stammt es aus einer Vorlage, bearbeite die Vorlage und wende sie erneut an.",
             itemsGroupSetup: "Einrichtung",
             itemsGroupSoftware: "Software",
             itemsGroupApps: "Apps",

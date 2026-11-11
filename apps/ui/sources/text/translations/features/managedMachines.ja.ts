@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "スクリプトを追加",
             removeScript: ({ index }: { index: number }) => `スクリプト ${index} を削除`,
             itemConflict: "このプリセットには別のバージョンがすでにあるため、追加されませんでした。先にそちらを削除してから、もう一度追加してください。",
+            sourceConflict: "セットアップの選択が競合しています。このマシンのセットアップで既存のレシピを削除してから、もう一度確認してください。プリセットから追加された場合は、そのプリセットを編集して再適用してください。",
             itemsGroupSetup: "セットアップ",
             itemsGroupSoftware: "ソフトウェア",
             itemsGroupApps: "アプリ",

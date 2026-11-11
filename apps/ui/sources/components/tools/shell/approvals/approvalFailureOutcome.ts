@@ -14,6 +14,7 @@ import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/pro
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
@@ -23,7 +24,7 @@ import { readConfidentialFillSettlement, resolveConfidentialFillOutcome } from '
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 
 /** Both Action executions and durable operation failures carry these same diagnostic facts. */
-export type ApprovalFailureDiagnostics = Pick<ActionExecuteFailure, 'error' | 'errorCode' | 'details' | 'failureCause' | 'effectAttempted'>;
+export type ApprovalFailureDiagnostics = Pick<ActionExecuteFailure, 'error' | 'errorCode' | 'details' | 'failureCause' | 'effectAttempted' | 'requestId'>;
 
 /** Project only named facts and owner-redacted diagnostics from the failure schemas, never arbitrary details. */
 export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDiagnostics, scope?: 'deployment'): readonly TechnicalDetailsLine[] {
@@ -36,6 +37,9 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
         add('failure-message', t('detailPages.approval.failureTitle'), failure.error);
     }
     add('failure-code', t('common.error'), presented.code);
+    const finiteCommand = FiniteCommandFailureDetailsV1Schema.safeParse(failure.details);
+    const machineSetup = MachineSetupFailureDetailsV1Schema.safeParse(failure.details);
+    const setupFailure = machineSetup.success ? machineSetup.data.failure : undefined;
     const execution = DeploymentExecutionFailureDetailsV1Schema.safeParse(failure.details);
     const conflict = DeploymentReviewConflictFailureDetailsV1Schema.safeParse(failure.details);
     const domain = DeploymentDomainFailureDetailsV1Schema.safeParse(failure.details);
@@ -54,8 +58,14 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const recovery = scope === 'deployment' || authoredRecovery
         ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? {}, failure.errorCode) : null;
     const cause = failure.failureCause ?? receiptFailure?.failureCause;
-    add('failure-phase', t('approvals.failureTechnicalLabels.phase'), receiptFailure?.phase ?? (domain.success ? domain.data.step
+    add('failure-phase', t('approvals.failureTechnicalLabels.phase'), finiteCommand.success ? finiteCommand.data.phase
+        : setupFailure && 'phase' in setupFailure ? setupFailure.phase : receiptFailure?.phase ?? (domain.success ? domain.data.step
         : environmentRemoval.success ? environmentRemoval.data.step : sourceAdmission?.phase ?? (backup?.success ? backup.data.step : undefined)));
+    add('failure-step', t('approvals.failureTechnicalLabels.step'), finiteCommand.success && finiteCommand.data.step !== undefined
+        ? finiteCommand.data.step + 1 : setupFailure && 'stepId' in setupFailure ? setupFailure.stepId : undefined);
+    add('failure-request-id', t('approvals.failureTechnicalLabels.requestId'), failure.requestId);
+    add('failure-signal', t('approvals.failureTechnicalLabels.signal'), finiteCommand.success && finiteCommand.data.signal !== 0
+        ? finiteCommand.data.signal : undefined);
     add('failure-reason', t('approvals.failureTechnicalLabels.reason'), domainFailure?.reason ?? sourceAdmission?.reason);
     add('failure-cause-phase', t('approvals.failureTechnicalLabels.causePhase'), cause?.phase ?? sourceAdmission?.phase
         ?? (domainFailure && 'phase' in domainFailure ? domainFailure.phase : domainFailure?.nativeCommand?.phase));
@@ -64,7 +74,7 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
         ?? (domainFailure && 'errorCode' in domainFailure ? domainFailure.errorCode : undefined));
     const nativeFailure = scope === 'deployment'
         ? readDeploymentBackupMaintenanceFailureEvidenceV1({ details: failure.details })?.nativeFailure : undefined;
-    add('failure-native-exit-code', t('tools.structuredResult.exit'), nativeFailure?.exitCode);
+    add('failure-native-exit-code', t('tools.structuredResult.exit'), finiteCommand.success ? finiteCommand.data.exitCode : nativeFailure?.exitCode);
     add('failure-native-stderr', t('tools.structuredResult.stderr'), nativeFailure?.stderr);
     add('failure-native-stderr-truncated', t('browserDiagnostics.host.fields.truncated'), nativeFailure?.stderrTruncated);
     add('failure-http-status', t('approvals.failureTechnicalLabels.httpStatus'), cause?.httpStatus ?? receiptFailure?.validation?.httpStatus);
@@ -73,7 +83,7 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     add('failure-domain', t('projects.deployments.domainFieldHost'),
         domain.success && domain.data.step === 'removeDomain' ? domain.data.domainHostname ?? domain.data.domainId : undefined);
     add('failure-current-revision', t('approvals.failureTechnicalLabels.currentEnvironmentRevision'), conflict.success ? conflict.data.currentEnvironmentRevision : undefined);
-    add('failure-remedy', t('approvals.failureTechnicalLabels.remedy'), recovery?.remedy);
+    add('failure-remedy', t('approvals.failureTechnicalLabels.remedy'), setupFailure && 'remedy' in setupFailure ? setupFailure.remedy : recovery?.remedy);
     return lines;
 }
 
@@ -121,8 +131,10 @@ function readFailureHeadline(approval: ApprovalRequest, failure: ActionExecuteFa
 }
 
 /** The same failure reason and diagnostic projection for direct Actions and settled approvals. */
-export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics, scope?: 'deployment') {
-    const presented = presentApprovalFailure(failure, failure.errorCode, '');
+export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics, scope?: 'deployment', fallbackReason?: string) {
+    const presented = presentApprovalFailure(failure, fallbackReason ?? failure.errorCode, '');
+    const finiteCommand = FiniteCommandFailureDetailsV1Schema.safeParse(failure.details);
+    const machineSetup = MachineSetupFailureDetailsV1Schema.safeParse(failure.details);
     const technicalDetails = presentActionFailureTechnicalDetails(failure, scope);
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
@@ -130,14 +142,18 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     // A deploy refused before review names the required secrets that have no value (names only, never values).
     const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;
-    return {
-        reason: missingSecrets?.success
+    const reason = finiteCommand.success && finiteCommand.data.exitCode !== null
+            ? t('localServices.actions.failure.exitCode', { code: String(finiteCommand.data.exitCode) })
+            : machineSetup.success && remedy ? remedy
+            : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
-                : deploymentRecovery ? remedy || deploymentRecovery.remedy : presented.reason || remedy || null,
+                : deploymentRecovery ? remedy || deploymentRecovery.remedy : presented.reason || remedy || null;
+    return {
+        reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
         code: presented.code,
-        technicalDetails,
+        technicalDetails: technicalDetails.filter(line => line.key !== 'failure-message' || line.value !== reason),
     };
 }
 
@@ -157,7 +173,9 @@ export function presentApprovalFailureOutcome(approval: ApprovalRequest, failure
     serviceStartFailure?: ApprovalServiceStartFailure;
 }> {
     // Executor prose stays in Details; only canonical copy or typed recovery leads the summary.
-    const presented = presentActionFailureOutcome(failure, isDeploymentActionIdV1(approval.actionId) ? 'deployment' : undefined);
+    const presented = presentActionFailureOutcome({ ...failure,
+        requestId: failure.requestId ?? ('executionOriginV1' in approval ? approval.executionOriginV1.requestId : undefined),
+    }, isDeploymentActionIdV1(approval.actionId) ? 'deployment' : undefined);
     const serviceStartFailure = readServiceStartFailure(approval, failure);
     // A refused or unconfirmed confidential entry is named by what became of it, not as a failed Action.
     const fill = readConfidentialFillSettlement(approval);

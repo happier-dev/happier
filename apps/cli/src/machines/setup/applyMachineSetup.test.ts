@@ -114,6 +114,19 @@ describe('applyMachineSetup', () => {
     expect(f.spawned[2]!.launch.options.env).toMatchObject({ B_ONLY: 'private-value' });
     expect(f.spawned[2]!.launch.options.env).not.toHaveProperty('A_ONLY');
   });
+  it('retains only the failing ordered command phase, step and exit for Action readers', async () => {
+    const f = await fixture(launch => launch.args.at(-1)?.includes('exit 23') ? 23 : 0);
+    const result = await applyMachineSetup({ ...f.input, setup: { scripts: [
+      { body: 'printf PRIVATE_FIRST_MARKER', affects: 'none' },
+      { body: 'printf PRIVATE_COMMAND_BODY; exit 23', affects: 'none' },
+      { body: 'printf MUST_NOT_RUN', affects: 'none' },
+    ] } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed', details: {
+      kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0,
+    } });
+    expect(f.spawned).toHaveLength(2);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|private-value|MUST_NOT_RUN/);
+  });
   it('runs unchanged source scripts while excluding reviewed recipes and preserves merge conflicts', async () => {
     const f = await fixture(true);
     const ref = { pluginId: 'com.example.machine-tools', recipeId: 'unavailable', revision: '1' };

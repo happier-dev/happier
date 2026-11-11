@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "Adicionar outro script",
             removeScript: ({ index }: { index: number }) => `Remover o script ${index}`,
             itemConflict: "Esta predefinição já tem outra versão disto, por isso não foi adicionado. Remove essa primeiro e depois adiciona-o de novo.",
+            sourceConflict: "A configuração tem opções em conflito. Na configuração desta máquina, remove a receita existente e revê novamente. Se vier de uma predefinição, edita-a e volta a aplicá-la.",
             itemsGroupSetup: "Configuração",
             itemsGroupSoftware: "Software",
             itemsGroupApps: "Apps",

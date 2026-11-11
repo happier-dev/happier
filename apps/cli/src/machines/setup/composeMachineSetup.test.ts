@@ -128,6 +128,7 @@ describe('Combined Machine setup child settlement', () => {
     } });
   });
   it.each<{ errorCode: string; details: Record<string, WorkflowJsonValue> }>([
+    { errorCode: 'machine_setup_setup_failed', details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 } },
     { errorCode: 'native_effect_failed', details: { kind: 'machineSetup',
       failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } } },
     { errorCode: 'target_unavailable', details: { reason: 'machine_offline',

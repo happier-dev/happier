@@ -603,6 +603,7 @@ export const managedMachinesEn = {
             addScript: "Add another script",
             removeScript: ({ index }: { index: number }) => `Remove script ${index}`,
             itemConflict: "This preset already has a different version of it, so it wasn’t added. Remove that one first, then add it again.",
+            sourceConflict: "Setup has conflicting choices. In this Machine’s Setup, remove the existing recipe, then review again. If it comes from a preset, edit that preset and apply it again.",
             itemsGroupSetup: "Setup",
             itemsGroupSoftware: "Software",
             itemsGroupApps: "Apps",

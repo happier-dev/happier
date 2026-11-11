@@ -66,6 +66,7 @@ function readWidgetRefusalMessage(code: unknown, details?: unknown): string | nu
  */
 export function describeMachineNativeFailureCode(code: unknown): string | null {
     switch (code) {
+        case 'machine_setup_conflict': return t('machinePresets.setup.sourceConflict');
         case 'native_protocol_invalid': return t('errors.machineNativeProtocolInvalid');
         case 'native_check_unavailable': return t('errors.machineNativeCheckUnavailable');
         case 'native_check_unsupported': return t('errors.machineNativeCheckUnsupported');
@@ -107,6 +108,7 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'client_required') return t('errors.clientRequired');
     if (code === 'secret_save_client_required') return t('errors.secretSaveClientRequired');
     if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');
+    if (code === 'role_policy_unenforceable') return t('errors.rolePolicyUnenforceable');
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');

@@ -597,6 +597,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             addScript: "再新增一個腳本",
             removeScript: ({ index }: { index: number }) => `移除腳本 ${index}`,
             itemConflict: "此預設已包含它的另一個版本，因此未加入。請先移除那個版本，再重新加入。",
+            sourceConflict: "設定選項發生衝突。請在此機器的設定中移除現有配方，然後重新檢查。如果它來自預設，請編輯該預設並重新套用。",
             itemsGroupSetup: "設定",
             itemsGroupSoftware: "軟體",
             itemsGroupApps: "應用程式",

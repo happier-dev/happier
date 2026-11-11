@@ -73,8 +73,18 @@ const ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1 = 200;
 const ACTION_OPERATION_ERROR_MAX_LENGTH_V1 = 10_000;
 
 
-const ActionOperationProgressPhaseV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1)));
+export const ActionOperationProgressPhaseV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1)));
 const ActionOperationProgressLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1)));
+
+/** Finite process settlement facts only; command bodies, environment and output never enter this carrier. */
+export const FiniteCommandFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('finiteCommand'),
+  phase: ActionOperationProgressPhaseV1Schema,
+  step: z.optional(z.number().check(z.int(), z.gte(0))),
+  exitCode: z.nullable(z.number().check(z.int())),
+  signal: z.nullable(z.number().check(z.int())),
+}));
+export type FiniteCommandFailureDetailsV1 = Readonly<z.infer<typeof FiniteCommandFailureDetailsV1Schema>>;
 
 export const ActionOperationDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   version: z.literal(1),
@@ -242,7 +252,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   failureCause: z.optional(ActionFailureCauseV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
     ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedMachineFailureDetailsV1Schema,
-    MachineSetupFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
+    MachineSetupFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
     DeploymentTemplateInstantiationPartialV1Schema, OpenProjectRefusalV1Schema, DeploymentDomainFailureDetailsV1Schema, DeploymentFailureRecoveryV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema,
     DeploymentExecutionFailureDetailsV1Schema,
@@ -254,6 +264,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
     : 'requiredFact' in failure.details
     ? DeploymentFailureRecoveryV1Schema.shape.requiredFact.safeParse(failure.details.requiredFact).success || failure.errorCode === 'target_unavailable'
     : failure.errorCode === 'approval_stale')
+  : failure.details.kind === 'finiteCommand'
+  ? true
   : failure.details.kind === 'machineSetup'
   ? failure.errorCode === 'outcome_unknown' || failure.errorCode === failure.details.failure.kind
     || failure.errorCode === 'platform_unsupported'

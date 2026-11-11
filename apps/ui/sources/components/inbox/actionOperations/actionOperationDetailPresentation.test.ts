@@ -26,6 +26,21 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation detail presentation', () => {
+    it('shows retained Setup command failure evidence through the shared failure presenter', () => {
+        const detail = projectActionOperationDetail(operation({ actionId: 'machines.setup.apply', state: 'failed',
+            requestId: 'setup-request', settledAt: 2_000,
+            domainRef: { kind: 'machineSetup', serverId: 'home', machineId: 'machine-1' },
+            error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed',
+                details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 } },
+        }), 'available');
+        expect(detail.failure?.reason).toBe(t('localServices.actions.failure.exitCode', { code: '23' }));
+        expect(detail.failure?.technicalLines).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'failure-phase', value: 'setup' }),
+            expect.objectContaining({ key: 'failure-step', value: '2' }),
+            expect.objectContaining({ key: 'failure-native-exit-code', value: '23' }),
+            expect.objectContaining({ key: 'failure-request-id', value: 'setup-request' }),
+        ]));
+    });
     it.each([undefined, 'Refresh apt package indexes, then review and retry.'])('shows the native owner recovery when supplied (%s)', remedy => {
         const detail = projectActionOperationDetail(operation({ actionId: 'machines.setup.apply', state: 'failed',
             settledAt: 2_000, error: { errorCode: 'native_check_unsupported', error: 'native_check_unsupported',

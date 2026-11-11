@@ -172,7 +172,7 @@ export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInp
         ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
         progress: { phase: input.purpose, label: 'Running project command',
             ...(input.totalSteps ? { current: input.step ?? 0, total: input.totalSteps } : {}) },
-        failureCode: 'project_command_step_failed', failureDetails: { step: input.step ?? 0 },
+        failureCode: 'project_command_step_failed', failureStep: input.step ?? 0,
         attachment: observation => ({ ...attachment, cwd: input.launch.cwd ?? attachment.cwd, ...observation }),
     });
 }

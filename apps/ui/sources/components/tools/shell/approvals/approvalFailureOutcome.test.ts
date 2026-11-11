@@ -36,6 +36,32 @@ function approval(result: unknown = response) {
 }
 
 describe('approval failure outcome', () => {
+    it('presents typed command evidence without disclosing opaque command or environment data', () => {
+        const failure = { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed',
+            details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 } };
+        const outcome = presentActionFailureOutcome(failure);
+        expect(outcome.reason).toBe(t('localServices.actions.failure.exitCode', { code: '23' }));
+        expect(outcome.technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'failure-phase', value: 'setup' }),
+            expect.objectContaining({ key: 'failure-step', value: '2' }),
+            expect.objectContaining({ key: 'failure-native-exit-code', value: '23' }),
+        ]));
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'machines.setup.apply', summary: 'Apply setup',
+            actionArgs: { homeId: 'home', machineId: 'machine', targets: [{ homeId: 'home', machineId: 'machine',
+                desiredRevision: 0, recipePlans: [], sources: [{ kind: 'direct', setup: {} }] }] },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+                serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'machines.setup.apply', requestId: 'setup-request' } });
+        const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: projectApprovalExecutionFailureV2({ request, failure: { ok: false, ...failure }, executedAtMs: 3 }) });
+        expect(presentApprovalFailureOutcome(stored, readApprovalExecutionFailure(stored)!).technicalDetails)
+            .toContainEqual(expect.objectContaining({ key: 'failure-request-id', value: 'setup-request' }));
+        const opaque = presentActionFailureOutcome({ ...failure, details: { ...failure.details,
+            body: 'PRIVATE_COMMAND', env: { SECRET: 'PRIVATE_ENV' }, stdout: 'PRIVATE_OUTPUT' } });
+        expect(JSON.stringify(opaque)).not.toMatch(/PRIVATE_/);
+        expect(opaque.technicalDetails).not.toContainEqual(expect.objectContaining({ key: 'failure-step' }));
+    });
     it.each([undefined, { exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]', stderrTruncated: true }])('retains the backup stream step and native evidence in direct and recorded failure Details: %j', nativeFailure => {
         const code = nativeFailure ? 'backup_failed' : 'outcome_unknown';
         const phase = nativeFailure ? 'deployment.backup.native' : 'dispatch';

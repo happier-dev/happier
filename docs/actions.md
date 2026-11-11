@@ -3459,7 +3459,10 @@ same exact arithmetic owner as rich pricing, without acquiring event rows;
 Coach retains its explicitly demanded evidence inside the existing read owner
 before delivery. Public-profile preparation consumes bounded
 numeric facts and locally composed private projections. The external Action
-response-size limit is unchanged. `includeComparison: false` omits an unused
+response-size limit is unchanged. The CLI and agent Action acquire all primary
+and comparison accounting slices in one batch request and one server read
+snapshot; a single accounting slice retains the scalar route. There is no scalar
+fan-out fallback. `includeComparison: false` omits an unused
 previous-period read; explicit queries keep comparison enabled by default.
 `workProjection: 'summary'` requests the same
 canonically qualified merged-PR count without allocation rows; detailed Work
@@ -3467,7 +3470,10 @@ remains the default for explicit Work readers. Period summary uses this bounded
 count, and broad Recap does not prefetch its unmounted Session autopsy. A selected
 Session retains the detailed autopsy. Public-profile preparation shares admitted
 Session/turn membership and bounded numeric/private projections, not full Usage
-event delivery.
+event delivery. Rich Work stores complete contribution memberships once in its
+outcome and branch tables; each allocation carries only the corresponding
+identity and evidence. Its bounded `workSummary` also retains distinct Session,
+contribution and allocated-contribution counts.
 
 In-process Usage filter-option readers call the same typed query port with
 inventory-only demand. They consume distinct accounting ids and labels without
@@ -3480,7 +3486,9 @@ delivery projection omits the largest evidence sections first and reports
 `incomplete: { reason: 'response_size_limit', omittedSections, recovery: 'narrow_query' }`
 on each affected slice. Sections are `work`, `howYouWork` and `coach`; omitting
 Work also omits its raw contributions and dependent merged-outcome summary.
-Accounting totals, breakdowns, allowance facts, source currentness and exact
+The bounded Work summary, including Session and contribution counts when rich
+Work was acquired, remains available to agents and the CLI. Accounting totals,
+breakdowns, allowance facts, source currentness and exact
 query identities remain unchanged. Smaller sibling slices keep their evidence
 when it fits. Narrow the period or select a Session/filter to read omitted
 evidence; there is no automatic retry, hidden truncation or transport bypass.
@@ -5601,8 +5609,19 @@ cannot be read leaves sign-in unknown; without that dep only executable prerequi
 Option sources keep `needsSignIn`, `notInstalled` and `unsupported` rows listed but disabled,
 with the reason as the description; unknown never blocks. Rows are matched to inventory by
 `findMachineAgentInventoryItemForTargetV1`, the same matcher the UI picker facts and the
-default-Agent owner use. Run start does not re-probe: an explicit choice that is not ready
-fails at launch with the existing typed `agent_cli_missing` / sign-in refusal.
+default-Agent owner use.
+
+Run start refuses a known not-ready Agent before any Run exists. Every Run start
+(`execution.run.start`, `subagents.delegate.start`, `subagents.plan.start`, `voice_agent.start`,
+`review.start`) passes `startExecutionRunWithSelection`, which calls
+`refuseAgentStartWhenNotReadyV1` with the Machine that will run the Agent (the target Machine,
+else the exact Machine from the V2 preflight, else the start context's baseline Machine, else the
+Session's Machine). It reads the same per-target readiness as the option sources above. A
+blocking state refuses that start with the existing spawn codes: `notInstalled` →
+`agent_cli_missing`, `needsSignIn` → `agent_signed_out`, `unsupported` → `agent_cli_not_ready`,
+in the existing run-start failure envelope (`details.executionRunStart.runCreation: 'noRunCreated'`).
+In a fan-out start only that backend's item
+fails. Unknown, checking or unreadable readiness admits, and launch stays the authority.
 
 ## Operations outcome links (0.3 development source)
 
@@ -8151,7 +8170,16 @@ Session operand through the owning Machine's receiver. It uses the same
 reviewed Stop-child owner as Section archive; neither phase becomes a new
 Action admission or a grant over another Account's Session.
 Direct Home DELETE retains its inactive guard and typed absent/active/conflict
-responses. Delete adds no separate liveness read.
+responses. The canonical Delete Action treats typed absence as successful deletion,
+including after its Stop retry. The UI's captured Home adapter retires that Home's
+local Session state after success or typed absence through the same retirement
+owner as cross-device deletion; it does not wait for a socket echo. This projection
+borrows the request authority's credential Account lifetime: changing focus does
+not suppress cleanup, while an old Account's acknowledgement cannot retire a
+replacement Account's local Session. Exact Session
+route reads also retire stale local state when the Home proves Session absence.
+An ambiguous 404 or a failed Stop is not absence evidence. Delete adds no separate
+liveness read.
 
 In 0.3 development, the same `session.delete` Action also accepts
 `{ machineId, runId }` for a terminal detached conversation. This operand reaches
@@ -10049,6 +10077,14 @@ An optional `failureCause` carries the native reason code, never process output
 or script bytes. Apply, removal and updates share this producer; terminal and
 task attachments retain the rows. The existing operation subscription publishes
 only changed snapshots. Released V1 readers omit the Machine setup reference.
+
+In unreleased 0.3, a failed finite Machine Setup or retained Project command also
+carries closed `finiteCommand` failure details for current V2 operation and
+approval readers: the execution phase, optional zero-based command index, exit
+code and signal. The shared failure presenter displays the command index as a
+one-based step and can show the retained request ID. Command bodies, environment
+values and process output are excluded from this diagnostic. Released V1
+operation and approval projections omit these details.
 
 The development completion contract retains the original active operation and
 accepted reservation across a post-copy setup review. Its strict `setupReview`
