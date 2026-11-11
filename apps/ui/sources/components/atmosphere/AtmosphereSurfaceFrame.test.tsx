@@ -339,6 +339,47 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
         }
     });
 
+    // RU2 F-3 (2026-11-11): on Project Services with the Browser open, the planet re-composed into the ~460 px column
+    // and its dither ran under the service rows, illegible in dark.
+    describe('a Project planet behind its tab pages', () => {
+        function Scene() {
+            const column = React.useRef<View>(null);
+            return <AtmosphereSurfaceFrame surface={{ project: { serverId: 'srv', projectKey: 'p1' } }} column={column} focused visible>
+                <View testID="project-column" ref={column} />
+            </AtmosphereSurfaceFrame>;
+        }
+        // The Browser pane is open beside the Project: the column is 460 of the frame's 1060.
+        const mock = { createNodeMock: (element: { props: { testID?: string } }) => ({
+            measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) =>
+                element.props.testID === 'project-column' ? done(328, 40, 460, 852) : done(328, 40, 1060, 852),
+        }) };
+        it('keeps its composition when the column narrows: composed at the frame and clipped to the column', async () => {
+            const screen = await renderScreen(<Scene />, mock);
+            try {
+                await vi.waitFor(() => expect(screen.findByTestId('surface-planet')).not.toBeNull());
+                const planet = screen.findAll((node) => typeof node.props?.placement === 'string' && node.props?.pane !== undefined)[0]!;
+                expect(planet.props.pane).toEqual({ width: 1060, height: 852 });
+                expect(flattenTestStyle(screen.findByTestId('surface-planet')!.props.style)).toMatchObject({ width: 460, overflow: 'hidden' });
+            } finally {
+                await screen.unmount();
+            }
+        });
+        it('lays a calm coat between the planet and the page below its band, in the page colour', async () => {
+            const screen = await renderScreen(<Scene />, mock);
+            try {
+                await vi.waitFor(() => expect(screen.findByTestId('surface-planet-coat')).not.toBeNull());
+                const coat = flattenTestStyle(screen.findByTestId('surface-planet-coat')!.props.style) as Record<string, unknown>;
+                const band = atmosphereStageStore.get().panes[0]?.geometry?.band ?? 0;
+                expect(coat).toMatchObject({ position: 'absolute', top: band, left: 0, right: 0, bottom: 0 });
+                const paint = Color(String(coat.backgroundColor));
+                expect(paint.alpha()).toBeGreaterThanOrEqual(0.5);
+                expect(paint.alpha()).toBeLessThan(1);
+            } finally {
+                await screen.unmount();
+            }
+        });
+    });
+
     it.each(['screen', 'modal'] as const)('uses Elements in the %s New composer instead of the content or menu material', async (mode) => {
         storage.setState(state => ({ ...state, settings: { ...state.settings,
             newSessionPresentationModeV1: mode,

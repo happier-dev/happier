@@ -4,7 +4,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useDestinationFocus, useDestinationInstanceKey, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
-import { GlassEnvironmentHold } from '@/components/ui/glass/glassRuntimeEnvironment';
+import { GlassEnvironmentHold, useGlassRuntimeEnvironment } from '@/components/ui/glass/glassRuntimeEnvironment';
+import { resolveGlassReadingCoatOpacity } from '@/components/ui/glass/glassMaterial';
+import { useGlassMaterialSettings } from '@/components/ui/glass/useGlassMaterialSettings';
+import Color from 'color';
 import { useSetting } from '@/sync/store/hooks';
 import { HomePlanet } from './HomePlanet';
 import { LookChip } from './look/LookChip';
@@ -17,8 +20,9 @@ import { projectAtmosphereBand } from './atmosphereGeometry';
 import { AtmosphereBandBoundary } from './atmosphereBandBoundary';
 import { useAtmosphereBackdrop } from './atmosphereBackdrop';
 
-type AtmosphereOrigin = Readonly<{ x: number; y: number }>;
-const NO_ORIGIN: AtmosphereOrigin = { x: 0, y: 0 };
+/** Where the page column sits inside this frame, and the frame's own size (null when the frame is the column). */
+type AtmosphereOrigin = Readonly<{ x: number; y: number; frame: Readonly<{ width: number; height: number }> | null }>;
+const NO_ORIGIN: AtmosphereOrigin = { x: 0, y: 0, frame: null };
 
 function measure(node: View | null): Promise<AtmosphereRect | null> {
     return new Promise(resolve => node ? node.measureInWindow((x, y, width, height) => resolve({ x, y, width, height })) : resolve(null));
@@ -69,8 +73,9 @@ export function AtmosphereSurfaceFrame(props: Readonly<{
         void Promise.all([measure(column?.current ?? paneRef.current), measure(bandRef.current),
             column?.current ? measure(paneRef.current) : null]).then(([pane, tabs, frame]) => {
             if (!pane || id !== request.current) return;
-            const origin = frame ? { x: pane.x - frame.x, y: pane.y - frame.y } : NO_ORIGIN;
-            setColumnOrigin(previous => previous.x === origin.x && previous.y === origin.y ? previous : origin);
+            const origin = frame ? { x: pane.x - frame.x, y: pane.y - frame.y, frame: { width: frame.width, height: frame.height } } : NO_ORIGIN;
+            setColumnOrigin(previous => previous.x === origin.x && previous.y === origin.y && previous.frame?.width === origin.frame?.width
+                && previous.frame?.height === origin.frame?.height ? previous : origin);
             const band = tabs ? projectAtmosphereBand({ pane, tabs }) : 0;
             setGeometry(previous => previous && writing.current && previous.rect.width === pane.width
                 && previous.rect.height === pane.height
@@ -121,13 +126,26 @@ function SurfacePlanet(props: Readonly<{ surface: AtmosphereSurface; atmosphere:
     // On a Project the planet stays an object (DIRECTION: "never a wallpaper"): Home's Corner, clipped to
     // the project pane, rather than a strip of dots squeezed into the header band.
     const project = typeof props.surface === 'object';
+    // A Project composes its planet once for the whole frame and the column only crops it: a pane opening beside the
+    // Project (the Browser) narrows the view instead of re-composing the planet into the narrow column (RU2 F-3).
+    const composed = project && props.origin.frame ? props.origin.frame : { width: geometry.rect.width, height: geometry.rect.height };
+    const offset = project && props.origin.frame ? { left: -props.origin.x, top: -props.origin.y } : { left: 0, top: 0 };
+    // Its tab pages stand on the same calm coat a picture gets, so the planet's dither never runs under their ink;
+    // the band above keeps the planet clear.
+    const settings = useGlassMaterialSettings();
+    const environment = useGlassRuntimeEnvironment();
+    const coat = project ? resolveGlassReadingCoatOpacity(settings, { ...environment, atmosphereBehind: 'band' }, theme.dark) : 0;
     // The pane crops the planet: it is clipped to the page column, wherever that sits inside the frame.
     return <View testID="surface-planet" pointerEvents="none"
         style={{ position: 'absolute', left: props.origin.x, top: props.origin.y, width: geometry.rect.width, height: geometry.rect.height, borderRadius: props.radius, overflow: 'hidden' }}>
+        <View style={{ position: 'absolute', ...offset, width: composed.width, height: composed.height }}>
         <HomePlanet
-            pane={{ width: geometry.rect.width, height: geometry.rect.height }} placement={project ? 'corner' : atmosphere.planet.placement}
+            pane={composed} placement={project ? 'corner' : atmosphere.planet.placement}
             style={atmosphere.planet.style} digits={atmosphere.planet.digits} theme={theme.dark ? 'dark' : 'light'} phone={phone}
             hero={!project && geometry.band > 0 ? { composerTop: 2 * geometry.focus.y - geometry.band, aboveBottom: geometry.band, nextTop: null } : null}
             hidden={sending} onHidden={sending ? atmosphereStageStore.finishSendDissolve : undefined} leave={sending ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion} />
+        </View>
+        {coat > 0 ? <View testID="surface-planet-coat" pointerEvents="none" style={{ position: 'absolute', top: geometry.band, left: 0, right: 0, bottom: 0,
+            backgroundColor: Color(theme.colors.surface.base).alpha(coat).rgb().string() }} /> : null}
     </View>;
 }
