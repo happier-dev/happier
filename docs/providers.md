@@ -1230,7 +1230,11 @@ The same declaration-derived rule covers API keys, request-auth accounts and
 Vertex service accounts. Resolved helper and Session model selections remain usable when
 inherited. A missing native model could select another provider's saved default,
 so preparation returns the typed `model_selection_required` startup reason
-instead. Selected-account and Provider-bound Session inventories remain
+instead. The existing nested failure cause distinguishes
+`opencode_connected_account_model_required` during account qualification from
+`native_model_not_selectable` when the native catalog rejects an explicit model;
+both retain the `model_selection_required` startup reason and carry no credential
+or model value. Selected-account and Provider-bound Session inventories remain
 `account_unverified`; the shared catalog owner withholds their choices while
 preserving the active model and explicit model controls. For preflight model
 listing, a withheld ChatGPT route does not mark usable models from other native

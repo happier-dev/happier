@@ -217,12 +217,14 @@ function refineProviderFailureSource(
 function readNativeConstructionFailure(error: unknown): Readonly<{
   code: 'provider_endpoint_auth_required' | 'agent_startup_model_reconciliation_failed';
   failureReason: 'authentication_required' | 'auth_expired' | 'model_selection_required';
+  failureCauseCode?: 'native_model_not_selectable';
 }> | null {
   const text = extractErrorText(error).toLowerCase();
   const code = inspectOwnErrorCodeDataProperty(error);
-  if ((code.kind === 'string' && code.value === 'model_selection_required')
-    || /\bmodel\b[^\n]*(?:\bnot selectable\b|\bunavailable in the native catalog\b)/u.test(text)) {
-    return { code: 'agent_startup_model_reconciliation_failed', failureReason: 'model_selection_required' };
+  const nativeModelUnavailable = /\bmodel\b[^\n]*(?:\bnot selectable\b|\bunavailable in the native catalog\b)/u.test(text);
+  if ((code.kind === 'string' && code.value === 'model_selection_required') || nativeModelUnavailable) {
+    return { code: 'agent_startup_model_reconciliation_failed', failureReason: 'model_selection_required',
+      ...(nativeModelUnavailable ? { failureCauseCode: 'native_model_not_selectable' as const } : {}) };
   }
   const expiry = /\baccess token\b[^\n]*\bknown,?\s+current expiry\b/u.test(text);
   if (expiry || classifyProviderOutputFailure(text).authenticationError) {
@@ -724,6 +726,7 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
     ...(nativeConstructionFailure ? { failureCause: { phase: 'client_start' as const,
+      ...(nativeConstructionFailure.failureCauseCode ? { code: nativeConstructionFailure.failureCauseCode } : {}),
       failureReason: nativeConstructionFailure.failureReason,
       ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) } }
       : failureCause.success ? { failureCause: {

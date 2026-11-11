@@ -23,7 +23,9 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
       ? { code, severity: 'error', message, details: { requestErrorCode: -32000 } }
       : code ? new PluginError({ code, message }) : new Error(message);
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error, occurredAt: 100 });
-    expect(issue).toMatchObject({ code: expectedCode, failureCause: { phase: 'client_start', failureReason } });
+    expect(issue).toMatchObject({ code: expectedCode, failureCause: { phase: 'client_start', failureReason,
+      ...(message.startsWith('OpenCode model') ? { code: 'native_model_not_selectable' } : {}),
+    } });
     expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100,
       error: { code: issue.code, severity: 'error', details: { v: 1, source: issue.source, failureCause: issue.failureCause } } }))
