@@ -29,3 +29,21 @@ it.each([{ attach: false, create: false, existingCheckout: false }, { attach: tr
     }
   },
 );
+
+it.each(['open', 'merged'] as const)('reconstructs a cold %s pull-request preview without opening another PR', async state => {
+  const fixture = await createDeploymentMoveFixture({ attach: false, create: false });
+  try {
+    const { mergedCommit, mergedDocument } = await fixture.seedMergedPullRequest({ edited: true, state });
+    const result = await fixture.executeMove({ ...fixture.input, baseCommit: mergedCommit,
+      pullRequestReference: { url: 'https://github.com/owner/app/pull/4' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: state === 'open'
+      ? { kind: 'pullRequestStatus', pullRequest: { number: 4, state: 'open' } }
+      : { kind: 'reviewMerged', review: { currentDefinition: fixture.input.definition,
+        currentDocument: fixture.initial.document, mergedCommit, mergedDocument,
+        mergedPublicFiles: [{ path: 'runtime.env', content: 'PUBLIC_VALUE=two\n' }] } } });
+    expect(fixture.detail.content.definition).toEqual(fixture.initial);
+    expect(fixture.forge.httpRequests.filter(request => request.method === 'POST')).toEqual([]);
+  } finally {
+    await fixture.cleanup();
+  }
+});

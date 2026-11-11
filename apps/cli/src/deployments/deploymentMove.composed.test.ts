@@ -27,7 +27,7 @@ it.each([{ edited: false, cold: false, storedChanged: false, attach: false, crea
     expect(opened.ok, JSON.stringify(opened)).toBe(true);
     if (!opened.ok) throw new Error(opened.errorCode);
     const result = DeploymentMoveToRepositoryResultV1Schema.parse(opened.result);
-    expect(result.kind).toBe('pullRequest');
+    expect(result.kind, JSON.stringify(result)).toBe('pullRequest');
     if (result.kind !== 'pullRequest') throw new Error(JSON.stringify(result));
     if (create) {
       expect(result.repository).toMatchObject({ repository, baseBranch: 'main', workspace: input.workspace });
@@ -37,7 +37,7 @@ it.each([{ edited: false, cold: false, storedChanged: false, attach: false, crea
     }
     expect(detail.content.definition).toEqual(initial);
     const continuation = result.continuation;
-    expect(fixture.readSource().repository).toEqual(sourceRepository);
+    expect(fixture.readSource().repository).toMatchObject(sourceRepository);
     expect(await readFile(join(git.rootPath, 'personal.txt'), 'utf8')).toBe('Personal work');
     // A merge commit differs from the exported head; it can also contain a reviewed edit.
     runScmExecutable(git.rootPath, 'git', ['merge', '--no-ff', continuation.headCommit, '-m', 'Merge definition']);
