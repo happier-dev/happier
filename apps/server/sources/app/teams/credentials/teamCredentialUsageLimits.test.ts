@@ -8,11 +8,34 @@ const limit = (overrides: Partial<TeamCredentialUsageLimitRow> = {}): TeamCreden
 });
 const event = (overrides: Partial<TeamCredentialUsageLimitEvent> = {}): TeamCredentialUsageLimitEvent => ({
     id: crypto.randomUUID(), observedAt: now, resourceId: 'resource-1', actorAccountId: 'member-1', requestCount: 1,
+    tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: 0 },
     totalTokens: 0, effectiveCostUsd: null, costMeasurementExpected: true, deliveryMode: 'brokered',
     groupAdmissions: [], turnStartedAtMs: null, ...overrides,
 });
 
 describe('Team credential usage limits', () => {
+    it('counts known token parts when the reported total is unknown', () => {
+        const result = evaluateTeamCredentialUsageLimits({
+            limits: [limit({ metric: 'total_tokens', maximum: '120' })],
+            events: [event({ totalTokens: null, tokens: { input: 100, output: 50, reasoning: null, cacheRead: null, cacheWrite: null, total: null } })],
+            actorAccountId: 'member-1',
+            now,
+        });
+
+        expect(result).toMatchObject({ ok: false, denied: { recorded: 150, maximum: 120 } });
+    });
+
+    it('keeps a fully unmeasured token event out of the recorded total', () => {
+        const result = evaluateTeamCredentialUsageLimits({
+            limits: [limit({ metric: 'total_tokens', maximum: '120' })],
+            events: [event({ totalTokens: null, tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null } })],
+            actorAccountId: 'member-1',
+            now,
+        });
+
+        expect(result).toMatchObject({ ok: true, applied: [{ recorded: 0, maximum: 120 }] });
+    });
+
     it('uses Monday-start UTC windows and denies at the recorded ceiling', () => {
         const result = evaluateTeamCredentialUsageLimits({ limits: [limit()], events: [event(), event({ id: 'event-2' })], actorAccountId: 'member-1', now });
         expect(result).toMatchObject({

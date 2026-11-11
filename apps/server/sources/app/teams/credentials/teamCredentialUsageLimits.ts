@@ -7,6 +7,8 @@ import {
     type TeamCredentialUsageLimitSubjectKindV1,
 } from '@happier-dev/protocol/teams';
 import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
+import { sumKnownUsageTokenParts } from '@happier-dev/protocol/usage/usageAggregation';
+import type { UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveScopedUsageContributions } from '@/app/usage/query/resolveScopedUsageContributions';
 import { toScopedUsageEventRow } from '@/app/usage/query/scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from '@/app/usage/query/resolveUsageCostMode';
@@ -43,6 +45,7 @@ export type TeamCredentialUsageLimitEvent = Readonly<{
     actorAccountId: string | null;
     requestCount: number;
     totalTokens: number | null;
+    tokens: UsageObservationTokens;
     effectiveCostUsd: number | null;
     costMeasurementExpected: boolean;
     deliveryMode: string | null;
@@ -100,7 +103,7 @@ function isEventInLimitScope(
 
 function readMetric(event: TeamCredentialUsageLimitEvent, metric: TeamCredentialUsageLimitMetricV1): number | null {
     if (metric === 'inference_requests') return event.requestCount;
-    if (metric === 'total_tokens') return event.totalTokens;
+    if (metric === 'total_tokens') return event.totalTokens ?? sumKnownUsageTokenParts(event.tokens);
     return event.effectiveCostUsd;
 }
 
@@ -381,6 +384,7 @@ async function evaluateResourcesFromDatabaseInTx(
             actorAccountId: row.teamCredentialActorAccountId ?? null,
             requestCount: row.requestCount ?? 0,
             totalTokens: row.tokens.total,
+            tokens: row.tokens,
             effectiveCostUsd: row.cost.costSource === 'none' ? null : resolveEffectiveUsageCostUsd(row.cost, 'auto'),
             costMeasurementExpected: row.source !== 'team_credential_admission',
             deliveryMode: row.credentialDeliveryMode ?? null,

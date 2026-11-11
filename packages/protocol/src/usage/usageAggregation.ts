@@ -15,6 +15,12 @@ export function addUsageMeasurements(left: number | null, right: number | null):
     return left === null ? right : right === null ? left : left + right;
 }
 
+/** Returns the measured lower bound when a provider omits its aggregate total. */
+export function sumKnownUsageTokenParts(tokens: UsageObservationTokens): number | null {
+    return [tokens.input, tokens.output, tokens.reasoning, tokens.cacheRead, tokens.cacheWrite]
+        .reduce<number | null>((sum, value) => addUsageMeasurements(sum, value), null);
+}
+
 /** Descending presentation order retains unknown values after every measured value. */
 export function compareUsageMeasurementsDescending(left: number | null, right: number | null): number {
     return left === null ? right === null ? 0 : 1 : right === null ? -1 : right - left;

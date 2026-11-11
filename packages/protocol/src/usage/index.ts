@@ -2,6 +2,7 @@ export { resolveUsageBucketBounds, resolveUsageCalendarInstant, resolveUsageCale
 export { UsageCalendarExportInputSchema, projectUsageScheduledEvents, buildUsageCalendarFileResult,
   type UsageCalendarExportInput, type UsageScheduledEvent } from './usageCalendarExport.js';
 export { resolveUsageTokenCategories } from './usageTokenCategories.js';
+export { sumKnownUsageTokenParts } from './usageAggregation.js';
 export { normalizeLegacyUsageTokens } from './legacyUsageTokens.js';
 export { allocateUsageOutcomes, UsageWorkProjectionSchema, type UsageWorkContribution, type UsageWorkEvidence,
   type UsageWorkOutcome, type UsageWorkAllocation, type UsageWorkBranch, type UsageWorkBranchAllocation, type UsageWorkProjection } from './usageOutcomeAllocation.js';
