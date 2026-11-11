@@ -99,7 +99,7 @@ function collectDeploymentOperands(value: unknown, visit: (kind: ReturnType<type
  */
 export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
-    acceptedEnvironmentId?: string, readActionId?: string, setupReceiverMachineId?: string, operands?: unknown, preparationDeployRead = false,
+    acceptedEnvironmentId?: string, readActionId?: string, setupReceiverMachineId?: string, operands?: unknown, preparationEffectRead = false,
 ): Promise<Readonly<{ environmentIds: ReadonlySet<string>; sourceIds: ReadonlySet<string>;
     artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string>; deploymentIds?: ReadonlySet<string>; receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
     const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
@@ -117,7 +117,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     const nativeAdmission = binding.deploymentNativeAdmission;
     const defaults = binding.actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission) && nativeAdmission.defaultsFor !== undefined;
-    const resolvedEnvironmentId = preparationDeployRead ? await readTemplateDeploymentEnvironmentIdInTx(tx, binding) : binding.environmentId ?? (preparation?.operation === 'create'
+    const resolvedEnvironmentId = preparationEffectRead ? await readTemplateDeploymentEnvironmentIdInTx(tx, binding) : binding.environmentId ?? (preparation?.operation === 'create'
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation)
         : preparation?.operation === 'template' ? await readTemplateEnvironmentId(tx, binding, preparation) : null);
     if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
@@ -133,7 +133,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     const backup = native && 'kind' in native && (native.kind === 'backup' || native.kind === 'restore') ? native : undefined;
     // Environment identity is already signed; expand owned rows only when the read needs them.
     if (readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && !backup) {
-        if (preparation?.operation === 'template' || preparation?.operation === 'create' && preparationDeployRead) {
+        if (preparation?.operation === 'template' || preparation?.operation === 'create' && preparationEffectRead) {
             seeds.environment.clear();
             if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
         }
@@ -165,7 +165,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         });
     }
     const receiptRead = readActionId === 'deployments.receipts.get' || readActionId === 'deployments.receipts.list';
-    if (preparation?.operation === 'create' && (receiptRead || preparationDeployRead)) {
+    if (preparation?.operation === 'create' && (receiptRead || preparationEffectRead)) {
         const environmentId = await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation);
         environments = environments.filter(environment => environment.id === environmentId);
     }
@@ -269,7 +269,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
  */
 export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
     binding: Parameters<typeof readAdmittedDeploymentScopeInTx>[1], operands: unknown, acceptedEnvironmentId?: string,
-    operandKind?: AdmittedDeploymentOperandKind, readActionId?: string, setupReceiverMachineId?: string, preparationDeployRead = false,
+    operandKind?: AdmittedDeploymentOperandKind, readActionId?: string, setupReceiverMachineId?: string, preparationEffectRead = false,
 ): Promise<boolean | null> {
     if (readActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
         const parsed = DeploymentEnvironmentListInputV1Schema.safeParse(operands);
@@ -309,7 +309,7 @@ export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
         && 'serverId' in operands && operands.serverId !== binding.serverIdentityId) return false;
     if (operands && typeof operands === 'object' && 'projection' in operands && operands.projection === 'approvalScope'
         && 'environmentId' in operands && operands.environmentId !== binding.environmentId) return false;
-    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, acceptedEnvironmentId, readActionId, setupReceiverMachineId, operands, preparationDeployRead);
+    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, acceptedEnvironmentId, readActionId, setupReceiverMachineId, operands, preparationEffectRead);
     if (!scope) return null;
     const owned = { deployment: [] as string[], targetLink: [] as string[], domain: [] as string[] };
     let constrained = false;
@@ -365,7 +365,7 @@ export function readDeploymentSourceReadOperands(serverIdentityId: string,
 export async function isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
-    approvalProjection = false, setupReceiverMachineId?: string,
+    approvalProjection = false, setupReceiverMachineId?: string, preparationEffectRead = false,
 ): Promise<boolean> {
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
     const url = new URL(proof.path, 'http://home.invalid');
@@ -381,7 +381,7 @@ export async function isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx: Tx,
     return parsed.success && parsed.data.serverId === binding.serverIdentityId
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, parsed.data))
         && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, parsed.data,
-            undefined, undefined, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, setupReceiverMachineId) === true;
+            undefined, undefined, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, setupReceiverMachineId, preparationEffectRead) === true;
 }
 
 // Template scope adds only pending captures to the existing public operand grammar.
@@ -1121,6 +1121,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)
         return admit(await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof));
     if (method === 'GET' && proof.body === undefined) {
+        if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, undefined, true)) return admit(true);
         if ((proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') && matches({})) return admit(true);
         if (!childEffect && admission.source && (proof.path === `/v1/projects/sources/${encodeURIComponent(admission.source.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
             || proof.path === `/v1/projects/${encodeURIComponent(admission.source.id)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`)
@@ -1490,8 +1491,10 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
                 === `/v1/projects/${encodeURIComponent(selected.source.id)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`
                 && routeMatches({ serverId: binding.serverIdentityId, id: selected.source.id }))) return true;
         }
-        if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) {
-            return isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, setupReceiverMachineId);
+        if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || effectActionId === binding.actionId
+            || effectActionId === 'deployments.templates.instantiate') {
+            if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, setupReceiverMachineId)) return true;
+            if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) return false;
         }
         if (effectActionId !== binding.actionId || isReadOnlyArtifactPurpose && !isReadOnlyArtifactPurpose(proof)) return false;
         const match = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
@@ -1580,6 +1583,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         const child = ['deployments.environments.create', 'deployments.environments.update', 'deployments.targets.link', 'deployments.bindings.set'].includes(effectActionId);
         if (effectActionId !== binding.actionId && !child) return false;
         if (method === 'GET' && proof.body === undefined) {
+            if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, undefined, true)) return true;
             if (await isDeploymentPreparationMachineReadHttpPurposeInTx(tx, binding, effectActionId, proof)) return true;
             if (effectActionId === binding.actionId && admission.source
                 && proof.path === `/v1/projects/${encodeURIComponent(admission.source.id)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`

@@ -780,7 +780,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     if (grantsChanged === null) return deploymentFailure('deployment_conflict');
     if (typeof grantsChanged === 'object') return grantsChanged;
     if (!contentOrPlacementChanged && !grantsChanged) {
-        const machineFailure = await admitDeploymentMachinesInTx(tx, principal, [...recipients.values()]);
+        const machineFailure = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [...recipients.values()]);
         if (machineFailure) return machineFailure;
     }
     const principalsChanged = placement?.deployerPrincipals !== undefined

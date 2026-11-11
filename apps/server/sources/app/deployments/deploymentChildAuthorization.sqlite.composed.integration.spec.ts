@@ -3120,6 +3120,21 @@ describe('deployment children retain their controller Action authority', () => {
             if (actionId === 'deployments.bindings.set') {
                 expect((await prepare({ ...preparation, buildMachineId: f.controller.id })).statusCode).toBe(401);
             }
+            for (const [environmentId, expectedStatus] of [[f.environment.id, 200], [foreign.environment.id, 401]] as const) {
+                const path = `/v1/deployments/environments/${environmentId}?serverId=${encodeURIComponent(serverId)}`;
+                const metadata = await app.inject({ method: 'GET', url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    ...(reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild) } : {}),
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId, target,
+                        installationId: f.controller.installationId, requestId: envelope.requestId,
+                        method: 'GET', path, body: undefined, ...(reviewedChild ? { reviewedChild } : {}),
+                        privateKey: f.controller.keys.secretKey }),
+                } });
+                expect(metadata.statusCode).toBe(expectedStatus);
+            }
             const prepared = await prepare(preparation);
             expect(prepared.statusCode, prepared.body).toBe(200);
             expect(prepared.json()).toMatchObject({ ok: true, bindingPreparation: {} });
