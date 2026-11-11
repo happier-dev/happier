@@ -138,18 +138,26 @@ const STRUCTURED_SEED_BUILDERS: readonly ((size: number) => string)[] = [
 const compiledPatterns = new Map<string, RegExp>();
 
 function admitsString(fragment: PluginJsonSchema, value: string): boolean {
-    const length = codePointsOf(value).length;
-    if (fragment.minLength !== undefined && length < fragment.minLength) return false;
-    if (fragment.maxLength !== undefined && length > fragment.maxLength) return false;
-    const maxUtf8Bytes = fragment['x-happier-max-utf8-bytes'];
-    if (maxUtf8Bytes !== undefined && utf8ByteLength(value) > maxUtf8Bytes) return false;
-    if (fragment.pattern === undefined) return true;
-    let pattern = compiledPatterns.get(fragment.pattern);
-    if (pattern === undefined) {
-        pattern = new RegExp(fragment.pattern, 'u');
-        compiledPatterns.set(fragment.pattern, pattern);
+    // Reject a forbidden fill character before traversing its full byte budget.
+    if (fragment.pattern !== undefined) {
+        let pattern = compiledPatterns.get(fragment.pattern);
+        if (pattern === undefined) {
+            pattern = new RegExp(fragment.pattern, 'u');
+            compiledPatterns.set(fragment.pattern, pattern);
+        }
+        if (!pattern.test(value)) return false;
     }
-    return pattern.test(value);
+    if (fragment.maxLength !== undefined || (fragment.minLength ?? 0) > 1) {
+        const length = codePointsOf(value).length;
+        if (fragment.minLength !== undefined && length < fragment.minLength) return false;
+        if (fragment.maxLength !== undefined && length > fragment.maxLength) return false;
+    } else if (fragment.minLength === 1 && value.length === 0) {
+        // Non-empty UTF-16 is also non-empty in code points. Byte-bounded
+        // frontiers have no other code-point constraint to measure.
+        return false;
+    }
+    const maxUtf8Bytes = fragment['x-happier-max-utf8-bytes'];
+    return maxUtf8Bytes === undefined || utf8ByteLength(value) <= maxUtf8Bytes;
 }
 
 /** Replaces one character with a costlier admitted one, keeping it only if valid. */
@@ -169,7 +177,9 @@ function raiseCharacter(
 }
 
 function cheapestCharacterCost(characters: readonly string[]): number {
-    return characters.reduce(
+    // A repeated fill has one encoded character cost, regardless of its byte
+    // budget. Measure each distinct character rather than encoding every copy.
+    return [...new Set(characters)].reduce(
         (cheapest, character) => Math.min(cheapest, jsonEscapedByteCost(character)),
         WORST_CASE_JSON_ESCAPE_BYTES,
     );
@@ -186,8 +196,9 @@ function cheapestCharacterCost(characters: readonly string[]): number {
  */
 function raiseFillCost(seed: string, admits: (value: string) => boolean): string {
     const characters = [...codePointsOf(seed)];
+    let cheapestCost = cheapestCharacterCost(characters);
     for (const candidate of ASCII_FILL_ALPHABET) {
-        if (jsonEscapedByteCost(candidate) <= cheapestCharacterCost(characters)) break;
+        if (jsonEscapedByteCost(candidate) <= cheapestCost) break;
         const probes = [0, 1, characters.length - 1].filter((index, position, all) => (
             index >= 0 && index < characters.length && all.indexOf(index) === position
         ));
@@ -198,6 +209,9 @@ function raiseFillCost(seed: string, admits: (value: string) => boolean): string
         for (let index = 0; index < characters.length; index += 1) {
             raiseCharacter(characters, index, candidate, admits);
         }
+        // Rejected candidates leave the fill unchanged. Only a successful
+        // sweep can change its cheapest character.
+        cheapestCost = cheapestCharacterCost(characters);
     }
     return characters.join('');
 }
@@ -329,9 +343,13 @@ function buildMaximalArray(fragment: PluginJsonSchema, path: string, stringFills
         const candidate = buildMaximalValue(arm, `${path}[|${index}]`, stringFills);
         distinct.set(JSON.stringify(candidate), candidate);
     }
+    // The maximum is the longest N distinct encodings plus array framing;
+    // neither permutations nor repeated comparator encodings affect that sum.
     const ranked = [...distinct.values()]
-        .sort((left, right) => encodedJsonBytes(right) - encodedJsonBytes(left))
-        .slice(0, maxItems);
+        .map((value) => ({ value, bytes: encodedJsonBytes(value) }))
+        .sort((left, right) => right.bytes - left.bytes)
+        .slice(0, maxItems)
+        .map(({ value }) => value);
     if (ranked.length < (fragment.minItems ?? 0)) {
         throw new Error(`${path}: fewer distinct items than the schema requires`);
     }
