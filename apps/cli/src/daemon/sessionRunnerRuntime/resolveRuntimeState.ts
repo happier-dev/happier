@@ -1,5 +1,6 @@
 import type { TrackedSession } from '@/daemon/types';
 import type { RpcHandlerActiveExecution } from '@/api/rpc/types';
+import { SESSION_RUNTIME_REFRESH_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { SessionRunnerDaemonEntrypointSourceV1 } from '@happier-dev/protocol';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 
@@ -29,10 +30,12 @@ export type SessionRunnerActivityRefusal = Readonly<{
 export function resolveTrackedSessionRunnerActivity(
   tracked: TrackedSession | null | undefined,
   activeRpcOperations: readonly RpcHandlerActiveExecution[] = [],
+  observingActionId: string = SESSION_RUNTIME_REFRESH_ACTION_ID_V1,
 ): SessionRunnerActivityRefusal | null {
-  const effect = activeRpcOperations.find(operation => operation.sessionEffect?.sessionId === tracked?.happySessionId
-    // Refresh is the observing operation itself, rather than work it must join.
-    && operation.sessionEffect?.actionId !== 'session.runtime.refresh');
+  const effect = activeRpcOperations.find(operation => operation.sessionEffect && operation.sessionEffect.sessionId === tracked?.happySessionId
+    // Restart-owning Actions stay in flight until replacement completes. Counting
+    // them as runtime work makes a deferred switch refuse itself at the boundary.
+    && operation.sessionEffect.actionId !== observingActionId);
   if (effect?.sessionEffect) return { reasonCode: 'turn_in_progress', diagnostics: {
     busySource: 'session_action', actionId: effect.sessionEffect.actionId,
   } };

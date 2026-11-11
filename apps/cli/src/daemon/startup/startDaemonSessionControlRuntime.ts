@@ -1,6 +1,7 @@
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
 import { resolveProviderAccountUsageAuthoritativeSource } from '../connectedServices/accountUsage/runtimeSource';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveLocalServiceActionCredentials } from '@/daemon/local/services/credentialAdmission';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
 import { resolveGroupRequiredModelIds } from '../connectedServices/runtimeRegistry/resolveGroupRequiredModelIds';
@@ -5398,6 +5399,7 @@ export async function startDaemonSessionControlRuntime(
   const resolveSessionRunnerActivity = (
     sessionId: string,
     childRuns?: readonly Parameters<typeof isExecutionRunActive>[0][],
+    observingActionId?: string,
   ) => {
     const busy = (busySource: string, details: Record<string, unknown> = {}) => ({
       reasonCode: 'turn_in_progress' as const, diagnostics: { busySource, ...details },
@@ -5411,7 +5413,7 @@ export async function startDaemonSessionControlRuntime(
       sessionId,
     );
     const trackedActivity = resolveTrackedSessionRunnerActivity(tracked,
-      params.getApiMachineForSessions()?.getActiveRpcHandlerExecutions() ?? []);
+      params.getApiMachineForSessions()?.getActiveRpcHandlerExecutions() ?? [], observingActionId);
     if (trackedActivity) return trackedActivity;
     return connectedServiceTurnDeferralQueue.isTurnInFlight(sessionId)
       ? busy('foreground_turn_queue')
@@ -5420,10 +5422,12 @@ export async function startDaemonSessionControlRuntime(
   const resolveSessionRunnerActivityDisabledReason = (
     sessionId: string,
     childRuns?: readonly Parameters<typeof isExecutionRunActive>[0][],
-  ): SessionRunnerRestartDisabledReason | null => resolveSessionRunnerActivity(sessionId, childRuns)?.reasonCode ?? null;
+    observingActionId?: string,
+  ): SessionRunnerRestartDisabledReason | null => resolveSessionRunnerActivity(sessionId, childRuns, observingActionId)?.reasonCode ?? null;
   const waitForSessionRunnerChildTurns = async (
     sessionId: string,
     signal: AbortSignal,
+    observingActionId?: string,
   ): Promise<PlannedRunnerRestartSignalGateResult> => {
     const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
     if (!tracked) return 'activity_observation_unavailable';
@@ -5452,10 +5456,10 @@ export async function startDaemonSessionControlRuntime(
                 : await callSessionRpc({ ...request, mode: 'e2ee', ctx: transport.ctx });
               const { runs } = ExecutionRunListResponseSchema.parse(raw);
               await assertSessionAccountCurrent(sessionId, accountContext);
-              const reason = resolveSessionRunnerActivityDisabledReason(sessionId, runs);
+              const reason = resolveSessionRunnerActivityDisabledReason(sessionId, runs, observingActionId);
               if (!reason) return true;
               // Foreground activity retains its existing busy/retry semantics.
-              if (resolveSessionRunnerActivityDisabledReason(sessionId)) return reason;
+              if (resolveSessionRunnerActivityDisabledReason(sessionId, undefined, observingActionId)) return reason;
               if (await changed === 'aborted') return 'activity_observation_unavailable';
             } finally { observation.abort(); }
           }
@@ -5607,9 +5611,10 @@ export async function startDaemonSessionControlRuntime(
         captureRunnerRemainder: captureSessionRunnerRemainder,
         canSignal: async signal => {
           await assertSessionAccountCurrent(input.sessionId, accountContext);
-          return resolveSessionRunnerActivityDisabledReason(input.sessionId)
+          const observingActionId = input.source === 'manual' ? SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 : undefined;
+          return resolveSessionRunnerActivityDisabledReason(input.sessionId, undefined, observingActionId)
             ?? await waitForSessionRunnerChildTurns(input.sessionId,
-              AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]));
+              AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), observingActionId);
         },
         requestSignal: async (signalInput) => {
           // This raw SIGTERM is the gated restart primitive's signal. It

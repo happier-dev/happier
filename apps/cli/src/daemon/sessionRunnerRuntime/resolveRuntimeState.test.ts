@@ -39,6 +39,21 @@ describe('resolveSessionRunnerRuntimeState', () => {
       .toMatchObject({ reasonCode: 'turn_in_progress', diagnostics: { busySource: 'foreground_turn' } });
   });
 
+  it('does not make a connected-account switch hold its own restart while retaining other work', () => {
+    const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: 'session' };
+    const switchOperation = { method: 'approved-switch', activeForMs: 1,
+      sessionEffect: { sessionId: 'session', actionId: 'session.connected_services_auth.set' } };
+    expect(resolveTrackedSessionRunnerActivity(tracked, [switchOperation]))
+      .toMatchObject({ reasonCode: 'turn_in_progress', diagnostics: { busySource: 'session_action' } });
+    expect(resolveTrackedSessionRunnerActivity(tracked, [switchOperation], 'session.connected_services_auth.set')).toBeNull();
+    expect(resolveTrackedSessionRunnerActivity({ ...tracked, activeTurnId: 'turn' }, [switchOperation], 'session.connected_services_auth.set'))
+      .toMatchObject({ reasonCode: 'turn_in_progress', diagnostics: { busySource: 'foreground_turn' } });
+    expect(resolveTrackedSessionRunnerActivity(tracked, [switchOperation, {
+      method: 'session.compact', activeForMs: 1,
+      sessionEffect: { sessionId: 'session', actionId: 'session.compact' },
+    }], 'session.connected_services_auth.set')).toMatchObject({ reasonCode: 'turn_in_progress', diagnostics: { busySource: 'session_action', actionId: 'session.compact' } });
+  });
+
   it('keeps unattested freshness unknown while preflight and explicit refresh agree on eligibility', async () => {
     const input = {
       sessionId: 'sess-1',
