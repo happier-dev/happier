@@ -37,6 +37,7 @@ use self::storage::{
 };
 use self::window_lifecycle::{
     ensure_pet_overlay_window, park_pet_overlay_window_offscreen,
+    show_pet_overlay_window_if_hidden,
     resolve_pet_overlay_available_monitor_rects, resolve_pet_overlay_ignore_cursor_events,
     resolve_pet_overlay_monitor_rect_with_id, set_pet_overlay_window_frame,
 };
@@ -1242,7 +1243,7 @@ fn apply_desktop_pet_overlay_payload<R: Runtime>(
     let _ = window.set_ignore_cursor_events(resolve_pet_overlay_ignore_cursor_events(
         payload.policy.input_locked,
     ));
-    window.show().map_err(|error| error.to_string())?;
+    show_pet_overlay_window_if_hidden(&window)?;
 
     Ok(AppliedDesktopPetOverlayPayload {
         drag_offset: normalized_drag_offset,
