@@ -24,6 +24,8 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalAct
 import { createCliActionDeps } from '../createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { handlePluginsCommand } from '@/cli/commands/plugins';
+import { createDaemonPluginDevelopmentReviewApprovalPublisher } from '@/plugins/daemon/developmentReviewApproval';
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { configuration } from '@/configuration';
@@ -137,23 +139,38 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
-  it('installs a non-dev archive from a saved Home through daemon review and one approval without a Machine flag', async () => {
+  it.each(['archive', 'cold-dev'] as const)('installs %s from a saved Home through daemon review and one approval without a Machine flag', async (entry) => {
+    accountMode = entry === 'cold-dev' ? 'e2ee' : 'plain';
     const root = await mkdtemp(join(tmpdir(), 'happier-saved-home-install-'));
     const happyHomeDir = join(root, 'home');
-    const source = join(root, 'plugin.tgz');
+    const source = join(root, entry === 'archive' ? 'plugin.tgz' : 'plugin.mjs');
+    const publicationErrors: unknown[] = [];
+    let publications = 0;
     const pluginId = 'acme.saved-home-review';
     await mkdir(happyHomeDir, { recursive: true });
-    await writeFile(source, await createTestNpmTarball([
+    if (entry === 'archive') await writeFile(source, await createTestNpmTarball([
       { name: 'package/package.json', body: JSON.stringify({ name: '@acme/saved-home-review', version: '1.0.0',
         keywords: ['happier-plugin'], files: ['.happier-plugin'], happier: { manifest: '.happier-plugin/plugin.json' } }) },
       { name: 'package/.happier-plugin/plugin.json', body: JSON.stringify(createPluginManifestV2Fixture({
         id: pluginId, version: '1.0.0', entrypoints: undefined, engines: undefined,
       })) },
     ]));
+    if (entry === 'cold-dev') {
+      const manifest = createPluginManifestV2Fixture({ id: pluginId, version: '1.0.0', engines: undefined,
+        entrypoints: undefined,
+        hostAccess: { required: [{ id: 'ledger-api', capability: 'connectedAccounts', reason: 'Read reviewed ledger',
+          scope: { serviceRefs: ['ledger-account'], operations: ['use'] } }], optional: [] },
+        contributes: { connectedAccountDescriptors: [{ id: 'ledger-account', title: 'Ledger fixture', authentication: {
+          defaultModeId: 'fixture', modes: [{ id: 'fixture', kind: 'manual', title: 'Fixture', outcomeReconciliation: 'none',
+            fields: [{ id: 'key', title: 'Fixture key', schema: { type: 'string' }, secret: true }] }],
+        } }] },
+      });
+      await writeFile(source, `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`);
+    }
     const storedCredentials: StoredCredentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1',
       tokenEpoch: 0, provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`,
-      encryption: null, credentialProvenance: 'stored_session' };
-    const store = createCliApprovalsArtifactStore({ credentials: storedCredentials, getAccountEncryptionMode: async () => 'plain' });
+      encryption: credentials().encryption, credentialProvenance: 'stored_session' };
+    const store = createCliApprovalsArtifactStore({ credentials: storedCredentials, getAccountEncryptionMode: async () => accountMode });
     const reloadController = createPluginReloadController({ happyHomeDir });
     const origin = { machineId: 'machine-1', serverIdentityId: 'srv_saved_home' };
     const previousConfiguration = { happyHomeDir: configuration.happyHomeDir,
@@ -173,9 +190,19 @@ describe('plugin install approval Artifact rejoin', () => {
       homeConnectionDescriptor: canonical.homeConnectionDescriptor })));
     const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, reloadController, staleCandidateCleanup: 'disabled',
       approvalStore: store, connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+      readDaemonRights: () => ({ freshness: 'current', observation: { version: 1, observedAt: 1, daemonUid: 1000,
+        daemonUsername: 'happier', daemonIdentity: 'nonRoot', rootEquivalentGroups: [], groupMembership: { state: 'current' },
+        passwordlessSudoToRoot: 'denied', managedDropIn: 'absent', tailscaledOperator: { authorization: 'denied' } } }),
       managedResourcePreflight: { credentials: storedCredentials, serverUrl: 'http://plugin-approval.invalid',
         homeId: origin.serverIdentityId, controller: { machineId: origin.machineId, installationId: installation.installationId } },
-      resolveCurrentMachineExecutionOriginContext: async () => origin });
+      resolveCurrentMachineExecutionOriginContext: async () => origin,
+      ...(entry === 'cold-dev' ? { publishDevelopmentReview: async (input: Parameters<ReturnType<typeof createDaemonPluginDevelopmentReviewApprovalPublisher>>[0]) => {
+        try {
+          await createDaemonPluginDevelopmentReviewApprovalPublisher({ credentials: storedCredentials, happyHomeDir, serverId: 'home-1',
+            resolveCurrentMachineExecutionOriginContext: async () => origin })(input);
+          publications += 1;
+        } catch (error) { publicationErrors.push(error); throw error; }
+      } } : {}) });
     const isApprovalExecutionOriginCurrent = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-1',
       ...origin, serverId: 'home-1', resolveCurrentMachineExecutionOriginContext: async () => origin,
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials: storedCredentials }),
@@ -186,7 +213,7 @@ describe('plugin install approval Artifact rejoin', () => {
       isApprovalExecutionOriginCurrent });
     const daemonExecutor = createCliActionExecutorFromCredentials({ credentials: storedCredentials,
       serverId: 'home-1', serverApiUrl: 'http://plugin-approval.invalid', serverIdentityId: origin.serverIdentityId,
-      machineId: origin.machineId, happyHomeDir, pluginChangeService: owner.changeService,
+      happyHomeDir, pluginChangeService: owner.changeService,
       isApprovalExecutionOriginCurrent,
       pluginActionExecutionOwner: 'current_process' });
     // OS publication and local HTTP are the process boundaries. Keep CLI routing,
@@ -209,6 +236,7 @@ describe('plugin install approval Artifact rejoin', () => {
     const accountGet = http.get.getMockImplementation()!;
     const accountPost = http.post.getMockImplementation()!;
     http.get.mockImplementation(async (url: string, ...args: unknown[]) => {
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
       if (url.endsWith(`/v1/machines/${origin.machineId}`)) return { status: 200, data: {
         machine: { ...ExternalActionMachineBootstrapV1Schema.parse({ id: origin.machineId,
           managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
@@ -256,6 +284,22 @@ describe('plugin install approval Artifact rejoin', () => {
     try {
       const output = captureConsoleJsonOutput<unknown>();
       try {
+        if (entry === 'cold-dev') {
+          await handlePluginsCommand(['dev', source, '--json'], {
+            actionExecutionDeps: { readCredentialsFn: async () => storedCredentials,
+              readCredentialsForServerIdFn: async () => storedCredentials, getServerProfileFn: getServerProfile,
+              createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params, actionsSettingsProvider: createActionSettingsProvider() }) },
+          });
+          const result = output.json();
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, kind: 'plugins_install' });
+          expect(publicationErrors).toEqual([]);
+          expect(publications).toBeGreaterThan(0);
+          expect(rows.size).toBe(1);
+          expect(await store.approvalsGet({ artifactId: [...rows.keys()][0]!, serverId: 'home-1' })).toMatchObject({
+            executionOriginV1: { ...origin, accountId: 'account-1' },
+          });
+          return;
+        }
         await handleActionsCommand(['invoke', 'plugins.install', '--server-id', 'home-1', '--kind', 'archive',
           '--path', source, '--yes', '--json'], {
           readCredentialsFn: async () => storedCredentials,
