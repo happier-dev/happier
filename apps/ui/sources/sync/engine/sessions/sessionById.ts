@@ -235,7 +235,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
         sessionId,
       });
       if (!fallbackRow) {
-        return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
+        // Ordinary compatibility lists can omit archived/shared rows. A missing
+        // detail route plus a list miss cannot prove authoritative Session absence.
+        return { ok: false, session: null, errorCode: 'http_error', httpStatus: 404 };
       }
       body = { session: fallbackRow };
     } else {

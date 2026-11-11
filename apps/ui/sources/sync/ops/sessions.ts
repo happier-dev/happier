@@ -54,7 +54,7 @@ import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
 import type { Metadata } from '../domains/state/storageTypes';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { sync } from '@/sync/sync';
 import { supportsSessionForkRequestId } from '@/utils/system/versionUtils';
 import { throwIfSessionArchiveAborted, withSessionArchiveDeadline, type SessionArchiveRequestOptions } from './sessionArchiveLifecycle';
 import { AsyncTimeoutError } from '@/utils/timing/time';
@@ -979,10 +979,10 @@ export async function sessionDeleteWithServerScope(
             signal: opts?.signal,
         });
         if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
-        if (response.ok) {
+        if (response.ok || response.status === 404) {
             await response.json().catch(() => null);
             if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
-            storage.getState().deleteSession(sessionId, serverId);
+            sync.retireLocalSession(sessionId, serverId);
             return { success: true };
         }
         const error = await response.text().catch(() => '');
@@ -1021,7 +1021,6 @@ export async function sessionRename(
             return { success: false, message: 'invalid_parameters' };
         }
 
-        const sync = getSyncSingleton();
         const updatedAt = Date.now();
 
         await sync.patchSessionMetadataWithRetry(

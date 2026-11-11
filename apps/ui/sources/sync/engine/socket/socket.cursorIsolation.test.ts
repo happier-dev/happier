@@ -4,7 +4,7 @@ import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import * as persistence from '@/sync/domains/state/persistence';
 import { storage } from '@/sync/domains/state/storage';
-import { flushActivityUpdates, handleUpdateContainer } from './socket';
+import { flushActivityUpdates, handleUpdateContainer, retireSessionSocketState } from './socket';
 
 const initialStorageState = storage.getInitialState();
 
@@ -34,6 +34,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
             removeSessionEncryption: () => {},
         } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
         artifactDataKeys: new Map(),
+        retireSession: retireSessionSocketState,
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),

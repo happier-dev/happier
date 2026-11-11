@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
-import { handleUpdateContainer } from './socket';
+import { handleUpdateContainer, retireSessionSocketState } from './socket';
 
 function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
     return {
@@ -11,6 +11,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
             removeSessionEncryption: () => {},
         } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
         artifactDataKeys: new Map(),
+        retireSession: retireSessionSocketState,
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),

@@ -126,6 +126,39 @@ describe('delete eligibility at execution', () => {
         expect(storage.getState().sessions[session.id]).toBe(session);
     });
 
+    it.each([
+        { status: 404, body: { error: 'Session not found' }, absent: true },
+        { status: 503, body: { error: 'Unavailable' }, absent: false },
+        { status: 404, body: { error: 'Unknown route' }, absent: false },
+    ])('recovers failed stop only with definitive session absence ($status, $absent)', async ({ status, body, absent }) => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://missing-stop-delete.example' }).id;
+        setActiveServerId(serverId);
+        const session = createSessionFixture({ id: 'missing-session-delete', serverId, active: true, presence: 'online', metadata: null });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        const { sync } = await import('@/sync/sync');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        Object.assign(sync, { credentials: { token: 'header.eyJzdWIiOiJtZSJ9.signature' } });
+        sync.encryption = await Encryption.createWithoutKeyMaterial();
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        // HTTP and RPC are transport boundaries; crypto resolution, exact-read classification,
+        // stop strategy, action orchestration and local retirement all remain real.
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(new Error('Unable to resolve session encryption for scoped RPC'));
+        vi.spyOn(apiSocket, 'request').mockImplementation(async () => Response.json(body, { status }));
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json(body, { status }));
+        const result = executeSessionAction({
+            actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }),
+        });
+        if (absent) {
+            await expect(result).resolves.toBeUndefined();
+            expect(storage.getState().sessions[session.id]).toBeUndefined();
+        } else {
+            await expect(result).rejects.toBeInstanceOf(HappyError);
+            expect(storage.getState().sessions[session.id]).toBe(session);
+        }
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+    });
+
     it.each(['active', 'preserved-terminal'] as const)('rejects a stale target after the session becomes %s', async (state) => {
         const serverId = getActiveServerSnapshot().serverId;
         const session = createSessionFixture({ id: 'delete-after-confirmation', archivedAt: 123, presence: 0, serverId });

@@ -1081,6 +1081,20 @@ function dropDeferredTranscriptStreamSegments(sessionId: string): void {
     }
 }
 
+export function retireSessionSocketState(params: Parameters<typeof handleDeleteSessionSocketUpdate>[0]): void {
+    const { sessionId } = params;
+    socketSessionApplyCoalescer.dropSessionIds([sessionId]);
+    socketMessageApplyCoalescer.dropSessionIds([sessionId]);
+    durableMessageProjectionPatchCoalescer.dropSessionIds([sessionId]);
+    cacheOnlySessionUpdateProjectionPatchCoalescer.dropSessionIds([sessionId]);
+    activityRenderableProjectionPatchCoalescer.dropSessionIds([sessionId]);
+    cacheOnlySessionMetadataHydrationCoalescer.drop(sessionId);
+    sessionShellRefreshCoalescer.drop(sessionId);
+    cacheOnlySessionUpdateSeqBySession.delete(sessionId);
+    dropDeferredTranscriptStreamSegments(sessionId);
+    handleDeleteSessionSocketUpdate(params);
+}
+
 function scheduleDeferredTranscriptStreamSegmentFlush(
     sessionId: string,
     state: DeferredTranscriptStreamSegmentQueueState,
@@ -1137,6 +1151,7 @@ export async function handleSocketUpdate(params: {
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
     artifactDataKeys: ArtifactDataKeyCache;
+    retireSession: typeof retireSessionSocketState;
     applySessions: ApplySessions;
     fetchSessions: () => void;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
@@ -1173,6 +1188,7 @@ export async function handleSocketUpdate(params: {
         sourceServerId,
         shouldContinue = () => true,
         artifactDataKeys,
+        retireSession,
         applySessions,
         fetchSessions,
         hydrateSessionById,
@@ -1215,6 +1231,7 @@ export async function handleSocketUpdate(params: {
         sourceServerId,
         shouldContinue,
         artifactDataKeys,
+        retireSession,
         applySessions,
         fetchSessions,
         hydrateSessionById,
@@ -1284,6 +1301,7 @@ export async function handleUpdateContainer(params: {
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
     artifactDataKeys: ArtifactDataKeyCache;
+    retireSession: typeof retireSessionSocketState;
     applySessions: ApplySessions;
     fetchSessions: () => void;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
@@ -1320,6 +1338,7 @@ export async function handleUpdateContainer(params: {
         sourceServerId,
         shouldContinue = () => true,
         artifactDataKeys,
+        retireSession,
         applySessions,
         fetchSessions,
         hydrateSessionById,
@@ -1350,6 +1369,15 @@ export async function handleUpdateContainer(params: {
     } = params;
 
     if (!shouldContinue()) return;
+
+    const retireSessionById = (sessionId: string): void => retireSession({
+        sessionId,
+        deleteSession: (id) => storage.getState().deleteSession(id),
+        removeSessionEncryption: (id) => encryption.removeSessionEncryption(id),
+        removeProjectManagerSession: (id) => projectManager.removeSession(id),
+        clearScmStatusForSession: (id) => scmStatusSync.clearForSession(id),
+        log,
+    });
 
     const isPlainSessionBlockedByClientRequirement = (sessionId: string): boolean => {
         const state = storage.getState();
@@ -1536,22 +1564,7 @@ export async function handleUpdateContainer(params: {
     } else if (updateData.body.t === 'delete-session') {
         log.log('🗑️ Delete session update received');
         if (!shouldContinue()) return;
-        socketSessionApplyCoalescer.dropSessionIds([updateData.body.sid]);
-        socketMessageApplyCoalescer.dropSessionIds([updateData.body.sid]);
-        durableMessageProjectionPatchCoalescer.dropSessionIds([updateData.body.sid]);
-        cacheOnlySessionUpdateProjectionPatchCoalescer.dropSessionIds([updateData.body.sid]);
-        activityRenderableProjectionPatchCoalescer.dropSessionIds([updateData.body.sid]);
-        cacheOnlySessionMetadataHydrationCoalescer.drop(updateData.body.sid);
-        cacheOnlySessionUpdateSeqBySession.delete(updateData.body.sid);
-        dropDeferredTranscriptStreamSegments(updateData.body.sid);
-        handleDeleteSessionSocketUpdate({
-            sessionId: updateData.body.sid,
-            deleteSession: (sessionId) => storage.getState().deleteSession(sessionId),
-            removeSessionEncryption: (sessionId) => encryption.removeSessionEncryption(sessionId),
-            removeProjectManagerSession: (sessionId) => projectManager.removeSession(sessionId),
-            clearScmStatusForSession: (sessionId) => scmStatusSync.clearForSession(sessionId),
-            log,
-        });
+        retireSessionById(updateData.body.sid);
     } else if (updateData.body.t === 'pending-changed') {
         const sessionId = updateData.body.sid;
         const pendingPatch = buildPendingChangedSessionPatch(updateData.body);
@@ -2212,21 +2225,7 @@ export async function handleUpdateContainer(params: {
             invalidateSessions();
             return;
         }
-        socketSessionApplyCoalescer.dropSessionIds([sessionId]);
-        socketMessageApplyCoalescer.dropSessionIds([sessionId]);
-        durableMessageProjectionPatchCoalescer.dropSessionIds([sessionId]);
-        cacheOnlySessionUpdateProjectionPatchCoalescer.dropSessionIds([sessionId]);
-        activityRenderableProjectionPatchCoalescer.dropSessionIds([sessionId]);
-        cacheOnlySessionUpdateSeqBySession.delete(sessionId);
-        dropDeferredTranscriptStreamSegments(sessionId);
-        handleDeleteSessionSocketUpdate({
-            sessionId,
-            deleteSession: (targetSessionId) => storage.getState().deleteSession(targetSessionId),
-            removeSessionEncryption: (targetSessionId) => encryption.removeSessionEncryption(targetSessionId),
-            removeProjectManagerSession: (targetSessionId) => projectManager.removeSession(targetSessionId),
-            clearScmStatusForSession: (targetSessionId) => scmStatusSync.clearForSession(targetSessionId),
-            log,
-        });
+        retireSessionById(sessionId);
     } else if (
         updateData.body.t === 'public-share-created' ||
         updateData.body.t === 'public-share-updated' ||

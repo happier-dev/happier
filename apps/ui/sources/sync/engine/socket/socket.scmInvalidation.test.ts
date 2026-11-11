@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
-import { handleUpdateContainer } from './socket';
+import { handleUpdateContainer, retireSessionSocketState } from './socket';
 
 const invalidateScmSpy = vi.hoisted(() => vi.fn());
 const invalidateScmMutationSpy = vi.hoisted(() => vi.fn());
@@ -76,6 +76,7 @@ describe('socket scm invalidation', () => {
         removeSessionEncryption: () => {},
       } as any,
       artifactDataKeys: new Map(),
+      retireSession: retireSessionSocketState,
       applySessions: vi.fn(),
       fetchSessions: vi.fn(),
       applyMessages: vi.fn(),
@@ -133,6 +134,7 @@ describe('socket scm invalidation', () => {
         removeSessionEncryption: () => {},
       } as any,
       artifactDataKeys: new Map(),
+      retireSession: retireSessionSocketState,
       applySessions: vi.fn(),
       fetchSessions: vi.fn(),
       applyMessages: vi.fn(),

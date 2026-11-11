@@ -79,6 +79,7 @@ export function createSessionLeadingTrailingCoalescer<Payload, TriggerResult = v
 
 export type SessionShellRefreshCoalescer = Readonly<{
     request: (sessionId: string) => void;
+    drop: (sessionId: string) => void;
     reset: () => void;
 }>;
 
@@ -94,6 +95,7 @@ export function createSessionShellRefreshCoalescer(params: Readonly<{
         request: (sessionId) => {
             coalescer.request(sessionId, undefined);
         },
+        drop: coalescer.drop,
         reset: coalescer.reset,
     };
 }

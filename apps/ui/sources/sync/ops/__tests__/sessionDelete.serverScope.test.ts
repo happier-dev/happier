@@ -69,7 +69,8 @@ describe('sessionDeleteWithServerScope', () => {
     expect(storage.getState().sessionListViewDataByServerId[serverA.id]?.some((item) => item.type === 'session' && item.session.id === sessionId)).toBe(false);
   });
 
-  it('removes a remote Home row through an identity alias while retaining a same-id active session', async () => {
+  it.each([200, 404])('retires a remote Home row through an identity alias without touching a same-id active session (%s)', async (status) => {
+    remoteRequest.mockImplementation(async () => Response.json(status === 404 ? { error: 'Session not found or not owned by user' } : { success: true }, { status }));
     seedRemoteSession(serverB.id);
     setServerProfileIdentityForUrl(serverB.serverUrl, 'srv_delete_b');
     const activeSession = storage.getState().sessions[sessionId];
@@ -97,6 +98,16 @@ describe('sessionDeleteWithServerScope', () => {
 
     expect(storage.getState().sessions).toBe(before.sessions);
     expect(storage.getState().sessionListViewDataByServerId).toBe(before.sessionListViewDataByServerId);
+  });
+
+  it('treats a missing server session as an idempotent deletion and retires it locally', async () => {
+    remoteRequest.mockImplementation(async () => new Response('missing', { status: 404 }));
+
+    await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toEqual({ success: true });
+
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
+    expect(storage.getState().sessionListViewDataByServerId[serverA.id]?.some((item) => item.type === 'session' && item.session.id === sessionId)).toBe(false);
   });
 
   it('settles against the original Home when the active Home changes during the request', async () => {

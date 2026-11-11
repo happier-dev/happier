@@ -202,6 +202,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = {
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toEqual(expect.objectContaining({
@@ -224,6 +225,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         const connectivityError = new Error('Timed out waiting for server reachability');
@@ -251,6 +253,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         requestMock.mockImplementation(async () => Response.json({ error: 'Session not found' }, { status: 404 }));
@@ -261,6 +264,50 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             serverId: activeServer.id,
             cause: 'not_found',
         });
+    });
+
+    it('retires a stale local session when the exact route read proves it is gone', async () => {
+        const sessionId = 'stale_local_missing_session';
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active-stale.example', name: 'Active' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const { sync } = await import('./sync');
+        Object.assign(sync, { credentials: { token: 't' } });
+        const { Encryption } = await import('./encryption/encryption');
+        sync.encryption = await Encryption.createWithoutKeyMaterial();
+
+        requestMock.mockImplementation(async () => Response.json({ error: 'Session not found' }, { status: 404 }));
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { serverId: activeServer.id })).resolves.toMatchObject({
+            kind: 'missing',
+            cause: 'not_found',
+        });
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
+    });
+
+    it('preserves a cached archived session when a legacy detail route and filtered list cannot resolve it', async () => {
+        const sessionId = 'legacy_archived_session';
+        const session = { ...createSession({ sessionId }), archivedAt: Date.now() };
+        storage.getState().applySessions([session]);
+        const { sync } = await import('./sync');
+        Object.assign(sync, { credentials: { token: 't' } });
+        const { Encryption } = await import('./encryption/encryption');
+        sync.encryption = await Encryption.createWithoutKeyMaterial();
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === `/v2/sessions/${sessionId}`) {
+                return Response.json({ error: 'Not found', path }, { status: 404 });
+            }
+            return Response.json({ sessions: [], hasNext: false, nextCursor: null });
+        });
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true })).resolves.toMatchObject({
+            kind: 'retryable_failure',
+            sessionId,
+        });
+        expect(storage.getState().sessions[sessionId]).toBeDefined();
+        expect(storage.getState().deletedSessionIds[sessionId]).not.toBe(true);
     });
 
     it('treats not-found session ids as terminal so deep links can fail closed instead of spinning forever', async () => {
@@ -275,6 +322,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         requestMock.mockImplementation(async () => Response.json({ error: 'Session not found' }, { status: 404 }));
@@ -298,6 +346,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         // A proxy or misrouted endpoint is not the server's missing-session contract.
@@ -334,6 +383,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         requestMock.mockImplementation(async (path: string) => {
@@ -997,6 +1047,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         });
         runtimeFetchMock.mockResolvedValue(
             new Response(
@@ -1103,6 +1154,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
             initializeSessions,
             getSessionEncryption: () => null,
+            removeSessionEncryption: vi.fn(),
         };
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));

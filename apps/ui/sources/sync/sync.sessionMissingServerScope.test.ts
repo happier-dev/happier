@@ -193,6 +193,56 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         vi.clearAllMocks();
     });
 
+    it.each(['explicit', 'delete-session', 'session-share-revoked', 'remote-same-id'] as const)(
+        'retires session rows and active-server indexes with same-ID isolation: %s',
+        async (retirement) => {
+            const { sync } = await import('./sync');
+            sync.disconnectServer();
+            const activeServer = upsertServerProfile({ serverUrl: 'https://retirement-active.example', name: 'Retirement active' });
+            const remoteServer = upsertServerProfile({ serverUrl: 'https://retirement-remote.example', name: 'Retirement remote' });
+            setActiveServerId(activeServer.id, { scope: 'device' });
+            const sessionId = 'queued-retirement';
+            const internals = sync as unknown as {
+                credentials: { token: string };
+                encryption: Encryption;
+                activeServerSessionIds: Set<string>;
+                sessionDataKeys: Map<string, Uint8Array>;
+                sessionDataKeyEnvelopes: Map<string, string>;
+                handleUpdate: (update: unknown) => Promise<void>;
+            };
+            internals.credentials = { token: 'retirement-token' };
+            internals.encryption = await Encryption.create(new Uint8Array(32));
+            await internals.encryption.initializeSessions(new Map([[sessionId, null]]));
+            internals.activeServerSessionIds.add(sessionId);
+            internals.sessionDataKeys.set(sessionId, new Uint8Array([1]));
+            internals.sessionDataKeyEnvelopes.set(sessionId, 'envelope');
+            storage.getState().applySessions([{
+                ...createSession(sessionId), encryptionMode: 'plain', metadata: { path: '/original', host: 'host' },
+            }]);
+            try {
+                if (retirement === 'explicit' || retirement === 'remote-same-id') {
+                    sync.retireLocalSession(sessionId, retirement === 'remote-same-id' ? remoteServer.id : activeServer.id);
+                } else {
+                    await internals.handleUpdate({
+                        id: 'retirement-update', seq: 3, createdAt: Date.now(),
+                        body: retirement === 'delete-session'
+                            ? { t: retirement, sid: sessionId }
+                            : { t: retirement, sessionId, shareId: 'retirement-share' },
+                    });
+                }
+                const retained = retirement === 'remote-same-id';
+                expect(storage.getState().sessions[sessionId]?.seq).toBe(retained ? 0 : undefined);
+                expect(storage.getState().sessionListRenderables[sessionId]?.seq).toBe(retained ? 0 : undefined);
+                expect(internals.activeServerSessionIds.has(sessionId)).toBe(retained);
+                expect(internals.sessionDataKeys.has(sessionId)).toBe(retained);
+                expect(internals.sessionDataKeyEnvelopes.has(sessionId)).toBe(retained);
+                expect(internals.encryption.getSessionEncryption(sessionId) !== null).toBe(retained);
+            } finally {
+                sync.disconnectServer();
+            }
+        },
+    );
+
     it('does not publish an empty loaded transcript while the route owner is unresolved', async () => {
         const sessionId = 'route_owner_race';
         const { sync } = await import('./sync');

@@ -511,6 +511,7 @@ import {
     handleSocketUpdate,
     parseUpdateContainer,
     resetSocketSessionProjectionStateForServerScope,
+    retireSessionSocketState,
 } from './engine/socket/socket';
 import { actionOperationStore } from './domains/actionOperations/actionOperationStore';
 import { openActionOperationRevisionEphemeral } from './domains/actionOperations/actionOperationEphemeral';
@@ -2409,6 +2410,25 @@ class Sync {
             return storage.getState().sessions[normalized] ?? null;
         }
 
+        retireLocalSession(sessionId: string, serverId?: string | null): void {
+            const targetServerId = serverId ?? getActiveServerSnapshot().serverId;
+            const isActiveServer = areServerProfileIdentifiersEquivalent(targetServerId, getActiveServerSnapshot().serverId);
+            const retireSession = isActiveServer ? retireSessionSocketState : handleDeleteSessionSocketUpdate;
+            retireSession({
+                sessionId,
+                deleteSession: (id) => storage.getState().deleteSession(id, targetServerId),
+                removeSessionEncryption: (id) => { if (isActiveServer) this.encryption?.removeSessionEncryption(id); },
+                removeProjectManagerSession: (id) => { if (isActiveServer) projectManager.removeSession(id); },
+                clearScmStatusForSession: (id) => { if (isActiveServer) scmStatusSync.clearForSession(id); },
+                log,
+            });
+            if (isActiveServer) {
+                this.sessionDataKeys.delete(sessionId);
+                this.sessionDataKeyEnvelopes.delete(sessionId);
+                this.activeServerSessionIds.delete(sessionId);
+            }
+        }
+
         /**
          * Hydrate a visible session by id for deep links / hard refreshes.
          *
@@ -2524,6 +2544,7 @@ class Sync {
                         const code = typeof result.errorCode === 'string' ? result.errorCode : '';
                         const missingCause = mapSessionByIdTerminalCodeToMissingCause(code);
                         if (missingCause) {
+                            if (missingCause === 'not_found') this.retireLocalSession(normalized, scopedServerId);
                             if (missingCause === 'unauthorized') {
                                 recordTerminalAuthSyncError(new Error('Authentication required'), { serverId: scopedServerId });
                             }
@@ -3417,13 +3438,15 @@ class Sync {
                 : null;
 
         const fetchLatestSession = async () => {
-            if (!this.credentials) {
+            const credentials = this.credentials;
+            if (!credentials) {
                 throw new Error('Sync credentials not available');
             }
+            const serverId = resolvedServerIdOverride ?? resolvePreferredServerIdForSessionId(sessionId);
             const hydrationResult = await fetchSessionByIdWithServerScope({
                 sessionId,
-                serverId: resolvedServerIdOverride ?? resolvePreferredServerIdForSessionId(sessionId),
-                activeCredentials: this.credentials,
+                serverId,
+                activeCredentials: credentials,
                 activeEncryption: this.encryption,
                 sessionDataKeys: this.sessionDataKeys,
                 sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
@@ -3432,6 +3455,10 @@ class Sync {
                 getExistingSession: (targetSessionId) => storage.getState().sessions[targetSessionId] ?? null,
                 log,
             });
+            if (!hydrationResult.ok && hydrationResult.errorCode === 'not_found'
+                && this.credentials === credentials && options?.shouldContinue?.() !== false) {
+                this.retireLocalSession(sessionId, serverId);
+            }
             throwForFailedSessionHydration(hydrationResult);
         };
 
@@ -4402,21 +4429,7 @@ class Sync {
                 if (!shouldContinue()) return;
                 if (!exactResult.ok) {
                     if (exactResult.errorCode === 'not_found') {
-                        stagedSessionDataKeys.delete(sessionId);
-                        stagedSessionDataKeyEnvelopes.delete(sessionId);
-                        handleDeleteSessionSocketUpdate({
-                            sessionId,
-                            deleteSession: (targetSessionId) => storage.getState().deleteSession(targetSessionId),
-                            removeSessionEncryption: (targetSessionId) => activeEncryption.removeSessionEncryption(targetSessionId),
-                            removeProjectManagerSession: (targetSessionId) => projectManager.removeSession(targetSessionId),
-                            clearScmStatusForSession: (targetSessionId) => scmStatusSync.clearForSession(targetSessionId),
-                            log,
-                        });
-                        this.commitSessionDataKeyCacheEntry(
-                            sessionId,
-                            stagedSessionDataKeys,
-                            stagedSessionDataKeyEnvelopes,
-                        );
+                        this.retireLocalSession(sessionId, activeServerId);
                         return;
                     }
                     throw new Error(
@@ -8146,6 +8159,10 @@ class Sync {
             });
             if (!shouldContinue()) return;
             if (!result.ok) {
+                if (result.errorCode === 'not_found') {
+                    this.retireLocalSession(normalized, scopedServerId);
+                    return;
+                }
                 log.log(`[Sync.socketHydrateSession] ${reason} failed for ${normalized}: ${result.errorCode ?? 'unknown'}`);
                 this.sessionsSync.invalidate();
                 return;
@@ -8188,6 +8205,7 @@ class Sync {
               sourceServerId,
               shouldContinue,
               artifactDataKeys: this.artifactDataKeys,
+              retireSession: ({ sessionId }) => this.retireLocalSession(sessionId, sourceServerId),
               applySessions: (sessions) => this.applySessions(sessions),
               fetchSessions: () => {
                   fireAndForget(this.fetchSessions(), {
