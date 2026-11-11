@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { describe, expect, it } from 'vitest';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -294,6 +297,24 @@ describe('activated Lume provisioner Actions', () => {
       .map(field => [field.path, field.defaultValue])).toEqual([
         ['cpu', 4], ['memoryBytes', 8 * 1024 ** 3], ['diskBytes', undefined],
       ]);
+  });
+
+  it('completes the captured Lume image/location selection through the published controller declaration', async () => {
+    // R120-E/lume-create-d: tiles assign only image and storage; hardware comes from the published hints.
+    const published = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL(
+      '../../../../apps/cli/assets/bundled-plugin-manifests/machine-lume.json', import.meta.url), 'utf8')));
+    const declaration = published.contributes.actions.find(action => action.id === 'options');
+    if (!declaration) throw new Error('Published Lume options declaration missing');
+    const inputHints = normalizePluginActionInputHintsV2(declaration.inputHints);
+    const query = seedInputByFieldHints({ inputHints }, {
+      image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' }, storage: 'home',
+    });
+    const { action, context } = await activated();
+    const options = await action('options')(query, context);
+    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: {
+      image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' }, storage: 'home',
+      cpu: 4, memoryBytes: 8 * 1024 ** 3, diskBytes: launch.diskBytes,
+    } });
   });
 
   it('uses the selected catalog image disk annotation so the first image is creatable', async () => {

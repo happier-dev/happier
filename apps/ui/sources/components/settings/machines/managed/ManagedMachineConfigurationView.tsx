@@ -831,7 +831,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     return duration ? [{ id: choice.id, title: localized(provisioner.contribution.pluginId, choice.title),
                         unavailableReason: !selectable || busy || !!preset && !props.presetOnly ? t('managedMachines.options.unavailable') : undefined }] : [];
                 }),
-                onChange: id => setDraft(current => current ? selectManagedConfiguratorDimension(current, 'duration', id) : current),
+                onChange: id => setDraft(current => current ? selectManagedConfiguratorDimension(current, 'duration', id, optionsInput.kind === 'ready' ? optionsInput.schema : undefined) : current),
                 ...(provisioner.descriptor.nativeDurationInput ? { editor: nativeDurationField ? <ActionInputFields fields={[nativeDurationField]} input={fieldInput}
                     editable={!!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true)}
                     busy={busy} resolveFieldOptions={fieldOptions.resolveOptions} resolveFieldTestID={field => `managed-config.field:${field.path}`}
@@ -1123,7 +1123,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             billing={selectedCapabilities!.billing}
             incomplete={!!missingLaunchField}
             formSize={formSized ? { editor: showLaunchFields && sizeFields.length ? launchForm(sizeFields, formFields.length === 0) : undefined } : undefined}
-            onChange={(dimension, id) => setDraft(current => current ? selectManagedConfiguratorDimension(current, dimension, id) : current)} /> : null}
+            onChange={(dimension, id) => setDraft(current => current ? selectManagedConfiguratorDimension(current, dimension, id, optionsInput.kind === 'ready' ? optionsInput.schema : undefined) : current)} /> : null}
         {draft && showLaunchFields && advancedFields.length ? <ItemGroup header="none">
             <ExpandableItem testID="managed-config.advanced" expanded={advancedOpen || advancedNeedsYou}
                 onExpandedChange={setAdvancedOpen} showDivider={false}

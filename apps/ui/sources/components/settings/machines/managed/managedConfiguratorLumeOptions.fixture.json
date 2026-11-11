@@ -1,0 +1,114 @@
+{
+  "dimensions": {
+    "size": [],
+    "image": [
+      {
+        "id": "ghcr.io/trycua/macos:26",
+        "title": "ghcr.io/trycua/macos:26",
+        "assignments": [
+          {
+            "path": "image",
+            "value": {
+              "kind": "catalog",
+              "id": "ghcr.io/trycua/macos:26"
+            }
+          }
+        ],
+        "available": true,
+        "guestPlatform": "darwin",
+        "nativeFacts": {
+          "image": {
+            "id": "ghcr.io/trycua/macos:26",
+            "title": "ghcr.io/trycua/macos:26",
+            "description": {
+              "key": "machineLume.configure.macosVmCount",
+              "fallback": "{count} of {limit} macOS VMs running on this Mac",
+              "params": {
+                "count": 0,
+                "limit": 2
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "ghcr.io/trycua/macos:26-slim",
+        "title": "ghcr.io/trycua/macos:26-slim",
+        "assignments": [
+          {
+            "path": "image",
+            "value": {
+              "kind": "catalog",
+              "id": "ghcr.io/trycua/macos:26-slim"
+            }
+          }
+        ],
+        "available": true,
+        "guestPlatform": "darwin",
+        "nativeFacts": {
+          "image": {
+            "id": "ghcr.io/trycua/macos:26-slim",
+            "title": "ghcr.io/trycua/macos:26-slim",
+            "description": {
+              "key": "machineLume.configure.macosVmCount",
+              "fallback": "{count} of {limit} macOS VMs running on this Mac",
+              "params": {
+                "count": 0,
+                "limit": 2
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "ghcr.io/trycua/macos-tahoe-cua:26.5.2",
+        "title": "ghcr.io/trycua/macos-tahoe-cua:26.5.2",
+        "assignments": [
+          {
+            "path": "image",
+            "value": {
+              "kind": "catalog",
+              "id": "ghcr.io/trycua/macos-tahoe-cua:26.5.2"
+            }
+          }
+        ],
+        "available": true,
+        "guestPlatform": "darwin",
+        "nativeFacts": {
+          "image": {
+            "id": "ghcr.io/trycua/macos-tahoe-cua:26.5.2",
+            "title": "ghcr.io/trycua/macos-tahoe-cua:26.5.2",
+            "description": {
+              "key": "machineLume.configure.macosVmCount",
+              "fallback": "{count} of {limit} macOS VMs running on this Mac",
+              "params": {
+                "count": 0,
+                "limit": 2
+              }
+            }
+          }
+        }
+      }
+    ],
+    "location": [
+      {
+        "id": "home",
+        "title": "home",
+        "assignments": [
+          {
+            "path": "storage",
+            "value": "home"
+          }
+        ],
+        "nativeFacts": {
+          "location": {
+            "id": "home",
+            "title": "home"
+          }
+        }
+      }
+    ],
+    "network": [],
+    "duration": []
+  }
+}

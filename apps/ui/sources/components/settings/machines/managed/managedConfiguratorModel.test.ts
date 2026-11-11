@@ -393,6 +393,22 @@ describe('managed configurator draft owner', () => {
         }), input);
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(input);
     });
+    it('sends captured Lume tile assignments with defaults when the options response has no base launch', () => {
+        const descriptor = MachineProvisionerContributionV1Schema.parse(LUME_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
+        const action = PluginActionContributionV2Schema.parse(LUME_PLUGIN.manifest.contributes.actions?.find(action => action.id === 'options'));
+        const hints = normalizePluginActionInputHintsV2(action.inputHints);
+        const captured = MachineProvisionerOptionsResultV1Schema.parse(JSON.parse(readFileSync(new URL(
+            './managedConfiguratorLumeOptions.fixture.json', import.meta.url), 'utf8')));
+        let draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({
+            provisioner: { contribution: { pluginId: LUME_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'lume', descriptor },
+            controller, name: 'Lume',
+        }), captured);
+        draft = selectManagedConfiguratorDimension(draft, 'image', 'ghcr.io/trycua/macos:26', action.inputSchema!);
+        draft = selectManagedConfiguratorDimension(draft, 'location', 'home', action.inputSchema!);
+        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({
+            cpu: 4, memoryBytes: 8 * 1024 ** 3, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' }, storage: 'home',
+        });
+    });
     it('starts a Cua sandbox launch from the provider\u2019s declared size defaults, so its options read is complete without typing', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(CUA_PLUGIN.manifest.contributes.actions?.find(entry => entry.id === descriptor.actions.options));

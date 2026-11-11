@@ -15,9 +15,10 @@ import type { MachineRetentionDefaultsV1, MachineRetentionOverrideV1 } from '@ha
 import type { MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { InputHints } from '@happier-dev/protocol/inputs/inputFields';
-import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { seedInputByFieldHints, writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { MACHINE_PROVISIONER_DIMENSIONS_V1, type MachineProvisionerDimensionV1, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { resolveDeclaredInputLeaves } from '@happier-dev/protocol/plugins/actions/inputSchemaTraversal';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { managedSizeMemoryRecommendation } from './managedSizeMemoryRecommendation';
 
@@ -174,12 +175,23 @@ function refreshEnrollmentDefault(draft: ManagedConfiguratorDraft): ManagedConfi
     return { ...draft, enrollmentIdentity: identity };
 }
 /** All executable selector assignments and constraints are applied by the shared Protocol owner. */
-export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension, id: string): ManagedConfiguratorDraft {
-    if (!draft.options?.dimensions[dimension].some(option => option.id === id && option.available !== false)) return draft;
+export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension, id: string, optionsInputSchema?: PluginJsonSchemaV2): ManagedConfiguratorDraft {
+    const option = draft.options?.dimensions[dimension].find(option => option.id === id && option.available !== false);
+    if (!option) return draft;
     const selection = { ...managedConfiguratorDimensionSelection(draft), [dimension]: id };
     const projection = managedConfiguratorProjection(draft, selection);
-    return refreshEnrollmentDefault({ ...draft, dimensionSelection: selection, selected: projection?.kind === 'ready' ? selectedProjection(draft, projection, selection) : null,
+    let next = refreshEnrollmentDefault({ ...draft, dimensionSelection: selection, selected: projection?.kind === 'ready' ? selectedProjection(draft, projection, selection) : null,
         optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited });
+    // Tiles author the same options operands as fields. Forward only operands declared by
+    // that Action; fixed launch facts remain solely in Protocol's launch projection.
+    let selectors = draft.optionsSelectors ?? {};
+    for (const assignment of option.assignments) {
+        if (optionsInputSchema && resolveDeclaredInputLeaves(optionsInputSchema, assignment.path, 'conditional-field')) {
+            selectors = writeInputPath(selectors, assignment.path, assignment.value);
+        }
+    }
+    if (!pluginJsonValuesEqual(selectors, draft.optionsSelectors ?? {})) next = setManagedConfiguratorOptionsSelectors(next, selectors);
+    return next;
 }
 export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'controllerPoolId' | 'name' | 'enrollmentIdentity' | 'credentials' | 'setup' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset' | 'delegatedFacts'>): ManagedConfiguratorDraft {
     return { ...input,
