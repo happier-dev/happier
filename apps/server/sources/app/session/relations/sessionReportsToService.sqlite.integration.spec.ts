@@ -104,6 +104,25 @@ describe('SessionManager service (SQLite integration)', () => {
         expect(await db.sessionFollowEdge.count({ where: { relation: 'manager' } })).toBe(0);
     });
 
+    it('keeps every descendant edge when a parent is moved', async () => {
+        const owner = await account();
+        const [child, grandchild, first, second] = await Promise.all([
+            session(owner.id), session(owner.id), session(owner.id), session(owner.id),
+        ]);
+        expect((await set(owner.id, child.id, first.id)).ok).toBe(true);
+        expect((await set(owner.id, grandchild.id, child.id)).ok).toBe(true);
+
+        expect((await set(owner.id, child.id, second.id, first.id)).ok).toBe(true);
+        expect(await db.sessionFollowEdge.findMany({
+            where: { relation: 'manager', sourceSessionId: { in: [child.id, grandchild.id] } },
+            select: { sourceSessionId: true, destinationSessionId: true },
+            orderBy: { sourceSessionId: 'asc' },
+        })).toEqual([
+            { sourceSessionId: child.id, destinationSessionId: second.id },
+            { sourceSessionId: grandchild.id, destinationSessionId: child.id },
+        ].sort((left, right) => left.sourceSessionId < right.sourceSessionId ? -1 : 1));
+    });
+
     it('rejects self and ancestor cycles without changing the existing tree', async () => {
         const owner = await account();
         const [root, middle, leaf] = await Promise.all([session(owner.id), session(owner.id), session(owner.id)]);

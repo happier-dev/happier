@@ -105,6 +105,19 @@ describe('nestSessionListReports', () => {
         expect(shape(nested)).toEqual(['# g1', 'a:0', 'b:1', '# g2', 'solo:0']);
     });
 
+    it('moves the whole descendant subtree to a new manager on warm reprojection', () => {
+        const items = [header('old'), session('first', 'old'), session('child', 'old'),
+            session('grandchild', 'old'), session('leaf', 'old'), header('new'), session('second', 'new')];
+        const before = nestSessionListReports(items, rows({ first: null, second: null,
+            child: 'first', grandchild: 'child', leaf: 'grandchild' }));
+        expect(shape(before)).toEqual(['# old', 'first:0', 'child:1', 'grandchild:2', 'leaf:3', '# new', 'second:0']);
+        const moved = nestSessionListReports(before, rows({ first: null, second: null,
+            child: 'second', grandchild: 'child', leaf: 'grandchild' }));
+        expect(shape(moved)).toEqual(['# old', 'first:0', '# new', 'second:0', 'child:1', 'grandchild:2', 'leaf:3']);
+        expect(moved.filter(item => item.type === 'session').map(item => [item.sessionId, item.groupKey]))
+            .toEqual([['first', 'old'], ['second', 'new'], ['child', 'new'], ['grandchild', 'new'], ['leaf', 'new']]);
+    });
+
     it('returns a report to its own level once it is detached', () => {
         const nested = nestSessionListReports([session('lead'), session('worker')], rows({ lead: null, worker: 'lead' }));
         const detached = nestSessionListReports(nested, rows({ lead: null, worker: null }));
