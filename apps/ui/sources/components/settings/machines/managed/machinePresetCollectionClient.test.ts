@@ -485,9 +485,10 @@ describe('preset collection and history through Actions', () => {
 
     it.each([
         { accountEncryptionMode: 'e2ee', team: true, delegated: true },
+        { accountEncryptionMode: 'plain', team: true, delegated: true },
         { accountEncryptionMode: 'plain', team: false, delegated: false },
         { accountEncryptionMode: 'plain', team: true, delegated: false },
-    ] as const)('publishes labels only for delegated Team saves: $accountEncryptionMode team=$team delegated=$delegated', async scenario => {
+    ] as const)('publishes labels only for Plain delegated Team saves: $accountEncryptionMode team=$team delegated=$delegated', async scenario => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true,
             accountEncryptionMode: scenario.accountEncryptionMode,
@@ -514,7 +515,7 @@ describe('preset collection and history through Actions', () => {
             expectedRevision: preset.revision, patch: { name: 'Edited', controllerDisplayName: 'Retained supplied label' } },
         { preset: saved });
         await client.saveDraft({ preset: saved, draft: { name: 'Draft save', creation: { launch: preset.launch, controller: preset.controller } } });
-        const publishes = scenario.team && scenario.delegated;
+        const publishes = scenario.accountEncryptionMode === 'plain' && scenario.team && scenario.delegated;
         for (const request of harness.requestsFor('/v1/machines/presets/create')) {
             if (publishes) expect(request.input).toHaveProperty('controllerDisplayName', 'Private decrypted builder');
             else expect(request.input).not.toHaveProperty('controllerDisplayName');

@@ -234,7 +234,7 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(member, 'get', target)).statusCode).toBe(404);
     });
 
-    it('projects an E2EE Team delegated label and typed availability without owner Machine metadata', async () => {
+    it('omits an E2EE Team delegated label while preserving typed availability without owner Machine metadata', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const owner = 'preset-public-controller-owner-e2ee';
         const member = 'preset-public-controller-member-e2ee';
@@ -251,10 +251,11 @@ describe("Machine preset relational owner", () => {
             retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' }, wakeOnAcceptedMessage: false };
         const created = await requestPreset(owner, 'create', definition);
         expect(created.statusCode, created.body).toBe(200);
-        expect(created.json()).toMatchObject({ kind: 'saved', preset: { controllerDisplayName: definition.controllerDisplayName } });
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { id: definition.id } });
+        expect(created.json().preset).not.toHaveProperty('controllerDisplayName');
 
         const assertPublicProjection = (preset: Record<string, unknown>) => {
-            expect(preset.controllerDisplayName).toBe(definition.controllerDisplayName);
+            expect(preset).not.toHaveProperty('controllerDisplayName');
             // The exact controller carrier is retained for preset admission; it is
             // identity only and carries no Machine metadata or access grant.
             expect(preset.controller).toEqual(controller);
@@ -278,7 +279,7 @@ describe("Machine preset relational owner", () => {
             patch: { controllerDisplayName: 'Renamed E2EE builder' } });
         expect(renamed.statusCode, renamed.body).toBe(200);
         const afterUpdate = (await requestPreset(member, 'get', target)).json().preset as Record<string, unknown>;
-        expect(afterUpdate.controllerDisplayName).toBe('Renamed E2EE builder');
+        expect(afterUpdate).not.toHaveProperty('controllerDisplayName');
         expect(afterUpdate.controller).toEqual(controller);
         expect(afterUpdate.delegatedAcquire).toMatchObject({ kind: 'ready' });
 
@@ -289,9 +290,10 @@ describe("Machine preset relational owner", () => {
             launch: { ...launch, credentials } };
         const failingCreated = await requestPreset(owner, 'create', failingDefinition);
         expect(failingCreated.statusCode, failingCreated.body).toBe(200);
-        expect(failingCreated.json()).toMatchObject({ kind: 'saved', preset: { controllerDisplayName: failingDefinition.controllerDisplayName } });
+        expect(failingCreated.json()).toMatchObject({ kind: 'saved', preset: { id: failingDefinition.id } });
+        expect(failingCreated.json().preset).not.toHaveProperty('controllerDisplayName');
         const failing = (await requestPreset(member, 'get', { homeId, id: failingId })).json().preset as Record<string, unknown>;
-        expect(failing.controllerDisplayName).toBe(failingDefinition.controllerDisplayName);
+        expect(failing).not.toHaveProperty('controllerDisplayName');
         expect(failing.controller).toEqual(controller);
         expect(failing.launch).not.toHaveProperty('credentials');
         expect(failing.delegatedAcquire).toEqual({ kind: 'unavailable', code: 'credential_unavailable' });
@@ -307,11 +309,12 @@ describe("Machine preset relational owner", () => {
 
     it.each([
         { encryptionMode: 'e2ee', team: true, delegated: true },
+        { encryptionMode: 'plain', team: true, delegated: true },
         { encryptionMode: 'plain', team: false, delegated: false },
         { encryptionMode: 'plain', team: true, delegated: false },
-    ] as const)('persists controller labels only for delegated Team presets for $encryptionMode team=$team delegated=$delegated, including retained labels', async scenario => {
+    ] as const)('persists controller labels only for Plain delegated Team presets for $encryptionMode team=$team delegated=$delegated, including retained labels', async scenario => {
         const homeId = await getOrCreateServerIdentityId();
-        const accountId = `preset-private-label-${scenario.encryptionMode}-${scenario.team}`;
+        const accountId = `preset-private-label-${scenario.encryptionMode}-${scenario.team}-${scenario.delegated}`;
         await db.account.create({ data: { id: accountId, encryptionMode: scenario.encryptionMode,
             publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey, 'base64') } });
         const controller = await seedCurrentProvisioner(accountId, homeId);
@@ -320,7 +323,7 @@ describe("Machine preset relational owner", () => {
         const definition = { id: `${accountId}-preset`, homeId, name: 'Guest', controller, launch,
             owner: scenario.team ? { kind: 'team', teamId: team.id } : { kind: 'account', accountId },
             ...(scenario.delegated ? { teamAcquireDelegated: true } : {}), controllerDisplayName: 'Private builder' };
-        const publishes = scenario.team && scenario.delegated;
+        const publishes = scenario.encryptionMode === 'plain' && scenario.team && scenario.delegated;
         const created = await requestPreset(accountId, 'create', definition);
         expect(created.statusCode, created.body).toBe(200);
         if (publishes) {

@@ -1406,6 +1406,39 @@ describe('reachable preset detail', () => {
     expect(listFailed.findByTestId('machine-preset.detail.createOne')).toBeNull();
     await listFailed.unmount();
   });
+  it('keeps E2EE delegated details neutral and presents the typed use-time failure', async () => {
+    const serverId = await seed(true, true);
+    const scopeId = await seedConfiguration(serverId);
+    const delegated = createDelegatedManagedPresetFixture({
+      preset: ManagedMachinePresetV1Schema.parse({
+        ...preset,
+        owner: { kind: 'team', teamId: 'team-1' },
+        controllerDisplayName: undefined,
+      }),
+      descriptor: { ...provisioner.descriptor, enrollmentRole: 'sandbox' },
+      custodianAccountId: 'custodian',
+      installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url'),
+    });
+    const unavailable = ManagedMachinePresetV1Schema.parse({ ...delegated,
+      controllerDisplayName: undefined,
+      delegatedAcquire: { kind: 'unavailable', code: 'credential_unavailable' } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: unavailable } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.getState().applyMachines([], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+    const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.configuration-unavailable')).not.toBeNull());
+    const model = screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
+    expect(model.receipt?.facts).toContainEqual(expect.objectContaining({
+      id: 'controller', value: t('managedMachines.receipt.managingComputer'),
+    }));
+    expect(model.receipt?.facts).not.toContainEqual(expect.objectContaining({ id: 'controller', value: t('common.unknown') }));
+    expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    const unavailableCard = screen.tree.findAll((node) => node.props.testID === 'machine-preset.configuration-unavailable')[0];
+    expect(unavailableCard?.props.diagnosticCode).toBe('credential_unavailable');
+    expect(unavailableCard?.props.title).toBe(t('startFailure.cause.credential_unavailable'));
+    expect(unavailableCard?.props.title).not.toBe(t('managedMachines.options.unavailable'));
+    await screen.unmount();
+  });
   it('withdraws a Team preset editor when its Team read loses access without changing the credential or preset response', async () => {
     const serverId = await seed();
     const scopeId = await seedConfiguration(serverId);

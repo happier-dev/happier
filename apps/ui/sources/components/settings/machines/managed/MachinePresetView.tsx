@@ -24,6 +24,7 @@ import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailMod
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 import { findPresetLastSavedFacts } from './managedPresetHistory';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { useMachinePresetDetail, useMachinePresetConfiguration } from './useMachinePresets';
@@ -179,7 +180,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
             action={{ label: t('common.retry'), onPress: catalog.refresh }} /> : null}
         {!archived && configurationUnavailable ? <SurfaceStateCard testID="machine-preset.configuration-unavailable"
-            kind="unavailable" size="line" title={t('managedMachines.options.unavailable')} diagnosticCode={configuration.error ?? undefined}
+            kind="unavailable" size="line" title={configuration.error ? describeManagedPresetAvailabilityFailure(configuration.error) : t('managedMachines.options.unavailable')} diagnosticCode={configuration.error ?? undefined}
             action={{ label: t('common.retry'), onPress: configuration.refresh }} /> : null}
         {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" title={t('machinePresets.loadFailed')}
             diagnosticCode={detail.state.error} action={{ label: t('common.retry'), onPress: detail.refresh }} /> : null}
@@ -217,7 +218,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const receipt = buildManagedConfigurationReceipt({ launch: visibleCreation.launch, reviewedFacts: configuration.facts ?? undefined,
         credentialPresentations: credentialAccounts.presentationsByKey, ...(lastSaved ? { lastSaved } : {}),
         providerTitle: presentation.title, localized: presentation.localized,
-        controllerName: pooled ? controllerName : knownControllerName, homeName,
+        controllerName, homeName,
         ...(pooled ? { pooledController: { sentenceName: controllerSentenceName } } : {}), declaredBilling: presentation.billing, setup: visiblePreset.setup,
         preset: { id: visiblePreset.id, revision: visiblePreset.revision, name: visiblePreset.name },
         presetPolicy: { ...(visiblePreset.retention ? { retention: visiblePreset.retention } : {}),

@@ -9,6 +9,7 @@ import { mergeMachineSetupsV1 } from '@happier-dev/protocol/machines/managed/mac
 import type { MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -66,6 +67,16 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         return machine?.installationId === controller.installationId ? readMachineName(machine) : null;
     };
 
+    async function isPlainAuthor(signal?: AbortSignal): Promise<boolean> {
+        try {
+            const account = await captureLazyActionAccountContext(scope.serverId, signal);
+            try {
+                if (account.accountId !== scope.accountId) return false;
+                return await account.resolveAccountMode() === 'plain';
+            } finally { account.dispose(); }
+        } catch { return false; }
+    }
+
     async function execute<T extends MachinePresetActionIdV1>(actionId: T, input: MachinePresetActionInputV1<T>,
         options?: MachinePresetCollectionOptions<MachinePresetActionOutputV1<T>>): Promise<MachinePresetCollectionResult<MachinePresetActionOutputV1<T>>> {
         // Keep mutation arms concrete while parsing each request exactly once.
@@ -76,25 +87,29 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             ? MachinePresetActionInputSchemasV1['machines.presets.create'].safeParse(input) : null;
         const parsed = update ?? create ?? MachinePresetActionInputSchemasV1[actionId].safeParse(input);
         if (!parsed.success || parsed.data.homeId !== homeId) return { kind: 'failed', code: 'invalid_parameters' };
-        // An explicitly delegated Team preset publishes its saved presentation label.
+        // Only a Plain author's delegated Team recipe publishes this plaintext label.
         // Approval continuation retains these captured bytes without another disclosure.
         if (update?.success) {
             const patch = update.data.patch;
             const delegated = patch.teamAcquireDelegated ?? options?.preset?.teamAcquireDelegated;
             const controller = patch.controller === undefined && (patch.name !== undefined || patch.setup !== undefined || patch.launch !== undefined)
                 ? options?.preset?.controller : patch.controller;
-            if (options?.preset?.owner.kind !== 'team' || delegated !== true) {
+            if (options?.preset?.owner.kind !== 'team' || delegated !== true
+                || (controller || typeof patch.controllerDisplayName === 'string') && !await isPlainAuthor(options?.signal)) {
                 delete patch.controllerDisplayName;
             } else if (controller) {
                 const name = readControllerDisplayName(controller);
-                if (name !== null) patch.controllerDisplayName = name;
+                if (name === null) delete patch.controllerDisplayName;
+                else patch.controllerDisplayName = name;
             }
         } else if (create?.success) {
             const presetInput = create.data;
-            if (presetInput.owner.kind !== 'team' || presetInput.teamAcquireDelegated !== true) delete presetInput.controllerDisplayName;
+            if (presetInput.owner.kind !== 'team' || presetInput.teamAcquireDelegated !== true
+                || !await isPlainAuthor(options?.signal)) delete presetInput.controllerDisplayName;
             else if (presetInput.controller) {
                 const name = readControllerDisplayName(presetInput.controller);
-                if (name !== null) presetInput.controllerDisplayName = name;
+                if (name === null) delete presetInput.controllerDisplayName;
+                else presetInput.controllerDisplayName = name;
             }
         }
         const outcome = observeHomeActionOutcome<MachinePresetActionOutputV1<T>, T>({
