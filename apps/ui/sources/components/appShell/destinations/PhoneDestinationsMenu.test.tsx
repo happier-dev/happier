@@ -294,6 +294,19 @@ describe('PhoneDestinationsMenu', () => {
         expect(mainTabPress).toHaveBeenCalledWith('projects');
     });
 
+    it('rides an open main tab from More on the bar just before More, after the kept destinations (owner 11-10)', async () => {
+        // One visitor rule for every phone bar: the open item that is not on the bar rides it last, never its
+        // old home slot (device 11-11: unpinned Projects came back second).
+        setCatalog({ pages: [], navigationPlacements: { phoneLauncher: { orderedIds: [], placements: {
+            'tab:projects': 'overflow', artifacts: 'pinned',
+        } } } });
+        const { PhoneMainAppTabBar } = await import('./PhoneDestinationsMenu');
+        const { CockpitTabBar } = await import('@/components/navigation/mobile/chrome/bars/CockpitTabBar');
+        const bar = await render(<PhoneMainAppTabBar activeTab="projects" onTabPress={mainTabPress} />);
+        const ids = (bar.findByType(CockpitTabBar as React.ComponentType).props.tabs as readonly { id: string }[]).map(tab => tab.id);
+        expect(ids).toEqual(['sessions', 'inbox', 'workflows', 'artifacts', 'projects']);
+    });
+
     it('shows the open destination from More on the bar just before More, which stays More', async () => {
         routeState.pathname = '/artifacts';
         setCatalog({ pages: [] });

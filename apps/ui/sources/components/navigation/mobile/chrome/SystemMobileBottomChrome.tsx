@@ -65,13 +65,16 @@ const MainPresentation = React.memo(function MainPresentation(props: React.Compo
     const activeId = props.selectedDestinationId ?? props.activeTab;
     const main = React.useMemo(() => ({ activeId, onTabPress: props.onTabPress }), [activeId, props.onTabPress]);
     const more = usePhoneDestinationsMore({ native: true, main });
-    const placedTabs = React.useMemo(() => tabs.filter(tab => more.bar.mainTabKeys.includes(tab.key)), [tabs, more.bar.mainTabKeys]);
+    const placedTabs = React.useMemo(() => more.bar.mainTabKeys.flatMap(key => tabs.filter(tab => tab.key === key)), [tabs, more.bar.mainTabKeys]);
+    const visitorTab = React.useMemo(() => tabs.find(tab => tab.key === more.bar.mainVisitorKey) ?? null, [tabs, more.bar.mainVisitorKey]);
     React.useLayoutEffect(() => {
         const items: SystemTabItem[] = placedTabs.map(tab => ({ id: tab.key, title: tab.label, sfSymbol: tab.sfSymbol,
             accessibilityLabel: tab.accessibilityLabel, badge: nativeBadge(tab.badge) }));
         items.push(...more.bar.tabs.map(tab => ({ id: tab.id, title: tab.label, sfSymbol: tab.sfSymbol,
             accessibilityLabel: tab.unavailableReason ? `${tab.label}, ${tab.unavailableReason}` : tab.accessibilityLabel ?? tab.label,
             disabled: tab.disabled, badge: nativeBadge(tab.badge) })));
+        if (visitorTab) items.push({ id: visitorTab.key, title: visitorTab.label, sfSymbol: visitorTab.sfSymbol,
+            accessibilityLabel: visitorTab.accessibilityLabel, badge: nativeBadge(visitorTab.badge) });
         if (more.available) items.push({ id: 'more', title: t('common.more'), sfSymbol: 'ellipsis', action: true });
         const destinationId = props.selectedDestinationId ?? props.activeTab;
         const selectedId = items.some(item => item.id === destinationId) ? destinationId : 'more';
@@ -83,7 +86,7 @@ const MainPresentation = React.memo(function MainPresentation(props: React.Compo
             if (tab) props.onTabPress(tab.key);
             else more.bar.onPress(id);
         } });
-    }, [tabs, placedTabs, newSessionPress, more.available, more.open, more.bar.tabs, more.bar.onPress, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
+    }, [tabs, placedTabs, visitorTab, newSessionPress, more.available, more.open, more.bar.tabs, more.bar.onPress, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
     return more.menu;
 });
 

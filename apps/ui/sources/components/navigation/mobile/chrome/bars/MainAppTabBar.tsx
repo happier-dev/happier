@@ -17,8 +17,10 @@ export type MainAppTabBarDestinations = Readonly<{
     onPress: (id: string) => void;
     /** A held tab, main tabs included: the destinations owner holds the placement menu. */
     onTabLongPress?: (id: string, anchor: unknown, label: string) => void;
-    /** The main tabs that ride the bar (the same placement as every Bar item); absent, all of them. */
+    /** The main tabs kept on the bar (the same placement as every Bar item); absent, all of them. */
     mainTabKeys?: readonly TabType[];
+    /** An open main tab waiting in More: it rides last, just before More (the one visitor rule). */
+    mainVisitorKey?: TabType | null;
 }>;
 
 type MainAppTabBarProps = Readonly<{
@@ -49,12 +51,14 @@ const NO_DESTINATIONS: readonly CockpitTabBarTabDefinition<string>[] = [];
 export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const allDefinitions = useMainAppTabDefinitions();
     const mainTabKeys = props.destinations?.mainTabKeys;
-    const definitions = mainTabKeys ? allDefinitions.filter((tab) => mainTabKeys.includes(tab.key)) : allDefinitions;
+    const definitions = mainTabKeys ? mainTabKeys.flatMap((key) => allDefinitions.filter((tab) => tab.key === key)) : allDefinitions;
+    const visitorKey = props.destinations?.mainVisitorKey ?? null;
+    const visitor = visitorKey ? allDefinitions.find((tab) => tab.key === visitorKey) ?? null : null;
     const windowWidth = useWindowDimensions().width;
     const baseMetrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     const destinations = props.destinations?.tabs ?? NO_DESTINATIONS;
     const accessorySize = baseMetrics.iconSize + baseMetrics.tabPaddingVertical * 2;
-    const slots = definitions.length + destinations.length + (props.more ? 1 : 0);
+    const slots = definitions.length + destinations.length + (visitor ? 1 : 0) + (props.more ? 1 : 0);
     // The "+" keeps its square and only its centring mirror gives way, so the items have the rest.
     const scrolls = slots > resolveFloatingTabBarSlotCount({
         windowWidth, maxWidth: layout.maxWidth, tabMinWidth: baseMetrics.tabMinWidth, accessorySize,
@@ -63,13 +67,14 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const metrics = baseMetrics.showLabels || scrolls ? baseMetrics : { ...baseMetrics, tabMinWidth: resolveFloatingTabBarAccessorySlotWidth({
         windowWidth, maxWidth: layout.maxWidth, accessorySize, slots, tabMinWidth: baseMetrics.tabMinWidth,
     }) };
-    const tabs: readonly CockpitTabBarTabDefinition<string>[] = [...definitions.map((tab) => ({
+    const mainTab = (tab: (typeof allDefinitions)[number]): CockpitTabBarTabDefinition<string> => ({
         id: tab.key, label: tab.label, icon: tab.icon, accessibilityLabel: tab.accessibilityLabel, badge: tab.badge,
-    })), ...destinations];
+    });
+    const tabs: readonly CockpitTabBarTabDefinition<string>[] = [...definitions.map(mainTab), ...destinations, ...(visitor ? [mainTab(visitor)] : [])];
     const onHold = props.destinations?.onTabLongPress;
     const onTabLongPress = onHold ? (id: string, anchor: unknown) => onHold(id, anchor, tabs.find((tab) => tab.id === id)?.label ?? id) : undefined;
     const onPress = (id: string) => {
-        const tab = definitions.find((definition) => definition.key === id);
+        const tab = allDefinitions.find((definition) => definition.key === id);
         if (tab) props.onTabPress(tab.key);
         else props.destinations?.onPress(id);
     };

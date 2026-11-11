@@ -195,6 +195,15 @@ export function readNavigationSurfacePlacements(local: Readonly<{
     return parsed.success ? parsed.data : {};
 }
 
+/**
+ * More is never replaced (owner 11-10): the open item that is not on a phone bar rides it last, just before
+ * More, and keeps its row behind More. One rule for the main bar and every cockpit bar.
+ */
+export function resolveNavigationVisitor<T>(onBar: readonly T[], candidates: readonly T[], isOpen: (item: T) => boolean): T | null {
+    if (onBar.some(isOpen)) return null;
+    return candidates.find(isOpen) ?? null;
+}
+
 /** Fit the measured prefix, accounting for separators and a single overflow trigger. */
 export function resolveNavigationOverflow<T extends Readonly<{ id: string; group?: string }>>(
     pinned: readonly T[], explicitOverflow: readonly T[],

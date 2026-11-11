@@ -30,7 +30,38 @@ function Probe(props: { onOptions: (options: Readonly<Record<string, unknown>>) 
     return null;
 }
 
+function PresentedProjectBar(props: { pageKind: string }) {
+    // The bottom-chrome host's own publication, as it reports a presented detail bar.
+    const { usePublishPresentedBottomChrome } = presentedBottomChromeModule;
+    usePublishPresentedBottomChrome({ kind: 'detail', pageKind: props.pageKind });
+    return null;
+}
+
+let presentedBottomChromeModule: typeof import('@/components/navigation/mobile/chrome/presentedBottomChrome');
+
 describe('Project route header options', () => {
+    it('where the Project cockpit bar is presented, leaves Browser and Terminal to the bar and keeps the worktrees toggle (owner 11-10)', async () => {
+        presentedBottomChromeModule = await import('@/components/navigation/mobile/chrome/presentedBottomChrome');
+        windowSize.width = 390;
+        windowSize.height = 844;
+        let seen: Readonly<Record<string, unknown>> | null = null;
+        const screen = await renderScreen(<><PresentedProjectBar pageKind="project" />
+            <Probe onOptions={(options) => { seen = options; }} /></>);
+        try {
+            const HeaderRight = seen!.headerRight as () => React.ReactNode;
+            const bar = await renderScreen(<>{HeaderRight()}</>);
+            try {
+                expect(bar.findAllHostsByTestId('project-header-open-worktrees')).toHaveLength(1);
+                expect(bar.findAllHostsByTestId('project-header-open-terminal')).toHaveLength(0);
+                expect(bar.findAllHostsByTestId('project-header-open-browser')).toHaveLength(0);
+            } finally {
+                await bar.unmount();
+            }
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it.each([
         ['phone', 390, 844, true],
         ['desktop', 1440, 900, false],

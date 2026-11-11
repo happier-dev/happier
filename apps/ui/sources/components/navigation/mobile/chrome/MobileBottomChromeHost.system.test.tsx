@@ -200,7 +200,7 @@ describe('system bottom chrome through the real host', () => {
         expect(native).toEqual({ mounts: 1, unmounts: 0 });
     });
 
-    it('keeps the current page under More when its active pinned destination moves off the bar', async () => {
+    it('keeps the current page on the bar as the visitor before More when its destination moves off the bar (owner 11-10)', async () => {
         const placeArtifacts = async (placement: 'pinned' | 'overflow' | 'hidden') => {
             await act(async () => storage.setState({ localSettings: { ...storage.getState().localSettings,
                 navigationSurfacePlacementsV1: { phoneLauncher: { orderedIds: [], placements: { artifacts: placement } } },
@@ -214,8 +214,10 @@ describe('system bottom chrome through the real host', () => {
         expect(bar.props.selectedId).toBe('artifacts');
         for (const placement of ['overflow', 'hidden'] as const) {
             await placeArtifacts(placement);
-            expect(bar.props.items.some((item: { id: string }) => item.id === 'artifacts')).toBe(false);
-            expect(bar.props.selectedId).toBe('more');
+            // More is never replaced: the open page rides the bar last, just before More.
+            const ids = bar.props.items.map((item: { id: string }) => item.id);
+            expect(ids.indexOf('artifacts')).toBe(ids.indexOf('more') - 1);
+            expect(bar.props.selectedId).toBe('artifacts');
             expect(bar.props.hidden).toBe(false);
             expect(route.pathname).toBe('/artifacts');
             await placeArtifacts('pinned');
@@ -226,11 +228,12 @@ describe('system bottom chrome through the real host', () => {
         expect(native).toEqual({ mounts: 1, unmounts: 0 });
     });
 
-    it.each(['/artifacts', '/home'])('hosts an already unpinned page under More on direct entry: %s', async pathname => {
+    it.each([['/artifacts', 'artifacts'], ['/home', 'more']] as const)('hosts an unpinned page on direct entry: %s selects %s', async (pathname, selectedId) => {
+        // An unpinned destination rides the bar as the visitor; Home is More's own page.
         route.pathname = pathname;
         const h = await createHarness();
         await h.setEdge('trailing');
-        expect(h.bars()[0]!.props).toMatchObject({ selectedId: 'more', hidden: false });
+        expect(h.bars()[0]!.props).toMatchObject({ selectedId, hidden: false });
         expect(navigation.navigate).not.toHaveBeenCalled();
         expect(route.pathname).toBe(pathname);
     });

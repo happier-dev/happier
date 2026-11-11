@@ -16,7 +16,7 @@ import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { StyleSheet } from 'react-native-unistyles';
 import { sfSymbolForCockpitTabIcon } from '@/components/navigation/mobile/chrome/bars/cockpitTabSymbols';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
-import { readNavigationPlacementPreferences, resolveNavigationPlacements, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { readNavigationPlacementPreferences, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';
@@ -113,11 +113,25 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
         id: `${MAIN_TAB_PLACEMENT_PREFIX}${key}`, key, defaultPlacement: 'pinned' as const, allowedPlacements: MAIN_TAB_PLACEMENTS,
     })), placement.preferences), [mainKeys, placement.preferences]);
     const mainActiveId = input.main?.activeId ?? null;
-    // An open main tab that waits in More rides the bar just before More, as every Bar item does.
     const mainTabKeys = React.useMemo(() => mainPlaced.ordered
-        .filter((entry) => mainPlaced.effectivePlacements[entry.id] === 'pinned' || entry.key === mainActiveId)
-        .map((entry) => entry.key), [mainPlaced, mainActiveId]);
-    const visitor = placed.ordered.find(entry => entry.destination.id === currentId && placed.effectivePlacements[entry.id] !== 'pinned') ?? null;
+        .filter((entry) => mainPlaced.effectivePlacements[entry.id] === 'pinned').map((entry) => entry.key), [mainPlaced]);
+    // The open item that waits in More, a main tab or a destination, rides the bar last, just before More:
+    // the one visitor rule every phone bar uses (resolveNavigationVisitor).
+    const visitorEntry = React.useMemo(() => {
+        type Entry = Readonly<{ kind: 'main'; key: TabType } | { kind: 'destination'; entry: (typeof placed.ordered)[number] }>;
+        const main = (key: TabType): Entry => ({ kind: 'main', key });
+        const destination = (entry: (typeof placed.ordered)[number]): Entry => ({ kind: 'destination', entry });
+        // The open item is the launcher destination on screen when there is one, otherwise the open main tab
+        // (the catalog also names main tabs' pages, which are not launcher destinations).
+        const onDestination = placed.ordered.some(entry => entry.destination.id === currentId);
+        const isOpen = (item: Entry) => onDestination
+            ? item.kind === 'destination' && item.entry.destination.id === currentId
+            : item.kind === 'main' && item.key === mainActiveId;
+        return resolveNavigationVisitor([...mainTabKeys.map(main), ...placed.pinned.map(destination)],
+            [...mainPlaced.ordered.map(entry => main(entry.key)), ...placed.ordered.map(destination)], isOpen);
+    }, [currentId, mainActiveId, mainPlaced, mainTabKeys, placed]);
+    const mainVisitorKey = visitorEntry?.kind === 'main' ? visitorEntry.key : null;
+    const visitor = visitorEntry?.kind === 'destination' ? visitorEntry.entry : null;
     const onBar = React.useMemo(() => visitor ? [...placed.pinned, visitor] : placed.pinned, [placed, visitor]);
     const { needsYou } = useBotsSummary(onBar.some(entry => entry.destination.activation === 'botsRoster'));
     const barTabs = React.useMemo(() => onBar.map((entry) => phoneBarTab(entry.destination, needsYou)), [onBar, needsYou]);
@@ -250,7 +264,7 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
         />
     </>;
     return { available, menu: renderMenu(settingsMetrics), renderMenu, open: openMenu,
-        bar: { tabs: barTabs, mainTabKeys, onPress: select, ...(input.native || !available ? {} : { onTabLongPress: holdTab }) } };
+        bar: { tabs: barTabs, mainTabKeys, mainVisitorKey, onPress: select, ...(input.native || !available ? {} : { onTabLongPress: holdTab }) } };
 }
 
 /** The floating main bar with the phone's destinations: the tabs, the Bar items, then More. */

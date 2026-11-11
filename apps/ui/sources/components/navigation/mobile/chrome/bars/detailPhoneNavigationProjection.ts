@@ -1,5 +1,5 @@
 import { resolveDetailPhoneNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
-import { resolveNavigationOverflow, resolveNavigationPlacements, type NavigationPlacementPolicy, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationOverflow, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacementPolicy, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
 
 export type PhonePlacementItem = NavigationPlacementPolicy & Readonly<{
     id: string;
@@ -49,8 +49,8 @@ export function resolveDetailPhoneBarFit<T extends PhonePlacementItem>(
     };
     const visitorOf = (shown: readonly T[]): T | null => {
         const id = options?.activeId;
-        if (!id || shown.some(item => item.id === id) || placement.topPages.some(item => item.id === id)) return null;
-        const item = placement.placements.ordered.find(entry => entry.id === id) ?? null;
+        if (!id || placement.topPages.some(item => item.id === id)) return null;
+        const item = resolveNavigationVisitor(shown, placement.placements.ordered, entry => entry.id === id);
         // With page tabs at the top, the bottom bar holds only companions: an open page stays checked in More.
         return item && placement.topPages.length > 0 && item.navigation.kind !== 'companion' ? null : item;
     };

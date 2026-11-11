@@ -12,6 +12,7 @@ import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { useDetailBottomBarPresented } from '@/components/navigation/mobile/chrome/presentedBottomChrome';
 
 export function useProjectRouteHeaderOptions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -33,6 +34,9 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
     // header (`ProjectShellHeader`), whose tab bar owns the checkout (branch) and Terminal; lending
     // these too drew a second Back/branch/terminal row beside the page title (DA R-12).
     const phoneBar = useDeviceType() === 'phone';
+    // Where the Project cockpit bar is on screen, Browser and Terminal live in it and its ⋯ (owner 11-10); the
+    // File page has no bar and keeps them here (lab FV1p). The bottom-chrome host decides which bar shows.
+    const barHoldsTools = useDetailBottomBarPresented('project');
     const navigationRef = React.useRef(navigation);
     navigationRef.current = navigation;
     const onBack = params.onBack;
@@ -86,13 +90,14 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
                 workspaceExperienceToggleA11yLabel={params.workspaceExperienceToggleA11yLabel}
                 onToggleWorkspaceExperience={params.onToggleWorkspaceExperience}
                 onOpenWorktrees={params.onToggleWorktrees}
-                onOpenBrowser={params.onOpenBrowser}
-                onOpenTerminal={params.onOpenTerminal}
+                onOpenBrowser={barHoldsTools ? undefined : params.onOpenBrowser}
+                onOpenTerminal={barHoldsTools ? undefined : params.onOpenTerminal}
             />
         ),
         } : {}),
     }), [
         phoneBar,
+        barHoldsTools,
         handleBack,
         params.activeRootPath,
         params.onBack,

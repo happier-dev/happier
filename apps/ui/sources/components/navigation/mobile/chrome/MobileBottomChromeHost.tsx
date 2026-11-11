@@ -46,6 +46,7 @@ import { usePageBarFoldsChrome } from './pageBarChromeFold';
 import { resolveMobileBottomChromePresenter } from './resolveMobileBottomChromePresenter';
 import { systemTabBarAvailable } from './SystemTabBar';
 import { SystemMobileBottomChrome, type SystemMobileBottomChromeModel } from './SystemMobileBottomChrome';
+import { usePublishPresentedBottomChrome } from './presentedBottomChrome';
 
 const MAIN_TAB_DEFAULT_ROUTES = {
     inbox: '/',
@@ -357,6 +358,10 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     if (presenter !== 'system') lastSystemChromeRef.current = null;
     else if (resolvedChrome) lastSystemChromeRef.current = resolvedChrome;
     const systemChrome = resolvedChrome ?? lastSystemChromeRef.current;
+    // The one answer to "which bar is on screen" for headers that lend controls only where no bar holds them.
+    usePublishPresentedBottomChrome(resolvedChrome
+        ? resolvedChrome.detailNavigation ? { kind: 'detail', pageKind: resolvedChrome.detailNavigation.pageKind } : { kind: 'main' }
+        : null);
 
     const [renderedChrome, setRenderedChrome] = React.useState<Readonly<{
         current: BottomChromeItem | null;

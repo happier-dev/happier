@@ -34,7 +34,8 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
     onToggleWorkspaceExperience?: () => void;
     onOpenWorktrees?: () => void;
     onOpenBrowser?: () => void;
-    onOpenTerminal: () => void;
+    /** Absent where the Project cockpit bar is on screen: Terminal lives in the bar and its ⋯ there. */
+    onOpenTerminal?: () => void;
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -75,15 +76,17 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                     onPress={props.onOpenBrowser}
                 />
             ) : null}
-            <IconButton
-                testID={`${props.testIdPrefix}-open-terminal`}
-                variant="plain"
-                size={size}
-                interactiveTargetGapPx={ACTION_GAP_PX}
-                onPress={props.onOpenTerminal}
-                accessibilityLabel={t('settings.terminal')}
-                icon={glyph('terminal')}
-            />
+            {props.onOpenTerminal ? (
+                <IconButton
+                    testID={`${props.testIdPrefix}-open-terminal`}
+                    variant="plain"
+                    size={size}
+                    interactiveTargetGapPx={ACTION_GAP_PX}
+                    onPress={props.onOpenTerminal}
+                    accessibilityLabel={t('settings.terminal')}
+                    icon={glyph('terminal')}
+                />
+            ) : null}
         </View>
     );
 });
