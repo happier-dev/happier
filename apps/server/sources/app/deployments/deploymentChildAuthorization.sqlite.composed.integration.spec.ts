@@ -1331,6 +1331,12 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
         // The retained root cannot manufacture accepted custody for a different request.
         await db.deployment.update({ where: { id: f.receipt.id }, data: { acceptedRequestEnvelopeDigest: null } });
+        if (f.workflowActionOrigin) {
+            // A Workflow root's principal is its active Run, not accepted custody:
+            // its own Environment stays readable until that Run ends.
+            expect(await verify(reads[0])).not.toBeNull();
+            await db.automationRun.update({ where: { id: f.workflowActionOrigin.runId }, data: { state: 'cancelled' } });
+        }
         expect(await verify(reads[0])).toBeNull();
     });
 
@@ -1396,12 +1402,15 @@ describe('deployment children retain their controller Action authority', () => {
                 input: { ...f.input, expectedRevision: f.environmentRevision } }],
         }] });
         const target = { kind: 'machine' as const, machineId: f.outsider.id };
-        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
-        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
-            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
-            actionId, machineId: f.outsider.id, target, requestId: envelope.requestId,
-            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const mint = () => {
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                actionId, machineId: f.outsider.id, target, requestId: envelope.requestId,
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        };
+        const authorization = await mint();
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const get = (artifactId: string, signer = f.member) => {
                 const path = `/v1/artifacts/${artifactId}`;
@@ -1421,7 +1430,10 @@ describe('deployment children retain their controller Action authority', () => {
                 async () => { expect((await get(f.link.contentArtifactId)).statusCode).toBe(401); }, [authorization.token]);
             expect((await get(f.input.contentArtifactId, f.builder)).statusCode).toBe(401);
             await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'view' } });
-            expect((await get(f.input.contentArtifactId)).statusCode).toBe(401);
+            // Mint admitted the receiver's Manage once. A downgrade takes effect at
+            // the next admission; the already admitted finite Setup finishes.
+            expect((await get(f.input.contentArtifactId)).statusCode).toBe(200);
+            await expect(mint()).rejects.toThrow();
         }, { authentication: 'real' });
     });
 

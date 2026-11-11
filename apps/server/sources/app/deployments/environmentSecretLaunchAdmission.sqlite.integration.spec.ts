@@ -159,10 +159,16 @@ describe('private installed Environment secret launch transport', () => {
             ? { purpose: 'dataRole', service: roleService, role: 'readOnlyPassword', source: secretSource }
             : { purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: secretSource }] });
         const boundContent = await artifact('deployment-environment.v1', boundDefinition);
-        const bound = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, { serverId,
-            environmentId: environment.environmentId, expectedRevision: linked.revision, ...boundContent, grants: [grant],
+        const preparedBindings = { grants: [grant],
             referencedSavedSecretRevisions: roleService ? captureDeploymentBindingSavedSecretRevisionsV1(boundDefinition.bindings)
-                : [{ resourceId, revision: resource.value.revision }] }));
+                : [{ resourceId, revision: resource.value.revision }] };
+        // A plugin link's bindings writer owns provider variables and adds no
+        // Machine grants; its runtime grants come from the Environment writer.
+        const bound = await inTx(tx => runtimePlacement === 'plugin'
+            ? updateDeploymentEnvironmentInTx(tx, owner.id, { serverId, environmentId: environment.environmentId,
+                expectedRevision: linked.revision, ...boundContent, preparedBindings })
+            : setDeploymentEnvironmentBindingsInTx(tx, owner.id, { serverId,
+                environmentId: environment.environmentId, expectedRevision: linked.revision, ...boundContent, ...preparedBindings }));
         if (!bound.ok) throw new Error(bound.error);
         const actionOperationId = crypto.randomUUID();
         const candidate = await artifact('deployment-receipt.v1');
