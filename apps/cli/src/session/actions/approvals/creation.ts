@@ -43,13 +43,16 @@ type PluginInstallApprovalSubject = Readonly<{
   origin: Pick<ApprovalRequestV2['executionOriginV1'], 'accountId' | 'machineId' | 'serverIdentityId' | 'serverId'>;
 }>;
 
-/** Creation/rejoin and retirement must refer to the same Account/Home/Machine candidate. */
+/** Creation/rejoin and retirement must refer to the same Account/Home candidate.
+ * Host-origin installs may have no Machine; when present, the Machine remains
+ * part of the subject and must match exactly.
+ */
 function matchesPluginInstallApprovalSubject(request: ApprovalRequest, expected: PluginInstallApprovalSubject): request is ApprovalRequestV2 {
   if (request.v !== 2 || request.actionId !== 'plugins.install') return false;
   const origin = request.executionOriginV1;
   return sameStrictJsonValue(readPluginInstallApprovalPendingReview(request.preview), expected.pendingReview)
     && origin.accountId === expected.origin.accountId
-    && Boolean(origin.machineId) && origin.machineId === expected.origin.machineId
+    && origin.machineId === expected.origin.machineId
     && origin.serverIdentityId === expected.origin.serverIdentityId
     && (origin.serverIdentityId !== undefined || origin.serverId === expected.origin.serverId);
 }

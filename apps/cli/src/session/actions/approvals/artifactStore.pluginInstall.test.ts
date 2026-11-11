@@ -645,6 +645,18 @@ describe('plugin install approval Artifact rejoin', () => {
     expect(rows.size).toBe(2);
   });
 
+  it('rejoins a host-origin install when the origin has no Machine', async () => {
+    const original = installRequest();
+    const { machineId: _machineId, target: _target, ...originWithoutMachine } = original.executionOriginV1;
+    const request = ApprovalRequestV2Schema.parse({ ...original, executionOriginV1: originWithoutMachine });
+    const store = createStore();
+    const first = await store.approvalsCreate({ request, serverId: 'home-1' });
+    const nextRequest = ApprovalRequestV2Schema.parse({ ...request,
+      executionOriginV1: { ...request.executionOriginV1, requestId: 'host-origin-retry' } });
+
+    expect(await store.approvalsCreate({ request: nextRequest, serverId: 'home-1' })).toEqual(first);
+  });
+
   it.each(['review', 'machine', 'home', 'account', 'family', 'access'] as const)(
     'refuses to rejoin a pending id with a different %s', async (mismatch) => {
       const store = createStore();
