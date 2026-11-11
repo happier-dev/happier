@@ -49,6 +49,7 @@ beforeAll(async () => {
 afterAll(async () => await harness.close());
 afterEach(async () => {
     await db.homeGovernancePolicy.deleteMany({});
+    await db.machine.deleteMany({});
     await db.account.deleteMany({});
 });
 
@@ -106,7 +107,8 @@ describe("Home governance policy singleton", () => {
 
     it("persists Home Session defaults through the Home-admin authority", async () => {
         const owner = await createAccount("owner");
-        const defaults = { placement: { kind: "machine" as const, target: { serverId: "home", machineId: "machine" } } };
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner, metadata: "{}" } });
+        const defaults = { placement: { kind: "machine" as const, target: { serverId: "home", machineId: machine.id } } };
         const applied = await inTx(async (tx) => await setHomeGovernancePolicyInTx(tx, {
             emailDeliveryReady: false,
             actorAccountId: owner,
@@ -123,6 +125,24 @@ describe("Home governance policy singleton", () => {
             env: POLICY_ENV,
             patch: { expectedRevision: 1, sessionDefaults: null },
         }))).resolves.toEqual({ status: "forbidden" });
+    });
+
+    it("refuses a Home Machine default until every active Account has shared Use access", async () => {
+        const owner = await createAccount("owner");
+        const member = await createAccount("member");
+        await createAccount("member", "suspended");
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner, metadata: "{}" } });
+        const defaults = { placement: { kind: "machine" as const, target: { serverId: "home", machineId: machine.id } } };
+        const write = () => inTx(tx => setHomeGovernancePolicyInTx(tx, {
+            emailDeliveryReady: false, actorAccountId: owner, env: POLICY_ENV,
+            patch: { expectedRevision: 0, sessionDefaults: defaults },
+        }));
+        expect(await write()).toEqual({ status: "invalid_policy" });
+        expect(await db.homeGovernancePolicy.count()).toBe(0);
+        await db.machineAccountGrant.create({ data: {
+            machineId: machine.id, accountId: member, accessLevel: "view", createdByAccountId: owner,
+        } });
+        expect(await write()).toMatchObject({ status: "applied", policy: { sessionDefaults: defaults } });
     });
 
     it("inherits the deployment ceiling for a fresh Home and fails an unreadable ceiling closed", async () => {

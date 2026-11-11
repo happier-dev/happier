@@ -110,13 +110,16 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
-    it('falls back to the member choice when a managed Machine default is not in the member inventory', async () => {
+    it.each(['home', 'team', 'group'] as const)('falls back to the member choice when a %s Machine default is not in the member inventory', async layer => {
         const props: HookParams = {
             machines: toMachines({ id: 'member-machine' }), recentMachinePaths: [],
             machineIdParam: undefined, pathParam: undefined,
-            managedDefaults: { teamDefaults: { team: {
-                placement: { kind: 'machine', target: { serverId: 'server-a', machineId: 'admin-only-machine' } },
-            }, groups: {} } },
+            managedDefaults: (() => {
+                const defaults = { placement: { kind: 'machine' as const, target: { serverId: 'server-a', machineId: 'admin-only-machine' } } };
+                return layer === 'home' ? { homeDefaults: defaults }
+                    : layer === 'team' ? { teamDefaults: { team: defaults, groups: {} } }
+                        : { teamDefaults: { team: {}, groups: { 'group-a': defaults } }, groupIds: ['group-a'] };
+            })(),
         };
         const hook = await renderMachinePathState(props);
         try {

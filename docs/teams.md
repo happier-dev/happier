@@ -423,6 +423,9 @@ Team-change push and member-qualified Team snapshots supply updates; no addition
 or defaults storage is introduced by the precedence resolver. Home defaults are stored in
 `HomeGovernancePolicy.sessionDefaults` and projected in Team policy as `homeDefaults`;
 machine policy remains a separate source.
+Home, Team and Group Machine defaults share one eligibility owner: saving requires
+the Machine to be usable by every active member receiving that layer. If access later
+changes, New Session falls back to a Machine in the member's own usable inventory.
 
 ### Accepted authentication
 

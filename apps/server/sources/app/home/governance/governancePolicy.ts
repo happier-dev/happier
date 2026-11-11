@@ -2,6 +2,7 @@ import { HOME_TEAM_CREATION_POLICY_DEFAULT_V1, HOME_TEAMS_VISIBLE_TO_MEMBERS_DEF
 import { ManagedSessionDefaultsV1Schema, readManagedDefaultsV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import { type HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
+import { managedPlacementAudienceInTx } from "@/app/teams/managedPlacementAudience";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { resolveEffectiveHomeAuthMethodsInTx } from "@/app/auth/methods/effectiveHomeAuthMethods";
 import { checkHomeAuthenticationPolicyRetainsLoginRoutesInTx } from "@/app/auth/methods/effectiveAccountLoginMethods";
@@ -422,6 +423,11 @@ export async function setHomeGovernancePolicyInTx(
             env: input.env,
             policy: input.patch.identityNetworkPolicy,
         }).status === "invalid") return { status: "invalid_policy" };
+
+    if (input.patch.sessionDefaults != null
+        && !await managedPlacementAudienceInTx(tx, { kind: "home" }, input.patch.sessionDefaults.placement)) {
+        return { status: "invalid_policy" };
+    }
 
     const teamsVisibleToMembersWrite = input.patch.teamsVisibleToMembers === undefined
         ? {}
