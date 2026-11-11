@@ -23,7 +23,7 @@ import { readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
-import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useSettledBodyHeightFloor, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -145,11 +145,22 @@ describe('shared Usage identity and dependent coverage', () => {
         const cold = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending' }] }).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice: cold, pending: true, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
-        const render = (slice: UsageQueryResultSlice) => <UsageRhythmWidget query={query} slice={slice} model={model}
-            serverId="home" id="usage_rhythm" testID="rhythm-read" />;
+        const render = (slice: UsageQueryResultSlice) => <WidgetPresentationProvider value={{ size: 'medium',
+            footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 320, height: 260 } }}>
+            <UsageRhythmWidget query={query} slice={slice} model={model}
+                serverId="home" id="usage_rhythm" testID="rhythm-read" />
+        </WidgetPresentationProvider>;
         const screen = await renderScreen(render(cold));
         expect(screen.findByTestId('rhythm-read.empty')).toBeNull();
         expect(screen.findByTestId('rhythm-read.loading')).not.toBeNull();
+        // Cold-read room belongs to UsageWidgetBody's usageBodyHeightMemory owner, not the Rhythm child.
+        let held = 0;
+        for (let node = screen.findHostByTestId('rhythm-read.loading')?.parent; node; node = node.parent) {
+            for (const entry of ([] as unknown[]).concat(node.props.style ?? []).flat(2)) {
+                if (entry && typeof entry === 'object' && typeof entry.minHeight === 'number') held = Math.max(held, entry.minHeight);
+            }
+        }
+        expect(held).toBe(0);
         const empty = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
             ...usageQaAccountingFixture(), activity: { calendarDays: [], weekdayHourBuckets: [] },
         } }] }).results[0]!;
@@ -697,47 +708,5 @@ describe('shared Usage identity and dependent coverage', () => {
             v: 1, totals: { tokens: { total: 5, input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' }, eventCount: 1 },
         } }] }).results[0]!;
         expect(readUsageCoverageGaps(slice, ['accounting'])).toEqual([{ source: 'accounting', status: 'unknown' }]);
-    });
-});
-
-describe('a settled list body keeps the tallest height it has drawn', () => {
-    const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height } } }) as never;
-    it('holds the floor through shorter re-reads, ignores layouts before the settle, and starts over when the list changes shape', async () => {
-        const hook = await renderHook(({ settled, shapeKey }: { settled: boolean; shapeKey: string }) => useSettledBodyHeightFloor(settled, shapeKey),
-            { initialProps: { settled: false, shapeKey: 'wide' } });
-        // The dispatch's remembered height owns the room before the settle.
-        await act(async () => { hook.getCurrent()!.onLayout(layout(500)); });
-        expect(hook.getCurrent()!.minHeight).toBeUndefined();
-        await hook.rerender({ settled: true, shapeKey: 'wide' });
-        await act(async () => { hook.getCurrent()!.onLayout(layout(457)); });
-        await act(async () => { hook.getCurrent()!.onLayout(layout(491)); });
-        // A re-read puts accounts back to pending: the floor holds.
-        await hook.rerender({ settled: false, shapeKey: 'wide' });
-        expect(hook.getCurrent()!.minHeight).toBe(491);
-        await hook.rerender({ settled: true, shapeKey: 'wide' });
-        // The re-read drops the pace alert: the body is shorter, the floor is not.
-        await act(async () => { hook.getCurrent()!.onLayout(layout(457)); });
-        expect(hook.getCurrent()!.minHeight).toBe(491);
-        // Show all / a resize is a deliberate new shape, not a re-read.
-        await hook.rerender({ settled: true, shapeKey: 'narrow' });
-        expect(hook.getCurrent()!.minHeight).toBeUndefined();
-        await act(async () => { hook.getCurrent()!.onLayout(layout(300)); });
-        expect(hook.getCurrent()!.minHeight).toBe(300);
-    });
-
-    it('lets the first settle after a cold read follow the drawn height down once, then keeps the ratchet for re-reads (R5)', async () => {
-        const hook = await renderHook(({ settled }: { settled: boolean }) => useSettledBodyHeightFloor(settled, 'phone'),
-            { initialProps: { settled: false } });
-        // Cold read: the evidence settles with three findings (403), then the stored dismissals arrive and one is left (213).
-        await hook.rerender({ settled: true });
-        await act(async () => { hook.getCurrent()!.onLayout(layout(403)); });
-        await act(async () => { hook.getCurrent()!.onLayout(layout(213)); });
-        expect(hook.getCurrent()!.minHeight).toBe(213);
-        // A re-read begins: from here the body only keeps its tallest height, so nothing below it moves.
-        await hook.rerender({ settled: false });
-        await hook.rerender({ settled: true });
-        await act(async () => { hook.getCurrent()!.onLayout(layout(260)); });
-        await act(async () => { hook.getCurrent()!.onLayout(layout(180)); });
-        expect(hook.getCurrent()!.minHeight).toBe(260);
     });
 });

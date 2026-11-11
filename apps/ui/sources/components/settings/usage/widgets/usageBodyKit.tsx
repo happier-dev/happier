@@ -1,7 +1,7 @@
 import { usageProjectDisplayKey } from './usageWorkPresentation';
 import * as React from 'react';
 import type { PluginUiThemeV1 } from '@happier-dev/plugin-sdk/ui';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageHistoryReadState, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
@@ -1005,33 +1005,6 @@ export const leadingUsageRows = leadHappierListRows;
 
 /** One quiet line under a led list. */
 const SETTLED_QUIET_LINE_PX = 18;
-
-/**
- * The height a settled list body has shown, kept while it stays open. Its optional lines (the pace alert, the
- * shared reason, the legend) come and go with every read, so once the body has settled and a re-read begins it keeps
- * the tallest height it has drawn and they come and go inside it. The cold read's own first settle is not a re-read:
- * the floor follows the drawn height up or down until the first re-read, so late arrivals (stored dismissals,
- * hidden findings) shrink the body once instead of leaving blank room. The floor starts over when the viewer changes
- * the list's own shape (Show all, a resize), so a deliberate collapse is never held open. Before the first settle the
- * dispatch's remembered body height holds the room. `onLayout` belongs on a view that does not carry the floor as its own min height.
- */
-export function useSettledBodyHeightFloor(settled: boolean, shapeKey: string): Readonly<{
-  minHeight: number | undefined;
-  onLayout: (event: LayoutChangeEvent) => void;
-}> {
-  const [floor, setFloor] = React.useState<Readonly<{ shapeKey: string; height: number; keepTallest: boolean }>>({ shapeKey, height: 0, keepTallest: false });
-  const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-    if (!settled) return;
-    const height = Math.ceil(event.nativeEvent.layout.height);
-    setFloor((current) => current.shapeKey !== shapeKey ? { shapeKey, height, keepTallest: false }
-      : current.keepTallest && height <= current.height ? current : { ...current, height });
-  }, [settled, shapeKey]);
-  // A re-read puts accounts back to pending: the floor recorded while settled stays and from then on only grows.
-  React.useEffect(() => {
-    if (!settled) setFloor((current) => current.height > 0 && !current.keepTallest ? { ...current, keepTallest: true } : current);
-  }, [settled]);
-  return { minHeight: floor.shapeKey === shapeKey && floor.height > 0 ? floor.height : undefined, onLayout };
-}
 
 /**
  * The one footer under a led list (Projections, Breakdowns, Session value, How you work): the shared plugin-ui

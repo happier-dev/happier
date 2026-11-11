@@ -33,23 +33,6 @@ import {
 import { UsageSkyStyleBody, UsageWeekTideStyleBody, UsageDaylightStyleBody } from './UsageChartStyleBodies';
 import { UsageCalendarArtStyleBody, isUsageCalendarArtStyle } from './UsagePlanetFamilyBodies';
 
-/**
- * What the settled body measures at the widths the page is designed for, so the reading state holds
- * that room: side by side (calendar beside weekday × hour), a half-width card (calendar over the matrix,
- * measured at ~430 px) and a phone (calendar over the 24-hour rhythm). Other widths hold nothing rather
- * than a guess.
- */
-const SETTLED_SIDE_BY_SIDE_BODY_PX = 180;
-const SETTLED_HALF_WIDTH_BODY_PX = 272;
-const HALF_WIDTH_MAX_PX = 520;
-const SETTLED_PHONE_BODY_PX = 223;
-function settledBodyPx(width: number | undefined): number | undefined {
-  if (width === undefined) return undefined;
-  if (width >= USAGE_RHYTHM_SIDE_BY_SIDE_MIN_WIDTH_PX) return SETTLED_SIDE_BY_SIDE_BODY_PX;
-  if (width < USAGE_RHYTHM_MATRIX_MIN_WIDTH_PX) return SETTLED_PHONE_BODY_PX;
-  return width < HALF_WIDTH_MAX_PX ? SETTLED_HALF_WIDTH_BODY_PX : undefined;
-}
-
 /** One body per widget: its Style own-input picks the encoding of the same question. */
 export function UsageRhythmWidget(props: UsageBodyProps) {
   const style = props.presentation?.style;
@@ -88,11 +71,7 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
   );
   if (!view || !activity || (!hasCalendar && !hasRhythm)) {
     if (isUsageReadOutstanding(props.slice, ['accounting']))
-      return (
-        <View style={{ minHeight: settledBodyPx(width) }}>
-          <UsageBodyReading testID={`${props.testID}.loading`} />
-        </View>
-      );
+      return <UsageBodyReading testID={`${props.testID}.loading`} />;
     if (isUsageReadFailed(props.slice, ['accounting']))
       return <UsageBodyReadFailed slice={props.slice} sources={['accounting']} testID={props.testID} onRetry={props.model.refresh} />;
     return (
