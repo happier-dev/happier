@@ -3957,7 +3957,16 @@ remain on the existing managed Machine owners.
 Devcontainer presets save only the author operands accepted by the options
 Action: image and setup script, runtime, workspace and file or inline build
 configuration. Saving or editing these operands does not require a controller or
-native acquisition. On use, native options compute the effect review and its
+native acquisition. Image-only acquisition can use the saved operands without a
+native review digest: they fully specify child setup, and image metadata cannot
+add Dev Containers hooks. Acquire observes the image through the existing native
+review owner and retains those executable facts for reconciliation; this is not
+requester-supplied approval authority. If an acquisition carries an admitted
+digest, image drift still refuses it. Advanced file and inline sources require
+an admitted digest before any native configuration runs. Delegated Team members
+cannot supply that digest; advanced delegated creation remains unavailable.
+
+For reviewed acquisition, native options compute the effect review and its
 digest once for the selected operands. The receipt builder puts only the digest
 in `reviewedFacts.reviewedEffectDigest`, outside the saved launch choices; the
 ordinary acquisition approval signs those facts with the request. The controller

@@ -308,10 +308,12 @@ available for advanced setups. Presets, Team presets, pools and retention use th
 existing managed Machine flows.
 
 You can save or edit a container preset without a connected computer. It stores
-your image, setup script and configuration choices. When you create a Machine
-from it, the selected computer checks availability and presents the native effects
-for approval. Those reviewed effects belong to that creation, rather than the
-reusable preset.
+your image, setup script and configuration choices. Image presets can be used
+directly: the selected computer checks the image and runs the saved child setup.
+Advanced file or inline configurations require native effect review for each
+creation. Those reviewed effects belong to that creation, rather than the
+reusable preset. Delegated Team creation from advanced configurations remains
+unavailable; a Team member cannot supply the custodian's native review.
 
 The image must provide a Linux shell and the `id`, `chown` and `sleep` commands.
 Happier replaces the image's entrypoint and command to keep the child running;

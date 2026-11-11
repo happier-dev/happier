@@ -11,9 +11,8 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
-import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema } from './machine/schemas.js';
+import { DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema } from './machine/schemas.js';
 import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
-import { materializeDevcontainerConfiguration } from './machine/configuration.js';
 
 export const DEVCONTAINER_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema });
 export const DEVCONTAINER_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema,
@@ -152,10 +151,8 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       confirmation: { title: 'Create Devcontainer', body: 'Runs the reviewed host and child setup hooks on this controller.', confirmLabel: 'Create' },
       resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
       async run(input, context) { try {
-        if (!input.reviewedEffectDigest) return { kind: 'rejected' as const, code: 'invalid_request' as const };
-        const launch = DevcontainerLaunchSchema.parse({ ...await materializeDevcontainerConfiguration(input.launch),
-          reviewedEffectDigest: input.reviewedEffectDigest });
-        return await (await provider(context, launch)).acquire(launch, input.managedId ?? '', input.guestHome);
+        return await (await provider(context, input.launch)).acquire({ ...input.launch,
+          ...(input.reviewedEffectDigest ? { reviewedEffectDigest: input.reviewedEffectDigest } : {}) }, input.managedId ?? '', input.guestHome);
       }
         catch (error) { return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath ?? input.managedId ?? '', reason: code(error) } }; } } },
     bootstrap: { ...defaults, title: 'Resolve private child enrollment transport', dangerLevel: 'writesLocal',

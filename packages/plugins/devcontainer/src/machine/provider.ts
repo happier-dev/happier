@@ -6,8 +6,8 @@ import { posix, win32 } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerNativeOperationSchema } from './schemas.js';
-import type { DevcontainerLaunch, DevcontainerResource, DevcontainerNativeOperation } from './schemas.js';
-import { assertDevcontainerEffectReview, devcontainerComposeProjectName, readDevcontainerNativeEnvironment } from './effectReview.js';
+import type { DevcontainerLaunch, DevcontainerResource, DevcontainerNativeOperation, DevcontainerReviewQuery } from './schemas.js';
+import { assertDevcontainerEffectReview, devcontainerComposeProjectName, readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './effectReview.js';
 
 export const DEVCONTAINER_PLUGIN_ID = 'happier.devcontainer';
 export const DEVCONTAINER_PROVISIONER_ID = 'devcontainer';
@@ -241,11 +241,17 @@ export function createDevcontainerProvider(input: Readonly<{
         return /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(version) ? { available: true } : { available: false, code: 'devcontainer_version_unavailable' };
       } catch (error) { return { available: false, code: code(error) }; }
     },
-    async acquire(rawLaunch: DevcontainerLaunch, managedMachineId: string, guestHome?: MachineProvisionerGuestHomeV1) {
+    async acquire(rawLaunch: DevcontainerReviewQuery & { reviewedEffectDigest?: string }, managedMachineId: string, guestHome?: MachineProvisionerGuestHomeV1) {
       if (!managedMachineId) return { kind: 'rejected' as const, code: 'invalid_request' as const };
-      const launch = DevcontainerLaunchSchema.parse(rawLaunch);
+      const { reviewedEffectDigest, ...query } = rawLaunch;
+      // Image presets fully specify the child setup; image metadata cannot add
+      // Dev Containers hooks. Only advanced sources need admitted native review.
+      // Still retain locally observed executable facts for exact reconciliation.
+      if (query.configuration?.kind !== 'image' && !reviewedEffectDigest) return { kind: 'rejected' as const, code: 'invalid_request' as const };
+      let launch: DevcontainerLaunch;
       try {
-        await assertDevcontainerEffectReview(nativeInput, launch, launch.reviewedEffectDigest);
+        launch = (await readDevcontainerEffectReview(nativeInput, query)).launch;
+        if (reviewedEffectDigest && launch.reviewedEffectDigest !== reviewedEffectDigest) fail('request_conflict');
       } catch (error) {
         return { kind: 'rejected' as const, code: code(error) === 'request_conflict' ? 'request_conflict' as const
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
