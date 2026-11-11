@@ -203,6 +203,38 @@ describe('Source catalog real SQLite owner', () => {
             expectedRevision: attached.source.revision, patch: { repository } })))
             .toMatchObject({ ok: false, error: 'source_conflict' });
     });
+    it.each(['member', 'admin', 'owner'] as const)('authorizes own Source Team sharing for a %s through HTTP independently of direct Account sharing', async role => {
+        const [owner, recipient] = await Promise.all([account(), account()]);
+        const team = await db.team.create({ data: { name: `Source sharing ${role}` } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member' } });
+        const row = await source(owner.id);
+        await withAuthenticatedTestApp(projectSourceRoutes, async app => {
+            const headers = { 'x-test-user-id': owner.id };
+            const teamAudience = [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }];
+            const shared = await app.inject({ method: 'PATCH', url: `/v1/projects/sources/${row.id}`, headers,
+                payload: { serverId, sourceId: row.id, expectedRevision: row.revision, patch: { audience: teamAudience } } });
+            if (role === 'member') {
+                expect(shared.statusCode, shared.body).toBe(403);
+                expect(shared.json()).toEqual({ ok: false, error: 'source_access_denied' });
+                expect((await db.projectSource.findUniqueOrThrow({ where: { id: row.id } })).audience).toEqual([]);
+            } else {
+                expect(shared.statusCode, shared.body).toBe(200);
+                expect(shared.json()).toMatchObject({ ok: true, source: { audience: teamAudience } });
+                const read = await app.inject({ method: 'GET', url: `/v1/projects/sources/${row.id}?serverId=home`,
+                    headers: { 'x-test-user-id': recipient.id } });
+                expect(read.statusCode, read.body).toBe(200);
+            }
+            const current = await db.projectSource.findUniqueOrThrow({ where: { id: row.id } });
+            const direct = await app.inject({ method: 'PATCH', url: `/v1/projects/sources/${row.id}`, headers,
+                payload: { serverId, sourceId: row.id, expectedRevision: current.revision,
+                    patch: { audience: [{ principal: { kind: 'account', accountId: recipient.id }, level: 'view' }] } } });
+            expect(direct.statusCode, direct.body).toBe(200);
+            const read = await app.inject({ method: 'GET', url: `/v1/projects/sources/${row.id}?serverId=home`,
+                headers: { 'x-test-user-id': recipient.id } });
+            expect(read.statusCode, read.body).toBe(200);
+        });
+    });
     it('serves acknowledged mutations and current conflicts through authenticated HTTP, with exact path/body identity', async () => {
         const owner = await account();
         await withAuthenticatedTestApp(projectSourceRoutes, async app => {
