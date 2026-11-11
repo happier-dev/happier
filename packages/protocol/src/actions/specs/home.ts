@@ -311,7 +311,6 @@ function createHomeGovernanceActionSpecs() {
       approvalField('identityNetworkPolicy.hostnames', 'Allowed hostnames', { widget: 'text_list', listSeparator: 'comma' }),
       approvalField('identityNetworkPolicy.cidrs', 'Allowed CIDRs', { widget: 'text_list', listSeparator: 'comma' }),
       approvalField('identityNetworkPolicy.ports', 'Allowed ports', { widget: 'text_list', listSeparator: 'comma' }),
-      approvalField('sessionDefaults', 'Home Session defaults', { widget: 'json' }),
       approvalField('authenticationPolicy.anonymousSignup', 'Anonymous sign-up', { widget: 'boolean' }),
       approvalField('authenticationPolicy.storagePolicy', 'Storage policy'),
       approvalField('confirmWidening', 'Widening confirmed', { widget: 'boolean' }),

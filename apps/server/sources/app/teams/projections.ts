@@ -104,7 +104,7 @@ export function projectTeamLogoRefV1(team: Pick<TeamRecord, "id" | "logo">): Tea
 }
 
 /** The closed policy projection; the stored columns are already the contract. */
-export function projectTeamPolicyV1(team: TeamRecord, homeDefaults?: TeamPolicyV1['homeDefaults']): TeamPolicyV1 {
+export function projectTeamPolicyV1(team: TeamRecord): TeamPolicyV1 {
     const managedDefaults = readManagedDefaultsV1(team.managedDefaults ?? null);
     const parsedAuthenticationPolicy = team.authenticationPolicy === null
         ? null
@@ -126,7 +126,6 @@ export function projectTeamPolicyV1(team: TeamRecord, homeDefaults?: TeamPolicyV
             : "available",
         managedDefaults: managedDefaults.defaults,
         managedDefaultsStatus: managedDefaults.status,
-        ...(homeDefaults !== undefined ? { homeDefaults } : {}),
     };
 }
 
@@ -178,12 +177,10 @@ export function projectTeamSummaryV1(input: Readonly<{
     teamCapabilities: TeamCapabilitiesV1;
     counts: TeamSummaryCountFacts;
     managedDefaultsGroupIds?: readonly string[];
-    homeDefaults?: TeamPolicyV1['homeDefaults'];
 }>): TeamSummaryV1 {
-    const policy = projectTeamPolicyV1(input.team, input.homeDefaults);
+    const policy = projectTeamPolicyV1(input.team);
     if (!input.capabilities.viewTeam) {
         policy.managedDefaults = null;
-        policy.homeDefaults = null;
     } else if (policy.managedDefaults && !input.capabilities.manageSettings && !input.teamCapabilities.manageGroups) {
         const applicable = new Set(input.managedDefaultsGroupIds ?? []);
         policy.managedDefaults = {

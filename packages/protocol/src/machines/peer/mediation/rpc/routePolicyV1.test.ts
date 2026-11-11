@@ -642,6 +642,8 @@ describe('MachineRpcRoutePolicyV1', () => {
     const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_AGENTS_INSTALL_START))
       .toMatchObject({ sharedMachineAccess: 'manage', rpcClassification: 'internal_only' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL))
+      .toMatchObject({ sharedMachineAccess: 'manage', rpcClassification: 'internal_only' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.CAPABILITIES_INVOKE)).toMatchObject({ sharedMachineAccess: 'use' });
     for (const actionId of ['machines.agents.install', 'machines.agents.uninstall'] as const) {
       expect(getActionSpec(actionId).bindings?.rpcMethod).toBe(RPC_METHODS.DAEMON_AGENTS_INSTALL_START);

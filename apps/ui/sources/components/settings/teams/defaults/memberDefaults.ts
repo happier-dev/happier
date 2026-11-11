@@ -1,6 +1,5 @@
 import {
   resolveManagedSessionDefaults,
-  projectManagedSessionDefaultsLayers,
   type ManagedConnectedServiceDefaultV1,
   type ManagedDefaultsV1,
   type ManagedSessionDefaultsV1,
@@ -175,7 +174,6 @@ export function memberDefaultsConflicts(
   stored: ManagedDefaultsV1 | null | undefined,
   scope: MemberDefaultsScope,
   agentTargetKey: string,
-  homeDefaults?: ManagedSessionDefaultsV1 | null,
 ): MemberDefaultsConflicts {
   const groupIds = Object.keys(stored?.groups ?? {});
   const comparisons =
@@ -191,7 +189,6 @@ export function memberDefaultsConflicts(
   for (const ids of comparisons) {
     const resolved = resolveManagedSessionDefaults({
       teamDefaults: stored ?? null,
-      homeDefaults,
       groupIds: ids,
       agentTargetKey,
     });
@@ -201,12 +198,17 @@ export function memberDefaultsConflicts(
     // The reader answers one decision per purpose, in sorted purpose-key order over the
     // layers it was given (here these Groups and the Team). A disagreeing purpose can fall
     // through to no value, so its key is read from that same order.
-    const purposeKeys = projectManagedSessionDefaultsLayers({
-      teamDefaults: stored ?? null,
-      homeDefaults,
-      groupIds: ids,
-      agentTargetKey,
-    }).purposeKeys;
+    const layers = [...ids.map((id) => stored?.groups[id]), stored?.team];
+    const purposeKeys = [
+      ...new Set(
+        layers.flatMap(
+          (layer) =>
+            layer?.connectedServicesByAgentTargetKey?.[agentTargetKey]?.map((entry) =>
+              qualifiedPurposeKey(entry.purpose),
+            ) ?? [],
+        ),
+      ),
+    ].sort();
     resolved.connectedServices.forEach((decision, index) => {
       const key = purposeKeys[index];
       if (decision.groupConflict && key) connectedServices.add(key);

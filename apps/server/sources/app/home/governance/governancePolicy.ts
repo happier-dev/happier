@@ -1,5 +1,4 @@
 import { HOME_TEAM_CREATION_POLICY_DEFAULT_V1, HOME_TEAMS_VISIBLE_TO_MEMBERS_DEFAULT_V1, readHomeAuthenticationPolicyV1, readHomeIdentityNetworkPolicyV1, readHomeTeamProviderPolicyV1, readTeamCreationPolicyV1, type HomeAuthenticationPolicyReadV1, type HomeAuthenticationPolicyV1, type HomeGovernancePolicySetInputV1, type HomeIdentityNetworkPolicyReadV1, type HomeTeamProviderPolicyReadV1, type ManagedIdentityProviderKindV1, type TeamCreationPolicyV1 } from '@happier-dev/protocol/home/governance';
-import { ManagedSessionDefaultsV1Schema, readManagedDefaultsV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import { type HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import { db, isPrismaErrorCode } from "@/storage/db";
@@ -41,7 +40,6 @@ export type HomeGovernancePolicyRecord = Readonly<{
     authentication: HomeAuthenticationPolicyReadV1;
     teamProviders: HomeTeamProviderPolicyReadV1;
     identityNetwork: HomeIdentityNetworkPolicyReadV1;
-    sessionDefaults?: ManagedSessionDefaultsV1 | null;
 }>;
 
 type HomeGovernancePolicyRow = Readonly<{
@@ -51,7 +49,6 @@ type HomeGovernancePolicyRow = Readonly<{
     authenticationPolicy: unknown;
     teamProviderPolicy: unknown;
     identityNetworkPolicy: unknown;
-    sessionDefaults: unknown;
 }>;
 
 const DEPLOYMENT_DEFAULT_POLICY: HomeGovernancePolicyRecord = Object.freeze({
@@ -65,7 +62,6 @@ const DEPLOYMENT_DEFAULT_POLICY: HomeGovernancePolicyRecord = Object.freeze({
 
 function projectPolicyRow(row: HomeGovernancePolicyRow | null): HomeGovernancePolicyRecord {
     if (!row) return DEPLOYMENT_DEFAULT_POLICY;
-    const sessionDefaults = ManagedSessionDefaultsV1Schema.safeParse(row.sessionDefaults);
     return Object.freeze({
         revision: row.revision,
         teamCreationPolicy: readTeamCreationPolicyV1(row.teamCreationPolicy),
@@ -73,7 +69,6 @@ function projectPolicyRow(row: HomeGovernancePolicyRow | null): HomeGovernancePo
         authentication: readHomeAuthenticationPolicyV1(row.authenticationPolicy),
         teamProviders: readHomeTeamProviderPolicyV1(row.teamProviderPolicy),
         identityNetwork: readHomeIdentityNetworkPolicyV1(row.identityNetworkPolicy),
-        ...(sessionDefaults.success ? { sessionDefaults: sessionDefaults.data } : {}),
     });
 }
 
@@ -87,7 +82,6 @@ async function findPolicyRowInTx(tx: Tx): Promise<HomeGovernancePolicyRow | null
             authenticationPolicy: true,
             teamProviderPolicy: true,
             identityNetworkPolicy: true,
-            sessionDefaults: true,
         },
     });
 }
@@ -110,7 +104,6 @@ export async function readHomeGovernancePolicy(): Promise<HomeGovernancePolicyRe
             authenticationPolicy: true,
             teamProviderPolicy: true,
             identityNetworkPolicy: true,
-            sessionDefaults: true,
         },
     });
     return projectPolicyRow(row);
@@ -181,8 +174,7 @@ export function isHomeGovernancePolicyCreateConflictError(
 function homeGovernancePolicyChangeAudience(patch: HomeGovernancePolicySetInputV1): "all_active_accounts" | "administrators" {
     return patch.teamCreationPolicy !== undefined || patch.teamsVisibleToMembers !== undefined
         || patch.authenticationPolicy !== undefined || patch.teamProviderPolicy !== undefined
-        || patch.identityNetworkPolicy !== undefined
-        || patch.sessionDefaults !== undefined ? "all_active_accounts" : "administrators";
+        || patch.identityNetworkPolicy !== undefined ? "all_active_accounts" : "administrators";
 }
 
 export async function setHomeGovernancePolicy(input: Readonly<{
@@ -321,7 +313,6 @@ const POLICY_FIELDS = [
     "authenticationPolicy",
     "teamProviderPolicy",
     "identityNetworkPolicy",
-    "sessionDefaults",
 ] as const;
 
 /** Records the fields this patch changed, as stored before and after (§3.9). */
@@ -366,7 +357,7 @@ export async function setHomeGovernancePolicyInTx(
         emailDeliveryReady: boolean;
     }>,
 ): Promise<HomeGovernancePolicySetResult> {
-    const operations = new Set<"set_team_creation_policy" | "set_authentication_policy" | "set_session_defaults">();
+    const operations = new Set<"set_team_creation_policy" | "set_authentication_policy">();
     // Who may create Teams and whether members outside every Team see them are
     // one Teams-policy authority.
     if (input.patch.teamCreationPolicy !== undefined
@@ -374,7 +365,6 @@ export async function setHomeGovernancePolicyInTx(
     if (input.patch.authenticationPolicy !== undefined
         || input.patch.teamProviderPolicy !== undefined
         || input.patch.identityNetworkPolicy !== undefined) operations.add("set_authentication_policy");
-    if (input.patch.sessionDefaults !== undefined) operations.add("set_session_defaults");
     await acquireHomeGovernanceAdmissionInTx(tx, {
         accountIds: [input.actorAccountId],
         intent: operations.has("set_authentication_policy") ? "exclusive" : "content",
@@ -447,9 +437,6 @@ export async function setHomeGovernancePolicyInTx(
                 ? getActivePrismaRuntime().DbNull
                 : input.patch.identityNetworkPolicy,
         };
-    const sessionDefaultsWrite = input.patch.sessionDefaults === undefined
-        ? {}
-        : { sessionDefaults: input.patch.sessionDefaults === null ? getActivePrismaRuntime().DbNull : input.patch.sessionDefaults };
 
     if (!current) {
         try {
@@ -462,7 +449,6 @@ export async function setHomeGovernancePolicyInTx(
                     ...authenticationPolicyWrite,
                     ...teamProviderPolicyWrite,
                     ...identityNetworkPolicyWrite,
-                    ...sessionDefaultsWrite,
                 },
                 select: { id: true },
             });
@@ -485,7 +471,6 @@ export async function setHomeGovernancePolicyInTx(
             ...authenticationPolicyWrite,
             ...teamProviderPolicyWrite,
             ...identityNetworkPolicyWrite,
-            ...sessionDefaultsWrite,
         },
     });
     if (applied.count === 0) {

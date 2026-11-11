@@ -87,44 +87,11 @@ export type ResolvedManagedSessionDefaults = Readonly<{
   connectedServices: readonly ManagedDefaultDecision<ManagedConnectedServiceDefaultV1>[];
 }>;
 
-export type ManagedSessionDefaultsLayerV1 = Readonly<{
-  source: 'explicit' | 'group' | 'team' | 'home' | 'policy';
-  defaults: ManagedSessionDefaultsV1 | null;
-}>;
-
-export type ManagedSessionDefaultsLayerProjectionV1 = Readonly<{
-  layers: readonly ManagedSessionDefaultsLayerV1[];
-  purposeKeys: readonly string[];
-}>;
-
-/** The canonical layer order and connected-service purpose projection. */
-export function projectManagedSessionDefaultsLayers(
-  input: ManagedSessionDefaultsContext & Readonly<{
-    agentTargetKey: string;
-    explicitChoices?: ManagedSessionDefaultsV1;
-  }>,
-): ManagedSessionDefaultsLayerProjectionV1 {
-  const groups = (input.groupIds ?? []).flatMap(id => input.teamDefaults?.groups[id] ? [input.teamDefaults.groups[id]] : []);
-  const layers: ManagedSessionDefaultsLayerV1[] = [
-    { source: 'explicit', defaults: input.explicitChoices ?? null },
-    ...groups.map(defaults => ({ source: 'group' as const, defaults })),
-    { source: 'team', defaults: input.teamDefaults?.team ?? null },
-    { source: 'home', defaults: input.homeDefaults ?? null },
-    { source: 'policy', defaults: input.policyDefaults?.values ?? null },
-  ];
-  const targetKey = input.agentTargetKey;
-  const purposeKeys = [...new Set(layers.flatMap(layer =>
-    layer.defaults?.connectedServicesByAgentTargetKey?.[targetKey]?.map(value => qualifiedPurposeKey(value.purpose)) ?? []
-  ))].sort();
-  return { layers, purposeKeys };
-}
-
 /** One decision per field/purpose. Defaults express intent and never confer resource access. */
 export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsContext & Readonly<{
   agentTargetKey: string; explicitChoices?: ManagedSessionDefaultsV1;
 }>): ResolvedManagedSessionDefaults {
-  const projection = projectManagedSessionDefaultsLayers(input);
-  const groups = projection.layers.filter(layer => layer.source === 'group').flatMap(layer => layer.defaults ? [layer.defaults] : []);
+  const groups = (input.groupIds ?? []).flatMap(id => input.teamDefaults?.groups[id] ? [input.teamDefaults.groups[id]] : []);
   function decide<T>(read: (defaults: ManagedSessionDefaultsV1) => T | undefined,
     equal: (left: T, right: T) => boolean = sameStrictJsonValue): ManagedDefaultDecision<T> {
     const groupValues = groups.flatMap(group => { const value = read(group); return value === undefined ? [] : [value]; });
@@ -149,7 +116,8 @@ export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsConte
   const targetKey = input.agentTargetKey;
   const purposeKey = (value: z.infer<typeof ManagedConnectedServiceDefaultV1Schema>) =>
     qualifiedPurposeKey(value.purpose);
-  const purposeKeys = new Set(projection.purposeKeys);
+  const layers = [input.explicitChoices, ...groups, input.teamDefaults?.team, input.homeDefaults, input.policyDefaults?.values];
+  const purposeKeys = new Set(layers.flatMap(layer => layer?.connectedServicesByAgentTargetKey?.[targetKey]?.map(purposeKey) ?? []));
   const modelIdentity = (model: SessionModelSelectionV1 | SessionModelSelectionV2) => model.v === 1
     ? model.ref
     : projectSessionModelSelectionV2ToV1(model)?.ref ?? model.ref;

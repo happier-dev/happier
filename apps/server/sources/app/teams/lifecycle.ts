@@ -20,7 +20,6 @@ import { AccountStatus } from "@/storage/enums.generated";
 import { revokeActiveTeamInvitationsForTeamInTx } from "./invitations/invitationLifecycle";
 import { admitTeamMemberInTx } from "./memberships/membershipService";
 import { TEAM_PROJECTION_SELECT, projectTeamSummaryV1, type TeamRecord } from "./projections";
-import { readHomeGovernancePolicyInTx } from "@/app/home/governance/governancePolicy";
 import { readTeamSummaryCountsInTx } from "./teamSummaryCounts";
 import { publishTeamChangedInTx, readTeamCreationPublicationAudienceInTx } from "./teamChanges";
 import {
@@ -469,7 +468,6 @@ async function projectQualifiedTeamContextInTx(
     const managedDefaultsGroupIds = qualification.ok && context.teamCapabilities.viewTeam && context.team.managedDefaults != null
         ? await resolveEffectiveTeamGroupIdsForAccountInTx(tx, { teamId: context.team.id, accountId: context.actorAccountId })
         : [];
-    const homeDefaults = (await readHomeGovernancePolicyInTx(tx)).sessionDefaults ?? null;
     return {
         qualification,
         team: projectTeamSummaryV1({
@@ -487,7 +485,6 @@ async function projectQualifiedTeamContextInTx(
             }),
             ownerRequired: context.ownerRequired,
             homeAuthority: context.homeAuthority,
-            homeDefaults,
         }),
     };
 }

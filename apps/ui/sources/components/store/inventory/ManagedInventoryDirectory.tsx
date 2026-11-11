@@ -312,10 +312,6 @@ export function RowMark(
       }
       return <StoreItemMark facts={{ kind: 'agent', title: props.title }} size={MARK_PX} />;
     }
-    case 'software':
-      // The same mark the setup editor draws for this recipe: its plugin's artwork, else its declared glyph.
-      return <StoreItemMark facts={{ kind: 'software', title: props.title,
-        bundledPluginId: row.subject === 'recipe' ? row.native.ref.pluginId : null, iconToken: row.presentation.icon ?? null }} size={MARK_PX} />;
     case 'watchedService':
       return <Icon name="eye" size={GLYPH_PX} color={theme.colors.text.secondary} />;
     case 'setup':

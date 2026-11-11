@@ -185,7 +185,7 @@ export function presentInventoryRow(row: InstalledRow, input: StoreInstalledInpu
             href = `/automations/${row.automationId}`;
             break;
         case 'software':
-            title = row.presentation.title; context = row.presentation.description ?? null;
+            title = row.subject === 'recipe' ? row.native.ref.recipeId : row.native.adapterId;
             href = machinePageHref({ door: 'rail', target: { serverId: row.scope.serverId,
                 machineId: input.machine?.machineId ?? row.installations[0]!.machineId } });
             machines = serverIdentityId ? row.installations.flatMap(installation => portable(installation.machineId) ?? []) : null;

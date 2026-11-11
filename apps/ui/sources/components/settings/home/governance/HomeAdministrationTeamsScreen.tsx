@@ -19,7 +19,7 @@ import { HomeAdministrationSection } from './HomeAdministrationSection';
 import { canInvitePeople, presentHomeInvitePeople } from './HomeInvitePeopleDialog';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { segmentHomeAdministrationRows } from './homeAdministrationVirtualizedSegments';
-import { HomeSessionDefaultsSection, TeamCreationPolicyEditor, TeamsVisibilityPolicyEditor } from './HomeTeamsPolicySections';
+import { TeamCreationPolicyEditor, TeamsVisibilityPolicyEditor } from './HomeTeamsPolicySections';
 import { homeAdministrationFeaturesPath } from './homeAdministrationRoutes';
 
 type HomeTeamsVirtualizedRow = Readonly<{
@@ -104,7 +104,6 @@ const HomeTeams = React.memo(function HomeTeams(
             <>
                 <TeamCreationPolicyEditor context={context} />
                 <TeamsVisibilityPolicyEditor context={context} />
-                <HomeSessionDefaultsSection context={context} />
             </>
         ));
         if (!mayGovern) {

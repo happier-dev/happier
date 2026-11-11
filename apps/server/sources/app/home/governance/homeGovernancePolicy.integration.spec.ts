@@ -104,27 +104,6 @@ describe("Home governance policy singleton", () => {
         });
     });
 
-    it("persists Home Session defaults through the Home-admin authority", async () => {
-        const owner = await createAccount("owner");
-        const defaults = { placement: { kind: "machine" as const, target: { serverId: "home", machineId: "machine" } } };
-        const applied = await inTx(async (tx) => await setHomeGovernancePolicyInTx(tx, {
-            emailDeliveryReady: false,
-            actorAccountId: owner,
-            env: POLICY_ENV,
-            patch: { expectedRevision: 0, sessionDefaults: defaults },
-        }));
-        expect(applied).toMatchObject({ status: "applied", policy: { revision: 1, sessionDefaults: defaults } });
-        await expect(readHomeGovernancePolicy()).resolves.toMatchObject({ sessionDefaults: defaults });
-
-        const member = await createAccount("member");
-        await expect(inTx(async (tx) => await setHomeGovernancePolicyInTx(tx, {
-            emailDeliveryReady: false,
-            actorAccountId: member,
-            env: POLICY_ENV,
-            patch: { expectedRevision: 1, sessionDefaults: null },
-        }))).resolves.toEqual({ status: "forbidden" });
-    });
-
     it("inherits the deployment ceiling for a fresh Home and fails an unreadable ceiling closed", async () => {
         // Absent policy means "inherit the deployment ceiling" (teams-lane-01/02 :230, :234):
         // the Home adds no narrowing, while each provider kind's deployment runtime still

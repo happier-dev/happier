@@ -306,6 +306,15 @@ describe('public Vercel provisioner composition', () => {
     expect(MACHINE_PROVISIONER.retention.supportedIntents).toEqual(['start','stop','resume','delete']);
     expect(ROLE_SCHEMAS.acquireInput.safeParse({ managedId: resource.managedId, launch: { ...launch, token: 'not-public' } }).success).toBe(false);
   });
+  it('does not invent a Vercel vCPU default in the authoring hints', () => {
+    const manifest = parsePluginManifest(PLUGIN_MANIFEST);
+    if (!manifest.ok) throw new Error('Expected admitted manifest');
+    const action = manifest.manifest.contributes.actions.find(action => action.id === 'options');
+    if (!action) throw new Error('Expected options action');
+    const vcpus = action.inputHints?.fields.find(field => field.path === 'vcpus');
+    expect(vcpus).toBeDefined();
+    expect(vcpus).not.toHaveProperty('defaultValue');
+  });
   it('invokes the activated check and options through host HTTP without waking or guest IO', async () => {
     const { kit, calls } = await vendor();
     try {

@@ -94,6 +94,15 @@ describe('Freestyle HTTP leaf qualification', () => {
       expect(readFileSync(join(daemonHome, 'starts'), 'utf8')).toBe('started');
     } finally { v.cleanup(); }
   });
+  it('lets Freestyle apply its documented exec timeout when none is supplied', async () => {
+    const v = vendor();
+    try {
+      const c = createFreestyleNativeClient(v.request), a = await c.acquire(launch, 'managed');
+      if (a.kind !== 'bound') throw new Error('Missing resource');
+      await c.exec({ resource: a.resource.value, argv: ['true'] });
+      expect(v.calls.find(call => call.path.endsWith('/exec-await'))?.body).not.toHaveProperty('timeoutMs');
+    } finally { v.cleanup(); }
+  });
   it('keeps paused memory/disk and truthful plan deletion rules; start/delete use the same identity', async () => {
     const v = vendor();
     try {

@@ -2,7 +2,6 @@ import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1, decodeTeamDirectoryCursorV1, encodeTeamDirectoryCursorV1, teamDirectoryQueryKeyV1, type TeamsListInputV1, type TeamsPageV1 } from '@happier-dev/protocol/teams/projections';
 
 import { readHomeGovernanceAccountInTx, resolveHomeGovernanceAuthority } from "@/app/home/governance/homeCapabilities";
-import { readHomeGovernancePolicyInTx } from "@/app/home/governance/governancePolicy";
 import type { Tx } from "@/storage/inTx";
 import { AccountStatus, TeamMembershipStatus, TeamRole } from "@/storage/enums.generated";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -108,7 +107,6 @@ export async function listTeamsForActorInTx(
     const account = await readHomeGovernanceAccountInTx(tx, input.actorAccountId);
     if (!account || account.status !== AccountStatus.active) return { ok: false, error: "team_forbidden" };
     const authority = resolveHomeGovernanceAuthority(account);
-    const homeDefaults = (await readHomeGovernancePolicyInTx(tx)).sessionDefaults ?? null;
 
     // The administrative scope is an explicit request, not an implicit widening
     // of the member directory: an administrator's ordinary Teams list still shows
@@ -234,7 +232,6 @@ export async function listTeamsForActorInTx(
                 }),
             ownerRequired: context.ownerRequired,
             homeAuthority: context.homeAuthority,
-            homeDefaults,
         }));
     }
 

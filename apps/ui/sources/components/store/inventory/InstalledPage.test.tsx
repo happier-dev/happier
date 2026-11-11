@@ -78,36 +78,6 @@ it('renders recorded Software and watches in the real Installed page and its Mac
     expect(rpc.state.requests.filter(request => request.method !== 'capabilities.detect')).toHaveLength(0);
 });
 
-it('names installed Software by its declared recipe and toolchain titles, never their ids', async () => {
-    const { PluginAccountAvailabilityIntentReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/availability');
-    const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
-    const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
-    const dispose = await installRealActionExecutorModuleLoader();
-    onTestFinished(dispose);
-    const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/machine-recipes/src/manifest');
-    const machine = createMachineFixture({ id: 'named-software', metadata: { ...createMachineFixture().metadata!,
-        agentInventory: { checkedAt: 1, installedAgentIds: [] },
-        setup: { version: 1, revision: 1, exclusions: [], sources: [{ kind: 'direct', setup: {
-            toolchain: { adapterId: 'mise', config: 'node=22' },
-            items: [{ kind: 'softwareRecipe', selection: { ref: { pluginId: PLUGIN_MANIFEST.id, recipeId: 'ffmpeg', revision: '1' }, inputs: {} } }],
-        } }] },
-    } });
-    await account.restore({ serverIdentityId: 'srv_installed_software_names', machines: [machine] });
-    const scope = storage.getState().settingsScope!;
-    const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
-        intent: { pluginId: PLUGIN_MANIFEST.id, desiredVersion: PLUGIN_MANIFEST.version, enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1' },
-        release: { ref: { pluginId: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
-            normalizedManifest: PLUGIN_MANIFEST, collectionContracts: [], uiSlots: [],
-            packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
-        packageAssets: [], uiArtifacts: [] });
-    await act(async () => { replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
-        intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response }], materializations: [], snapshots: [] } }); });
-    const page = await renderScreen(<PluginSurfaceFocusEligibilityProvider active><InstalledPage /></PluginSurfaceFocusEligibilityProvider>);
-    await waitForHomeGovernance(async () => { await flushHookEffects(); expect(page.getTextContent()).toContain('FFmpeg'); });
-    expect(page.getTextContent()).toContain('Mise');
-    expect(page.getTextContent()).not.toMatch(/\bffmpeg\b|\bmise\b/);
-});
-
 it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i installations)', async count => {
     const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
     const { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,

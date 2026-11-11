@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { qualifiedPurposeKey } from '../connect/connectedAccountPurposeBindings.js';
-import { ManagedDefaultsV1Schema, projectManagedSessionDefaultsLayers, readManagedDefaultsV1, resolveManagedSessionDefaults } from './managedDefaults.js';
+import { ManagedDefaultsV1Schema, readManagedDefaultsV1, resolveManagedSessionDefaults } from './managedDefaults.js';
 
 const key = 'agent:example.agent/example';
 const mode = (permissionMode: 'read-only' | 'safe-yolo' | 'yolo') => ({ permissionModeByAgentTargetKey: { [key]: permissionMode } });
@@ -39,26 +38,6 @@ describe('managed Session defaults', () => {
       .toMatchObject({ value: 'safe-yolo', source: 'home' });
     expect(resolveManagedSessionDefaults(input).permissionMode).toMatchObject({ value: 'yolo', source: 'policy' });
     expect(resolveManagedSessionDefaults({ ...input, agentTargetKey: 'agent:other/agent' }).permissionMode.value).toBeUndefined();
-  });
-
-  it('exports the resolver-owned layer order and purpose projection including Home', () => {
-    const projection = projectManagedSessionDefaultsLayers({
-      agentTargetKey: key,
-      teamDefaults: { team: {}, groups: {} },
-      groupIds: [],
-      homeDefaults: { connectedServicesByAgentTargetKey: { [key]: [{
-        purpose: { consumer: { pluginId: 'example.agent', localId: 'agent' }, purpose: 'z-purpose' },
-        service: { pluginId: 'example.service', localId: 'service' }, target: null, teamResource: null,
-      }, {
-        purpose: { consumer: { pluginId: 'example.agent', localId: 'agent' }, purpose: 'a-purpose' },
-        service: { pluginId: 'example.service', localId: 'service' }, target: null, teamResource: null,
-      }] } },
-    });
-    expect(projection.layers.map(layer => layer.source)).toEqual(['explicit', 'team', 'home', 'policy']);
-    expect(projection.purposeKeys).toEqual([
-      qualifiedPurposeKey({ consumer: { pluginId: 'example.agent', localId: 'agent' }, purpose: 'a-purpose' }),
-      qualifiedPurposeKey({ consumer: { pluginId: 'example.agent', localId: 'agent' }, purpose: 'z-purpose' }),
-    ]);
   });
 
   it('compares model identity without mistaking authoring timestamps for Group disagreement', () => {

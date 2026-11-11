@@ -6,6 +6,7 @@ import { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } from './rout
 // These expectations pin admission roles independently of the declaration refactor.
 it.each([
   ['daemon.agents.install.start', 'manage'],
+  ['daemon.agents.install.cancel', 'manage'],
   // O-MACH 2026-11-08: Manage means full Machine control, including plugin installers.
   ['action.invoke', 'manage'],
   ['daemon.plugins.npmRegistries.get', 'manage'],

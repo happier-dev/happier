@@ -33,7 +33,6 @@ import {
     type HomeTeamProviderPolicyV1,
     type TeamCreationPolicyV1,
 } from '@happier-dev/protocol/home/governance';
-import type { ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
@@ -289,26 +288,6 @@ export function setHomeTeamCreationPolicy(params: Readonly<{
             teamCreationPolicy: params.teamCreationPolicy,
         },
     });
-}
-
-export async function setHomeSessionDefaults(params: Readonly<{
-    scope: ServerAccountScope;
-    expectedRevision: number;
-    sessionDefaults: ManagedSessionDefaultsV1 | null;
-}>): Promise<HomeGovernanceValueMutationOutcome<HomeGovernancePolicyProjectionV1>> {
-    const result = await mutateForValue({
-        scope: params.scope,
-        actionId: 'home.policy.set',
-        input: {
-            expectedRevision: params.expectedRevision,
-            sessionDefaults: params.sessionDefaults,
-        },
-        parse: (value) => HomeGovernancePolicyProjectionV1Schema.safeParse(value),
-    });
-    if (result.kind === 'succeeded') {
-        fireAndForget(invalidateHomeGovernance(params.scope), { tag: 'homeGovernanceOperations.revalidate' });
-    }
-    return result;
 }
 
 /** Whether members outside every Team see Teams: a field of the same policy document. */

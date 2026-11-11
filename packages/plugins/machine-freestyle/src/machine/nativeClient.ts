@@ -100,7 +100,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     // Native output is UTF-8 text; a private shell envelope preserves bytes, channels and status.
     const command = buildMachineProvisionerShellCommand(argv);
     const result = executionSchema.parse(await http(path(value.vmId) + '/exec-await', 'POST', {
-      command, linuxUser: 'root', stdin: inputBase64, timeoutMs: timeoutMs ?? 300000,
+      command, linuxUser: 'root', stdin: inputBase64, ...(timeoutMs == null ? {} : { timeoutMs }),
     }));
     if (result.statusCode !== 0) throw new NativeError('freestyle_exec_unconfirmed');
     try { return outputSchema.parse(JSON.parse(result.stdout ?? '')); } catch { throw new NativeError('freestyle_exec_unconfirmed'); }

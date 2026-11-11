@@ -20,7 +20,6 @@ import {
 import { t } from '@/text';
 
 import type { HomeAdministrationContext } from './homeAdministrationContext';
-import { TeamMemberDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
 import {
   homeGovernanceFailureNotice,
   teamCreationPolicyDescription,
@@ -263,24 +262,6 @@ export const TeamCreationPolicyEditor = React.memo(
     );
   },
 );
-
-/** Home-wide Session preselects; the Team editor owns the shared form rows. */
-export const HomeSessionDefaultsSection = React.memo(function HomeSessionDefaultsSection(
-  props: Readonly<{ context: HomeAdministrationContext }>,
-) {
-  const editable = props.context.projection.capabilities.manageTeamCreationPolicy;
-  return (
-    <TeamMemberDefaultsSection
-      home
-      context={props.context}
-      scope={{ kind: 'team' }}
-      access={editable ? { editable: true } : { editable: false, reason: 'team' }}
-      writable={props.context.mutationsAvailable}
-      homeDefaults={props.context.projection.policy.sessionDefaults ?? null}
-      testID="home-session-defaults"
-    />
-  );
-});
 
 function teamCreationPolicyShortLabel(policy: TeamCreationPolicyV1): string {
   switch (policy) {

@@ -2,7 +2,6 @@ import { isSameActionInputOptionValue } from '@happier-dev/protocol/actions/acti
 import { mergeMachineSetupsV1, readMachineSetupRecipeIdentityV1, type MachinePresetItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { InputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
-import { listMachineSetupAdaptersV1, type BuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 
 type Items = readonly MachinePresetItemV1[];
 export type MachineSetupItemKind = MachinePresetItemV1['kind'];
@@ -69,16 +68,6 @@ export function renameMachineSetupApp<T extends Items>(
       ? { ...item, definition: { ...item.definition, name: trimmed } }
       : entry,
   );
-}
-
-/** Every characterized global-install adapter, across the platforms the catalog declares: the toolchain's name owner. */
-export function machineSetupAdapters(): readonly BuiltinNativeToolchainAdapterV1[] {
-  const byId = new Map<string, BuiltinNativeToolchainAdapterV1>();
-  for (const platform of ['linux', 'darwin', 'win32'] as const) {
-    for (const adapter of listMachineSetupAdaptersV1(platform))
-      if (!byId.has(adapter.id)) byId.set(adapter.id, adapter);
-  }
-  return [...byId.values()];
 }
 
 /** Declared Setup recipes an item is named from: native value, title, purpose and mark. */

@@ -26,13 +26,11 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { setTeamPolicy } from '@/sync/ops/teams/teamOperations';
-import { setHomeSessionDefaults } from '@/sync/ops/home/homeGovernanceOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 
 import { TeamMemberMachineDefaultRow } from './TeamMemberMachineDefaultRow';
 import type { TeamSectionContext } from '../teamSectionContext';
-import type { HomeAdministrationContext } from '@/components/settings/home/governance/homeAdministrationContext';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
 import {
   buildMemberDefaultsPatch,
@@ -69,29 +67,18 @@ type RowState = Readonly<{
  * settings. One writer, `teams.policy.set` through the Action executor; who may
  * write is the Home's decision, mirrored by `access` and said when it is no.
  */
-type TeamMemberDefaultsSectionProps = Readonly<{
-  context: TeamSectionContext;
-  scope: MemberDefaultsScope;
-  access: MemberDefaultsAccess;
-  writable: boolean;
-  testID: string;
-}> | Readonly<{
-  context: HomeAdministrationContext;
-  scope: { kind: 'team' };
-  access: MemberDefaultsAccess;
-  writable: boolean;
-  testID: string;
-  home: true;
-  homeDefaults: ManagedSessionDefaultsV1 | null;
-}>;
-
 export const TeamMemberDefaultsSection = React.memo(
   function TeamMemberDefaultsSection(
-    props: TeamMemberDefaultsSectionProps,
+    props: Readonly<{
+      context: TeamSectionContext;
+      scope: MemberDefaultsScope;
+      access: MemberDefaultsAccess;
+      /** The page can write right now (Home reachable, nothing pending, current data). */
+      writable: boolean;
+      testID: string;
+    }>,
   ) {
     const { context, scope, access } = props;
-    const home = 'home' in props && props.home;
-    const teamName = !home && 'team' in context ? context.team.name : undefined;
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const inFlightRef = React.useRef(false);
@@ -102,13 +89,13 @@ export const TeamMemberDefaultsSection = React.memo(
       [],
     );
 
-    const policy = home ? null : context.team.policy;
-    const stored = policy?.managedDefaults ?? null;
-    const repairRequired = policy?.managedDefaultsStatus === 'repair_required';
+    const policy = context.team.policy;
+    const stored = policy.managedDefaults ?? null;
+    const repairRequired = policy.managedDefaultsStatus === 'repair_required';
     // A Group's layer cannot be rewritten over an unreadable document; only the Team's whole save repairs it.
     const editable =
       access.editable && !(repairRequired && scope.kind === 'group');
-    const defaults = home ? props.homeDefaults ?? {} : readMemberDefaults(stored, scope);
+    const defaults = readMemberDefaults(stored, scope);
 
     const save = React.useCallback<SaveDefaults>(
       (next) => {
@@ -118,23 +105,16 @@ export const TeamMemberDefaultsSection = React.memo(
         setError(null);
         void (async () => {
           try {
-            const outcome = 'projection' in context
-              ? await setHomeSessionDefaults({
-                  scope: context.scope,
-                  expectedRevision: context.projection.policy.revision,
-                  sessionDefaults: Object.keys(next).length === 0 ? null : next,
-                })
-              : await setTeamPolicy({
-                  scope: context.scope,
-                  address: context.address,
-                  ...buildMemberDefaultsPatch(stored, scope, next),
-                });
+            const outcome = await setTeamPolicy({
+              scope: context.scope,
+              address: context.address,
+              ...buildMemberDefaultsPatch(stored, scope, next),
+            });
             if (outcome.kind === 'failed')
-              setError(home ? t('teams.errors.generic') : teamMutationFailureLabel(outcome.failure));
-            else if (outcome.kind === 'approval_pending') context.requestApproval?.(outcome.artifactId);
+              setError(teamMutationFailureLabel(outcome.failure));
           } catch (cause) {
             if (isTeamActionApprovalPendingError(cause))
-              context.requestApproval?.(cause.registration);
+              context.requestApproval(cause.registration);
             else setError(t('teams.errors.generic'));
           } finally {
             inFlightRef.current = false;
@@ -142,7 +122,7 @@ export const TeamMemberDefaultsSection = React.memo(
           }
         })();
       },
-      [context, home, scope, stored],
+      [context, scope, stored],
     );
 
     const enabledAgentIds = useEnabledAgentIds();
@@ -157,7 +137,7 @@ export const TeamMemberDefaultsSection = React.memo(
 
     const row: RowState = {
       serverId: context.scope.serverId,
-      teamId: home ? '' : context.address.teamId,
+      teamId: context.address.teamId,
       defaults,
       editable,
       disabled: busy || !props.writable,
@@ -173,11 +153,11 @@ export const TeamMemberDefaultsSection = React.memo(
       t('teams.settings.memberDefaults.description'),
       access.editable
         ? null
-          : access.reason === 'team' && !home
+        : access.reason === 'team'
           ? t('teams.settings.memberDefaults.readOnlyTeam', {
-              team: teamName ?? '',
+              team: context.team.name,
             })
-          : access.reason === 'group' ? t('teams.settings.memberDefaults.readOnlyGroup') : null,
+          : t('teams.settings.memberDefaults.readOnlyGroup'),
     ]
       .filter(Boolean)
       .join(' ');
@@ -203,7 +183,7 @@ export const TeamMemberDefaultsSection = React.memo(
         >
           <TeamMemberMachineDefaultRow
             state={row}
-            conflict={home ? false : memberDefaultsConflicts(stored, scope, '', policy?.homeDefaults).placement}
+            conflict={memberDefaultsConflicts(stored, scope, '').placement}
             testID={`${props.testID}-machine`}
             onApprovalPending={context.requestApproval}
           />
@@ -216,7 +196,6 @@ export const TeamMemberDefaultsSection = React.memo(
                 stored,
                 scope,
                 entry.backendTargetKey!,
-                policy?.homeDefaults,
               )}
               testID={`${props.testID}-agent:${entry.agentId}`}
             />

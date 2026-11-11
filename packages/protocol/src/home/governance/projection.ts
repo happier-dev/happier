@@ -9,7 +9,6 @@ import {
   ManagedIdentityProviderKindV1Schema,
   TeamCreationPolicyV1Schema,
 } from './policy.js';
-import { ManagedSessionDefaultsV1Schema } from '../../teams/managedDefaults.js';
 import { AccountStatusV1Schema, HomeRoleV1Schema } from './roles.js';
 import {
   AccountEncryptionModeSchema,
@@ -72,7 +71,6 @@ export const HomeGovernancePolicyProjectionV1Schema = lazyZodSchema(() => z.stri
   authentication: HomeAuthenticationPolicyProjectionV1Schema,
   teamProviders: z.optional(HomeTeamProviderPolicyProjectionV1Schema),
   identityNetwork: z.optional(HomeIdentityNetworkPolicyProjectionV1Schema),
-  sessionDefaults: z.optional(z.nullable(ManagedSessionDefaultsV1Schema)),
 }));
 
 export type HomeGovernancePolicyProjectionV1 = z.infer<typeof HomeGovernancePolicyProjectionV1Schema>;

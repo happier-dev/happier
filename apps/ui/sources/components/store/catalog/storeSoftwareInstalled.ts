@@ -9,15 +9,11 @@ import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/
 import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from './storeKinds';
 import { useInstalledMachines } from './storeInstalled';
 import type { InstalledScopeAdmission } from './storeAccountAdmission';
-import { useMachineSetupRecipeOptions } from './storeSoftware';
-import { machineSetupAdapters, machineSetupItemPresentation, type MachineSetupRecipeOffer } from '@/components/settings/machines/managed/machineSetupItems';
 
 type RecipeInstallation = Readonly<{ machineId: string; observation: NonNullable<MachinePublishedDaemonStateV1['setup']>['recipes'][number] | null }>;
 type SoftwareGroup = { subject: 'recipe'; native: MachineRecipeSelectionV1; installations: RecipeInstallation[] }
     | { subject: 'toolchain'; native: NonNullable<MachineSetupV1['toolchain']>; installations: Array<Readonly<{ machineId: string }>> };
-/** The name, purpose and glyph the setup item owner gives it; an id only while its declaration is unknown. */
-export type InstalledSoftwarePresentation = Readonly<{ title: string; description?: string; icon?: string }>;
-export type InstalledSoftwareRow = Readonly<{ kind: 'software'; key: string; scope: ServerAccountScope; presentation: InstalledSoftwarePresentation }> & (
+export type InstalledSoftwareRow = Readonly<{ kind: 'software'; key: string; scope: ServerAccountScope }> & (
     Readonly<{ subject: 'recipe'; native: MachineRecipeSelectionV1; installations: readonly RecipeInstallation[] }>
     | Readonly<{ subject: 'toolchain'; native: NonNullable<MachineSetupV1['toolchain']>; installations: readonly Readonly<{ machineId: string }>[] }>
 );
@@ -28,25 +24,11 @@ export type InstalledSoftwareResult = InstalledFamilyResult<InstalledSoftwareRow
 const EMPTY_ROWS: readonly InstalledSoftwareRow[] = Object.freeze([]);
 const EMPTY_GROUPS: Readonly<{ rows: readonly InstalledSoftwareRow[]; missing: boolean }> = Object.freeze({ rows: EMPTY_ROWS, missing: false });
 
-function presentSoftware(group: SoftwareGroup, offers: readonly MachineSetupRecipeOffer[] | null): InstalledSoftwarePresentation {
-    if (group.subject === 'recipe') {
-        const { title, description, icon } = machineSetupItemPresentation({ kind: 'softwareRecipe', selection: group.native }, offers);
-        return { title, ...(description ? { description } : {}), ...(icon ? { icon } : {}) };
-    }
-    return { title: machineSetupAdapters().find(adapter => adapter.id === group.native.adapterId)?.title ?? group.native.adapterId };
-}
-const samePresentation = (a: InstalledSoftwarePresentation, b: InstalledSoftwarePresentation) =>
-    a.title === b.title && a.description === b.description && a.icon === b.icon;
-
 /** Recorded desired copies and their revision-matched compact observations, never a native census. */
 export function useInstalledSoftware(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission): InstalledSoftwareResult {
     const held = useInstalledMachines(input, demand, admitted.scope, !input.projectKey);
     const scope = admitted.scope;
     const projecting = demand.presented && !!scope && !input.projectKey;
-    // Rows are named by the Account's recipe declarations, the same read every setup surface names its items from.
-    const recipeTarget = React.useMemo(() => scope ? { scope, machine: null } : null, [scope]);
-    const recipeOptions = useMachineSetupRecipeOptions(recipeTarget, { presented: projecting });
-    const offers = recipeOptions.state.status === 'ready' ? recipeOptions.state.options : null;
     // Unchanged Software groups keep their row identity when another group's setup changes.
     const lastGroups = React.useRef(EMPTY_GROUPS);
     const selectGroups = React.useMemo(() => {
@@ -89,19 +71,17 @@ export function useInstalledSoftware(input: StoreInstalledInput, demand: StoreDe
             const previous = new Map(last.rows.map(row => [row.key, row]));
             const rows = [...groups].map(([key, group]): InstalledSoftwareRow => {
                 const retained = previous.get(key);
-                const presentation = presentSoftware(group, offers);
-                if (retained?.subject === group.subject && samePresentation(retained.presentation, presentation)
-                    && retained.installations.length === group.installations.length
+                if (retained?.subject === group.subject && retained.installations.length === group.installations.length
                     && retained.installations.every((installation, index) => installation.machineId === group.installations[index]!.machineId
                         && (!('observation' in installation) || group.subject === 'recipe'
                             && installation.observation === group.installations[index]!.observation))) return retained;
-                return { ...group, kind: 'software', key, scope, presentation };
+                return { ...group, kind: 'software', key, scope };
             });
             const retainedRows = rows.length === last.rows.length && rows.every((row, index) => row === last.rows[index]) ? last.rows : rows;
             if (retainedRows !== last.rows || missing !== last.missing) lastGroups.current = { rows: retainedRows, missing };
             return lastGroups.current;
         };
-    }, [held.machineIds, projecting, scope, offers]);
+    }, [held.machineIds, projecting, scope]);
     const setupDemand = React.useMemo(() => ({
         machineIds: projecting ? held.machineIds : [],
         fields: [{ section: 'metadata', field: 'setup' }, { section: 'daemonState', field: 'setup' }] as const,

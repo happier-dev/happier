@@ -88,7 +88,7 @@ export const PLUGIN = definePlugin({
         { path: 'region', title: label('region'), widget: 'select', required: true, defaultValue: 'iad1',
           options: VERCEL_REGIONS
             .map(value => ({ value, label: value })) },
-        { path: 'vcpus', title: label('vcpus'), widget: 'integer', required: true, defaultValue: 2 },
+        { path: 'vcpus', title: label('vcpus'), widget: 'integer', required: true },
         { path: 'timeoutMs', title: label('timeout'), widget: 'integer', description: label('timeoutDescription') },
         { path: 'snapshotExpirationMs', title: label('snapshotExpiration'), widget: 'integer', required: true, defaultValue: 0, description: label('retentionDescription') },
       ] },

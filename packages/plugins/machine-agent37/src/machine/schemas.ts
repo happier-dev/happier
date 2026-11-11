@@ -4,6 +4,7 @@ import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliation
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '\\S' });
+// Agent37 exposes no size catalog endpoint; these documented instance-sizing values are the provider-owned fallback.
 // Current sizing/create references cap every type at four cores, including VMs.
 export const SIZES = [
   { id: '2-4', cpu: 2, memory: 4, containerCompute: 4.40 },

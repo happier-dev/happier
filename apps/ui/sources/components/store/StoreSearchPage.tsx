@@ -198,7 +198,6 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     [lists.mcpServer?.items, visible],
   );
   const appItems = React.useMemo(() => pick(lists.app?.items), [lists.app?.items, visible]);
-  const starterItems = React.useMemo(() => pick(lists.starter?.items), [lists.starter?.items, visible]);
   const browserExtensionItems = React.useMemo(() => pick(lists.browserExtension?.items), [lists.browserExtension?.items, visible]);
   const skillItems = React.useMemo(
     () => pick(lists.skill?.items),
@@ -231,9 +230,6 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     addRegistry,
   );
   const app = useRegistryRows({ items: appItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
-  const starterRows = useRegistryRows({ items: starterItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
-  // A starter's + starts a project from it, as on its kind page.
-  const starter = React.useMemo(() => starterRows.rows.map((row): DirectoryRow => ({ ...row, addLabel: t('capabilities.store.startProject') })), [starterRows.rows]);
   const browserExtension = useRegistryRows({ items: browserExtensionItems, curation: NO_CURATION }, openRegistry, sourceTitle, undefined, addRegistry);
   const skill = useRegistryRows(
     { items: skillItems, curation: NO_CURATION },
@@ -290,7 +286,6 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     React.useMemo(
       () => ({
         app: rankByTitleMatch(app.rows, state.query),
-        starter: rankByTitleMatch(starter, state.query),
         browserExtension: rankByTitleMatch(browserExtension.rows, state.query),
         mcpServer: rankByTitleMatch(mcp.rows, state.query),
         skill: rankByTitleMatch(skill.rows, state.query),
@@ -299,7 +294,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
         plugin: rankByTitleMatch(plugins, state.query),
         software: rankByTitleMatch(software, state.query),
       }),
-      [app.rows, starter, browserExtension.rows, agent.rows, builtIn, mcp.rows, plugins, providers, skill.rows, software, state.query],
+      [app.rows, browserExtension.rows, agent.rows, builtIn, mcp.rows, plugins, providers, skill.rows, software, state.query],
     );
   const sections = KIND_ORDER.filter((kind) => byKind[kind].length > 0);
   const selectedKind =
@@ -501,9 +496,7 @@ function SearchResults(
         {filter.tokenRow ? (
           <View style={styles.inset}>{filter.tokenRow}</View>
         ) : null}
-        {/* The Machine chooser narrows Software results: it stands only where Software is asked for, found, or failed to load. */}
-        {lists.software && (selectedKind === 'software' || lists.software.items.length > 0 || !!lists.software.error)
-          ? <SoftwareSource list={lists.software} target={props.softwareTarget} /> : null}
+        {lists.software ? <SoftwareSource list={lists.software} target={props.softwareTarget} /> : null}
         {/* A pasted Chrome Web Store link or ID is one result: install that extension. */}
         {selectedKind === 'all' || selectedKind === 'browserExtension' ? <StoreBrowserExtensionLinkResult query={query} /> : null}
         <Directory

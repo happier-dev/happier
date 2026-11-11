@@ -6,7 +6,6 @@ import {
   AccountEncryptionModeSchema,
   EncryptionStoragePolicySchema,
 } from '../../features/payload/capabilities/encryptionCapabilities.js';
-import { ManagedSessionDefaultsV1Schema } from '../../teams/managedDefaults.js';
 
 /**
  * Who may create a Team on this Home. This can only narrow a deployed Teams
@@ -218,7 +217,6 @@ export const HomeGovernancePolicySetInputV1Schema = lazyZodSchema(() => z.strict
   authenticationPolicy: z.optional(z.nullable(HomeAuthenticationPolicyV1Schema)),
   teamProviderPolicy: z.optional(z.nullable(HomeTeamProviderPolicyV1Schema)),
   identityNetworkPolicy: z.optional(z.nullable(HomeIdentityNetworkPolicyV1Schema)),
-  sessionDefaults: z.optional(z.nullable(ManagedSessionDefaultsV1Schema)),
   /**
    * The owner saw and accepted the consequence of widening sign-in, admission or
    * storage policy. A widening patch without it is refused with
@@ -229,7 +227,6 @@ export const HomeGovernancePolicySetInputV1Schema = lazyZodSchema(() => z.strict
     || input.teamsVisibleToMembers !== undefined
     || input.authenticationPolicy !== undefined
     || input.teamProviderPolicy !== undefined
-    || input.identityNetworkPolicy !== undefined
-    || input.sessionDefaults !== undefined, { message: 'A Home policy patch must change at least one field.' })));
+    || input.identityNetworkPolicy !== undefined, { message: 'A Home policy patch must change at least one field.' })));
 
 export type HomeGovernancePolicySetInputV1 = z.infer<typeof HomeGovernancePolicySetInputV1Schema>;
