@@ -302,6 +302,41 @@ describe('Automations · Latest runs on Home', () => {
         expect(screen.findByTestId('home-automations.empty')).toBeTruthy();
     });
 
+    it('presented in Home\'s row of smalls, holds the same body room as a small widget there, empty or not (owner 24(2))', async () => {
+        const { getWidgetSizeFootprintV1 } = await import('@happier-dev/protocol/widgets');
+        const { readHomeHubCardSizeV1 } = await import('@happier-dev/protocol/home');
+        const { resolveHomeHubCardPresentation } = await import('@/components/hub/HomeHubSectionList');
+        const { WidgetFrame } = await import('@/components/widgets/frame/WidgetFrame');
+        const placement = { ownsRow: false, inRowOfThree: true, leads: false };
+        // The built-in card's declared size, through the same placement rule a Small widget beside it goes through.
+        const declared = readHomeHubCardSizeV1({ kind: 'builtin', id: 'automations', hidden: false, hideable: true });
+        expect(declared).toBe('small');
+        const presentation = resolveHomeHubCardPresentation(declared!, placement);
+        expect(presentation.footprint).toEqual(getWidgetSizeFootprintV1('home', presentation.size));
+        const room = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) => {
+            const style = StyleSheet.flatten(screen.findByTestId(`${id}.viewport`)?.props.style);
+            return style?.height ?? style?.minHeight ?? null;
+        };
+        const widget = await renderScreen(<WidgetFrame testID="small-widget" placement="home" fill title="Local services"
+            widgetPresentation={presentation} body={{ kind: 'empty', title: 'Nothing running' }} />);
+        await flushHookEffects({ cycles: 2 });
+        const widgetRoom = room(widget, 'small-widget');
+        expect(widgetRoom).toBeGreaterThan(0);
+        standardCleanup();
+        // No workflows yet: the scene and its action keep the declared room instead of growing the row.
+        server.automations = [];
+        const empty = await renderScreen(<AutomationsLatestRunsSection widgetPresentation={presentation} />);
+        await flushHookEffects({ cycles: 4 });
+        expect(empty.findByTestId('home-automations.empty')).toBeTruthy();
+        expect(room(empty, 'home-automations')).toBe(widgetRoom);
+        standardCleanup();
+        serveTwoAutomations();
+        const withRuns = await renderScreen(<AutomationsLatestRunsSection widgetPresentation={presentation} />);
+        await flushHookEffects({ cycles: 4 });
+        expect(withRuns.findByTestId('home-automations.run.t2')).toBeTruthy();
+        expect(room(withRuns, 'home-automations')).toBe(widgetRoom);
+    });
+
     it('reserves room for the Runs it has, not for rows that will never come', async () => {
         const reservedHeight = (screen: Awaited<ReturnType<typeof renderSection>>, rowTestId: string) => {
             for (let node = screen.findByTestId(rowTestId)?.parent ?? null; node; node = node.parent) {

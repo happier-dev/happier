@@ -50,11 +50,12 @@ const homeIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
 ]));
 export const HomeHubLayoutIntentSchema = lazyZodSchema(() => z.union([homeIntentSchema, WidgetLayoutItemIntentV1Schema]));
 export type HomeHubLayoutIntent = z.infer<typeof HomeHubLayoutIntentSchema>;
-export type HomeHubBuiltinDefinition = Readonly<{ id: string; hideable: boolean; defaultHidden?: boolean; afterWidgets?: boolean; card?: boolean }>;
+/** `size`: a card's declared Home size, which its placement and its frame both read (as a widget's saved size). */
+export type HomeHubBuiltinDefinition = Readonly<{ id: string; hideable: boolean; defaultHidden?: boolean; afterWidgets?: boolean; card?: boolean; size?: WidgetSizeV1 }>;
 /** The UI renderer table and daemon consume these same built-in layout rules. */
 export const HOME_HUB_BUILTIN_DEFINITIONS: readonly HomeHubBuiltinDefinition[] = Object.freeze([
     { id: 'start', hideable: false }, { id: 'attention', hideable: false }, { id: 'setup', hideable: true },
-    { id: 'automations', hideable: true, afterWidgets: true, card: true },
+    { id: 'automations', hideable: true, afterWidgets: true, card: true, size: 'small' },
 ]);
 export type HomeHubWidgetInput = WidgetCandidateIdentityV1 & Readonly<{
     key: string; homeDefault: 'shown' | 'available'; sizeDeclaration?: WidgetSizeDeclarationV1;
@@ -72,6 +73,12 @@ export type ResolvedHomeHubLayout<W extends HomeHubWidgetInput = HomeHubWidgetIn
 }>;
 export function isHomeHubCardSection(section: HomeHubSection): boolean {
     return section.kind !== 'builtin' || HOME_HUB_BUILTIN_DEFINITIONS.find(builtin => builtin.id === section.id)?.card === true;
+}
+/** A Home card's size: a widget's saved size, a built-in card's declared size; a group has none of its own. */
+export function readHomeHubCardSizeV1(section: HomeHubSection): WidgetSizeV1 | undefined {
+    if (section.kind === 'widget') return section.size;
+    if (section.kind === 'group') return undefined;
+    return HOME_HUB_BUILTIN_DEFINITIONS.find(builtin => builtin.id === section.id)?.size;
 }
 let defaultLayout: HomeHubLayoutValue | undefined;
 /** Missing Home only; defer the catalog read until use and retain the shared preset identity. */

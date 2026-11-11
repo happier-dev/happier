@@ -11,6 +11,7 @@ import { HubAttentionSection } from './HubAttentionSection';
 import { HomeCompletedBots } from './HomeCompletedBots';
 import { HubComposerSection, type HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubSetupSection } from './HubSetupSection';
+import type { HubSectionProps } from './hubSectionProps';
 import { HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubBuiltinDefinition, type HomeHubSection } from './layout/homeHubLayout';
 export { isHomeHubCardSection } from './layout/homeHubLayout';
 
@@ -31,6 +32,8 @@ export type HomeHubBuiltinSection = HomeHubBuiltinDefinition & Readonly<{
         frameStyle: WidgetFrameStyle;
         /** How the composer's suggestions stand here: Home decides it once, for the hero and for a moved composer. */
         composerSuggestions: HubComposerSuggestionsPresentation;
+        /** A card's declared size where it landed (`resolveHomeHubCardPresentation`). */
+        widgetPresentation?: HubSectionProps['widgetPresentation'];
     }>) => React.ReactNode;
 }>;
 
@@ -71,7 +74,8 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         icon: 'timer',
         description: () => t('navigation.automations'),
         title: () => t('homeWidgets.latestRunsTitle'),
-        render: ({ menu, frameStyle }) => <AutomationsLatestRunsSection menu={menu} frameStyle={frameStyle} />,
+        render: ({ menu, frameStyle, widgetPresentation }) => <AutomationsLatestRunsSection menu={menu} frameStyle={frameStyle}
+            {...(widgetPresentation ? { widgetPresentation } : {})} />,
     },
 ]);
 

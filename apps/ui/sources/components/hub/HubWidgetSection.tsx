@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
+import { resolveHomeHubCardPresentation } from '@/components/hub/HomeHubSectionList';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useLayoutPresentationActive, usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { WidgetSurface, type WidgetSurfaceProps } from '@/components/widgets/surface/WidgetSurface';
-import { getWidgetSizeFootprintV1, resolveWidgetRowOfThreeSizeV1, resolveWidgetRowOwnerSizeV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
@@ -114,10 +115,9 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     // A hidden retained tab keeps the body it last showed (its demand withdraws with presentation), so
     // showing the tab again rebuilds nothing.
     const active = usePresentedValue(presented && near);
-    const size = props.leads
-        ? resolveWidgetRowOwnerSizeV1('home', resolveWidgetRowOfThreeSizeV1('home', savedSize, descriptor?.sizeDeclaration), descriptor?.sizeDeclaration)
-        : props.ownsRow ? resolveWidgetRowOwnerSizeV1('home', savedSize, descriptor?.sizeDeclaration)
-        : props.inRowOfThree ? resolveWidgetRowOfThreeSizeV1('home', savedSize, descriptor?.sizeDeclaration) : savedSize;
+    // Home's one placement rule (built-in cards present through it too).
+    const size = resolveHomeHubCardPresentation(savedSize, { ownsRow: props.ownsRow === true,
+        inRowOfThree: props.inRowOfThree === true, leads: props.leads === true }, descriptor?.sizeDeclaration).size;
     const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('home', size)! }), [size]);
 
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {

@@ -56,11 +56,11 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
+import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubCardPresentation, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
 import type { HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubWidgetSection } from './HubWidgetSection';
 import { HomeBotFaces } from './HomeBotFaces';
-import type { HomeHubSection } from './layout/homeHubLayout';
+import { readHomeHubCardSizeV1, type HomeHubSection } from './layout/homeHubLayout';
 import { HubSectionMenu } from './layout/HubSectionMenu';
 import { useHomeHubLayout, type HomeHubLayout } from './layout/useHomeHubLayout';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -149,10 +149,18 @@ const HubSectionSlot = React.memo(function HubSectionSlot(props: SlotProps & Rea
 
 function HubBuiltinSlot(props: SlotProps & Readonly<{
     section: Extract<HomeHubSection<WidgetCandidate>, { kind: 'builtin' }>;
+    ownsRow?: boolean;
+    inRowOfThree?: boolean;
+    leads?: boolean;
 }>) {
     const hover = useRowActionHoverHost();
     const definition = findHomeHubBuiltinSection(props.section.id);
     const frameStyle = useWidgetFrameStyle('home', props.section.frameStyle);
+    // A built-in card presents at its declared size where it landed, through the rule widgets use (owner 24(2)).
+    const size = readHomeHubCardSizeV1(props.section);
+    const ownsRow = props.ownsRow === true, inRowOfThree = props.inRowOfThree === true, leads = props.leads === true;
+    const widgetPresentation = React.useMemo(() => size
+        ? resolveHomeHubCardPresentation(size, { ownsRow, inRowOfThree, leads }) : undefined, [size, ownsRow, inRowOfThree, leads]);
     if (!definition) return null;
     const menu = (
         <HubSectionMenu
@@ -165,7 +173,8 @@ function HubBuiltinSlot(props: SlotProps & Readonly<{
     );
     return (
         <View testID={`home-hub.section.${props.section.id}`} style={definition.card ? styles.card : undefined} {...hover.hoverProps}>
-            {definition.render({ menu, placeholder: props.placeholder, frameStyle, composerSuggestions: props.composerSuggestions })}
+            {definition.render({ menu, placeholder: props.placeholder, frameStyle, composerSuggestions: props.composerSuggestions,
+                ...(widgetPresentation ? { widgetPresentation } : {}) })}
         </View>
     );
 }
@@ -644,7 +653,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                 // With no machine yet, where agents will run is the one question: Machines leads the cards (58d AF1).
                 leadCardId={firstRun ? resolveHomeHubFirstRunLeadId(layout.sections) : null}
                 renderSection={(section, index, placement) => section.kind === 'builtin' ? (
-                    <HubSectionSlot key={section.id} section={section} index={index} {...slotProps} />
+                    <HubSectionSlot key={section.id} section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />
                 ) : (
                     // Ungroup fans its widgets out to their own cards; Group with merges cards into one.
                     <WidgetGroupMembershipArrivalView key={section.id} arrival={arrivals.get(section.id)} style={styles.card}>

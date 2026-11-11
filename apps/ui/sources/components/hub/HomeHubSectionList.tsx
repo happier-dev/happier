@@ -1,12 +1,19 @@
 import * as React from 'react';
-import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
+import {
+    getWidgetSizeFootprintV1,
+    resolveWidgetRowOfThreeSizeV1,
+    resolveWidgetRowOwnerSizeV1,
+    type WidgetSizeDeclarationV1,
+    type WidgetSizeFootprintV1,
+    type WidgetSizeV1,
+} from '@happier-dev/protocol/widgets';
 
 import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 
-import { isHomeHubCardSection, type HomeHubSection } from './layout/homeHubLayout';
+import { isHomeHubCardSection, readHomeHubCardSizeV1, type HomeHubSection } from './layout/homeHubLayout';
 
 /** Widgets and card-like sections sit two to a row (one on a phone). */
 export const HOME_HUB_CARD_ROW_COLUMNS = 2;
@@ -47,7 +54,8 @@ function buildSlots(sections: readonly HomeHubSection<WidgetCandidate>[]): Slot[
 /** A full-width widget, or a full-width group, takes the whole row. */
 function spansRow(section: HomeHubSection<WidgetCandidate>): boolean {
     if (section.kind === 'group') return section.group.width === 'full';
-    return section.kind === 'widget' && getWidgetSizeFootprintV1('home', section.size)?.columnSpan === HOME_HUB_CARD_ROW_COLUMNS;
+    const size = readHomeHubCardSizeV1(section);
+    return size !== undefined && getWidgetSizeFootprintV1('home', size)?.columnSpan === HOME_HUB_CARD_ROW_COLUMNS;
 }
 
 /**
@@ -88,12 +96,23 @@ export type HomeHubSectionPlacement = Readonly<{
 
 type RenderSection = (section: HomeHubSection<WidgetCandidate>, index: number, placement: HomeHubSectionPlacement) => React.ReactNode;
 
-/**
- * A small card: a Small widget, or a built-in card (Latest runs), which has no size of its own and reads
- * as a short glance.
- */
+/** A small card: a Small widget, or a built-in card declared Small (Latest runs). */
 function joinsSmallRow(section: HomeHubSection<WidgetCandidate>): boolean {
-    return section.kind === 'builtin' || (section.kind === 'widget' && section.size === 'small');
+    return readHomeHubCardSizeV1(section) === 'small';
+}
+
+/**
+ * The size and footprint a Home card presents at where it landed, from its saved or declared size: a lead card at
+ * its Full, a card alone in its row at its full-row size, one in a row of smalls at the row's regular height. Widgets
+ * and built-in cards present through this one rule, so cards sharing a row share their declared room.
+ */
+export function resolveHomeHubCardPresentation(size: WidgetSizeV1, placement: HomeHubSectionPlacement,
+    declaration?: WidgetSizeDeclarationV1): Readonly<{ size: WidgetSizeV1; footprint: WidgetSizeFootprintV1 }> {
+    const presented = placement.leads
+        ? resolveWidgetRowOwnerSizeV1('home', resolveWidgetRowOfThreeSizeV1('home', size, declaration), declaration)
+        : placement.ownsRow ? resolveWidgetRowOwnerSizeV1('home', size, declaration)
+        : placement.inRowOfThree ? resolveWidgetRowOfThreeSizeV1('home', size, declaration) : size;
+    return { size: presented, footprint: getWidgetSizeFootprintV1('home', presented)! };
 }
 
 type Segment = Readonly<{

@@ -195,7 +195,9 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
             meta={hasRows && read.readAt !== null ? <SurfaceAsOfLabel testID="home-automations.asOf" at={read.readAt} /> : null}
             menu={props.menu}
             body={body}
-            // The Runs it has size the card; the four-row room is held only until the first answer.
+            // On Home the card holds its declared room, as the widgets beside it do (owner 24(2)). Unplaced, the
+            // Runs it has size it; the four-row room is held only until the first answer.
+            {...(props.widgetPresentation ? { widgetPresentation: props.widgetPresentation } : {})}
             {...(hasRows ? { rows: rows.length } : {})}
             footer={footer}
         />

@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { getWidgetSizeFootprintV1, resolveWidgetRowOfThreeSizeV1, resolveWidgetRowOwnerSizeV1, WIDGET_SIZE_POLICY_V1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { WIDGET_SIZE_POLICY_V1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import type { HappierSceneId } from '@happier-dev/plugin-ui/presentation';
 
 import { HubAttentionList, type AttentionItem } from '@/components/hub/HubAttentionSection';
-import { HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId, type HomeHubSectionPlacement } from '@/components/hub/HomeHubSectionList';
+import { HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubCardPresentation, resolveHomeHubFirstRunLeadId, type HomeHubSectionPlacement } from '@/components/hub/HomeHubSectionList';
 import { AgentInput } from '@/components/sessions/agentInput/AgentInput';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
@@ -22,7 +22,7 @@ import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { HubCustomizeButton } from '@/components/hub/header/HubCustomizeButton';
 import { HubStatusLineView } from '@/components/hub/header/HubStatusLine';
 import { HOME_HUB_BUILTIN_SECTIONS } from '@/components/hub/homeHubSections';
-import { getHomeHubDefaultLayoutV1, resolveHomeHubLayout, setHomeHubSectionHidden } from '@/components/hub/layout/homeHubLayout';
+import { getHomeHubDefaultLayoutV1, readHomeHubCardSizeV1, resolveHomeHubLayout, setHomeHubSectionHidden } from '@/components/hub/layout/homeHubLayout';
 import type { UsageSummaryEntry } from '@/components/hub/usage/useUsageSummary';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
@@ -192,12 +192,6 @@ const SHOWCASE_SERVICES = { kind: 'ready', scope: 'app', rows: [], runningCount:
 /** No machine yet: nothing to list and no machine to name. */
 const FIRST_RUN_SERVICES = { kind: 'ready', scope: 'app', rows: [], runningCount: 0, degraded: [], listedMachineCount: 0 } as const;
 
-/** Mirrors `HubWidgetSection`'s presented size for a placement (the saved size is untouched). */
-function presentedSize(size: WidgetSizeV1, placement: HomeHubSectionPlacement): WidgetSizeV1 {
-    return placement.leads ? resolveWidgetRowOwnerSizeV1('home', resolveWidgetRowOfThreeSizeV1('home', size))
-        : placement.ownsRow ? resolveWidgetRowOwnerSizeV1('home', size) : placement.inRowOfThree ? resolveWidgetRowOfThreeSizeV1('home', size) : size;
-}
-
 const noComposerSuggestions = async () => [];
 
 /**
@@ -325,8 +319,8 @@ function FirstRunComposer(props: Readonly<{ create?: HomeCreateFixtureFrame | nu
 
 function ShowcaseCard(props: Readonly<{ id: string; testID: string; size?: WidgetSizeV1; placement: HomeHubSectionPlacement; noMachine?: boolean }>) {
     const { theme } = useUnistyles();
-    const size = props.size ? presentedSize(props.size, props.placement) : undefined;
-    const widgetPresentation = size ? { size, footprint: getWidgetSizeFootprintV1('home', size)! } : undefined;
+    // Home's one placement rule, for widgets and built-in cards alike.
+    const widgetPresentation = props.size ? resolveHomeHubCardPresentation(props.size, props.placement) : undefined;
     if (props.id === 'default:builtin:machine_fleet' && props.noMachine) {
         // No machine yet (58d AF1, lab af-first): the real Machines empty state, the ways to add one.
         return (
@@ -435,7 +429,7 @@ export function HomeHubSpecimen(props: Readonly<{ machines: boolean; firstRun?: 
                     const testID = `home-hub.section.${section.id}`;
                     if (props.showcase && (section.kind === 'widget' || section.id === 'automations')) {
                         return <ShowcaseCard key={section.id} id={section.id} testID={testID} placement={placement}
-                            size={section.kind === 'widget' ? section.size : undefined} noMachine={props.firstRun} />;
+                            size={readHomeHubCardSizeV1(section)} noMachine={props.firstRun} />;
                     }
                     switch (section.id) {
                         case 'start':
@@ -455,6 +449,7 @@ export function HomeHubSpecimen(props: Readonly<{ machines: boolean; firstRun?: 
                                     frameStyle="card"
                                     placement="home"
                                     fill
+                                    widgetPresentation={resolveHomeHubCardPresentation(readHomeHubCardSizeV1(section)!, placement)}
                                     mark="timer"
                                     title={t('homeWidgets.latestRunsTitle')}
                                     meta={<SurfaceAsOfLabel at={NOW} />}
