@@ -336,7 +336,8 @@ describe('SessionView composer typing', () => {
   });
 
   it('opens a retained Custom ACP Session without offering a model picker for its abstract Agent', async () => {
-    publishSessionOwnerMetadata(metadata => ({ ...metadata, flavor: 'custom-acp' }));
+    // The Home refresh projects the explicit presentation from the owner fixture too.
+    publishSessionOwnerMetadata(metadata => ({ ...metadata, flavor: 'custom-acp', agentPresentation: { agentId: 'custom-acp' } }));
     expect(readSessionOwnerMetadataView(storage.getState().sessions.s1)?.flavor).toBe('custom-acp');
     const current = storage.getState().sessions.s1;
     storage.getState().applySessions([{ ...current, metadataVersion: current.metadataVersion + 1,
