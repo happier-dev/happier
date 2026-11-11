@@ -1,0 +1,455 @@
+{
+  "evidence": {
+    "status": "CAPTURED_NATIVE_PROTOCOL",
+    "nativeVersion": "1.4.14-R7309.1",
+    "note": "Isolated empty HOME, echo provider, zero model turns; temporary absolute roots sanitized. Fork, successful release, MCP-configured resume."
+  },
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "happier_muse_probe",
+            "version": "0.3.0"
+          },
+          "capabilities": {
+            "experimentalApi": true,
+            "requestedCapabilities": [
+              "sessionMcp"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "experimentalApi": true,
+          "grantedCapabilities": [
+            "sessionMcp"
+          ],
+          "museHome": "/captured/muse/fork-mcp/data/muse",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "sandboxAvailability": "available",
+          "schema": {
+            "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+            "version": 1
+          },
+          "serverInfo": {
+            "name": "muse",
+            "version": "1.4.14"
+          },
+          "sessionDurability": "durable",
+          "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/start",
+        "params": {
+          "workspaceRoot": "/captured/muse/fork-mcp/workspace",
+          "permissionProfile": ":ask-me",
+          "approvalMode": "promptUnmatched",
+          "providerId": "echo",
+          "config": {
+            "mcpServers": {
+              "probe": {
+                "transport": "stdio",
+                "command": "/captured/muse/fork-mcp/missing-mcp-executable",
+                "mode": "optional"
+              }
+            }
+          },
+          "commandId": "0475d5e8-19fc-77b4-871a-f9055ef8ca5c"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794423677234,
+        "jsonrpc": "2.0",
+        "method": "session/started",
+        "params": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-11T19:01:17.144685Z",
+            "createdByClient": {
+              "name": "happier_muse_probe",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "/captured/muse/fork-mcp/data/muse/sessions/2026/11/11/01a1cbfc-60a9-7922-a933-b11079711135/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-11T19:01:17.148857Z",
+            "workspaceRoot": "/captured/muse/fork-mcp/workspace"
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 2,
+        "jsonrpc": "2.0",
+        "result": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-11T19:01:17.144685Z",
+            "createdByClient": {
+              "name": "happier_muse_probe",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "/captured/muse/fork-mcp/data/muse/sessions/2026/11/11/01a1cbfc-60a9-7922-a933-b11079711135/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-11T19:01:17.148857Z",
+            "workspaceRoot": "/captured/muse/fork-mcp/workspace"
+          },
+          "viewCursor": "v4:01a1cbfc-60a9-7922-a933-b11079711135:1"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/fork",
+        "params": {
+          "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135",
+          "excludeItems": false,
+          "commandId": "2df3386a-8a93-74ff-bce6-f2827efd0d3a"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794423677243,
+        "jsonrpc": "2.0",
+        "method": "session/approvalModeChanged",
+        "params": {
+          "clientName": "happier_muse_probe",
+          "commandId": "0475d5e8-19fc-77b4-871a-f9055ef8ca5c",
+          "mode": "promptUnmatched",
+          "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135",
+          "source": "approvalReconfigure",
+          "sourceRange": {
+            "first": {
+              "id": "01a1cbfc-60dc-7191-a945-3d48596ae477",
+              "sequence": 7
+            },
+            "last": {
+              "id": "01a1cbfc-60dc-7191-a945-3d48596ae477",
+              "sequence": 7
+            },
+            "stream": {
+              "id": "01a1cbfc-60a9-7922-a933-b11079711135",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:01a1cbfc-60a9-7922-a933-b11079711135:1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794423677909,
+        "jsonrpc": "2.0",
+        "method": "session/started",
+        "params": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "onRequest",
+              "source": "startup"
+            },
+            "createdAt": "3570-12-31T20:33:29.235001Z",
+            "forkedFrom": {
+              "commandId": "2df3386a-8a93-74ff-bce6-f2827efd0d3a",
+              "cutCursor": "session:01a1cbfc-60a9-7922-a933-b11079711135:turn:0",
+              "cutExplicit": false,
+              "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135"
+            },
+            "kind": "root",
+            "modelId": null,
+            "path": "/captured/muse/fork-mcp/data/muse/sessions/2026/11/11/00000000-0000-72b6-8a7e-79539cbac318/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "3570-12-31T20:33:29.235006Z",
+            "workspaceRoot": "/captured/muse/fork-mcp/workspace"
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 3,
+        "jsonrpc": "2.0",
+        "result": {
+          "history": {
+            "items": [],
+            "mode": "inline",
+            "snapshot": null
+          },
+          "pendingRequests": [],
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "onRequest",
+              "source": "startup"
+            },
+            "createdAt": "3570-12-31T20:33:29.235001Z",
+            "forkedFrom": {
+              "commandId": "2df3386a-8a93-74ff-bce6-f2827efd0d3a",
+              "cutCursor": "session:01a1cbfc-60a9-7922-a933-b11079711135:turn:0",
+              "cutExplicit": false,
+              "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135"
+            },
+            "kind": "root",
+            "modelId": null,
+            "path": "/captured/muse/fork-mcp/data/muse/sessions/2026/11/11/00000000-0000-72b6-8a7e-79539cbac318/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "3570-12-31T20:33:29.235006Z",
+            "workspaceRoot": "/captured/muse/fork-mcp/workspace"
+          },
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/leave",
+        "params": {
+          "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+          "commandId": "d70f762f-c4b7-7228-87ba-718986b68d2d"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 4,
+        "jsonrpc": "2.0",
+        "result": {
+          "commandId": "d70f762f-c4b7-7228-87ba-718986b68d2d",
+          "status": "accepted"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794423677969,
+        "jsonrpc": "2.0",
+        "method": "session/closed",
+        "params": {
+          "reason": "leave",
+          "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794423677969,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+          "status": "notLoaded",
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794423677969,
+        "jsonrpc": "2.0",
+        "method": "session/leaveCompleted",
+        "params": {
+          "commandId": "d70f762f-c4b7-7228-87ba-718986b68d2d",
+          "outcome": "released",
+          "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/resume",
+        "params": {
+          "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+          "excludeItems": false,
+          "config": {
+            "mcpServers": {
+              "probe": {
+                "transport": "stdio",
+                "command": "/captured/muse/fork-mcp/missing-mcp-executable",
+                "mode": "optional"
+              }
+            }
+          },
+          "commandId": "6892d0b5-bcc9-7f60-8a56-3defa8be82f5"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 5,
+        "jsonrpc": "2.0",
+        "result": {
+          "abnormalEnd": {
+            "lastActivityAt": "3570-12-31T20:33:29.235009Z"
+          },
+          "history": {
+            "items": [],
+            "mode": "inline",
+            "snapshot": null
+          },
+          "pendingRequests": [],
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "onRequest",
+              "source": "startup"
+            },
+            "createdAt": "3570-12-31T20:33:29.235001Z",
+            "forkedFrom": {
+              "commandId": "2df3386a-8a93-74ff-bce6-f2827efd0d3a",
+              "cutCursor": "session:01a1cbfc-60a9-7922-a933-b11079711135:turn:0",
+              "cutExplicit": false,
+              "sessionId": "01a1cbfc-60a9-7922-a933-b11079711135"
+            },
+            "kind": "root",
+            "modelId": null,
+            "path": "/captured/muse/fork-mcp/data/muse/sessions/2026/11/11/00000000-0000-72b6-8a7e-79539cbac318/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "resumedByClient": {
+              "name": "happier_muse_probe",
+              "version": "0.3.0"
+            },
+            "sessionId": "00000000-0000-72b6-8a7e-79539cbac318",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "3570-12-31T20:33:29.235016Z",
+            "workspaceRoot": "/captured/muse/fork-mcp/workspace"
+          },
+          "viewCursor": ""
+        }
+      }
+    }
+  ]
+}

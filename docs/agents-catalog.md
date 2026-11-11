@@ -32,8 +32,11 @@ selected Machine and Account's Agent readiness. The inventory Action acquires
 that readiness through the existing Machine inventory owner, including a cold
 Home call without a mounted Agent picker; the owner reuses its scoped projection
 and probe caches. A ready Agent takes precedence over an unavailable automatic
-default. Explicit Agent choices remain unchanged. If no Agent is ready, creation
-retains the ordinary default so its named launch refusal reaches the caller.
+default. Explicit Agent choices remain unchanged. If readiness is supplied but
+no Agent is ready, the shared selector returns no automatic default and the
+inventory omits `defaultTargetKey`; creation does not attempt an unavailable
+remembered Agent. Preference-only selection without Machine readiness still
+retains the remembered choice for display and repair.
 
 ---
 
@@ -221,15 +224,26 @@ native turn checkpoint in the existing transcript anchor; imported messages with
 one return the existing typed invalid-request result. No host turn IDs or cuts are
 reconstructed from history text.
 
-Muse declares native workspace-write denial for read-only Roles. Create and resume
-map that policy to Muse's `:read-only` profile; a read-only fork remains unsupported
-because native fork cannot override its source profile.
+Muse's permission mapping is shared by Session and finite Run startup, resume,
+fork and runtime configuration. Default uses `:ask-me` with `promptUnmatched`;
+safe-yolo keeps that sandbox with `onRequest`; yolo uses `:unrestricted` with
+`allowAll`. Read-only, normalized plan and explicit workspace-write denial use
+`:read-only` with `promptUnmatched`. An explicit resume selection replaces the
+retained profile; omission preserves native authority. Fork profile selections
+use the existing native release/resume construction before exposing the child.
+Running Sessions can change approval mode within their admitted profile, including
+during a turn for subsequent actions. Profile changes return the existing
+unsupported configuration result and apply to the next Session; they never
+silently restart a running Session.
 
 Muse advertises native MCP delivery. The existing host resolver supplies selected
 server descriptors; the adapter requires the native `sessionMcp` grant before
-opening the configured conversation. Native approval choices retain their native
-IDs. A catalog-persistent MCP choice uses the shared choice builder and applies
-the catalog follow-up after the native grant succeeds; the adapter sends the
+opening the configured conversation. For a fork with selected MCP servers, the
+adapter waits for the child's native release outcome, then resumes that same
+child with the selected configuration. A failed release returns a typed
+client-start cause. Native approval choices retain their native IDs. A
+catalog-persistent MCP choice uses the shared choice builder and applies the
+catalog follow-up after the native grant succeeds; the adapter sends the
 captured native grant ID to Muse.
 
 These are unreleased development-source integrations, not stable-release or
@@ -2115,9 +2129,23 @@ for connected-service profile/group enumeration. Custody stops at the home:
 intentional shared-state symlinks inside it remain supported. This does not add a
 second native-home catalog or require a daemon merely to discover local pets.
 
-Codex Browse in 0.3 development source selects rows through the existing host
-candidate index, then refreshes their native names through the optional selected-page
-hydration operation. One managed native proxy process carries a WebSocket connection
+External Sessions Browse in 0.3 development source pages each Agent source in
+newest-activity-first order from a cheap per-row fact: one stat pass over the
+native store (rollout or transcript mtime) or the provider's own recency column.
+The source reads titles, working directories and thread classification only for
+the rows a page shows, through the shared plugin SDK helper
+`pageExternalSessionCandidatesByActivity`, and continues with an opaque
+activity-position cursor that resumes strictly after the last row shown. A row
+whose activity moves above that position appears on the next first page. There
+is no whole-corpus candidate index, crawl or preparation phase. The daemon keeps
+only each shown or searched row's opaque `candidateIndexState` checkpoint
+(`row-state.json` per Agent/source under the active server directory), so
+reopening Browse re-reads no unchanged head; the Agent validates every
+checkpoint against its own source facts. A cursor minted by the retired index
+answers with the existing typed `cursorReset`.
+
+Codex Browse then refreshes the selected page's native names through the optional
+selected-page hydration operation. One managed native proxy process carries a WebSocket connection
 to the already-running server's control socket and reads lean `thread/read` metadata
 for that page. The host protocol client owns binary framing before public output
 redaction. It does not start a server, list the whole native corpus or retain a
@@ -2144,7 +2172,7 @@ symlinks remain refused; a completed turn cannot settle Activity when ordered
 source admission fails.
 
 Claude's metadata reader keeps title and native working-directory interpretation
-in the plugin and resumes from the host's persisted candidate-index checkpoints.
+in the plugin and resumes from the host's persisted per-row checkpoints.
 The same scan publishes candidate `cwd` for browse linking; unchanged checkpoints
 need no additional transcript read. Older title-only checkpoints are re-derived
 once to establish working-directory knowledge. Concurrent reads share

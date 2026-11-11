@@ -89,7 +89,7 @@ export type MuseMspProcessAudit = Readonly<{
     /** Fixture-only native inputs, never a production diagnostic/log carrier. */
     turnInputs: readonly (readonly JsonValue[])[];
     commandTargets: readonly Readonly<{ method: string; commandId: string; sessionId?: string; providerId?: string;
-        modelId?: string; permissionProfile?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
+        modelId?: string; approvalMode?: string; mode?: string; permissionProfile?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
     modelSelections: readonly Readonly<{ providerId?: string | null; modelId?: string }>[];
     modelListSessionIds: readonly (string | null)[];
     viewPages: readonly Readonly<{ sessionId: string | null; cursor: string | null }>[];
@@ -290,7 +290,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         if (message.method === 'session/start') modelSelections.push({
             providerId: message.params?.providerId, modelId: message.params?.modelId,
         });
-        if (message.method === 'session/start' && process.env.MUSE_TEST_EXPECTED_MCP) {
+        if ((message.method === 'session/start' || message.method === 'session/resume') && process.env.MUSE_TEST_EXPECTED_MCP) {
             const expected = JSON.parse(process.env.MUSE_TEST_EXPECTED_MCP);
             const received = message.params?.config?.mcpServers;
             if (!Object.entries(expected).every(([name, value]) => require('node:util').isDeepStrictEqual(received?.[name], value))) {
@@ -306,11 +306,15 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         if (recordedRequest?.params?.commandId && message.params?.commandId) {
             commandIds.set(recordedRequest.params.commandId, message.params.commandId);
         }
-        const result = resultFor(message.method);
+        // Schema-derived response matching the isolated Muse 1.4.14 no-turn control probe.
+        const result = message.method === 'session/setApprovalMode' ? {
+            commandId: message.params.commandId, status: 'accepted', applyOutcome: 'completed',
+            effectiveMode: { mode: message.params.mode, source: 'approvalReconfigure', lastCommandId: message.params.commandId },
+        } : resultFor(message.method);
         if (message.params?.commandId) {
             commands.push(message.params.commandId);
             const target = { method: message.method, commandId: message.params.commandId };
-            for (const key of ['sessionId', 'providerId', 'modelId', 'permissionProfile', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
+            for (const key of ['sessionId', 'providerId', 'modelId', 'approvalMode', 'mode', 'permissionProfile', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
                 if (typeof message.params[key] === 'string') target[key] = message.params[key];
             }
             if (typeof message.params.model?.modelId === 'string') target.modelId = message.params.model.modelId;
@@ -345,7 +349,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             if (turnFailure.endsWith('eof')) process.stdout.write('', () => process.exit(0));
             return;
         }
-        if (playbackSteps) {
+        if (playbackSteps && message.method !== 'session/setApprovalMode') {
             if (!step) {
                 send({ jsonrpc: '2.0', id: message.id, error: { code: -32603,
                     message: 'Playback has no remaining recorded receive window for this method',

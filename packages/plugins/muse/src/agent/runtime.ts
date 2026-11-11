@@ -17,10 +17,20 @@ import { readMuseHistoryItems, replayMusePagedHistory } from './externalSessions
 import { reconcileMuseHistoryNotification } from './historyRecovery.js';
 import { recordMuseUsageObservation } from './accountUsage.js';
 
-function musePermissionProfile(configuration: AgentSessionConfigurationUpdate | undefined) {
-  const intent = configuration?.permissionIntent.value;
-  if (intent && intent !== 'default' && intent !== 'read-only') return undefined;
-  return intent === 'read-only' || configuration?.workspaceWrites === 'deny' ? ':read-only' : ':ask-me';
+// Muse 1.4.14 permissionProfile/list and the exported MSP ApprovalMode contract.
+// Plan has no Muse behavior mode; like the host normalization it stays read-only.
+const MUSE_PERMISSIONS = {
+  default: { permissionProfile: ':ask-me', approvalMode: 'promptUnmatched' },
+  'read-only': { permissionProfile: ':read-only', approvalMode: 'promptUnmatched' },
+  plan: { permissionProfile: ':read-only', approvalMode: 'promptUnmatched' },
+  'safe-yolo': { permissionProfile: ':ask-me', approvalMode: 'onRequest' },
+  yolo: { permissionProfile: ':unrestricted', approvalMode: 'allowAll' },
+} as const satisfies Record<NonNullable<AgentSessionConfigurationUpdate['permissionIntent']['value']>,
+  { permissionProfile: string; approvalMode: string }>;
+
+function musePermissions(configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'> | undefined) {
+  return MUSE_PERMISSIONS[configuration?.workspaceWrites === 'deny' ? 'read-only'
+    : configuration?.permissionIntent.value ?? 'default'];
 }
 
 function museStartupConfigurationError(message: string) {
@@ -28,6 +38,38 @@ function museStartupConfigurationError(message: string) {
     details: { failureCause: { code: 'agent_startup_invalid_state', phase: 'client_start',
       failureReason: 'unclassified_provider_error', providerErrorMessage: message } },
   });
+}
+
+async function releaseMuseForkForConfiguration(msp: MuseMsp, sessionId: string, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  let commandId: string | undefined;
+  let resolveRelease!: () => void;
+  let rejectRelease!: (error: unknown) => void;
+  const released = new Promise<void>((resolve, reject) => { resolveRelease = resolve; rejectRelease = reject; });
+  const observation = msp.client.onNotificationReceived(message => {
+    if (message.method !== 'session/leaveCompleted') return;
+    const params = readMuseRecord(message.params);
+    if (params.sessionId !== sessionId || params.commandId !== commandId) return;
+    if (params.outcome === 'released') resolveRelease();
+    else rejectRelease(museStartupConfigurationError('Native Muse could not release the fork for MCP configuration.'));
+  });
+  const onAbort = () => rejectRelease(signal.reason);
+  signal.addEventListener('abort', onAbort, { once: true });
+  void msp.wait().then(() => rejectRelease(museStartupConfigurationError(
+    'Native Muse ended before its fork configuration was ready.')), rejectRelease);
+  try {
+    await Promise.all([
+      msp.command('session/leave', { sessionId }, { signal, onCommandId: id => { commandId = id; } })
+        .then(result => {
+          if (readMuseRecord(result).status !== 'accepted') throw museStartupConfigurationError(
+            'Native Muse did not accept the fork configuration release.');
+        }),
+      released,
+    ]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    await observation.dispose();
+  }
 }
 
 async function openMuseConversation<SessionId extends string | undefined>(
@@ -55,8 +97,6 @@ async function openMuseConversation<SessionId extends string | undefined>(
     throw new PluginError({ code: 'unsupported', message: 'The selected native Muse skill delivery is unavailable on this launch path.' });
   }
   const selectedMcp = Object.entries(request.mcpServers ?? {});
-  if (request.kind === 'fork' && selectedMcp.length) throw museStartupConfigurationError(
-    'Native Muse fork cannot apply the selected MCP startup configuration.');
   // MSP has no tool-filter or per-tool policy field. Preserve the host's
   // selection by refusing shapes that cannot be represented before any effect.
   if (request.configuration?.allowedTools !== undefined || request.configuration?.unlistedTools !== undefined
@@ -71,12 +111,9 @@ async function openMuseConversation<SessionId extends string | undefined>(
     mode: request.mcpServersStrictMode === false ? 'optional' : 'required',
   }]));
   const nativeMcpConfig: Readonly<Record<string, JsonValue>> = selectedMcp.length ? { config: { mcpServers: nativeMcpServers } } : {};
-  const permissionProfile = musePermissionProfile(request.configuration);
-  // MSP 1.4.14 admits profiles at start/resume; fork inherits its source profile
-  // and has no profile override. Never widen a requested read-only fork.
-  if (!permissionProfile || (request.kind === 'fork' && permissionProfile === ':read-only')) {
-    throw museStartupConfigurationError('The requested permission intent has no characterized native Muse mapping.');
-  }
+  const permissions = musePermissions(request.configuration);
+  const explicitPermissions = request.configuration?.permissionIntent.value != null
+    || request.configuration?.workspaceWrites === 'deny';
   if (request.configuration?.mode.value) throw new PluginError({ code: 'unsupported', message: 'Native Muse behavior modes are unavailable.' });
   const workflowSnapshots = new Map<string, SessionWorkflowRunSnapshotV1>();
   const workflowAddress = (runId: string) => ({ owner: 'host' as const,
@@ -157,7 +194,8 @@ async function openMuseConversation<SessionId extends string | undefined>(
       });
       if (!interactions.observe(message)) await projection.observe(message);
       if (catalogSessionId) catalogSource?.observeConfiguration(message, catalogSessionId);
-      if (message.method === 'session/closed') end('connectionLost');
+      if (message.method === 'session/closed' && catalogSessionId
+        && readMuseRecord(message.params).sessionId === catalogSessionId) end('connectionLost');
     },
   }).catch(error => { interactions.dispose(); projection.dispose(); throw error; });
   const catalog = catalogSource = createMuseCatalog(msp.client);
@@ -178,26 +216,75 @@ async function openMuseConversation<SessionId extends string | undefined>(
       if (selected.status === 'unavailable') throw new PluginError({ code: 'model_selection_required', retryable: false,
         message: 'The selected Muse model is unavailable in the native catalog.' });
     }
-    const opened = readMuseRecord(await (request.kind === 'fork' && 'source' in request
+    let opened = readMuseRecord(await (request.kind === 'fork' && 'source' in request
       ? msp.command('session/fork', { sessionId: request.source.providerSessionId,
         ...(request.source.target ? { cutPoint: request.source.target.providerCheckpoint } : {}),
         excludeItems: false }, { signal: context.signal })
       : request.kind === 'resume'
       ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false,
-        // Omission retains native authority when no read-only constraint was selected.
-        ...(permissionProfile === ':read-only' ? { permissionProfile } : {}),
+        // Omission retains native authority; explicit selections use the same launch mapping.
+        ...(explicitPermissions ? { permissionProfile: permissions.permissionProfile } : {}),
         ...nativeMcpConfig }, { signal: context.signal })
       : msp.command('session/start', { workspaceRoot: request.cwd,
-        approvalMode: 'promptUnmatched', permissionProfile,
+        ...permissions,
         ...nativeMcpConfig,
         ...(selected.status === 'selected' ? { providerId: selected.providerId, modelId: selected.modelId } : {}),
       }, { signal: context.signal })));
-    const native = readMuseRecord(opened.session);
+    let native = readMuseRecord(opened.session);
     if (typeof native.sessionId !== 'string') throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse did not return a native Session identity.' });
     if (request.kind === 'resume' && native.sessionId !== resumeId) {
       throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse returned a different native Session identity during resume.' });
     }
     const nativeSessionId = native.sessionId;
+    if (request.kind === 'fork' && (selectedMcp.length || explicitPermissions)) {
+      // Fork inherits its profile and omits MCP bindings. Both launch selections
+      // use the existing construction-only release/resume path.
+      await releaseMuseForkForConfiguration(msp, nativeSessionId, context.signal);
+      opened = readMuseRecord(await msp.command('session/resume', {
+        sessionId: nativeSessionId, excludeItems: false, ...nativeMcpConfig,
+        ...(explicitPermissions ? { permissionProfile: permissions.permissionProfile } : {}),
+      }, { signal: context.signal }));
+      native = readMuseRecord(opened.session);
+      if (native.sessionId !== nativeSessionId) throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR',
+        message: 'Muse returned a different native Session identity during fork configuration.' });
+    }
+    const currentProfile = explicitPermissions || request.kind === 'create'
+      ? permissions.permissionProfile : readMuseRecord(native.permissionState).profileId;
+    let currentApproval = request.kind === 'create' ? permissions.approvalMode
+      : readMuseRecord(native.approvalMode).mode;
+    const applyPermissions = async (configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'>,
+      options?: { signal?: AbortSignal }) => {
+      if (configuration.permissionIntent.value === null && configuration.workspaceWrites !== 'deny') {
+        return { status: 'applied' as const, changed: [] };
+      }
+      const selected = musePermissions(configuration);
+      // MSP has no in-place permission-profile RPC. Do not silently widen or restart.
+      if (selected.permissionProfile !== currentProfile) return { status: 'unsupported' as const,
+        diagnostic: { code: 'unsupported', severity: 'error' as const,
+          message: 'Muse permission profile changes apply to the next Session.' } };
+      if (selected.approvalMode === currentApproval) return { status: 'applied' as const, changed: [] };
+      try {
+        const result = readMuseRecord(await msp.command('session/setApprovalMode', {
+          sessionId: nativeSessionId, mode: selected.approvalMode,
+        }, { signal: options?.signal ?? context.signal }));
+        if (result.status !== 'accepted' || readMuseRecord(result.effectiveMode).mode !== selected.approvalMode) {
+          return { status: 'rejected' as const, retryable: false,
+            diagnostic: { code: 'provider_request_rejected', severity: 'error' as const } };
+        }
+        currentApproval = selected.approvalMode;
+        return { status: 'applied' as const, changed: ['permissionIntent' as const] };
+      } catch (error) {
+        const failure = classifyJsonRpcSubmissionFailure(error, { method: 'session/setApprovalMode', effectObserved: false });
+        return { status: failure.kind === 'rejected_before_effect' ? 'rejected' as const : 'unavailable' as const,
+          diagnostic: { code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
+            severity: 'error' as const } };
+      }
+    };
+    if (request.kind !== 'create' && explicitPermissions && request.configuration) {
+      const result = await applyPermissions(request.configuration, { signal: context.signal });
+      if (result.status !== 'applied') throw new PluginError({ code: result.diagnostic.code, retryable: false,
+        message: 'Muse could not apply the selected approval mode.' });
+    }
     catalogSessionId = nativeSessionId;
     projection.observeSession(opened.session);
     inputBinding = sessionServices?.activeInput.bind({
@@ -209,7 +296,13 @@ async function openMuseConversation<SessionId extends string | undefined>(
       },
       canSteer: () => projection.readOwningTurn() !== undefined,
       onPromptQueued() {},
-      applyPermissionIntentDuringTurn: () => ({ status: 'unsupported' }),
+      async applyPermissionIntentDuringTurn(intent) {
+        const result = await applyPermissions({ permissionIntent: { value: intent, updatedAtMs: 0 },
+          ...(request.configuration?.workspaceWrites ? { workspaceWrites: request.configuration.workspaceWrites } : {}) });
+        return result.status === 'applied' ? { status: 'applied' }
+          : result.status === 'unsupported' ? { status: 'unsupported', reason: result.diagnostic.message }
+          : { status: 'failed', reason: result.diagnostic.code };
+      },
       clearTerminalComposer: () => ({ ok: false, status: 'unsupported' }),
       interruptPendingInputAndRun() { throw new PluginError({ code: 'unsupported' }); },
     });
@@ -281,16 +374,18 @@ async function openMuseConversation<SessionId extends string | undefined>(
     const updateConfiguration: NonNullable<AgentSessionRuntime['updateConfiguration']> = async (configuration, options) => {
       const unsupported = { status: 'unsupported' as const,
         diagnostic: { code: 'unsupported', severity: 'error' as const } };
-      // There is no characterized native in-place profile control. Reapplying
-      // the admitted profile may still change independently supported model options.
-      if (configuration.mode.value || musePermissionProfile(configuration) !== permissionProfile
+      if (configuration.mode.value
         || configuration.allowedTools !== undefined
         || configuration.unlistedTools !== undefined || configuration.providerBinding !== undefined
         || configuration.mcpToolPolicy !== undefined
         || Object.keys(configuration.options).some(id => id !== 'reasoning_effort')) return unsupported;
       const effort = configuration.options.reasoning_effort?.value;
       if (effort !== undefined && typeof effort !== 'string') return unsupported;
-      return applyModelConfiguration(configuration.model.value ?? undefined, effort, options);
+      const permissionResult = await applyPermissions(configuration, options);
+      if (permissionResult.status !== 'applied') return permissionResult;
+      const modelResult = await applyModelConfiguration(configuration.model.value ?? undefined, effort, options);
+      return modelResult.status === 'applied'
+        ? { ...modelResult, changed: [...permissionResult.changed, ...modelResult.changed] } : modelResult;
     };
     if (request.configuration?.options.reasoning_effort || ((request.kind === 'resume' || request.kind === 'fork') && requestedModelId)) {
       const result = request.configuration
