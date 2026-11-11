@@ -1210,7 +1210,7 @@ function isDeploymentReadPreparation(binding: ExternalActionExecutionAuthorizati
             || (rootActionId === 'deployments.health.current' ? effectActionId === 'deployments.domains.get'
                 : effectActionId === 'deployments.receipts.get');
     const native = deploymentNativeAdmissionInputSchema(rootActionId) !== null;
-    return effectActionId === 'deployments.environments.get' && (native || rootActionId === 'machines.services.logs.read')
+    return effectActionId === 'deployments.environments.get' && native
         || native && (effectActionId === 'deployments.receipts.get'
             || rootActionId !== 'deployments.teardown' && effectActionId === 'projects.sources.read')
         || (binding.deploymentChildRoot === true || rootActionId === 'deployments.teardown')
