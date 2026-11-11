@@ -74,6 +74,7 @@ export const MUSE_PLUGIN = definePlugin({
         capabilities: projectAgentCapabilitiesV2FromDefinition(MUSE_AGENT.core, {
           surfaces: ['externalSessions'],
           sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer'], cancel: true, configuration: true,
+            workspaceWrites: 'deny',
             catalog: { active: ['skills'], inactive: ['skills'] },
             executionRunContext: { versions: [1] } },
         }),

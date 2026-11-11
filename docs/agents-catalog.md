@@ -221,6 +221,10 @@ native turn checkpoint in the existing transcript anchor; imported messages with
 one return the existing typed invalid-request result. No host turn IDs or cuts are
 reconstructed from history text.
 
+Muse declares native workspace-write denial for read-only Roles. Create and resume
+map that policy to Muse's `:read-only` profile; a read-only fork remains unsupported
+because native fork cannot override its source profile.
+
 Muse advertises native MCP delivery. The existing host resolver supplies selected
 server descriptors; the adapter requires the native `sessionMcp` grant before
 opening the configured conversation. Native approval choices retain their native
