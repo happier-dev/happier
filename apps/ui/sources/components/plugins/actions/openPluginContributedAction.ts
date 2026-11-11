@@ -4,6 +4,7 @@ import type { PopoverAnchor } from '@/components/ui/popover';
 
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 
 import { presentActionInputForm } from './presentActionInputForm';
 import type {
@@ -12,12 +13,24 @@ import type {
     PluginContributedActionOpenOutcome,
 } from './pluginContributedActionController';
 
-function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | 'thrown', reasonCode?: string): void {
+function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | 'thrown', reasonCode?: string,
+    failure?: Readonly<{ code: string; details?: unknown }>): void {
     const message = reasonCode ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode }).body
         : kind === 'failed' ? t('pluginRuntime.actionFailed')
         : kind === 'stale' ? t('pluginRuntime.actionStale')
             : kind === 'unavailable' ? t('pluginRuntime.actionUnavailable')
                 : t('pluginRuntime.actionOpenFailed');
+    if (failure) {
+        const details = typeof failure.details === 'object' && failure.details !== null
+            ? failure.details as Readonly<Record<string, unknown>> : null;
+        alertActionFailure({
+            reason: message,
+            code: failure.code,
+            requestId: typeof details?.requestId === 'string' ? details.requestId : undefined,
+            context: readSafeFailureDetails(failure.details),
+        });
+        return;
+    }
     Modal.alert(t('common.error'), message);
 }
 
@@ -35,7 +48,7 @@ async function presentPluginContributedActionOpen(
         // known effect as stale, because consumers can otherwise retry it.
         if (opened.kind === 'direct') {
             if (showUnavailableFeedback && !opened.outcome.ok && !signal?.aborted) {
-                presentPluginActionFailure('failed', opened.outcome.layer ? opened.outcome.code : undefined);
+                presentPluginActionFailure('failed', opened.outcome.layer ? opened.outcome.code : undefined, opened.outcome);
             }
             return opened;
         }
