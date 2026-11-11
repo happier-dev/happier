@@ -35,15 +35,15 @@ export function describeManagedNativeFailureDiagnostic(code: string, cause?: Mac
 /** A preset's availability card presents the typed use-time refusal, never the controller label or inventory read. */
 export function describeManagedPresetAvailabilityFailure(code: string): string {
     switch (code) {
-        case 'permission_denied': return t('startFailure.cause.permission_denied');
-        case 'controller_unavailable': return t('startFailure.cause.controller_unavailable');
-        case 'credential_unavailable': return t('startFailure.cause.credential_unavailable');
-        case 'provider_unavailable': return t('startFailure.cause.provider_unavailable');
-        case 'controller_retired': return t('startFailure.cause.controller_retired');
-        case 'request_conflict': return t('startFailure.cause.request_conflict');
-        case 'intent_changed': return t('startFailure.cause.intent_changed');
-        case 'managed_not_found': return t('startFailure.cause.managed_not_found');
-        case 'enrollment_retired': return t('startFailure.cause.enrollment_retired');
+        case 'permission_denied': return t('session.startFailure.cause.permission_denied');
+        case 'controller_unavailable': return t('session.startFailure.cause.controller_unavailable');
+        case 'credential_unavailable': return t('session.startFailure.cause.credential_unavailable');
+        case 'provider_unavailable': return t('session.startFailure.cause.provider_unavailable');
+        case 'controller_retired': return t('session.startFailure.cause.controller_retired');
+        case 'request_conflict': return t('session.startFailure.cause.request_conflict');
+        case 'intent_changed': return t('session.startFailure.cause.intent_changed');
+        case 'managed_not_found': return t('session.startFailure.cause.managed_not_found');
+        case 'enrollment_retired': return t('session.startFailure.cause.enrollment_retired');
         default: return t('managedMachines.options.unavailable');
     }
 }

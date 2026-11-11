@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { describeManagedActionFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
+import { t } from '@/text';
+import { describeManagedActionFailureDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 
 describe('managed native failure Details', () => {
+    it.each([
+        'permission_denied', 'controller_unavailable', 'credential_unavailable', 'provider_unavailable',
+        'controller_retired', 'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired',
+    ] as const)('localizes the preset availability refusal %s through the existing Session copy', (code) => {
+        const expected = t(`session.startFailure.cause.${code}`);
+        expect(expected).not.toContain('startFailure.cause.');
+        expect(describeManagedPresetAvailabilityFailure(code)).toBe(expected);
+    });
+
     it('retains the typed controller request cause without exposing opaque response text', () => {
         const details = { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/submit-intent',
             category: 'status', status: 409, code: 'intent_changed' };

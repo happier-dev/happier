@@ -1436,7 +1436,7 @@ describe('reachable preset detail', () => {
     expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
     const unavailableCard = screen.tree.findAll((node) => node.props.testID === 'machine-preset.configuration-unavailable')[0];
     expect(unavailableCard?.props.diagnosticCode).toBe('credential_unavailable');
-    expect(unavailableCard?.props.title).toBe(t('startFailure.cause.credential_unavailable'));
+    expect(unavailableCard?.props.title).toBe(t('session.startFailure.cause.credential_unavailable'));
     expect(unavailableCard?.props.title).not.toBe(t('managedMachines.options.unavailable'));
     await screen.unmount();
   });

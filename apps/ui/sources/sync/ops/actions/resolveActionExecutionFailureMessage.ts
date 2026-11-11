@@ -152,9 +152,9 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });
     if (sessionInputLabel) return t(sessionInputLabel);
     if (code === 'feature_policy_disabled') return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
-    const message = (!(value instanceof Error) || isPluginError(value)) && typeof record.message === 'string'
-        ? record.message.trim() : '';
-    const reason = message || (code === 'credential_unavailable' ? t('startFailure.cause.credential_unavailable') : '');
+    const authoredMessage = isPluginError(value) ? value.data.message : !(value instanceof Error) ? record.message : undefined;
+    const message = typeof authoredMessage === 'string' ? authoredMessage.trim() : '';
+    const reason = message || (code === 'credential_unavailable' ? t('session.startFailure.cause.credential_unavailable') : '');
     if (reason) {
         const remediation = isPluginError(value) ? readPluginActionFailureAuthorPayload(value.data).remediation
             : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation).data;

@@ -18,7 +18,10 @@ describe('Action failure presentation', () => {
     });
     it('keeps the Docker sign-in instruction without interpreting its text', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login' }, 'fallback')).toBe('Sign in to Docker: run sbx login');
-        expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable' }, 'fallback')).toBe(t('startFailure.cause.credential_unavailable'));
+        const expected = t('session.startFailure.cause.credential_unavailable');
+        expect(expected).not.toContain('startFailure.cause.');
+        expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable' }, 'fallback')).toBe(expected);
+        expect(resolveActionExecutionErrorMessage(new PluginError({ code: 'credential_unavailable' }), 'fallback')).toBe(expected);
     });
     it.each(['mode_none', 'not_preauthorized'])('names the administrator prerequisite for %s without treating it as transport failure', code => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Could not read the network'))
