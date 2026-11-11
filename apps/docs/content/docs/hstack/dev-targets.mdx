@@ -1461,6 +1461,31 @@ Mutagen documents possible slow or stalled streams with Windows OpenSSH Server. 
 target with `doctor` and one complete `pnpm run tui` synchronization before relying on it for unattended
 QA.
 
+### AppArmor user namespaces on Linux (0.3 development)
+
+For hosts restricting unprivileged user namespaces, the explicit host-policy
+renderer is `apps/stack/scripts/utils/dev_targets/apparmor.mjs`. Run it from the
+checkout with the target user's absolute home directory:
+
+```bash
+node apps/stack/scripts/utils/dev_targets/apparmor.mjs /home/happier > /tmp/happier-sandbox-binaries
+```
+
+It renders one `flags=(unconfined)` profile granting `userns` to managed Codex,
+managed Chromium and Muse executables across stack names and build versions,
+plus standalone Codex and Muse installs in that home. Muse embeds Bubblewrap in
+`muse-bin-*`; it does not need an exception for system `/usr/bin/bwrap`.
+Rendering does not install anything. Host security changes need administrator
+approval: back up existing `happier-*` profiles, parse the generated file with
+`apparmor_parser -Q -T`, install it as `/etc/apparmor.d/happier-sandbox-binaries`
+and load with `apparmor_parser -r`. Only after loading succeeds, unload and remove
+superseded `happier-codex-bwrap` and `happier-managed-chromium-*` profiles. Restore
+the backups immediately if loading fails. Keep the backups and verify both
+agent namespaces and Chromium's sandbox before declaring setup complete.
+Keep `kernel.apparmor_restrict_unprivileged_userns=1` and the application
+sandboxes enabled. This explicit setup renderer does not alter the separate
+managed Ubuntu guest provisioner's system Bubblewrap profile.
+
 ## Troubleshooting
 
 - **Mutagen not found:** install Mutagen locally and confirm `mutagen version`.
