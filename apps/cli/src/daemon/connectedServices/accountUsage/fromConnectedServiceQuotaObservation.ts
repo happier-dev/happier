@@ -28,6 +28,25 @@ function mapQuotaConfidenceToUsageConfidence(
     return 'unknown';
 }
 
+/** An unknown provider measurement cannot establish zero remaining capacity. */
+function normalizeUnknownQuotaMeter(
+    meter: ConnectedServiceQuotaSnapshotV1['meters'][number],
+    snapshotConfidence: ConnectedServiceQuotaSnapshotV1['confidence'],
+): ConnectedServiceQuotaSnapshotV1['meters'][number] {
+    if (snapshotConfidence !== 'unknown' && meter.confidence !== 'unknown') return meter;
+    return {
+        ...meter,
+        used: null,
+        remaining: null,
+        remainingPct: null,
+        usedPct: null,
+        utilizationPct: null,
+        isExhausted: false,
+        confidence: 'unknown',
+        details: { ...meter.details, remainingPct: null },
+    };
+}
+
 /**
  * Quota observation input for the canonical scalar codec. `serviceId` accepts
  * either the released bundled scalar id or the canonical qualified contribution
@@ -87,7 +106,7 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
         ...(snapshot.recoveryCredits ? { recoveryCredits: snapshot.recoveryCredits } : {}),
         ...(snapshot.recoveryCreditDetails ? { recoveryCreditDetails: snapshot.recoveryCreditDetails } : {}),
         ...(snapshot.subscription ? { subscription: snapshot.subscription } : {}),
-        meters: snapshot.meters,
+        meters: snapshot.meters.map((meter) => normalizeUnknownQuotaMeter(meter, snapshot.confidence)),
         ...(snapshot.diagnostics ? { diagnostics: snapshot.diagnostics } : {}),
     });
 }

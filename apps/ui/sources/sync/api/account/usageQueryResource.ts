@@ -110,6 +110,38 @@ function canRetainQuotaRead(admitted: Pick<QualifiedQuotaSnapshotStoreEntry, 'su
         && (admitted.usageRecordId === null || admitted.usageRecordId === read.current?.recordId);
 }
 
+type UsageAllowanceProjection = Readonly<{
+    quota?: readonly ConnectedServiceQuotaGetResultV1[];
+    sources: readonly UsageQuerySourceState[];
+}>;
+
+/** A partial allowance revision updates settled rows without withdrawing the rest of the slice. */
+export function mergeRetainedUsageAllowance(
+    previous: UsageAllowanceProjection,
+    replacement: UsageAllowanceProjection,
+): Readonly<{ quota: readonly ConnectedServiceQuotaGetResultV1[]; sources: readonly UsageQuerySourceState[] }> {
+    const quotaBySource = new Map<string, ConnectedServiceQuotaGetResultV1>();
+    for (const read of previous.quota ?? []) quotaBySource.set(createCanonicalJsonSigningInput(read.source), read);
+    for (const read of replacement.quota ?? []) {
+        const key = createCanonicalJsonSigningInput(read.source);
+        const prior = quotaBySource.get(key);
+        // A replacement without a current observation is still in flight or unavailable;
+        // it cannot erase the last accepted provider reading.
+        if (!prior || read.current || !prior.current) quotaBySource.set(key, read);
+    }
+    const sourceByKey = new Map<string, UsageQuerySourceState>();
+    for (const state of previous.sources.filter(state => state.source === 'quota' || state.source.startsWith('quota:'))) {
+        sourceByKey.set(state.source, state);
+    }
+    for (const state of replacement.sources.filter(state => state.source === 'quota' || state.source.startsWith('quota:'))) {
+        const prior = sourceByKey.get(state.source);
+        const pending = state.status === 'pending' || state.status === 'not_loaded';
+        const priorSettled = prior && prior.status !== 'pending' && prior.status !== 'not_loaded';
+        if (!prior || !pending || !priorSettled) sourceByKey.set(state.source, state);
+    }
+    return { quota: [...quotaBySource.values()], sources: [...sourceByKey.values()] };
+}
+
 /** Reconcile B once, whether its revision came from cache, read progress or a sibling. */
 function reconcileQuotaRead(input: Readonly<{
     admitted: Pick<QualifiedQuotaSnapshotStoreEntry, 'supported' | 'usageRecordId' | 'loading' | 'error'>;
@@ -1987,11 +2019,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 });
                 const priorBatch = previousSlices.length ? { v: 1 as const, results: previousSlices } : undefined;
                 const sharedAllowance = allowance;
-                const previous = priorBatch && sharedAllowance ? { ...priorBatch, results: priorBatch.results.map(slice => slice.requestedQuery.includeQuota === false ? slice : ({
-                    ...slice, quota: sharedAllowance.quota,
-                    sources: [...slice.sources.filter(source => source.source !== 'quota' && !source.source.startsWith('quota:')),
-                        ...sharedAllowance.sources],
-                })) } : priorBatch ?? (sharedAllowance ? { v: 1 as const, results: [sharedAllowance] } : undefined);
+                const previous = priorBatch && sharedAllowance ? { ...priorBatch, results: priorBatch.results.map(slice => {
+                    if (slice.requestedQuery.includeQuota === false) return slice;
+                    const mergedAllowance = mergeRetainedUsageAllowance(slice, sharedAllowance);
+                    return { ...slice, quota: mergedAllowance.quota,
+                        sources: [...slice.sources.filter(source => source.source !== 'quota' && !source.source.startsWith('quota:')),
+                            ...mergedAllowance.sources] };
+                }) } : priorBatch ?? (sharedAllowance ? { v: 1 as const, results: [sharedAllowance] } : undefined);
                 let reproject: UsageQueryReprojection | undefined;
                 let projectionIsCurrent: (() => boolean) | undefined;
                 const assertProjectionCurrent = () => {

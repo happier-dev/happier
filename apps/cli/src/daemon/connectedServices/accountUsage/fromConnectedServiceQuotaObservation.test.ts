@@ -96,6 +96,29 @@ describe('buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation'
     });
   });
 
+  it('keeps an unknown allowance distinct from exhausted capacity', () => {
+    const snapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+      snapshot: createSnapshot({
+        confidence: 'unknown',
+        meters: [{
+          meterId: 'weekly', label: 'Weekly', used: null, limit: 100,
+          utilizationPct: 100, remainingPct: 0, isExhausted: true,
+          resetsAt: 10_000, status: 'ok', confidence: 'unknown', unit: 'unknown', details: {},
+        }],
+      }),
+    });
+
+    expect(snapshot.meters[0]).toMatchObject({
+      used: null,
+      limit: 100,
+      utilizationPct: null,
+      remainingPct: null,
+      isExhausted: false,
+      resetsAt: 10_000,
+      confidence: 'unknown',
+    });
+  });
+
   it('keeps source-of-truth writes provisional when the quota observation lacks stable account identity', () => {
     const snapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
       snapshot: createSnapshot({

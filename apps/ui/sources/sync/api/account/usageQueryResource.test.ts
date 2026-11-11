@@ -1,4 +1,5 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServedHomeAccountToken, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createUsageSessionEvidenceHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -18,7 +19,7 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { scmFallbackError } from '@/sync/ops/scm/scmRpcFailure';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
-import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources, readUiUsageQueryBatch } from './usageQueryResource';
+import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources, mergeRetainedUsageAllowance, readUiUsageQueryBatch } from './usageQueryResource';
 import { storage } from '@/sync/domains/state/storage';
 import { publishHomeAccountChange, publishHomeAccountChangeWake, subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { buildConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -203,6 +204,35 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
 }
 
 describe('usage query captured Resource adapter', () => {
+  it('retains settled allowance rows and states when a replacement revision is partial', () => {
+    const sourceA = { bindingKind: 'account' as const, ref: { service: { pluginId: 'codex', localId: 'openai' }, accountId: 'a' } };
+    const sourceB = { bindingKind: 'account' as const, ref: { service: { pluginId: 'codex', localId: 'openai' }, accountId: 'b' } };
+    const sourceKey = (source: typeof sourceA) => `quota:${createCanonicalJsonSigningInput(source)}`;
+    const previous = {
+      quota: [
+        { source: sourceA, current: { recordId: 'record-a' } as unknown as ConnectedServiceQuotaGetResultV1['current'],
+        },
+        { source: sourceB, current: { recordId: 'record-b' } as unknown as ConnectedServiceQuotaGetResultV1['current'],
+        },
+      ],
+      sources: [
+        { source: sourceKey(sourceA), status: 'available' as const },
+        { source: sourceKey(sourceB), status: 'available' as const },
+      ],
+    };
+    const replacement = {
+      quota: [
+        { source: sourceA, current: null },
+      ],
+      sources: [
+        { source: sourceKey(sourceA), status: 'pending' as const },
+      ],
+    };
+    const merged = mergeRetainedUsageAllowance(previous, replacement);
+    expect(merged.quota.map(read => read.current?.recordId)).toEqual(['record-a', 'record-b']);
+    expect(merged.sources).toEqual(previous.sources);
+  });
+
   it('normalizes evidence demand per query phase rather than per selected Session', async () => {
     let ids = ['demand-0'];
     const captured = await context(request => {
