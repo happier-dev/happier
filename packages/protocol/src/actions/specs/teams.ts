@@ -93,6 +93,7 @@ import { teamCredentialMutationRequiresUiConfirmation, teamCredentialNativeDiscl
 import { TeamMembershipHistoryInputV1Schema, TeamMembershipHistoryReadinessV1Schema,
   TeamMembershipHistoryPreparationResultV1Schema } from '../../teams/membershipHistoryPreparationV1.js';
 
+const TEAM_MEMBER_ADD_TITLE = 'Add Team member';
 const TEAM_ID_FIELD = approvalField('teamId', 'Team ID', { required: true });
 const MEMBERSHIP_ID_FIELD = approvalField('membershipId', 'Membership ID', { required: true });
 const GROUP_ID_FIELD = approvalField('groupId', 'Group ID', { required: true });
@@ -538,7 +539,9 @@ function createTeamActionSpecs() {
     id: 'teams.members.add', approval: {result: 'required',flow: 'deferred'},
     mcp: true,
     approvalPolicy: { uiConfirmation: 'direct' },
-    title: 'Add Team member',
+    title: TEAM_MEMBER_ADD_TITLE,
+    approvalPresentation: { summary: (_input, context) => context?.teamMemberPresentation
+      ? `${TEAM_MEMBER_ADD_TITLE} · ${context.teamMemberPresentation.accountName} · ${context.teamMemberPresentation.teamName}` : null },
     description: 'Admit an existing Home Account to a Team with an explicit role and history horizon.',
     safety: 'danger',
     sideEffectClass: 'danger',
@@ -771,6 +774,7 @@ function createTeamActionSpecs() {
   homeDomainActionRow({
     id: 'teams.groups.members.remove', approval: {result: 'required',flow: 'deferred'},
     approvalPolicy: { uiConfirmation: 'policy' },
+    confirmVerb: { key: 'common.remove', fallback: 'Remove' },
     title: 'Remove Team Group member',
     description: 'Clear the native Group contribution. A surviving directory contribution is reported truthfully.',
     safety: 'danger',

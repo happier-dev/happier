@@ -26,12 +26,35 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 await import('@/sync/ops/actions/defaultActionExecutor');
 const { MachineSubPageScreen } = await import('./MachineSubPageScreen');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+const { MachineTabSubHead } = await import('./MachineTabSubHead');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 
 beforeEach(() => { installReactDomPortalBoundaryForTests(); });
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); probe.rpc.mockReset(); });
+
+it('names the offline Machine in the page header and uses its canonical reachability cause in the viewer', async () => {
+    const serverId = 'srv_machine_navigation';
+    await prepareSessionDraftPersistenceStorage();
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://machine-navigation.example.test', serverIdentityId: serverId, accountId: 'owner' });
+    onTestFinished(() => connection.dispose());
+    const baseMachine = createMachineFixture();
+    const machine = createMachineFixture({ id: 'navigation-machine', active: false, activeAt: 1, storageMode: 'plain',
+        metadata: { ...baseMachine.metadata!, displayName: 'Studio' } });
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true, machines: { [machine.id]: machine },
+        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId: connection.serverId, accountId: 'owner' }, [machine]);
+    probe.rpc.mockRejectedValue(new Error('machine_unreachable'));
+    const screen = await renderScreen(<AuthProvider initialCredentials={connection.credentials}><MachineSubPageScreen /></AuthProvider>);
+    onTestFinished(() => screen.unmount());
+    expect(screen.root.findByType(MachineTabSubHead).props.description).toContain('machine=Studio');
+    await vi.waitFor(() => expect(screen.root.findAllByType(SurfaceStateCard)
+        .some(card => card.props.title === 'projects.checkouts.outOfReach(machine=Studio)')).toBe(true));
+    expect(screen.getTextContent()).not.toContain('computerUse.presentation.offlineBody');
+});
 
 it.each(['owner', 'manage', 'use'] as const)('opens Computer from the Machine page without a Session for %s', async role => {
     const serverId = 'srv_machine_navigation';

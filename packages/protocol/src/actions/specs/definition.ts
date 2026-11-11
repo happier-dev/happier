@@ -23,6 +23,7 @@ import { SessionSurfaceItemV1Schema, type SessionSurfaceItemDestinationV1 } from
 import { readSessionVisualCapabilitiesV1 } from '../../sessions/board/visualPolicy.js';
 import type { UiSurfaceNetworkPolicyV1 } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import type { TeamCredentialApprovalSource, TeamCredentialSourceSelection } from './teamCredentialApproval.js';
+import type { TeamMemberApprovalPresentation } from './teamMemberApproval.js';
 
 export type SessionVisualCopyApprovalSummaryInput = Readonly<{
   source: string;
@@ -32,6 +33,8 @@ export type SessionVisualCopyApprovalSummaryInput = Readonly<{
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
+  /** Public labels captured for the exact Team admission operands. */
+  teamMemberPresentation?: TeamMemberApprovalPresentation;
   /** Recipient-safe source names captured before admission, never selected adapter facts. */
   teamCredentialSources?: readonly TeamCredentialApprovalSource[];
   /** The target Machine's readable form of a path (home-relative). */

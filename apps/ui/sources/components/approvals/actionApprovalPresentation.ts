@@ -2,7 +2,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
-import { describeApprovalActionFields, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { describeApprovalActionFields, readTeamMemberApprovalPresentation, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
 import { getPreferredLanguage } from '@/text/i18n';
@@ -83,6 +83,8 @@ export function readActionApprovalRoleId(input: ActionApprovalPresentationInput)
 
 /** The existing Protocol reference projection owns subject identity, never a caller's id guess. */
 export function readActionApprovalSubject(input: ActionApprovalPresentationInput): ApprovalActionReference | undefined {
+    // The captured admission already names both operands; do not issue a second principal lookup.
+    if (input.actionId === 'teams.members.add' && readTeamMemberApprovalPresentation(input.preview, input.actionArgs)) return undefined;
     const serviceControl = readLocalServiceControlSubject(input);
     if (serviceControl) return serviceControl;
     const references = describeApprovalActionFields({ ...input, actionArgs: input.actionArgs }).rows.flatMap(row => row.kind === 'value'
@@ -133,7 +135,10 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const createdMachineName = spec.id === 'machines.managed.acquire'
         ? describeApprovalActionFields({ actionId: spec.id, actionArgs: input.actionArgs, status: input.status }).rows
             .find(row => row.kind === 'value' && row.path === 'name') : undefined;
-    const subject = createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
+    const teamMember = spec.id === 'teams.members.add'
+        ? readTeamMemberApprovalPresentation(input.preview, input.actionArgs) : null;
+    const subject = teamMember ? `${teamMember.accountName} · ${teamMember.teamName}`
+        : createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
     const confirmLabel = readActionApprovalConfirmLabel(spec.id)
         ?? (input.kind === 'confirmation' ? resolveActionTitle(spec.id, spec) : resolveActionConfirmVerb(undefined));
     const incoming = readIncomingDiscussionApprovalSource(input);
@@ -181,6 +186,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
         teamCredentialSources: readTeamCredentialApprovalSources(input.preview),
+        ...(teamMember ? { teamMemberPresentation: teamMember } : {}),
         formatSessionVisualCopySummary: summary => {
             canonicalCopySummary = summary.source;
             return t('actionPresentation.sessionVisualCopySummary', summary);
@@ -193,7 +199,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`
                 : english ? summarySource : resolveActionSummary(spec.id, summarySource), subject, role: roleIdentity });
-    const visibleSummary = !distinctAuthoredSummary && summarySource === `${spec.title}.`
+    const visibleSummary = teamMember && !distinctAuthoredSummary ? null
+        : !distinctAuthoredSummary && summarySource === `${spec.title}.`
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;

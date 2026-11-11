@@ -39,6 +39,7 @@ import { appendTeamCredentialSourceSummary, prepareTeamCredentialSources, readTe
 import { SAVED_HEALTH_ALERT_TEST_ACTION_ID } from '../notificationConfigurationActionIds.js';
 import { NotificationConfigurationActionInputSchemas, SavedHealthAlertTestApprovalReviewSchema } from '../notificationConfigurationActionFamily.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { prepareTeamMemberApprovalPresentation } from '../specs/teamMemberApproval.js';
 
 export function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']): ApprovalRequestV1['createdBy']['surface'] {
   if (surface === 'voice') return 'voice';
@@ -457,12 +458,16 @@ export async function prepareApprovalRequest(params: Readonly<{
       }
     }
   }
+  const teamMemberPresentation = params.actionId === 'teams.members.add'
+    ? await prepareTeamMemberApprovalPresentation(params) : null;
   const defaultPreview = {
     actionId: params.actionId,
     ...(params.hostReviewedContent === undefined ? {} : { hostReviewedContent: params.hostReviewedContent }),
     ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     actionArgs: observedInput,
-    summary: buildApprovalPreviewSummary(spec, summaryInput, { ...(widgetPresentation ? { widgetPresentation } : {}), teamCredentialSources }),
+    summary: buildApprovalPreviewSummary(spec, summaryInput, { ...(widgetPresentation ? { widgetPresentation } : {}),
+      ...(teamMemberPresentation ? { teamMemberPresentation } : {}), teamCredentialSources }),
+    ...(teamMemberPresentation ? { teamMemberPresentation } : {}),
     ...(teamCredentialSources.length ? { teamCredentialSources } : {}),
     ...(widgetPresentation ? { widgetPresentation } : {}),
     ...(widgetLibraryName ? { widgetLibraryName } : {}),

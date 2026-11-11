@@ -12,6 +12,25 @@ import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it.each(['en', 'fr'] as const)('names admitted Team membership operands and preserves authored copy in %s', async language => {
+        await preloadTranslations(language);
+        setPreferredLanguageFromSettings(language);
+        const actionArgs = { v: 1, teamId: 'team-product', accountId: 'account-grace', role: 'member', historyAccess: 'from_membership' };
+        const preview = { teamMemberPresentation: { teamId: actionArgs.teamId, accountId: actionArgs.accountId,
+            accountName: 'Grace', teamName: 'Product Team' } };
+        const presentation = presentActionApproval({ actionId: 'teams.members.add', actionArgs, preview });
+        expect(presentation.title).toContain('Grace');
+        expect(presentation.title).toContain('Product Team');
+        expect(presentation.summary).toBeNull();
+        expect(readActionApprovalSubject({ actionId: 'teams.members.add', actionArgs, preview })).toBeUndefined();
+        expect(readActionApprovalSubject({ actionId: 'teams.members.add', actionArgs }))
+            .toEqual({ kind: 'account', id: actionArgs.accountId });
+        expect(presentActionApproval({ actionId: 'teams.members.add', actionArgs, preview,
+            authoredSummary: 'Please review the membership first.' }).summary).toBe('Please review the membership first.');
+        expect(presentActionApproval({ actionId: 'teams.members.add', actionArgs: { ...actionArgs, accountId: 'another-person' }, preview }).title)
+            .not.toContain('Grace');
+    });
+
     it('retains the admitted Team account source in immediate and saved spawn presentations', () => {
         const actionArgs = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'example.agent', localId: 'agent' } } };

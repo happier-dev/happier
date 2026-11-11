@@ -1,3 +1,5 @@
+export { readTeamMemberApprovalPresentation } from './specs/teamMemberApproval.js';
+
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceV1Schema, NativePermissionChoicesV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
