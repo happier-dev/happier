@@ -29,7 +29,7 @@ function jsonOkFromUnknown(value: unknown): string {
   return jsonOk({ result: value });
 }
 
-function getNestedActionFailure(actionId: ActionId, value: unknown): { errorCode: string; errorMessage: string } | null {
+function getNestedActionFailure(actionId: ActionId, value: unknown): { errorCode: string; errorMessage: string; details?: unknown } | null {
   if (actionId === 'session.message.reply') {
     const reply = SessionMessageReplyMutationResultV1Schema.safeParse(value);
     if (reply.success && !reply.data.ok) {
@@ -39,12 +39,17 @@ function getNestedActionFailure(actionId: ActionId, value: unknown): { errorCode
   const carrier = isRecord(value) ? value : {};
   if (carrier.success === false) {
     const errorCode = String(carrier.errorCode ?? carrier.code ?? 'unknown_error');
-    return { errorCode, errorMessage: errorCode };
+    return {
+      errorCode,
+      errorMessage: errorCode,
+      ...(carrier.details === undefined ? {} : { details: carrier.details }),
+    };
   }
   if (carrier.ok !== false) return null;
   return {
     errorCode: String(carrier.errorCode ?? 'unknown_error'),
     errorMessage: String(carrier.errorMessage ?? carrier.errorCode ?? 'unknown_error'),
+    ...(carrier.details === undefined ? {} : { details: carrier.details }),
   };
 }
 
@@ -65,9 +70,9 @@ export function serializeVoiceActionExecuteResult(
     return jsonError(result.errorCode, options?.agentTarget
       ? `${options.agentTarget.identity.localId}: ${result.errorCode}` : result.errorCode, {
       actionId,
+      ...(result.details === undefined ? {} : { details: result.details }),
       ...(options?.agentTarget ? { agentTarget: options.agentTarget } : {}),
       // The Action-input owner has already projected these content-free repair facts.
-      ...(Array.isArray(details.issues) ? { details: { issues: details.issues } } : {}),
       ...(typeof details.sessionId === 'string' ? { sessionId: details.sessionId } : {}),
       ...(errorDetail ? { errorDetail } : {}),
       ...(options?.failurePayload ?? {}),
@@ -94,6 +99,7 @@ export function serializeVoiceActionExecuteResult(
   if (nestedFailure) {
     return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, {
       actionId,
+      ...(nestedFailure.details === undefined ? {} : { details: nestedFailure.details }),
       ...(options?.failurePayload ?? {}),
     });
   }

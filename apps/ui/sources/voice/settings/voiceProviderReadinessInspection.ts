@@ -168,6 +168,9 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const voiceAgentAvailability = resolveFeatureAvailabilityArm(resolveRuntimeFeatureDecisionFromSnapshot({
         featureId: 'voice.agent', settings, snapshot: featureSnapshot ?? { status: 'loading' },
     }));
+    const daemonFeatureAvailability = resolveFeatureAvailabilityArm(resolveRuntimeFeatureDecisionFromSnapshot({
+        featureId: 'voice.daemonInference', settings, snapshot: featureSnapshot ?? { status: 'loading' },
+    }));
     let models: readonly DaemonVoiceInferenceModelStatus[] = [];
     let modelError: Parameters<typeof resolveVoiceDaemonModelAvailabilityFromCatalogState>[0]['errorCode'] = null;
     if ((requireStt || requireTts) && machine.machineId && daemonFeatureEnabled && input.isCurrent()) {
@@ -191,7 +194,8 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
         ? await TokenStorage.getCredentialsForServerUrl(appliedServer.serverUrl, { serverId: appliedServer.serverId }) : null;
     const nativeDeviceSpeechRecognition = platform === 'web' || stt.provider !== 'device' ? 'unknown'
         : await import('expo-speech-recognition').then(({ ExpoSpeechRecognitionModule }) => readDeviceSpeechRecognitionAvailability(ExpoSpeechRecognitionModule), () => 'unknown' as const);
-    const localAvailability = resolveVoiceProviderLocalAvailability({ serverFeatures, daemonFeatureEnabled, platformOs: platform,
+    const localAvailability = resolveVoiceProviderLocalAvailability({ serverFeatures, daemonFeatureEnabled,
+        daemonFeatureAvailability, platformOs: platform,
         browserSpeechCapability: readPassiveBrowserWebSpeechCapability({ platformOs: platform }), nativeDeviceSpeechRecognition,
         daemonModelState: modelAvailability.modelState, daemonRuntimeState: modelAvailability.runtimeState,
         daemonSpeech: {

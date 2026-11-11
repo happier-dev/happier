@@ -2581,7 +2581,7 @@ describe('voice tool handlers', () => {
       ok: false,
       errorCode: 'action_failed',
       error: 'private connected-service credential refresh transport detail',
-      details: { sessionId: 's1' },
+      details: { sessionId: 's1', plugin: { code: 'credential_refresh_failed', retryable: true } },
     });
 
     expect(JSON.parse(serialized)).toMatchObject({
@@ -2589,6 +2589,7 @@ describe('voice tool handlers', () => {
       errorCode: 'action_failed',
       errorMessage: 'action_failed',
       sessionId: 's1',
+      details: { sessionId: 's1', plugin: { code: 'credential_refresh_failed', retryable: true } },
     });
     expect(serialized).not.toContain('private connected-service');
   });
@@ -2603,6 +2604,16 @@ describe('voice tool handlers', () => {
     expect(serialized).not.toContain('private publisher diagnostic');
   });
 
+  it('preserves typed recovery details from a nested Action refusal', () => {
+    const details = { recovery: { action: 'reconnect_profile' } };
+    const serialized = serializeVoiceActionExecuteResult('session.spawn_new', {
+      ok: true, result: { ok: false, errorCode: 'credential_refresh_failed', details },
+    });
+    expect(JSON.parse(serialized)).toMatchObject({
+      ok: false, errorCode: 'credential_refresh_failed', details,
+    });
+  });
+
   it.each(['session_stop_failed', 'session_stop_requested'] as const)(
     'reports an unconfirmed Session Stop as a Voice tool failure (%s)', (code) => {
       const serialized = serializeVoiceActionExecuteResult('session.stop', {
@@ -2610,11 +2621,13 @@ describe('voice tool handlers', () => {
         result: {
           sessionId: 's1', stopped: false, success: false, code,
           message: 'Session stop incomplete: private host diagnostic',
+          details: { recovery: { action: 'retry_stop' } },
         },
       });
 
       expect(JSON.parse(serialized)).toMatchObject({
         ok: false, actionId: 'session.stop', errorCode: code, errorMessage: code,
+        details: { recovery: { action: 'retry_stop' } },
       });
       expect(serialized).not.toContain('private host diagnostic');
     },

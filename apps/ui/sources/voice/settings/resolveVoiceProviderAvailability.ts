@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import type { VoiceReadinessRole } from '@happier-dev/protocol/voice/realtime/capabilities';
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 
 import type { DeviceSpeechRecognitionAvailability } from '@/voice/input/deviceSpeechRecognitionAvailability';
 
@@ -106,6 +107,7 @@ export type ResolveVoiceProviderAvailabilityInput = Readonly<{
         browserSpeech?: VoiceBrowserSpeechCapability;
         daemon?: Readonly<{
             featureEnabled: boolean;
+            featureAvailability?: FeatureAvailabilityArm;
             route: VoiceDaemonRouteAvailability;
             modelState: VoiceDaemonModelAvailability;
             runtimeState?: VoiceDaemonRuntimeAvailability;

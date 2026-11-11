@@ -1,6 +1,4 @@
 import * as React from 'react';
-import { useAuth } from '@/auth/context/AuthContext';
-import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
 import { Stack } from 'expo-router';
 import { View, useWindowDimensions, Platform } from 'react-native';
 import { getStorage, useActiveServerAccountScope, useLocalSetting } from '@/sync/domains/state/storage';
@@ -91,7 +89,6 @@ export const SidebarNavigator = React.memo(function SidebarNavigator() {
 });
 
 const FullSidebarNavigator = React.memo(() => {
-    const { isAuthenticated } = useAuth();
     const accountScope = useActiveServerAccountScope();
     const { execute, isCurrent } = useMountedActionExecution(accountScope);
     // The route tree reads only whether the workspace hosts it; tab, title and sync
@@ -253,7 +250,6 @@ const FullSidebarNavigator = React.memo(() => {
         <AppShellColumnContext.Provider value={appShellState}>
         <WorkspaceBarGeometryContext.Provider value={workspaceBarGeometry}>
         <AppShellPeekProvider enabled={showSidebar} currentId={column.kind === 'none' ? null : location.railEntryId} columnShown={columnShown}>
-        <ActivityPersonalSessionMembershipProvider enabled={isAuthenticated}>
         <InboxSummaryProvider>
         <NavigatorSafeAreaBleed>
         <AppShellMaterialFrame
@@ -276,7 +272,6 @@ const FullSidebarNavigator = React.memo(() => {
         </AppShellMaterialFrame>
         </NavigatorSafeAreaBleed>
         </InboxSummaryProvider>
-        </ActivityPersonalSessionMembershipProvider>
         </AppShellPeekProvider>
         </WorkspaceBarGeometryContext.Provider>
         </AppShellColumnContext.Provider>

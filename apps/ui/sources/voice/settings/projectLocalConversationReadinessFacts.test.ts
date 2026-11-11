@@ -17,7 +17,7 @@ import {
   resolveVoiceProviderAvailability,
   type ResolveVoiceProviderAvailabilityInput,
 } from './resolveVoiceProviderAvailability';
-import { projectLocalConversationReadinessFacts } from './projectLocalConversationReadinessFacts';
+import { projectLocalConversationProviderReadiness, projectLocalConversationReadinessFacts } from './projectLocalConversationReadinessFacts';
 import { buildVoiceConversationsPipeline } from './pipeline/voicePipelineSteps';
 import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -473,6 +473,26 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       status: 'unavailable',
       code: 'server_feature_disabled',
       recoveryAction: 'switch_provider',
+    });
+    const accountDisabled = projectDaemon({
+      ...localInput.daemon,
+      featureEnabled: false,
+      featureAvailability: 'policy_disabled',
+      modelState: 'unknown',
+      runtimeState: 'unknown',
+    }, executionMachineId);
+    expect(accountDisabled).toMatchObject({
+      status: 'needs_setup',
+      code: 'feature_policy_disabled',
+      recoveryAction: 'enable_voice_agent',
+    });
+    const unknownModel = {
+      role: 'conversation_stt', providerId: 'local_conversation', status: 'unavailable',
+      code: 'model_unknown', reasonKey: 'voice.readiness.model_unknown', recoveryAction: 'switch_provider',
+    } as const;
+    expect(projectLocalConversationProviderReadiness({ daemonRouteReadiness: accountDisabled,
+      thinkReadiness: unknownModel }, unknownModel)).toMatchObject({
+      code: 'feature_policy_disabled', recoveryAction: 'enable_voice_agent',
     });
   });
 });

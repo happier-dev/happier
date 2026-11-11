@@ -12,6 +12,7 @@ import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import type { PermissionIntent } from '@happier-dev/agents';
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { PluginError } from '@happier-dev/cli-common/plugins/errors';
 
 export type Verbosity = 'short' | 'balanced';
 
@@ -94,12 +95,14 @@ export class VoiceAgentError extends Error {
   /** Native runtime refusal codes share the existing execution-run error channel. */
   readonly code: string;
 
-  readonly details?: Readonly<{ uxDiagnostic: ConnectedServiceUxDiagnosticV1 }>;
+  readonly details?: PluginError['details'] | Readonly<{ uxDiagnostic: ConnectedServiceUxDiagnosticV1 }>;
 
-  constructor(code: VoiceAgentError['code'], message: string, readonly uxDiagnostic?: ConnectedServiceUxDiagnosticV1) {
+  constructor(code: VoiceAgentError['code'], message: string, readonly uxDiagnostic?: ConnectedServiceUxDiagnosticV1,
+    details?: PluginError['details']) {
     super(message);
     this.code = code;
-    if (uxDiagnostic) this.details = { uxDiagnostic };
+    if (details !== undefined) this.details = details;
+    else if (uxDiagnostic) this.details = { uxDiagnostic };
   }
 }
 

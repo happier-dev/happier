@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
+import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 
 import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2, createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol';
@@ -1766,6 +1767,21 @@ describe('VoiceAgentManager', () => {
         initialContext: 'CTX',
       }),
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_UNSUPPORTED' });
+  });
+
+  it('preserves the PluginError code and details when Local Voice startup is refused', async () => {
+    const failure = new PluginError({
+      code: 'credential_refresh_failed',
+      details: { providerId: 'provider-a', recovery: { action: 'reconnect_profile' } },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => { throw failure; } });
+    onTestFinished(() => manager.dispose());
+
+    await expect(manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'commit-model', permissionIntent: 'read-only',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    })).rejects.toMatchObject({ code: failure.code, details: failure.details });
   });
 
   it('removes the voice-agent registry entry when native bootstrap delivery fails', async () => {

@@ -11,7 +11,7 @@ import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/w
 import {
     PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol/push/pushNotificationActions';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { AuthProvider, ConcurrentSessionCacheRuntime } from '@/auth/context/AuthContext';
+import { AuthProvider, ConcurrentSessionCacheRuntime, useAuth } from '@/auth/context/AuthContext';
 import { WebServerOverrideGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { OrganizationPolicyDiagnostic } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -38,6 +38,7 @@ import {
 import { NotificationsSettingsV1Schema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
+import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
 import { VoiceEnergyAppProvider } from '@/components/voice/light/VoiceEnergyAppProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { BotsRosterRuntimeProvider } from '@/components/sessions/bots/BotsRosterRuntime';
@@ -825,7 +826,10 @@ function AppBoot() {
             <SidebarNavigator />
         </VoiceEnergyAppProvider>
     );
-    const routeContent = primaryRealm ? <RealtimeProvider>{routeNavigation}</RealtimeProvider> : routeNavigation;
+    const realtimeRouteContent = primaryRealm ? <RealtimeProvider>{routeNavigation}</RealtimeProvider> : routeNavigation;
+    const routeContent = desktopWindowContext.chrome === 'destination'
+        ? realtimeRouteContent
+        : <AppActivityOwner>{realtimeRouteContent}</AppActivityOwner>;
 
     const appShellWithRootDesktopDragSurface = (
         <RootShellChromeFrame
@@ -916,6 +920,12 @@ function AppBoot() {
             {providers}
         </>
     );
+}
+
+/** Sidebar and global Voice share the same authenticated personal-session census. */
+function AppActivityOwner(props: React.PropsWithChildren): React.ReactElement {
+    const { isAuthenticated } = useAuth();
+    return <ActivityPersonalSessionMembershipProvider enabled={isAuthenticated}>{props.children}</ActivityPersonalSessionMembershipProvider>;
 }
 
 /** Breakpoint geometry updates this frame without rebuilding the boot/provider/route tree. */

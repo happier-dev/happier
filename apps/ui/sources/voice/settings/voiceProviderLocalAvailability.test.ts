@@ -168,6 +168,27 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         },
     );
 
+    it('projects an Account-disabled daemon feature as setup with the Settings repair action', () => {
+        expect(resolveVoiceDaemonHeavyAudioReadiness({
+            role: 'conversation_stt',
+            providerId: 'local_conversation',
+            executionMachineId: 'machine-online',
+            daemon: {
+                featureEnabled: false,
+                featureAvailability: 'policy_disabled',
+                route: 'unavailable',
+                modelState: 'unknown',
+                runtimeState: 'unknown',
+                pcmCapture: 'unknown',
+            },
+        })).toMatchObject({
+            status: 'needs_setup',
+            code: 'feature_policy_disabled',
+            reasonKey: 'voice.readiness.feature_policy_disabled',
+            recoveryAction: 'enable_voice_agent',
+        });
+    });
+
     it.each(['direct', 'relay'] as const)(
         'keeps selected-machine heavy-audio route %s passively viable',
         (route) => {

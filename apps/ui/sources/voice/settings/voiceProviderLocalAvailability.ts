@@ -21,7 +21,9 @@ import type {
 import { useAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveMachineRpcDirectRoutePreflight } from '@/sync/domains/machines/peer/mediation/rpc/directRoutePreflight';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -85,14 +87,8 @@ export function resolveVoiceDaemonHeavyAudioReadiness(input: Readonly<{
 }>): VoiceRoleReadiness | null {
     if (!input.daemon) return null;
     if (input.daemon.featureEnabled !== true) {
-        return Object.freeze({
-            role: input.role,
-            providerId: input.providerId,
-            status: 'unavailable',
-            code: 'server_feature_disabled',
-            reasonKey: 'voice.readiness.server_feature_disabled',
-            recoveryAction: 'switch_provider',
-        });
+        return projectVoiceReadinessRequirement(input.role, input.providerId, 'server_feature',
+            input.daemon.featureAvailability === 'policy_disabled' ? 'policy_disabled' : 'missing');
     }
     const machineReadiness = projectVoiceReadinessRequirement(input.role, input.providerId, 'execution_machine',
         projectVoiceExecutionMachineReadiness(input.executionMachineSelectionKind, input.executionMachineId));
@@ -347,6 +343,7 @@ export function resolveVoiceDaemonModelAvailabilityFromCatalogState(input: Reado
 export function resolveVoiceProviderLocalAvailability(input: Readonly<{
     serverFeatures: ServerFeaturesForRelay;
     daemonFeatureEnabled: boolean;
+    daemonFeatureAvailability?: FeatureAvailabilityArm;
     platformOs?: string;
     browserSpeechCapability?: VoiceBrowserSpeechCapability;
     browserSpeechSupport?: VoiceBrowserSpeechSupport;
@@ -368,6 +365,7 @@ export function resolveVoiceProviderLocalAvailability(input: Readonly<{
         },
         daemon: {
             featureEnabled: input.daemonFeatureEnabled,
+            ...(input.daemonFeatureAvailability ? { featureAvailability: input.daemonFeatureAvailability } : {}),
             route: resolveVoiceDaemonRouteAvailabilityFromServerFeatures(
                 input.serverFeatures,
                 input.daemonDirectRouteAvailability,
@@ -430,9 +428,11 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
     const browserSpeechCapability = useBrowserWebSpeechCapability();
     const nativeDeviceSpeechRecognition = useNativeDeviceSpeechRecognitionAvailability();
     const daemonPcmCapture = resolveDaemonSpeechPcmCaptureAvailability();
-    const daemonFeatureEnabled = useFeatureEnabled('voice.daemonInference', {
+    const daemonFeatureDecision = useFeatureDecision('voice.daemonInference', {
         scopeKind: 'runtime',
     });
+    const daemonFeatureEnabled = daemonFeatureDecision?.state === 'enabled';
+    const daemonFeatureAvailability = resolveFeatureAvailabilityArm(daemonFeatureDecision);
     // Read the consumed route fact, not the whole Machine. Resource publications
     // stay quiet while preflight still observes endpoint expiry on source changes.
     const daemonDirectRouteAvailability = storage(React.useCallback(state => (
@@ -448,6 +448,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
         () => resolveVoiceProviderLocalAvailability({
             serverFeatures,
             daemonFeatureEnabled,
+            daemonFeatureAvailability,
             browserSpeechCapability,
             daemonModelState: input.daemonModelState,
             daemonRuntimeState: input.daemonRuntimeState,
@@ -460,6 +461,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
             browserSpeechCapability,
             daemonDirectRouteAvailability,
             daemonFeatureEnabled,
+            daemonFeatureAvailability,
             daemonPcmCapture,
             input.daemonModelState,
             input.daemonRuntimeState,
