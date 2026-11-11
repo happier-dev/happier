@@ -137,7 +137,7 @@ describe("Home governance policy singleton", () => {
             emailDeliveryReady: false, actorAccountId: owner, env: POLICY_ENV,
             patch: { expectedRevision: 0, sessionDefaults: defaults },
         }));
-        expect(await write()).toEqual({ status: "invalid_policy" });
+        expect(await write()).toEqual({ status: "refused", code: "managed_default_machine_not_member_usable" });
         expect(await db.homeGovernancePolicy.count()).toBe(0);
         await db.machineAccountGrant.create({ data: {
             machineId: machine.id, accountId: member, accessLevel: "view", createdByAccountId: owner,

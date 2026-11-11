@@ -455,6 +455,7 @@ export const english = {
                 readOnlyTeam: ({ team }: { team: string }) => `Only people who manage ${team}’s settings can change these.`,
                 readOnlyGroup: "Only people who manage this Group can change these.",
                 machine: "Machine",
+                machineNotMemberUsable: "Members can't use this Machine. Share it with the Team, or pick another.",
                 teamDefault: "Team default",
                 groupDefault: "Group default",
                 none: "None",

@@ -2,6 +2,7 @@ import { HOME_TEAM_CREATION_POLICY_DEFAULT_V1, HOME_TEAMS_VISIBLE_TO_MEMBERS_DEF
 import { ManagedSessionDefaultsV1Schema, readManagedDefaultsV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import { type HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
+import type { HomeGovernanceErrorCodeV1 } from "@happier-dev/protocol/home/governance";
 import { managedPlacementAudienceInTx } from "@/app/teams/managedPlacementAudience";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { resolveEffectiveHomeAuthMethodsInTx } from "@/app/auth/methods/effectiveHomeAuthMethods";
@@ -148,6 +149,7 @@ export type HomeGovernancePolicySetResult =
     | Readonly<{ status: "revision_conflict"; policy: HomeGovernancePolicyRecord }>
     | Readonly<{ status: "forbidden" }>
     | Readonly<{ status: "invalid_policy" }>
+    | Readonly<{ status: "refused"; code: Extract<HomeGovernanceErrorCodeV1, "managed_default_machine_not_member_usable"> }>
     /** The patch widens sign-in, admission or storage policy without `confirmWidening`; nothing was written. */
     | Readonly<{ status: "widening_unconfirmed" }>;
 
@@ -424,9 +426,9 @@ export async function setHomeGovernancePolicyInTx(
             policy: input.patch.identityNetworkPolicy,
         }).status === "invalid") return { status: "invalid_policy" };
 
-    if (input.patch.sessionDefaults != null
-        && !await managedPlacementAudienceInTx(tx, { kind: "home" }, input.patch.sessionDefaults.placement)) {
-        return { status: "invalid_policy" };
+    if (input.patch.sessionDefaults != null) {
+        const audience = await managedPlacementAudienceInTx(tx, { kind: "home" }, input.patch.sessionDefaults.placement);
+        if (!audience.ok) return { status: "refused", code: audience.error };
     }
 
     const teamsVisibleToMembersWrite = input.patch.teamsVisibleToMembers === undefined

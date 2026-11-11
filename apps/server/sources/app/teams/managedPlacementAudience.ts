@@ -6,11 +6,11 @@ import { resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/mac
 
 /** Managed Machine defaults are prospective, but their target must be usable by
  * every member receiving the layer. This is the same Machine access owner used
- * by Session admission, so Action/MCP writes cannot bypass the picker rule. */
+ * by Session admission; every managed-default write consumes this decision. */
 export async function managedPlacementAudienceInTx(tx: Tx,
     audience: Readonly<{ kind: "home" }> | Readonly<{ kind: "team"; teamId: string }> | Readonly<{ kind: "group"; groupId: string }>,
-    placement: ManagedSessionPlacementV1 | undefined): Promise<boolean> {
-    if (!placement || placement.kind !== "machine") return true;
+    placement: ManagedSessionPlacementV1 | undefined): Promise<{ ok: true } | { ok: false; error: "managed_default_machine_not_member_usable" }> {
+    if (!placement || placement.kind !== "machine") return { ok: true };
     const memberships = audience.kind === "home"
         ? []
         : audience.kind === "group"
@@ -29,10 +29,11 @@ export async function managedPlacementAudienceInTx(tx: Tx,
         .map(member => "teamMembership" in member ? member.teamMembership : member)
         .filter(member => isTeamPrincipalRoleV1(member.role))
         .map(member => member.accountId);
-    if (accountIds.length === 0) return true;
+    if (accountIds.length === 0) return { ok: true };
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
         machineIds: [placement.target.machineId], accountIds,
     });
-    return accountIds.every(accountId => access.get(placement.target.machineId)?.get(accountId) !== null);
+    return accountIds.every(accountId => access.get(placement.target.machineId)?.get(accountId) !== null)
+        ? { ok: true } : { ok: false, error: "managed_default_machine_not_member_usable" };
 }
 

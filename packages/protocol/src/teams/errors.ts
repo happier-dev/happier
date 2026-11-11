@@ -11,6 +11,7 @@ import { z } from '../zodRuntimePolicy.js';
  */
 export const TeamErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_team_input',
+  'managed_default_machine_not_member_usable',
   'invalid_team_cursor',
   'invalid_team_authentication_policy',
   'team_forbidden',
@@ -108,6 +109,7 @@ export type TeamErrorV1 = z.infer<typeof TeamErrorV1Schema>;
 export function teamErrorHttpStatusV1(code: TeamErrorCodeV1): 400 | 403 | 404 | 409 | 503 {
   switch (code) {
     case 'invalid_team_input':
+    case 'managed_default_machine_not_member_usable':
     case 'invalid_team_cursor':
     case 'invalid_team_authentication_policy':
       return 400;

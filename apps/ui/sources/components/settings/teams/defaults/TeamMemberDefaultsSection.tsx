@@ -130,7 +130,7 @@ export const TeamMemberDefaultsSection = React.memo(
                   ...buildMemberDefaultsPatch(stored, scope, next),
                 });
             if (outcome.kind === 'failed')
-              setError(home ? t('teams.errors.generic') : teamMutationFailureLabel(outcome.failure));
+              setError(teamMutationFailureLabel(outcome.failure));
             else if (outcome.kind === 'approval_pending') context.requestApproval?.(outcome.artifactId);
           } catch (cause) {
             if (isTeamActionApprovalPendingError(cause))

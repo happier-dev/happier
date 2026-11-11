@@ -25,7 +25,7 @@ vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return createReactNavigationNativeMock();
 });
-installSettingsViewCommonModuleMocks({ storage: 'real', modal: async () => {
+installSettingsViewCommonModuleMocks({ storage: 'real', text: () => vi.importActual('@/text'), modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ confirmResult: true }).module;
 } });
@@ -108,4 +108,32 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
     expect(harness.requestsFor(listPath)).toHaveLength(2);
     expect(harness.requestsFor('/v1/machines/managed/list')).toHaveLength(0);
     expect(harness.requestsFor('/v1/machines/managed/acquire')).toHaveLength(0);
+});
+
+
+it('renders the typed member Machine refusal with a recovery step in mounted Team defaults', async () => {
+    const serverId = await harness.addHome({ name: 'Team Home', serverUrl: 'https://defaults-refused.example',
+        accountId: 'admin', currentAccount: true, teamsEnabled: true });
+    await harness.selectHomes([serverId]);
+    const team = teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: true }),
+        policy: teamPolicyFixture({ managedDefaults: { team: {}, groups: {} }, managedDefaultsStatus: 'available' }) });
+    harness.answer(serverId, '/v1/teams/get', { body: team });
+    harness.answer(serverId, '/v1/teams/policy/set', { status: 400,
+        body: { error: 'managed_default_machine_not_member_usable' } });
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const { createPlainSharedMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const shared = createPlainSharedMachineRowFixture({ id: 'admin-shared-machine', custodianAccountId: 'custodian' });
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await publishMachineInventoryForTest({ serverId, accountId: 'admin' }, [createMachineFixture({
+        id: shared.id, isShared: true, active: true, activeAt: Date.now(), storageMode: 'plain', access: shared.access,
+    })]);
+    const screen = await renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
+    const menu = () => screen.findAllByType(DropdownMenu).find(node =>
+        node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-machine');
+    await waitForHomeGovernance(() => expect(menu()).toBeDefined());
+    await act(async () => menu()!.props.onOpenChange(true));
+    await waitForHomeGovernance(() => expect(menu()!.props.items.some((item: { id: string }) => item.id === 'admin-shared-machine')).toBe(true));
+    await act(async () => menu()!.props.onSelect('admin-shared-machine'));
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/teams/policy/set')).toHaveLength(1));
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain("Members can't use this Machine. Share it with the Team, or pick another."));
 });

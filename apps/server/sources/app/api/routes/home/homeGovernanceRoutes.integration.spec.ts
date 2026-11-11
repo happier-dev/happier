@@ -107,6 +107,26 @@ afterEach(async () => {
 });
 
 describe("Home governance routes", () => {
+    it("returns the typed Machine-default refusal through the Home policy route", async () => {
+        const app = createTestApp();
+        const owner = await createAccount("owner");
+        await createAccount("member");
+        const machine = await db.machine.create({ data: {
+            id: `home-default-${++sequence}`, accountId: owner.accountId, metadata: "{}",
+        } });
+        try {
+            const response = await post(app, "/v1/home/policy/set", owner.token, {
+                expectedRevision: 0,
+                sessionDefaults: { placement: { kind: "machine", target: { serverId: "home-a", machineId: machine.id } } },
+            });
+            expect(response.statusCode, response.body).toBe(400);
+            expect(response.json()).toEqual({ error: "managed_default_machine_not_member_usable" });
+            expect(await db.homeGovernancePolicy.count()).toBe(0);
+        } finally {
+            await db.machine.delete({ where: { id: machine.id } });
+        }
+    });
+
     it("serves only Session defaults to an authenticated active Home member", async () => {
         const app = createTestApp();
         const owner = await createAccount("owner");

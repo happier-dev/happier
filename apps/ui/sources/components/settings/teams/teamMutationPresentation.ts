@@ -56,6 +56,7 @@ export function teamReadFailureAction(
 }
 
 export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
+    if (failure.code === 'managed_default_machine_not_member_usable') return t('teams.settings.memberDefaults.machineNotMemberUsable');
     if (failure.code === 'team_authentication_required') return context === 'authentication_policy'
         ? t('teams.authentication.policy.authenticationRequired')
         : t('teams.errors.authenticationRequired');

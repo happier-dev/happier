@@ -427,6 +427,9 @@ export function homeGovernanceRoutes(app: Fastify): void {
                     .code(homeGovernanceErrorHttpStatusV1("home_policy_revision_conflict"))
                     .send({ error: "home_policy_revision_conflict" as const });
             }
+            if (outcome.status === "refused") {
+                return await reply.code(homeGovernanceErrorHttpStatusV1(outcome.code)).send({ error: outcome.code });
+            }
             if (outcome.status === "invalid_policy") {
                 return await reply
                     .code(homeGovernanceErrorHttpStatusV1("home_policy_invalid"))

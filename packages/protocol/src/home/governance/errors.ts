@@ -30,6 +30,7 @@ export const HomeGovernanceErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'home_iroh_needs_public_address',
   /** The submitted policy is structurally or referentially unusable. */
   'home_policy_invalid',
+  'managed_default_machine_not_member_usable',
   /**
    * The patch widens sign-in, admission or storage policy and did not carry
    * `confirmWidening: true`. Nothing was written; confirm and resend.
@@ -82,6 +83,7 @@ export function homeGovernanceErrorHttpStatusV1(
   switch (code) {
     case 'invalid_home_input':
     case 'home_policy_invalid':
+    case 'managed_default_machine_not_member_usable':
     case 'invalid_home_cursor':
       return 400;
     case 'home_governance_forbidden':

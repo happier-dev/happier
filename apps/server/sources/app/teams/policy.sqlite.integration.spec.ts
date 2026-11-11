@@ -97,15 +97,21 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         if (directoryGroup.ok) expect(directoryGroup.value.capabilities.updateMetadata).toBe(false);
     });
 
-    it("refuses a Machine default until every Team member has shared Use access", async () => {
+    it.each(["team", "group"] as const)("refuses a %s Machine default shared only with the admin", async layer => {
         const { owner, teamId } = await ownedTeam();
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
-        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
-        const defaults = { team: { placement: { kind: "machine" as const,
-            target: { serverId: "server-a", machineId: machine.id } } }, groups: {} };
+        const custodian = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}" } });
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: owner.id,
+            accessLevel: "view", createdByAccountId: custodian.id } });
+        const group = await db.teamGroup.create({ data: { teamId, name: "Engineering", nameKey: "engineering" } });
+        const membership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId, accountId: member.id } } });
+        await db.teamGroupMembership.create({ data: { teamId, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true, sessionAccessStartsAt: new Date() } });
+        const values = { placement: { kind: "machine" as const, target: { serverId: "server-a", machineId: machine.id } } };
+        const defaults = { team: layer === "team" ? values : {}, groups: layer === "group" ? { [group.id]: values } : {} };
         expect(await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults })))
-            .toEqual({ ok: false, error: "invalid_team_input" });
+            .toEqual({ ok: false, error: "managed_default_machine_not_member_usable" });
         await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
         expect((await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults }))).ok).toBe(true);
     });

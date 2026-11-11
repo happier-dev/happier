@@ -117,12 +117,14 @@ type TeamPolicyPatch = Pick<SetTeamPolicyInput,
     | "managedGroupDefaults"
 >;
 
-async function managedDefaultsAreMemberUsableInTx(tx: Tx, teamId: string, defaults: ManagedDefaultsV1): Promise<boolean> {
-    if (!await managedPlacementAudienceInTx(tx, { kind: "team", teamId }, defaults.team.placement)) return false;
+async function managedDefaultsAreMemberUsableInTx(tx: Tx, teamId: string, defaults: ManagedDefaultsV1): ReturnType<typeof managedPlacementAudienceInTx> {
+    const team = await managedPlacementAudienceInTx(tx, { kind: "team", teamId }, defaults.team.placement);
+    if (!team.ok) return team;
     for (const [groupId, groupDefaults] of Object.entries(defaults.groups)) {
-        if (!await managedPlacementAudienceInTx(tx, { kind: "group", groupId }, groupDefaults.placement)) return false;
+        const group = await managedPlacementAudienceInTx(tx, { kind: "group", groupId }, groupDefaults.placement);
+        if (!group.ok) return group;
     }
-    return true;
+    return { ok: true };
 }
 
 /** Every changed field is authorized before any field is written. */
@@ -232,9 +234,9 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
             )) return { ok: false, error: "group_archived" };
         }
     }
-    if (managedDefaults !== undefined && managedDefaults !== null
-        && !await managedDefaultsAreMemberUsableInTx(tx, input.teamId, managedDefaults)) {
-        return { ok: false, error: "invalid_team_input" };
+    if (managedDefaults !== undefined && managedDefaults !== null) {
+        const audience = await managedDefaultsAreMemberUsableInTx(tx, input.teamId, managedDefaults);
+        if (!audience.ok) return audience;
     }
 
     if (input.admissionMode !== undefined) {
