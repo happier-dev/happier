@@ -250,19 +250,11 @@ async function publishSessionFixtures(sessions: readonly Session[]) {
     });
 }
 
-async function renderSettingsView(element: React.ReactElement) {
-    const [preferences, projection] = await Promise.all([
-        import('@/sync/domains/machines/administration/selectionPreferences'),
-        import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
-    ]);
-    const settings = { ...effectBoundary.accountSettings, externalSessionsSettingsV1: effectBoundary.settings,
-        ...(effectBoundary.contextSelections ? { contextSelectionsV1: effectBoundary.contextSelections } : {}) };
-    await account.restore({ accountId: 'account-1', serverIdentityId: 'srv_external_settings',
-        machines: effectBoundary.machines, settings });
+function installSettingsBoundary(accountId: string, settings: Record<string, unknown>) {
     settingsVersion = 1;
     rawAccountSettings = settings;
     settingsHttp = createAccountSettingsHttpBoundary({ serverUrl: 'https://provider-settings-account.test',
-        initialAccounts: [{ accountId: 'account-1', snapshot: { content: { t: 'plain', v: settings }, version: settingsVersion } }] });
+        initialAccounts: [{ accountId, snapshot: { content: { t: 'plain', v: settings }, version: settingsVersion } }] });
     account.home.answer(account.serverId, '/v2/account/settings', { select: async (_input, request) => {
         const respondAfter = request.init?.method === 'POST' ? settingsWriteGate : null;
         if (request.init?.method === 'POST') {
@@ -281,6 +273,18 @@ async function renderSettingsView(element: React.ReactElement) {
         settingsVersion = snapshot.version;
         return { status: response.status, body: await response.json(), ...(respondAfter ? { respondAfter } : {}) };
     } });
+}
+
+async function renderSettingsView(element: React.ReactElement) {
+    const [preferences, projection] = await Promise.all([
+        import('@/sync/domains/machines/administration/selectionPreferences'),
+        import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
+    ]);
+    const settings = { ...effectBoundary.accountSettings, externalSessionsSettingsV1: effectBoundary.settings,
+        ...(effectBoundary.contextSelections ? { contextSelectionsV1: effectBoundary.contextSelections } : {}) };
+    await account.restore({ accountId: 'account-1', serverIdentityId: 'srv_external_settings',
+        machines: effectBoundary.machines, settings });
+    installSettingsBoundary('account-1', settings);
     await publishSessionFixtures(effectBoundary.sessions);
     let selectedServerId = account.serverId;
     if (administrationTargetState.peerHome) {
@@ -971,7 +975,66 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
-    it('coalesces the restore row and Switch while pending and recovers after a rejected account mutation', async () => {
+    it.each([
+        { latest: false, rejectLatest: false },
+        { latest: true, rejectLatest: false },
+        { latest: false, rejectLatest: true },
+    ])('keeps latest restart-follow interactive and skips identical followups ($latest, reject=$rejectLatest)', async ({ latest, rejectLatest }) => {
+        effectBoundary.sessions = [];
+        const firstMutation = createDeferred<void>();
+        settingsWriteGate = firstMutation.promise;
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const toggle = () => screen.findRow('settings-external-sessions-restore-item')?.props.rightElement as
+            React.ReactElement<{ value: boolean; disabled?: boolean; onValueChange: (enabled: boolean) => void }>;
+        await act(async () => { toggle().props.onValueChange(true); });
+        await waitForHomeGovernance(() => expect(settingsPosts).toHaveBeenCalledTimes(1));
+        await act(async () => {
+            for (const enabled of [false, true, latest, latest]) toggle().props.onValueChange(enabled);
+        });
+        expect(toggle().props.disabled).not.toBe(true);
+        expect(toggle().props.value).toBe(latest);
+        await act(async () => { settingsWriteGate = null; rejectSettingsWrite = rejectLatest; firstMutation.resolve(); });
+        await waitForHomeGovernance(() => {
+            expect(screen.findRow('settings-external-sessions-restore-item')?.props.loading).not.toBe(true);
+            expect(settingsPosts).toHaveBeenCalledTimes(latest ? 1 : 2);
+        });
+        const confirmed = rejectLatest ? true : latest;
+        await waitForHomeGovernance(() => expect(toggle().props.value).toBe(confirmed));
+        expect(effectBoundary.accountSettings.externalSessionsSettingsV1).toMatchObject({ keepPassivelyFollowingAfterRestart: confirmed });
+        if (rejectLatest) expect(modalMock.spies.alertAsync).toHaveBeenCalledExactlyOnceWith('common.error', 'externalSessions.settingsRestoreUpdateFailed');
+        await flushHookEffects();
+        expect(settingsPosts).toHaveBeenCalledTimes(latest ? 1 : 2);
+        await screen.unmount();
+    });
+
+    it('does not join a retired Account restart-follow write when the mounted Account changes', async () => {
+        const first = createDeferred<void>();
+        settingsWriteGate = first.promise;
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const toggle = () => screen.findRow('settings-external-sessions-restore-item')?.props.rightElement as
+            React.ReactElement<{ value: boolean; onValueChange: (enabled: boolean) => void }>;
+        try {
+            await act(async () => { toggle().props.onValueChange(true); });
+            await waitForHomeGovernance(() => expect(settingsPosts).toHaveBeenCalledTimes(1));
+            const nextSettings = { externalSessionsSettingsV1: { v: 1, keepPassivelyFollowingAfterRestart: false } };
+            await act(async () => { await account.restore({ accountId: 'account-next', serverIdentityId: 'srv_external_settings',
+                machines: effectBoundary.machines, settings: nextSettings }); });
+            installSettingsBoundary('account-next', nextSettings);
+            expect(toggle().props.value).toBe(false);
+            settingsWriteGate = null;
+            await act(async () => { toggle().props.onValueChange(true); });
+            await waitForHomeGovernance(() => expect(settingsPosts).toHaveBeenCalledTimes(2));
+            first.resolve();
+            await flushHookEffects();
+            expect(toggle().props.value).toBe(true);
+            expect(effectBoundary.accountSettings.externalSessionsSettingsV1).toMatchObject({ keepPassivelyFollowingAfterRestart: true });
+            expect(modalMock.spies.alertAsync).not.toHaveBeenCalled();
+        } finally { first.resolve(); await screen.unmount(); }
+    });
+
+    it('coalesces identical restore intents and recovers after a rejected account mutation', async () => {
         effectBoundary.sessions = [];
         effectBoundary.settings = {
             v: 1,
@@ -999,11 +1062,11 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         });
 
         await waitForHomeGovernance(() => expect(settingsPosts).toHaveBeenCalledTimes(1));
-        expect(screen.findRow('settings-external-sessions-restore-item')?.props.loading).toBe(true);
-        expect(screen.findRow('settings-external-sessions-restore-item')?.props.disabled).toBe(true);
+        expect(screen.findRow('settings-external-sessions-restore-item')?.props.loading).not.toBe(true);
+        expect(screen.findRow('settings-external-sessions-restore-item')?.props.disabled).not.toBe(true);
         const pendingToggle = screen.findRow('settings-external-sessions-restore-item')
             ?.props.rightElement as React.ReactElement<{ disabled?: boolean }> | undefined;
-        expect(pendingToggle?.props.disabled).toBe(true);
+        expect(pendingToggle?.props.disabled).not.toBe(true);
 
         await act(async () => {
             settingsWriteGate = null;
@@ -1015,11 +1078,12 @@ describe('ExternalSessionsSettingsView passive shell', () => {
             'common.error',
             'externalSessions.settingsRestoreUpdateFailed',
         ));
-        await waitForHomeGovernance(() => expect(screen.findRow('settings-external-sessions-restore-item')?.props.loading).toBe(false));
-        expect(screen.findRow('settings-external-sessions-restore-item')?.props.disabled).toBe(false);
+        expect(screen.findRow('settings-external-sessions-restore-item')?.props.disabled).not.toBe(true);
         const recoveredToggle = screen.findRow('settings-external-sessions-restore-item')
-            ?.props.rightElement as React.ReactElement<{ disabled?: boolean }> | undefined;
-        expect(recoveredToggle?.props.disabled).toBe(false);
+            ?.props.rightElement as React.ReactElement<{ disabled?: boolean; value: boolean }> | undefined;
+        expect(recoveredToggle?.props.disabled).not.toBe(true);
+        await waitForHomeGovernance(() => expect((screen.findRow('settings-external-sessions-restore-item')
+            ?.props.rightElement as React.ReactElement<{ value: boolean }>).props.value).toBe(false));
 
         await act(async () => {
             screen.findRow('settings-external-sessions-restore-item')?.props.onPress?.();
@@ -1465,6 +1529,33 @@ describe('ExternalSessionsSettingsView passive shell', () => {
             updatedAtMs: 84,
         });
 
+        await screen.unmount();
+    });
+
+    it.each([false, true])('keeps latest per-session follow interactive and reverts to confirmed on failure (reject=%s)', async reject => {
+        effectBoundary.sessions = [createExternalSession({ id: 'selected', policy: 'attached_only', status: 'disabled' })];
+        const first = createDeferred<unknown>();
+        effectBoundary.followPolicySet.mockReset();
+        effectBoundary.followPolicySet.mockReturnValueOnce(first.promise);
+        if (reject) effectBoundary.followPolicySet.mockRejectedValue(new Error('fixture follow write failed'));
+        else effectBoundary.followPolicySet.mockResolvedValue({ ok: true, enabled: false, leaseActive: false, updatedAtMs: 84 });
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const toggle = () => screen.findRow('settings-external-sessions-follow-item-selected')?.props.rightElement as
+            React.ReactElement<{ value: boolean; disabled?: boolean; onValueChange: (enabled: boolean) => void }>;
+        await act(async () => { toggle().props.onValueChange(true); });
+        await waitForHomeGovernance(() => expect(effectBoundary.followPolicySet).toHaveBeenCalledTimes(1));
+        expect(toggle().props.value).toBe(true);
+        await act(async () => { toggle().props.onValueChange(false); });
+        expect(toggle().props.disabled).not.toBe(true);
+        expect(toggle().props.value).toBe(false);
+        await act(async () => { first.resolve({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 }); });
+        await waitForHomeGovernance(async () => {
+            expect(effectBoundary.followPolicySet).toHaveBeenCalledTimes(2);
+            expect(readExternalSessionFollowPolicy(await currentMetadata('selected'))).toBe(reject ? 'background_follow' : 'attached_only');
+            expect(toggle().props.value).toBe(reject);
+        });
+        if (reject) expect(modalMock.spies.alert).toHaveBeenCalledExactlyOnceWith('common.error', 'externalSessions.followUpdateFailed');
         await screen.unmount();
     });
 

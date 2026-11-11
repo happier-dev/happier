@@ -19,7 +19,7 @@ import {
 } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
-import { setExternalSessionFollowPolicy } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
+import { setExternalSessionFollowPolicy, useExternalSessionFollowPolicyIntent } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
@@ -118,7 +118,6 @@ function buildFollowRows(
 
 const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(props: Readonly<{
     row: FollowRow;
-    pending: boolean;
     mutationStatus: 'error' | 'unsupported' | undefined;
     onSetEnabled: (row: FollowRow, enabled: boolean) => Promise<void>;
     /**
@@ -130,6 +129,8 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
     showDivider?: boolean;
 }>) {
     const link = readExternalSessionLink(readSessionOwnerMetadataView(props.row.session));
+    const desiredPolicy = useExternalSessionFollowPolicyIntent(props.row.session.serverId ?? null, link);
+    const enabled = desiredPolicy === null ? props.row.enabled : desiredPolicy === 'background_follow';
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: link?.machineId ?? null,
         serverId: props.row.session.serverId ?? null,
@@ -166,8 +167,7 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
     // status cannot be verified instead of leaving an enabled-looking control.
     const capabilityPending = capabilityPhase === 'loading' || capabilityPhase === 'idle';
     const capabilityUnavailable = capabilityPhase === 'error' || capabilityPhase === 'unsupported';
-    const disabled = props.pending
-        || capabilityPending
+    const disabled = capabilityPending
         || capabilityUnavailable
         || !props.row.canChange
         || (!props.row.enabled && props.mutationStatus === 'unsupported');
@@ -177,14 +177,14 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
             {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
             title={props.row.title}
             subtitle={capabilityUnavailable ? resolveFollowStatusSubtitle('unknown') : resolveFollowStatusSubtitle(status)}
-            loading={props.pending || capabilityPending}
+            loading={capabilityPending}
             disabled={disabled}
             rightElement={(
                 <Switch
                     testID={`settings-external-sessions-follow-toggle-${props.row.session.id}`}
                     accessibilityLabel={props.row.title}
                     accessibilityHint={t('externalSessions.settingsFollowToggleHint')}
-                    value={props.row.enabled}
+                    value={enabled}
                     disabled={disabled}
                     onValueChange={(enabled) => {
                         if (disabled) return;
@@ -196,7 +196,7 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
             showChevron={false}
             onPress={() => {
                 if (disabled) return;
-                void props.onSetEnabled(props.row, !props.row.enabled);
+                void props.onSetEnabled(props.row, !enabled);
             }}
         />
     );
@@ -311,24 +311,19 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         isExecutionTargetCurrent,
     });
     const hasActiveFollowPolicy = rows.some((row) => row.enabled);
-    const pendingSessionIdsRef = React.useRef(new Set<string>());
     const presentationActive = useLayoutPresentationActive();
     const followControllerRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         const controller = new AbortController();
         followControllerRef.current = controller;
         if (!presentationActive) controller.abort();
-        pendingSessionIdsRef.current.clear();
-        setPendingSessionIds(new Set());
         return () => controller.abort();
     }, [presentationActive, expectedSettingsScope]);
-    const [pendingSessionIds, setPendingSessionIds] = React.useState<ReadonlySet<string>>(
-        () => new Set(),
-    );
     const [mutationStatusBySessionId, setMutationStatusBySessionId] = React.useState<
         ReadonlyMap<string, 'error' | 'unsupported'>
     >(() => new Map());
-    const { pending: restartFollowMutationPending, setEnabled: setRestartFollowEnabled } = useRestartFollowSetting();
+    const { enabled: restartFollowEnabled, setEnabled: setRestartFollowEnabled } =
+        useRestartFollowSetting(settings.keepPassivelyFollowingAfterRestart);
 
     const setSessionFollowEnabled = React.useCallback(async (row: FollowRow, enabled: boolean) => {
         const signal = followControllerRef.current?.signal;
@@ -338,61 +333,43 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
             !link
             || !row.canChange
             || (!row.enabled && mutationStatusBySessionId.get(row.session.id) === 'unsupported')
-            || pendingSessionIdsRef.current.has(row.session.id)
         ) return;
 
-        pendingSessionIdsRef.current.add(row.session.id);
-        setPendingSessionIds((current) => {
-            const next = new Set(current);
-            next.add(row.session.id);
+        // One shared operation owner with the session header action. It
+        // fences the settlement on the exact link identity and the active
+        // Account lifetime, so a stale settlement never publishes into a
+        // successor Account or a relinked session; only a current outcome
+        // is allowed to touch this surface's state.
+        const outcome = await setExternalSessionFollowPolicy({
+            sessionId: row.session.id,
+            serverId: row.session.serverId ?? null,
+            link,
+            policy: enabled ? 'background_follow' : 'attached_only',
+            registerApproval: followApproval.requestApproval,
+            signal,
+        });
+        if (outcome.kind === 'stale') return;
+        if (outcome.kind !== 'applied') {
+            const mutationStatus = outcome.kind === 'refused' && outcome.reason === 'unsupported'
+                ? 'unsupported'
+                : 'error';
+            setMutationStatusBySessionId((current) => {
+                const next = new Map(current);
+                next.set(row.session.id, mutationStatus);
+                return next;
+            });
+            await Modal.alert(
+                t('common.error'),
+                t('externalSessions.followUpdateFailed'),
+            );
+            return;
+        }
+        setMutationStatusBySessionId((current) => {
+            if (!current.has(row.session.id)) return current;
+            const next = new Map(current);
+            next.delete(row.session.id);
             return next;
         });
-        try {
-            // One shared operation owner with the session header action. It
-            // fences the settlement on the exact link identity and the active
-            // Account lifetime, so a stale settlement never publishes into a
-            // successor Account or a relinked session; only a current outcome
-            // is allowed to touch this surface's state.
-            const outcome = await setExternalSessionFollowPolicy({
-                sessionId: row.session.id,
-                serverId: row.session.serverId ?? null,
-                link,
-                policy: enabled ? 'background_follow' : 'attached_only',
-                registerApproval: followApproval.requestApproval,
-                signal,
-            });
-            if (outcome.kind === 'stale') return;
-            if (outcome.kind !== 'applied') {
-                const mutationStatus = outcome.kind === 'refused' && outcome.reason === 'unsupported'
-                    ? 'unsupported'
-                    : 'error';
-                setMutationStatusBySessionId((current) => {
-                    const next = new Map(current);
-                    next.set(row.session.id, mutationStatus);
-                    return next;
-                });
-                await Modal.alert(
-                    t('common.error'),
-                    t('externalSessions.followUpdateFailed'),
-                );
-                return;
-            }
-            setMutationStatusBySessionId((current) => {
-                if (!current.has(row.session.id)) return current;
-                const next = new Map(current);
-                next.delete(row.session.id);
-                return next;
-            });
-        } finally {
-            if (signal.aborted) return;
-            pendingSessionIdsRef.current.delete(row.session.id);
-            setPendingSessionIds((current) => {
-                if (!current.has(row.session.id)) return current;
-                const next = new Set(current);
-                next.delete(row.session.id);
-                return next;
-            });
-        }
     }, [followApproval.requestApproval, mutationStatusBySessionId]);
 
     const supplementalRows = React.useMemo<readonly ExternalSessionsSettingsSupplementalRow[]>(() => {
@@ -406,23 +383,20 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
                     <SettingRow
                         testID="settings-external-sessions-restore-item"
                         setting={EXTERNAL_SESSIONS_SETTINGS.settings.keepFollowingAfterRestart}
-                        subtitle={settings.keepPassivelyFollowingAfterRestart
+                        subtitle={restartFollowEnabled
                             ? t('externalSessions.settingsRestoreEnabledSubtitle')
                             : t('externalSessions.settingsRestoreDisabledSubtitle')}
                         rightElement={(
                             <Switch
                                 testID="settings-external-sessions-restore-toggle"
                                 accessibilityLabel={t('externalSessions.settingsRestoreTitle')}
-                                value={settings.keepPassivelyFollowingAfterRestart}
-                                disabled={restartFollowMutationPending}
+                                value={restartFollowEnabled}
                                 onValueChange={setRestartFollowEnabled}
                             />
                         )}
                         rightElementOutsidePressable
-                        loading={restartFollowMutationPending}
-                        disabled={restartFollowMutationPending}
                         showChevron={false}
-                        onPress={() => setRestartFollowEnabled(!settings.keepPassivelyFollowingAfterRestart)}
+                        onPress={() => setRestartFollowEnabled(!restartFollowEnabled)}
                     />
                     <Item
                         testID="settings-external-sessions-notifications-info"
@@ -462,7 +436,6 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
                             <ExternalSessionFollowItem
                                 key={row.session.id}
                                 row={row}
-                                pending={pendingSessionIds.has(row.session.id)}
                                 mutationStatus={mutationStatusBySessionId.get(row.session.id)}
                                 onSetEnabled={setSessionFollowEnabled}
                             />
@@ -490,12 +463,10 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
     }, [
         hasActiveFollowPolicy,
         mutationStatusBySessionId,
-        pendingSessionIds,
-        restartFollowMutationPending,
         rows,
         setRestartFollowEnabled,
         setSessionFollowEnabled,
-        settings.keepPassivelyFollowingAfterRestart,
+        restartFollowEnabled,
     ]);
 
     return (

@@ -74,7 +74,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { readExternalSessionFollowPolicy } from '@/sync/domains/session/external/externalSessionFollowMetadata';
-import { setExternalSessionFollowPolicy } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
+import { setExternalSessionFollowPolicy, useExternalSessionFollowPolicyIntent } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
@@ -593,7 +593,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   );
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
   const externalSessionLink = readExternalSessionLink(ownerMetadata);
-  const externalSessionFollowPolicy = readExternalSessionFollowPolicy(ownerMetadata);
+  const desiredExternalSessionFollowPolicy = useExternalSessionFollowPolicyIntent(sessionServerId ?? null, externalSessionLink);
+  const externalSessionFollowPolicy = desiredExternalSessionFollowPolicy ?? readExternalSessionFollowPolicy(ownerMetadata);
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
     sections: ['agentsById'],
     machineId: externalSessionLink?.machineId ?? reachableMachineId ?? ownerMetadata?.machineId ?? null,

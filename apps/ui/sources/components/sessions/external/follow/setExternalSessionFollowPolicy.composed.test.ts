@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema} from '@happier-dev/protocol/account/settings/accountSettings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ExternalSessionFollowPolicySetRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
-import { createDeferred, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, createModalModuleMock, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -11,14 +11,16 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
+const modal = createModalModuleMock({ confirmResult: true });
+vi.mock('@/modal', () => modal.module);
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 let answerRpc: Parameters<typeof installSessionActionRpcBoundary>[0] = () => { throw new Error('Unexpected daemon RPC'); };
-const requests = installSessionActionRpcBoundary(request => answerRpc(request));
+const requests = installSessionActionRpcBoundary((request, context) => answerRpc(request, context));
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-const { setExternalSessionFollowPolicy } = await import('./setExternalSessionFollowPolicy');
+const { setExternalSessionFollowPolicy, useExternalSessionFollowPolicyIntent } = await import('./setExternalSessionFollowPolicy');
 const { readExternalSessionFollowPolicy } = await import('@/sync/domains/session/external/externalSessionFollowMetadata');
 const { readExternalSessionLink } = await import('@/sync/domains/session/external/readExternalSessionLink');
 const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
@@ -51,11 +53,18 @@ function toggle(enabled = true) {
     return setExternalSessionFollowPolicy({ sessionId, serverId, link,
         policy: enabled ? 'background_follow' : 'attached_only', registerApproval });
 }
+function holdConfirmation() {
+    const shown = createDeferred<void>();
+    const decision = createDeferred<boolean>();
+    modal.spies.confirm.mockImplementation(async () => { shown.resolve(); return decision.promise; });
+    return { shown: shown.promise, decision };
+}
 
 beforeEach(async () => {
     await homes.reset();
     requests.length = 0;
-    registerApproval = () => {};
+    registerApproval = vi.fn();
+    modal.spies.confirm.mockReset().mockResolvedValue(true);
     serverId = await homes.addHome({ name: 'Follow Action Home', serverUrl: 'https://follow-actions.test', accountId });
     const machine = createPlainMachineRowFixture({ id: machineId, accountId });
     homes.answer(serverId, `/v1/machines/${machineId}`, { body: { machine } });
@@ -91,44 +100,47 @@ describe('external follow intent through ordinary Action admission', () => {
         await homes.setActionPolicy(otherServerId, actionId, 'ui', policy);
         installSessionActionFixture({ homes, storage, serverId: otherServerId,
             session: { id: sessionId, active: false, metadata: { machineId, externalSessionV1: link } } });
-        const registered = createDeferred<ActionApprovalContinuation>();
-        registerApproval = registration => registered.resolve(registration);
+        const confirmation = holdConfirmation();
+        const respond = answerRpc;
+        answerRpc = (request, context) => {
+            expect(context.serverUrl).toBe('https://other-follow-actions.test');
+            return respond(request, context);
+        };
         const pending = setExternalSessionFollowPolicy({ sessionId, serverId: otherServerId, link,
             policy: 'background_follow', registerApproval });
         try {
             if (policy === 'ask') {
-                const registration = await registered.promise;
-                expect(registration.scope).toEqual({ serverId: otherServerId, accountId: otherAccountId });
+                await Promise.race([confirmation.shown, pending.then(outcome => {
+                    throw new Error(`Follow Action settled before requesting confirmation: ${JSON.stringify(outcome)}`);
+                })]);
                 expect(requests).toHaveLength(0);
-                expect(await createDefaultActionExecutor().execute('approval.request.decide', {
-                    artifactId: registration.artifactId, decision: 'approve',
-                }, { surface: 'ui', authority: 'present_user', serverId: otherServerId,
-                    expectedAccountId: otherAccountId })).toMatchObject({ ok: true });
+                expect(homes.artifacts(otherServerId).list()).toHaveLength(0);
+                expect(registerApproval).not.toHaveBeenCalled();
+                confirmation.decision.resolve(true);
             }
             expect(await pending).toEqual({ kind: 'applied' });
-        } finally { retireActiveServerAccountScopeLifetime(); await pending; }
+        } finally { confirmation.decision.resolve(false); retireActiveServerAccountScopeLifetime(); await pending; }
         expect(requests).toHaveLength(1);
         expect(currentPolicy()).toBe('background_follow');
     });
-    it.each([false, true])('retains Ask completion and the exact linked intent across approval (relinked=%s)', async relinked => {
+    // docs/actions.md: own-UI explicit Ask uses local confirmation, not a self-approval Artifact.
+    it.each([false, true])('retains Ask completion and the exact linked intent across local confirmation (relinked=%s)', async relinked => {
         await homes.setActionPolicy(serverId, actionId, 'ui', 'ask');
-        const registered = createDeferred<ActionApprovalContinuation>();
-        registerApproval = registration => registered.resolve(registration);
+        const confirmation = holdConfirmation();
         const pending = toggle();
-        const registration = await registered.promise;
+        await Promise.race([confirmation.shown, pending.then(outcome => {
+            throw new Error(`Follow Action settled before requesting confirmation: ${JSON.stringify(outcome)}`);
+        })]);
         try {
-            expect(homes.artifacts(serverId).list()).toHaveLength(1);
-            expect(homes.artifacts(serverId).readPlainBody(registration.artifactId)).toContain(actionId);
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
+            expect(registerApproval).not.toHaveBeenCalled();
             expect(requests).toHaveLength(0);
             if (relinked) installLink({ ...link, remoteSessionId: 'new-remote', linkedAtMs: 2 });
-            const decision = await createDefaultActionExecutor().execute('approval.request.decide', {
-                artifactId: registration.artifactId, decision: 'approve',
-            }, { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId });
-            expect(decision.ok).toBe(true);
+            confirmation.decision.resolve(true);
             expect(await pending).toEqual({ kind: relinked ? 'stale' : 'applied' });
             expect(requests).toHaveLength(relinked ? 0 : 1);
             expect(currentPolicy()).toBe(relinked ? 'attached_only' : 'background_follow');
-        } finally { retireActiveServerAccountScopeLifetime(); await pending; }
+        } finally { confirmation.decision.resolve(false); retireActiveServerAccountScopeLifetime(); await pending; }
     });
     it('honors Off before any daemon mutation and preserves the visible policy', async () => {
         homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings(false) }, version: 2 } });
@@ -143,7 +155,9 @@ describe('external follow intent through ordinary Action admission', () => {
         expect(result).toEqual({ ok: true, result: { ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 } });
         expect(requests).toHaveLength(1);
     });
-    it('serializes rapid UI toggles and publishes the final admitted policy', async () => {
+    it('coalesces rapid UI toggles into the first and latest policy without duplicate writes', async () => {
+        const settingsObserver = await renderHook(() => useExternalSessionFollowPolicyIntent(serverId, link));
+        const headerObserver = await renderHook(() => useExternalSessionFollowPolicyIntent(serverId, link));
         const first = createDeferred<unknown>();
         const started = createDeferred<void>();
         const respond = answerRpc;
@@ -152,15 +166,28 @@ describe('external follow intent through ordinary Action admission', () => {
             if (input.enabled) { started.resolve(); return first.promise; }
             return respond(request, { signal: new AbortController().signal });
         };
-        const enable = toggle();
-        const disable = toggle(false);
+        let enable: ReturnType<typeof toggle> | undefined;
+        await act(async () => { enable = toggle(); });
         await started.promise;
+        expect(settingsObserver.getCurrent()).toBe('background_follow');
+        expect(headerObserver.getCurrent()).toBe('background_follow');
+        let choices: ReturnType<typeof toggle>[] = [];
+        await act(async () => { choices = [false, true, false, false].map(enabled => toggle(enabled)); });
+        expect(settingsObserver.getCurrent()).toBe('attached_only');
+        expect(headerObserver.getCurrent()).toBe('attached_only');
         expect(requests).toHaveLength(1);
-        first.resolve({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 });
-        expect(await enable).toEqual({ kind: 'applied' });
-        expect(await disable).toEqual({ kind: 'applied' });
+        await act(async () => {
+            first.resolve({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 });
+            await Promise.all([enable, ...choices]);
+        });
+        expect(await enable).toEqual({ kind: 'stale' });
+        expect(await Promise.all(choices)).toEqual([{ kind: 'stale' }, { kind: 'stale' }, { kind: 'stale' }, { kind: 'applied' }]);
         expect(requests).toHaveLength(2);
         expect(currentPolicy()).toBe('attached_only');
+        expect(settingsObserver.getCurrent()).toBeNull();
+        expect(headerObserver.getCurrent()).toBeNull();
+        await settingsObserver.unmount();
+        await headerObserver.unmount();
     });
     it('retires a late settlement after relinking rather than publishing into the successor link', async () => {
         const started = createDeferred<void>();
@@ -172,6 +199,23 @@ describe('external follow intent through ordinary Action admission', () => {
         result.resolve({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 });
         expect(await pending).toEqual({ kind: 'stale' });
         expect(currentPolicy()).toBe('attached_only');
+    });
+    it('keeps the last confirmed policy when the latest followup fails, without replaying it', async () => {
+        const first = createDeferred<unknown>();
+        const started = createDeferred<void>();
+        answerRpc = request => {
+            const input = ExternalSessionFollowPolicySetRequestSchema.parse(request.params);
+            if (input.enabled) { started.resolve(); return first.promise; }
+            throw new Error('fixture follow write failed');
+        };
+        const enable = toggle();
+        await started.promise;
+        const disable = toggle(false);
+        first.resolve({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 });
+        await Promise.all([enable, disable]);
+        expect(await disable).toEqual({ kind: 'refused', reason: 'error' });
+        expect(requests).toHaveLength(2);
+        expect(currentPolicy()).toBe('background_follow');
     });
     it('retires a late settlement with the captured Account lifetime', async () => {
         const started = createDeferred<void>();

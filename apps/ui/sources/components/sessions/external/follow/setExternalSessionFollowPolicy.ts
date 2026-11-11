@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { ExternalSessionFollowPolicy } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { ExternalSessionBackgroundFollowActionResultV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
@@ -23,11 +24,9 @@ import { sync } from '@/sync/sync';
  * local metadata write — the server stays the durable authority and the
  * successor Account/owner's own reads will present it.
  *
- * Mutations for the same scoped link are serialized, so rapid enable/disable
- * toggles settle in dispatch order and the last completed intent is the
- * policy the surfaces show. This is this owner's own ordering, not a second
- * Account bus or a registry: the daemon RPC and the metadata writer remain
- * the canonical ones.
+ * While one mutation runs, both surfaces show the latest desired policy.
+ * Only that latest policy follows the active write; intermediate choices
+ * are replaced, and an identical choice needs no further write.
  */
 export type ExternalSessionFollowMutationOutcome =
     | Readonly<{ kind: 'applied' }>
@@ -79,7 +78,49 @@ function resolveCurrentSessionLinkIdentity(sessionId: string): ExternalSessionLi
     return resolveLinkMutationIdentity(readExternalSessionLink(metadata));
 }
 
-const inFlightByScopeKey = new Map<string, Promise<ExternalSessionFollowMutationOutcome>>();
+type FollowIntent = Readonly<{
+    policy: ExternalSessionFollowPolicy;
+    execute: () => Promise<ExternalSessionFollowMutationOutcome>;
+}>;
+type FollowMutation = {
+    latest: FollowIntent | null;
+    completion: Promise<ExternalSessionFollowMutationOutcome> | null;
+    listeners: Set<() => void>;
+};
+const inFlightByScopeKey = new Map<string, FollowMutation>();
+
+function followScopeKey(serverId: string | null, identity: ExternalSessionLinkMutationIdentity): string {
+    return `${serverId ?? ''}:${serializeLinkMutationIdentity(identity)}`;
+}
+
+function getFollowMutation(scopeKey: string): FollowMutation {
+    let mutation = inFlightByScopeKey.get(scopeKey);
+    if (!mutation) {
+        mutation = { latest: null, completion: null, listeners: new Set() };
+        inFlightByScopeKey.set(scopeKey, mutation);
+    }
+    return mutation;
+}
+
+/** The operation's desired value, shared by the Settings row and Session header. */
+export function useExternalSessionFollowPolicyIntent(serverId: string | null, link: ExternalSessionLink | null) {
+    const identity = resolveLinkMutationIdentity(link);
+    const scopeKey = identity ? followScopeKey(serverId, identity) : null;
+    const subscribe = React.useCallback((listener: () => void) => {
+        if (scopeKey === null) return () => {};
+        const mutation = getFollowMutation(scopeKey);
+        mutation.listeners.add(listener);
+        return () => {
+            mutation.listeners.delete(listener);
+            if (!mutation.completion && mutation.listeners.size === 0) inFlightByScopeKey.delete(scopeKey);
+        };
+    }, [scopeKey]);
+    const snapshot = React.useCallback(() => {
+        const mutation = scopeKey === null ? undefined : inFlightByScopeKey.get(scopeKey);
+        return mutation?.completion ? mutation.latest?.policy ?? null : null;
+    }, [scopeKey]);
+    return React.useSyncExternalStore(subscribe, snapshot, snapshot);
+}
 
 export function setExternalSessionFollowPolicy(params: Readonly<{
     sessionId: string;
@@ -93,7 +134,7 @@ export function setExternalSessionFollowPolicy(params: Readonly<{
     if (!identity) {
         return Promise.resolve({ kind: 'failed' });
     }
-    const scopeKey = `${params.serverId ?? ''}:${serializeLinkMutationIdentity(identity)}`;
+    const scopeKey = followScopeKey(params.serverId, identity);
     const accountCurrentness = captureActiveServerAccountScopeCurrentness();
     const isIntentCurrent = () => {
         const current = resolveCurrentSessionLinkIdentity(params.sessionId);
@@ -101,87 +142,98 @@ export function setExternalSessionFollowPolicy(params: Readonly<{
             && current !== null
             && serializeLinkMutationIdentity(current) === serializeLinkMutationIdentity(identity);
     };
-    const prior = inFlightByScopeKey.get(scopeKey);
-    const request = (prior ?? Promise.resolve())
-        .catch(() => undefined)
-        .then(async (): Promise<ExternalSessionFollowMutationOutcome> => {
-            if (!isIntentCurrent()) {
-                return { kind: 'stale' };
-            }
-            const controller = new AbortController();
-            const abort = () => controller.abort();
-            const retirement = accountCurrentness.onRetire(abort);
-            params.signal?.addEventListener('abort', abort, { once: true });
-            const executeAction = createFrontDoorActionExecute(undefined, {
-                isExternalSessionFollowIntentCurrent: isIntentCurrent,
-                hostActionApprovalLifetime: { actionId: 'sessions.external.backgroundFollow.set',
-                    surface: 'ui', signal: controller.signal },
-                onBlockingApprovalPending: pending => params.registerApproval({
-                    artifactId: pending.artifactId, scope: pending.scope, signal: pending.signal ?? controller.signal,
-                    refreshAfterExecution: false,
-                    // The canonical blocking executor retains this invocation
-                    // and its exact-link precondition until the decision.
-                    onExecuted: async () => 'ignored',
-                }),
-            });
-            let result: ReturnType<typeof ExternalSessionBackgroundFollowActionResultV1Schema.parse>;
-            try {
-                const admitted = await executeAction('sessions.external.backgroundFollow.set', {
-                    sessionId: params.sessionId,
-                    enabled: params.policy === 'background_follow',
-                }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-                    serverId: params.serverId ?? undefined, signal: controller.signal });
-                if (!admitted.ok) {
-                    return !isIntentCurrent() || admitted.errorCode === 'external_session_follow_intent_stale'
-                        ? { kind: 'stale' }
-                        : { kind: 'refused', reason: 'error' };
-                }
-                requireActionSuccess(admitted);
-                result = ExternalSessionBackgroundFollowActionResultV1Schema.parse(admitted.result);
-            } catch {
-                return isIntentCurrent() && !controller.signal.aborted
-                    ? { kind: 'failed' }
-                    : { kind: 'stale' };
-            } finally {
-                retirement.dispose();
-                params.signal?.removeEventListener('abort', abort);
-            }
-            // Account-lifetime fence: the previous Account's settlement must
-            // never alert or publish into the successor Account.
-            if (controller.signal.aborted || !accountCurrentness.isCurrent()) {
-                return { kind: 'stale' };
-            }
-            if (!result.ok) {
-                return {
-                    kind: 'refused',
-                    reason: result.error === 'background_follow_not_supported'
-                        ? 'unsupported'
-                        : 'error',
-                };
-            }
-            // Exact-link fence: only the link that authorized the request may
-            // receive its local projection catch-up.
-            const currentIdentity = resolveCurrentSessionLinkIdentity(params.sessionId);
-            if (
-                currentIdentity === null
-                || serializeLinkMutationIdentity(currentIdentity) !== serializeLinkMutationIdentity(identity)
-            ) {
-                return { kind: 'stale' };
-            }
-            const updatedAtMs = result.updatedAtMs;
-            sync.applySessionMetadataLocally(params.sessionId, (metadata) =>
-                updateMetadataWithExternalSessionFollowPolicy(metadata, {
-                    policy: params.policy,
-                    updatedAtMs,
-                }),
-            );
-            return { kind: 'applied' };
-        })
-        .finally(() => {
-            if (inFlightByScopeKey.get(scopeKey) === request) {
-                inFlightByScopeKey.delete(scopeKey);
-            }
+    const execute = async (): Promise<ExternalSessionFollowMutationOutcome> => {
+        if (!isIntentCurrent()) {
+            return { kind: 'stale' };
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        const retirement = accountCurrentness.onRetire(abort);
+        params.signal?.addEventListener('abort', abort, { once: true });
+        const executeAction = createFrontDoorActionExecute(undefined, {
+            isExternalSessionFollowIntentCurrent: isIntentCurrent,
+            hostActionApprovalLifetime: { actionId: 'sessions.external.backgroundFollow.set',
+                surface: 'ui', signal: controller.signal },
+            onBlockingApprovalPending: pending => params.registerApproval({
+                artifactId: pending.artifactId, scope: pending.scope, signal: pending.signal ?? controller.signal,
+                refreshAfterExecution: false,
+                // The canonical blocking executor retains this invocation
+                // and its exact-link precondition until the decision.
+                onExecuted: async () => 'ignored',
+            }),
         });
-    inFlightByScopeKey.set(scopeKey, request);
-    return request;
+        let result: ReturnType<typeof ExternalSessionBackgroundFollowActionResultV1Schema.parse>;
+        try {
+            const admitted = await executeAction('sessions.external.backgroundFollow.set', {
+                sessionId: params.sessionId,
+                enabled: params.policy === 'background_follow',
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                serverId: params.serverId ?? undefined, signal: controller.signal });
+            if (!admitted.ok) {
+                return !isIntentCurrent() || admitted.errorCode === 'external_session_follow_intent_stale'
+                    ? { kind: 'stale' }
+                    : { kind: 'refused', reason: 'error' };
+            }
+            requireActionSuccess(admitted);
+            result = ExternalSessionBackgroundFollowActionResultV1Schema.parse(admitted.result);
+        } catch {
+            return isIntentCurrent() && !controller.signal.aborted
+                ? { kind: 'failed' }
+                : { kind: 'stale' };
+        } finally {
+            retirement.dispose();
+            params.signal?.removeEventListener('abort', abort);
+        }
+        // Account-lifetime fence: the previous Account's settlement must
+        // never alert or publish into the successor Account.
+        if (controller.signal.aborted || !accountCurrentness.isCurrent()) {
+            return { kind: 'stale' };
+        }
+        if (!result.ok) {
+            return {
+                kind: 'refused',
+                reason: result.error === 'background_follow_not_supported'
+                    ? 'unsupported'
+                    : 'error',
+            };
+        }
+        // Exact-link fence: only the link that authorized the request may
+        // receive its local projection catch-up.
+        const currentIdentity = resolveCurrentSessionLinkIdentity(params.sessionId);
+        if (
+            currentIdentity === null
+            || serializeLinkMutationIdentity(currentIdentity) !== serializeLinkMutationIdentity(identity)
+        ) {
+            return { kind: 'stale' };
+        }
+        const updatedAtMs = result.updatedAtMs;
+        sync.applySessionMetadataLocally(params.sessionId, (metadata) =>
+            updateMetadataWithExternalSessionFollowPolicy(metadata, {
+                policy: params.policy,
+                updatedAtMs,
+            }),
+        );
+        return { kind: 'applied' };
+    };
+    const mutation = getFollowMutation(scopeKey);
+    const intent = { policy: params.policy, execute };
+    mutation.latest = intent;
+    if (!mutation.completion) {
+        mutation.completion = (async () => {
+            let attempted = intent;
+            for (;;) {
+                const outcome = await attempted.execute();
+                const latest = mutation.latest;
+                if (outcome.kind !== 'applied' || !latest || latest.policy === attempted.policy) return outcome;
+                attempted = latest;
+            }
+        })().finally(() => {
+            mutation.completion = null;
+            for (const listener of mutation.listeners) listener();
+            if (mutation.listeners.size === 0) inFlightByScopeKey.delete(scopeKey);
+        });
+    }
+    for (const listener of mutation.listeners) listener();
+    return mutation.completion.then((outcome): ExternalSessionFollowMutationOutcome =>
+        mutation.latest === intent && isIntentCurrent() ? outcome : { kind: 'stale' });
 }
