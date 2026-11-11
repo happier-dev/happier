@@ -6,7 +6,8 @@ import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContri
 import { PluginProjectedMachineRecipeEntryV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
-    ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
+    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1,
@@ -492,12 +493,19 @@ it('prepares one full-target review then submits one public Apply without execut
     const authorize = (envelope: ReturnType<typeof ExternalActionRequestEnvelopeV1Schema.parse>) => {
         const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
         if (!authentication || envelope.target?.kind !== 'machine') throw new Error('Expected an authenticated Account Machine invocation');
-        return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'software-test-authorization', binding: {
+        const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'software-test-authorization', binding: {
             accountId: 'alice', authentication, serverIdentityId: target.machine.serverIdentityId,
             machineId: target.machine.machineId, custodianAccountId: 'alice', installationId: 'test-installation',
             accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId, target: envelope.target,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            ...(deploymentPreparationAdmission ? { admittedMachineRole: 'manage', deploymentPreparationAdmission } : {}),
         } });
+        if (actionId === 'machines.setup.apply') {
+            expect(authorization.binding).toMatchObject({ admittedMachineRole: 'manage',
+                deploymentPreparationAdmission: { operation: 'setup', machineTargets: ['machine-0', 'machine-1'] } });
+        }
+        return authorization;
     };
     homes.answer(homeId, bindExternalActionExecutionAuthorizationHttpPathV1(actionId), { select: input => {
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
