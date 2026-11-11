@@ -31,8 +31,8 @@ import { readHomeConnectionDescriptor } from '../app/features/homeConnectionDesc
 import { createEphemeralTlsServerFixture } from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 /** Real storage/auth/Socket boundary. No CLI source is imported into the server. */
-export async function createDeploymentSocketHome({ encryptionMode = 'plain', prepareMachineContent, configureApp } = {}) {
-    const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
+export async function createDeploymentSocketHome({ encryptionMode = 'plain', prepareMachineContent, configureApp,
+    serverId = `srv_${randomUUID().replaceAll('-', '')}` } = {}) {
     const harness = await createLightSqliteHarness({
         tempDirPrefix: 'happier-deployment-socket-home-', initAuth: true, initEncrypt: true,
         env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '',

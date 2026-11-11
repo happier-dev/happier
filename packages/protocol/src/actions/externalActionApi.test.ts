@@ -52,11 +52,12 @@ import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 const invocationGrant = ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['session.title.set'] },
   targets: { sessions: [], machines: ['machine-1'] }, approve: false, origins: [], models: null, permissionModes: null, create: null });
 
-it('admits deployment receipt and preview-cleanup roots without admitting unrelated deployment roots', () => {
-  for (const actionId of ['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown']) {
+it('admits Workflow preview creation, preparation, receipt and cleanup roots without admitting unrelated deployment roots', () => {
+  for (const actionId of ['deployments.environments.create', 'deployments.prepare',
+    'deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown']) {
     expect(externalActionApi.isExternalActionWorkflowActionIdV1(actionId), actionId).toBe(true);
   }
-  for (const actionId of ['deployments.environments.update', 'deployments.prepare',
+  for (const actionId of ['deployments.environments.update',
     'deployments.health.read', 'deployments.cancel', 'deployments.targets.unlink', 'deployments.environments.delete']) {
     expect(externalActionApi.isExternalActionWorkflowActionIdV1(actionId), actionId).toBe(false);
   }

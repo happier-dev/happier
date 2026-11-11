@@ -18,6 +18,7 @@ export * from './projection/deploymentHealthAggregate.js';
 export * from './projection/deploymentHealthAggregateLease.js';
 export * from './templates/prepareDeploymentTemplateInstantiationV1.js';
 export * from './backups/resticExecutor.js';
+export { SQLITE_RUNTIME_V1, type SQLiteRuntimeV1 } from './backups/sqliteRuntime.js';
 export * from './backups/configurationV1.js';
 export * from './actions/deploymentCiStep.js';
 export * from './actions/backups.js';

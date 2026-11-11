@@ -88,7 +88,7 @@ describe('existing deployment restart', () => {
       .toBe(readDeploymentEnvironmentOperationRequestIdV1(teardown));
     expect(readDeploymentActionOperationRequestIdV1('deployments.teardown', { ...teardown, requestKey: undefined })).toBeUndefined();
     const restore = { serverId: 'home', environmentId: 'environment', machineId: 'machine', installationId: 'installation',
-      targetLinkId: 'target', deploymentId: 'deployment', restoreBackupId: 'backup', expectedRevision: 1 };
+      targetLinkId: 'target', deploymentId: 'deployment', source: { kind: 'repository', snapshotId: 'backup' }, expectedRevision: 1 };
     const confirmed = readDeploymentActionOperationRequestIdV1('deployments.backups.restore',
       { ...restore, mode: 'confirm', prepareOperationId: 'prepared' });
     expect(confirmed).toEqual(expect.any(String));
@@ -259,6 +259,28 @@ describe('Create reviewed Deploy child transport', () => {
     expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child,
       rootActionId: 'deployments.rollback' })).toBe(false);
     expect(readDeploymentChildRpcV1({ ...transport, rootPreparationAdmission: undefined })).toBeNull();
+    if (kind === 'preview') {
+      const prepared = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: child.actionId,
+        machineId: 'receiver', installationId: 'installed', expectedRevision: 2, expectedTargetLinkRevision: 1,
+        input: { serverId: 'home', environmentId: 'allocated', targetLinkId: 'runtime', requestKey: 'create-deploy' },
+        previewDomain: { domainId: 'selected-template-domain', url: 'https://pr-17.preview.test' } });
+      const rootBinding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({
+        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+        serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-installation',
+        actionId: transport.rootActionId, target: { kind: 'machine', machineId: 'controller' },
+        requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), accountEncryptionMode: 'plain',
+        deploymentChildRoot: true, deploymentPreparationAdmission: rootPreparationAdmission,
+      });
+      const admitted = { ...transport, rootBinding, rootInput: createInput, child: prepared,
+        reviewedChild: { ...reviewedChild, inputDigest: computeActionInputApprovalDigestV1(prepared.actionId, prepared.input) } };
+      expect(doesDeploymentChildInputMatchRootV1(admitted)).toBe(true);
+      expect(projectDeploymentChildRoutingV1(prepared)).not.toHaveProperty('previewDomain');
+      expect(doesDeploymentChildInputMatchRootV1({ ...admitted, rootActionId: 'deployments.rollback' })).toBe(false);
+      expect(doesDeploymentChildInputMatchRootV1({ ...admitted,
+        reviewedChild: { ...admitted.reviewedChild, role: 'template.deploy' } })).toBe(false);
+      expect(doesDeploymentChildInputMatchRootV1({ ...admitted,
+        reviewedChild: { ...admitted.reviewedChild, inputDigest: reviewedChild.inputDigest } })).toBe(false);
+    }
   });
   it('derives read-only Catalog deployment preparation from the original attempt before its candidate is reviewed', () => {
     const rootInput = { serverId: 'home', projectSourceId: 'source', requestKey: 'environment-allocation', name: 'Web',
@@ -874,7 +896,7 @@ describe('deployment semantic preparation', () => {
       bindings: [] });
     const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input,
       async () => { throw new Error('Repository placement must not require the runtime controller'); },
-      async workspace => workspace.id === 'checkout' ? { ok: true, machineId: 'checkout-machine' }
+      async request => request.workspace.id === 'checkout' ? { ok: true, machineId: 'checkout-machine' }
         : { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' });
     expect(selected).toEqual({ ok: true, machineId: 'checkout-machine' });
     expect(getActionSpec('deployments.templates.instantiate').inputSchema.safeParse({ ...input,

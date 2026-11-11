@@ -72,6 +72,8 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     nativeBoundary?: EnrollmentJourneyNativeBoundary;
     isolationWorkspace?: Readonly<{ rootId: string; path: string }>;
     isolationReadinessSystem?: AgentIsolationReadinessSystem;
+    /** Observe the actual socket frame without replacing admission or dispatch. */
+    observeReceivedRequest?(request: SocketRpcRequestPayload): Promise<void>;
 }>) {
     const { home } = input;
     if (home.encryptionMode === 'e2ee' && (!home.machineEncryptionKey || !home.encryption)) {
@@ -276,7 +278,10 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     machineSocket.on('disconnect', () => rpc.onSocketDisconnect());
     machineSocket.on(SOCKET_RPC_EVENTS.REQUEST, (request: SocketRpcRequestPayload, acknowledge: (response: unknown) => void) => {
         receivedMethods.push(request.method);
-        void installationBoundary.run(readS0Installation(home), () => rpc.handleRequest(request)).then(acknowledge);
+        void (async () => {
+            await input.observeReceivedRequest?.(request);
+            return installationBoundary.run(readS0Installation(home), () => rpc.handleRequest(request));
+        })().then(acknowledge);
     });
     let closed = false;
     let presenceInterval: ReturnType<typeof setInterval> | undefined;

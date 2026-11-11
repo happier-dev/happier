@@ -693,6 +693,15 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         return separator < 0 ? Object.hasOwn(row.Labels, label)
             : row.Labels[label.slice(0, separator)] === label.slice(separator + 1);
     })).map(row => row.Id).join('\n'));
+} else if (args[0] === 'network' && args[1] === 'connect') {
+    const network = state.networks.find(row => row.Id === args[2] || row.Name === args[2]);
+    const caddy = state.nativeCaddy;
+    if (!network || caddy?.Id !== args[3] || Object.hasOwn(network.Containers, caddy.Id)) process.exitCode = 1;
+    else {
+        network.Containers[caddy.Id] = { Name: caddy.Name.slice(1) };
+        caddy.NetworkSettings.Networks[network.Name] = { NetworkID: network.Id };
+        save();
+    }
 } else if (args[0] === 'network' && args[1] === 'disconnect') {
     const network = state.networks.find(row => row.Id === args[2]);
     const caddy = state.nativeCaddy;

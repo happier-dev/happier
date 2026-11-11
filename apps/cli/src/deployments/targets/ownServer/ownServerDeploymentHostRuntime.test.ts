@@ -520,7 +520,7 @@ describe('own-server installed host acquisition', () => {
             } finally { await acquired.release(); }
         } finally { try { await mounted.dispose(); } finally { await rm(root, { recursive: true, force: true }); } }
     });
-    it.each(['deployment', 'restoration', 'review', 'copySourceRead', 'previewDomain'] as const)('materializes exact deployment facts through installation grants for %s without fabricating unavailable values', async kind => {
+    it.each(['deployment', 'restoration', 'review', 'copySourceRead', 'previewDomain', 'capturedPreviewDomain'] as const)('materializes exact deployment facts through installation grants for %s without fabricating unavailable values', async kind => {
         const mounted = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
         const keys = nacl.sign.keyPair();
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -532,7 +532,7 @@ describe('own-server installed host acquisition', () => {
                 source: { kind: 'deploymentFact', fact: 'deploymentId' } },
             { purpose: 'variable', phase: 'build', name: 'DATABASE_ENDPOINT',
                 source: { kind: 'reference', environmentId: 'data', export: 'database', via: 'privateNetwork' } },
-            ...(kind === 'previewDomain' ? [
+            ...(kind === 'previewDomain' || kind === 'capturedPreviewDomain' ? [
                 { purpose: 'variable', phase: 'runtime', name: 'DOMAIN_URL',
                     source: { kind: 'deploymentFact', fact: 'domainUrl', domainId: 'template-domain' } },
                 { purpose: 'variable', phase: 'runtime', name: 'PRIMARY_URL',
@@ -586,10 +586,10 @@ describe('own-server installed host acquisition', () => {
                     id: 'template-runtime', environmentId: 'template' } }],
             };
             const admittedEnvironment: DeploymentEnvironmentDetailV1 = { ...environment,
-                environment: { ...environment.environment, ...(kind === 'previewDomain' ? { purpose: 'preview' as const,
+                environment: { ...environment.environment, ...(kind === 'previewDomain' || kind === 'capturedPreviewDomain' ? { purpose: 'preview' as const,
                     previewTemplateEnvironmentId: 'template', previewRepositoryId: 'source', previewPullRequestId: '17',
                     previewTargetLinkId: 'template-runtime' } : {}) },
-                content: { ...environment.content, definition, bindings, ...(kind === 'previewDomain' ? { previewProvenance: {
+                content: { ...environment.content, definition, bindings, ...(kind === 'previewDomain' || kind === 'capturedPreviewDomain' ? { previewProvenance: {
                     v: 1 as const, templateEnvironmentId: 'template', runtimeTargetLinkId: 'template-runtime', repository,
                     headRepository: repository, pullRequestId: '17', pullRequestNumber: 17, author: { id: 'author', login: 'alice' },
                 } } : {}) } };
@@ -602,7 +602,9 @@ describe('own-server installed host acquisition', () => {
                 deployment: { ...receipt.deployment, id: kind === 'restoration' ? 'failed-operation' : receipt.deployment.id,
                     actionOperationId: kind === 'restoration' ? 'original-operation' : receipt.deployment.actionOperationId },
                 environment: admittedEnvironment,
-                content: { ...receipt.content, sourceIntent: definition },
+                content: { ...receipt.content, sourceIntent: definition, ...(kind === 'capturedPreviewDomain' ? {
+                    previewDomain: { domainId: 'template-domain', url: 'https://pr-17-app.preview.test/app' },
+                } : {}) },
                 ...(kind === 'previewDomain' ? { readReferenceEnvironment: async (reference: { environmentId: string }) => {
                     if (reference.environmentId !== 'template') throw Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable' });
                     return template;
@@ -636,13 +638,13 @@ describe('own-server installed host acquisition', () => {
                 try {
                     expect(material.env).toEqual({ ENVIRONMENT_NAME: 'Staging', ...(kind === 'review' ? {}
                         : { DEPLOYMENT_ID: kind === 'restoration' ? 'selected-receipt' : 'deployment' }),
-                        ...(kind === 'previewDomain' ? { DOMAIN_URL: 'https://pr-17-app.preview.test/app',
+                        ...(kind === 'previewDomain' || kind === 'capturedPreviewDomain' ? { DOMAIN_URL: 'https://pr-17-app.preview.test/app',
                             PRIMARY_URL: 'https://pr-17-app.preview.test/app' } : {}) });
                     // Acquisition spent the phase admission; its captured facts
                     // do not acquire the same authority again during preparation.
                     expect(network.mock.calls.slice(readsBefore).filter(([config]) => config.url?.endsWith('/secret-launch-admission'))).toHaveLength(0);
                     expect(network.mock.calls.length - readsBefore).toBe(kind === 'previewDomain' ? 2 : 0);
-                    if (kind === 'previewDomain') await expect(acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact',
+                    if (kind === 'previewDomain' || kind === 'capturedPreviewDomain') await expect(acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact',
                         fact: 'domainUrl', domainId: 'another-domain' })).rejects.toMatchObject({ code: 'reference_unavailable' });
                 }
                 finally { material.dispose(); }

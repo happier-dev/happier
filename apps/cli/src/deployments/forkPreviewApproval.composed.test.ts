@@ -22,7 +22,7 @@ import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifa
 afterEach(() => vi.restoreAllMocks());
 
 function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; productionPage: number; existing?: boolean;
-    sameRepository?: boolean; allowCreate?: boolean; privateForkSelections?: boolean; domain?: boolean }>) {
+    sameRepository?: boolean; allowCreate?: boolean; privateForkSelections?: boolean; domain?: boolean; domainRefused?: boolean }>) {
     const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
     const template = createDeploymentEnvironmentDetailV1();
     template.environment.id = 'template';
@@ -115,6 +115,8 @@ function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; product
         }
         if (request.method === 'GET' && path === '/v1/deployments/environments/template') return { status: 200,
             data: { ok: true, environment: template.environment, targetLinks: template.targetLinks.map(row => row.targetLink) } };
+        if (request.method === 'GET' && path === '/v1/deployments/environments/template/domains/template-domain' && scenario.domainRefused)
+            return { status: 403, data: { error: 'action_forbidden' } };
         if (request.method === 'GET' && path === '/v1/deployments/environments/template/domains/template-domain')
             return { status: 200, data: { ok: true, environmentId: template.environment.id, revision: template.environment.revision,
                 domain: { v: 1, id: 'template-domain', environmentId: 'template',
@@ -289,6 +291,17 @@ it('reviews the selected fork preview Domain before allocating the child or acti
     expect(approvals[0]?.preview).toMatchObject({ hostReviewedChildren: { children: expect.arrayContaining([
         expect.objectContaining({ action: 'deployments.domains.add', role: 'template.domain:preview' }),
     ]) } });
+    expect(mutations).toEqual([]);
+    expect(native).not.toHaveBeenCalled();
+});
+
+it('preserves the Home Domain refusal through preview preparation before any child effect', async () => {
+    const { executor, root, context, mutations, native } = fixture({
+        inventory: 'complete', productionPage: 0, domain: true, domainRefused: true,
+    });
+    const result = await executor.execute('deployments.environments.create', root, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_forbidden',
+        error: 'action_forbidden (home_deployment_http_forbidden)' });
     expect(mutations).toEqual([]);
     expect(native).not.toHaveBeenCalled();
 });

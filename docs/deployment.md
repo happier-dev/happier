@@ -1121,10 +1121,15 @@ the stored Compose document and public supporting files at a selected admitted
 workspace. A Source without a repository can preview an explicit repository
 selector. Create previews include the initial README for a new Git checkout;
 an existing committed checkout instead supplies its immutable file before-images
-through the shared SCM file reviewer. Preview leaves the Source, Environment and
-hosted repository unchanged. Repository creation, Source attachment and the final
-merged-definition switch remain under implementation; preview success alone does
-not establish those flows.
+through the shared SCM file reviewer. A cold preview can reopen an existing PR
+reference: an open PR stays pending, while a merged PR reviews the actual merged
+commit's Compose document and public supporting files against the current stored
+definition. Preview leaves the Source, Environment and hosted repository unchanged.
+Captured continuations switch through the existing reviewed Environment update;
+changed merged bytes or a changed stored definition require explicit acceptance
+of that comparison. Repository creation, Source attachment and cold apply remain
+under implementation; the owner-level continuation checks do not establish those
+publication flows or a loaded native journey.
 
 The Iroh export contract is development-only. Activation requires one effective loopback
 TCP publication for the exported container port, bound to a literal loopback

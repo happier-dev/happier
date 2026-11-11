@@ -6,7 +6,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, encodePlainArtifactStoredContent,
-    DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema,
+    DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, SOCKET_RPC_EVENTS,
     ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { EnvironmentSecretClientBindingsInputV1Schema } from '@happier-dev/deployment-protocol';
@@ -194,6 +194,51 @@ describe('reviewed create preparation authority', () => {
         return { f, template, runtime, input, envelope, authorization, read, readPath };
     }
 
+    it.each(['template', 'retained'] as const)('opens only the server-selected %s preview builder under its signed Create root', async placement => {
+        const { f, template, runtime, readPath } = await previewFixture();
+        const builder = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
+            metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey,
+            installationId: crypto.randomUUID(), installationPublicKey: nacl.sign.keyPair().publicKey } });
+        const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
+            metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey } });
+        const environment = placement === 'template' ? template : await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.destination.source.id, createdByAccountId: f.actor.id,
+            protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
+            controllerMachineId: f.machine.id, buildMachineId: builder.id,
+            previewTemplateEnvironmentId: template.id, previewRepositoryId: f.destination.source.id,
+            previewPullRequestId: '17', previewTargetLinkId: runtime.id, ...await f.artifact(f.actor.id),
+        } });
+        await db.deploymentEnvironment.update({ where: { id: template.id },
+            data: { buildMachineId: placement === 'template' ? builder.id : other.id } });
+        const foreign = await previewFixture();
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = (machineId: string, root = readPath) => {
+                const request = root(`/v1/machines/${machineId}`, 'deployments.environments.create');
+                return app.inject({ method: 'GET', url: request.path,
+                    headers: { ...request.headers, ...currentAccountStoredContentCompatibilityHeaders } });
+            };
+            const allowed = await read(builder.id);
+            expect(allowed.statusCode, allowed.body).toBe(200);
+            expect(allowed.json()).toMatchObject({ machine: { id: builder.id, installationId: builder.installationId } });
+            for (const request of [() => read(other.id), () => read(builder.id, foreign.readPath)]) {
+                const refused = await request();
+                expect(refused.statusCode, refused.body).toBe(401);
+                expect(refused.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'deployment_preparation' });
+            }
+            // Placement does not grant visibility to another Account's Machine.
+            await db.machine.update({ where: { id: builder.id }, data: { accountId: f.owner.id } });
+            const invisible = await read(builder.id);
+            expect(invisible.statusCode, invisible.body).toBe(404);
+            expect(invisible.json()).toMatchObject({ error: 'Machine not found' });
+            await db.machine.update({ where: { id: builder.id }, data: { accountId: f.actor.id } });
+            // An unrelated controller cannot spend this root's selected placement.
+            await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { controllerMachineId: other.id } });
+            const mismatchedController = await read(builder.id);
+            expect(mismatchedController.statusCode, mismatchedController.body).toBe(401);
+            expect(mismatchedController.json()).toMatchObject({ authorizationRefusal: 'deployment_preparation' });
+        }, { authentication: 'real' });
+    });
+
     it('lets a signed preview Create inspect only its execution Machines and preserves hidden workload incompleteness', async () => {
         const { f, read } = await previewFixture();
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
@@ -336,7 +381,7 @@ describe('reviewed create preparation authority', () => {
         const cases = [
             { actionId: 'deployments.deploy', role: 'preview.deploy', suffix: 'deploy',
                 input: { serverId, environmentId: child.id, expectedRevision: child.revision,
-                    targetLinkId: childRuntime.id, expectedTargetLinkRevision: 1, requestKey: envelope.requestId,
+                    targetLinkId: childRuntime.id, expectedTargetLinkRevision: 1, requestKey: `${envelope.requestId}-deploy`,
                     ...await f.artifact(f.actor.id, 'deployment-receipt.v1') } },
             { actionId: 'deployments.domains.add', role: 'template.domain:preview', suffix: 'domains',
                 input: { serverId, environmentId: child.id, expectedRevision: child.revision,
@@ -364,6 +409,7 @@ describe('reviewed create preparation authority', () => {
             expect(await verify()).toMatchObject({ effectActionId: selected.actionId, reviewedChildAdmission: reviewedChild });
             expect(await verify('preview.bindings')).toBeNull();
             expect(await verify(selected.role, { ...body, contentBodyVersion: 2 })).toBeNull();
+            expect(await verify(selected.role, { ...body, requestKey: `${selected.input.requestKey}-changed` })).toBeNull();
         }
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const deploy = cases[0];
@@ -396,6 +442,58 @@ describe('reviewed create preparation authority', () => {
             const refused = await app.inject({ method: 'GET', url: foreign.path, headers: foreign.headers });
             expect(refused.statusCode, refused.body).toBe(401);
         }, { authentication: 'real' });
+    });
+
+    it.each(['create', 'deploy'] as const)('carries the verified %s root into signed remote preparation with a captured Domain fact', async rootKind => {
+        const { f, template, runtime, authorization: createAuthorization, envelope: createEnvelope } = await previewFixture();
+        await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
+        const builderKey = nacl.sign.keyPair();
+        const builder = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
+            metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey, active: true,
+            installationId: crypto.randomUUID(), installationPublicKey: builderKey.publicKey } });
+        const child = await db.deploymentEnvironment.create({ data: { projectSourceId: f.destination.source.id,
+            createdByAccountId: f.actor.id, protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
+            controllerMachineId: f.machine.id, buildMachineId: builder.id, previewTemplateEnvironmentId: template.id,
+            previewRepositoryId: f.destination.source.id, previewPullRequestId: '17', previewTargetLinkId: runtime.id,
+            ...await f.artifact(f.actor.id) } });
+        const link = await db.deploymentTargetLink.create({ data: { environmentId: child.id, createdByAccountId: f.actor.id,
+            role: 'runtime', state: 'configured', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer',
+            ...await f.artifact(f.actor.id, 'deployment-target-link.v1'), machines: { create: [{ machineId: f.machine.id,
+                installationId: f.machine.installationId!, position: 0, state: 'active' }] } } });
+        await db.deploymentEnvironment.update({ where: { id: child.id }, data: { runtimeTargetLinkId: link.id } });
+        const input = { serverId, environmentId: child.id, targetLinkId: link.id,
+            requestKey: `${createEnvelope.input.requestKey}-deploy` };
+        const envelope = rootKind === 'create' ? createEnvelope : { ...createEnvelope,
+            requestId: crypto.randomUUID(), input };
+        const authorization = rootKind === 'create' ? createAuthorization : await auth.mintExternalActionExecutionAuthorization({
+            serverIdentityId: serverId, accountId: f.actor.id,
+            authentication: { kind: 'account', tokenEpoch: f.actor.tokenEpoch }, actionId: 'deployments.deploy',
+            requestId: envelope.requestId, target: envelope.target, machineId: f.machine.id,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.deploy', input,
+            machineId: builder.id, installationId: builder.installationId!, expectedRevision: child.revision,
+            expectedTargetLinkRevision: link.revision,
+            previewDomain: { domainId: 'selected-template-domain', url: 'https://pr-17.example.test' } });
+        if (job.kind !== 'prepare' || job.actionId !== 'deployments.deploy') throw new Error('Expected Deploy preparation');
+        const reviewedChild = rootKind === 'create' ? { actionId: 'deployments.deploy', role: 'preview.deploy',
+            inputDigest: computeActionInputApprovalDigestV1('deployments.deploy', input) } : undefined;
+        const verify = (params = job, proof = reviewedChild, signer = f.key.secretKey) => {
+            const method = `${params.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, requestId = crypto.randomUUID();
+            const deploymentChildRouting = projectDeploymentChildRoutingV1(params);
+            const execution = { v: 1 as const, authorization, effectActionId: 'deployments.deploy', target: envelope.target,
+                installationId: f.machine.installationId!, deploymentChildRouting, ...(proof ? { reviewedChild: proof } : {}),
+                machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'deployments.deploy', target: envelope.target, installationId: f.machine.installationId!,
+                    event: SOCKET_RPC_EVENTS.CALL, method, requestId, params, deploymentChildRouting,
+                    ...(proof ? { reviewedChild: proof } : {}), privateKey: signer }) };
+            return verifyExternalActionMachineRpcExecution(execution, { method, requestId, params,
+                originalActionEnvelope: envelope, event: SOCKET_RPC_EVENTS.CALL });
+        };
+        expect(await verify()).toMatchObject({ binding: { actionId: authorization.binding.actionId },
+            deploymentChildAdmission: { routing: { kind: 'prepare', machineId: builder.id } } });
+        expect(await verify({ ...job, input: { ...job.input, requestKey: `${input.requestKey}-changed` } })).toBeNull();
+        expect(await verify(job, reviewedChild, builderKey.secretKey)).toBeNull();
+        if (reviewedChild) expect(await verify(job, { ...reviewedChild, role: 'preview.bindings' })).toBeNull();
     });
 
     it('binds Link preparation reads and mutation to the admitted Environment and owner', async () => {

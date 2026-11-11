@@ -1,3 +1,4 @@
+import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import { refuseDeploymentAuthorization } from '@/deployments/deploymentAuthorizationFailure';
 import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
@@ -24,6 +25,7 @@ import { createDeploymentDumpBackupSourceV1, createDeploymentVolumeBackupSourceI
 import { readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveEnvironmentDeploymentFactForHost } from '@/deployments/secrets/deploymentFacts';
+import { preparePreviewDomainFactForHost } from '@/deployments/previewDomainForHost';
 import type { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { readEnvironmentSecretLaunchAdmissionForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import type { OwnServerDeploymentMaterialization, OwnServerDeploymentRuntime, OwnServerDeploymentRuntimeAcquisition, OwnServerDeploymentRuntimeRequest } from './ownServerDeploymentTarget';
@@ -104,7 +106,9 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
     }>), snapshot: Readonly<{ environment: DeploymentEnvironmentDetailV1; content?: DeploymentOwnServerContentV1;
         deployment?: DeploymentReceiptHeaderV1;
         readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
-        readPreviewDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>) {
+        readPreviewDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>): Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{
+            sourceIntent: DeploymentOwnServerContentV1['sourceIntent'];
+        }>> {
             const { environment, content } = snapshot;
             const hostSignal = host.signal ?? new AbortController().signal;
             const signal = request.context.signal ? AbortSignal.any([hostSignal, request.context.signal]) : hostSignal;
@@ -151,7 +155,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 : materialization.kind === 'restoration' ? materialization.sourceDeploymentId : materialization.deploymentId;
             const restorationForDeploymentId = materialization.kind === 'restoration' ? materialization.deploymentId : undefined;
             const maintenanceOperationId = isDeploymentBackupActionIdV1(request.actionId)
-                ? request.context.operationAcceptance?.operationId ?? request.context.actionRequestId : undefined;
+                ? request.context.operationAcceptance?.operationId ?? request.context.actionRequestId ?? undefined : undefined;
             const admission = await readSecretAdmission({ credentials: host.credentials,
                 serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
                 installationId: identity.installationId, environmentId: environment.environment.id,
@@ -237,18 +241,16 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const environmentName = environment.content.name;
                 const commitSha = intent.kind === 'repository' ? intent.sha : undefined;
                 let previewDomain: Promise<Readonly<{ domainId: string; url: string }>> | undefined;
-                const readPreviewDomain = () => previewDomain ??= (async () => {
-                    const provenance = environment.content.previewProvenance;
-                    if (!provenance || !snapshot.readReferenceEnvironment || !snapshot.readPreviewDomain)
+                const readPreviewDomain = (source: Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['secrets']['resolveNonSecret']>>[0]) => previewDomain ??= (async () => {
+                    const captured = content?.previewDomain ?? request.context.invocationServices?.deploymentPreviewDomain;
+                    if (captured) return captured;
+                    if (!snapshot.readReferenceEnvironment || !snapshot.readPreviewDomain)
                         return refuse('reference_unavailable');
-                    const template = await snapshot.readReferenceEnvironment({ environmentId: provenance.templateEnvironmentId,
-                        context: request.context });
-                    const selection = template.content.previewTemplate?.domain;
-                    if (!selection) return refuse('reference_unavailable');
-                    const planned = await snapshot.readPreviewDomain({ serverId: host.serverId,
-                        templateEnvironmentId: provenance.templateEnvironmentId, selection,
-                        pullRequestNumber: provenance.pullRequestNumber, context: request.context });
-                    return { domainId: selection.domainId, url: planned.url };
+                    return await preparePreviewDomainFactForHost({ serverId: host.serverId,
+                        provenance: environment.content.previewProvenance, sources: [source] }, {
+                        readTemplate: environmentId => snapshot.readReferenceEnvironment!({ environmentId, context: request.context }),
+                        readDomain: input => snapshot.readPreviewDomain!({ ...input, context: request.context }),
+                    }) ?? refuse('reference_unavailable');
                 })();
                 const secrets: OwnServerDeploymentRuntimeAcquisition['secrets'] = {
                     installationPrivateSeed: privateSeed, grants: admission.grants,
@@ -257,7 +259,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         // These primitives belong to the already admitted acquisition.
                         if (source.kind === 'deploymentFact') {
                             if (source.fact === 'domainUrl' || source.fact === 'primaryUrl') {
-                                const planned = await readPreviewDomain();
+                                const planned = await readPreviewDomain(source);
                                 if (source.fact === 'domainUrl' && source.domainId !== planned.domainId)
                                     return refuse('reference_unavailable');
                                 return planned.url;
@@ -476,7 +478,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const review = await project.reviewDefinition({ signal });
                 const choices: import('@happier-dev/deployment-protocol').DeploymentBackupSourceV1[] = [];
                 for (const data of environment.content.template?.data ?? []) {
-                    if (data.engine !== 'postgres' || data.logicalBackup?.adapter !== 'postgres-v1'
+                    if (!(data.engine === 'postgres' && data.logicalBackup?.adapter === 'postgres-v1'
+                        || data.engine === 'sqlite' && data.logicalBackup?.adapter === 'sqlite-v1' && data.logicalBackup.path && SQLITE_RUNTIME_V1)
                         || !review.services.some(service => service.name === data.service)) continue;
                     choices.push(createDeploymentDumpBackupSourceV1(data.service));
                 }

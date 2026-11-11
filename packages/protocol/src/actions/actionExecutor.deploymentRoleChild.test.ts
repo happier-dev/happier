@@ -7,6 +7,7 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { DeploymentTargetRoleInputSchemasV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
+import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 
 const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
   targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -29,6 +30,7 @@ function context(): ActionExecutorContext {
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-root', binding: {
     serverIdentityId: 'home-identity', accountId: 'owner', principalId: 'principal', credentialId: 'deployment-token', grant,
     custodianAccountId: 'owner', machineId: 'controller', installationId: 'installation', actionId: 'deployments.deploy',
+    ...(isDeploymentChildRootActionIdV1('deployments.deploy') ? { deploymentChildRoot: true } : {}),
     environmentId: 'environment', requestId: 'deploy-request', requestEnvelopeDigest: 'A'.repeat(43),
     target: { kind: 'machine', machineId: 'controller' },
   } });

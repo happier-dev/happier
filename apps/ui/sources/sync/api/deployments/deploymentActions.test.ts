@@ -13,6 +13,7 @@ import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -329,7 +330,7 @@ async function answerControllerAction(actionId: ActionId, machineId: string,
         installationId: `installation-${machineId}`, ...(deploymentSource ? { deploymentSource } : {}),
         actionId, tokenEpoch: 0, requesterInvocation: 'required',
         ...(encryption ? { encryption } : {}), ...(failure ? { failure } : {}), execute });
-    for (const path of [`/v1/machines/${machineId}`, '/v1/machines/read-batch',
+    for (const path of ['/v1/machines', `/v1/machines/${machineId}`, '/v1/machines/read-batch',
         bindExternalActionExecutionAuthorizationHttpPathV1(actionId), `/v1/actions/${actionId}`]) {
         homes.answer(serverId, path, { select: async (_body, request) => {
             const response = await boundary.handle(new URL(request.url), request.init);
@@ -970,6 +971,59 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
     });
 });
 
+
+it.each(['retained child', 'cold preview', 'explicit conflict', 'prepared child'] as const)(
+    'routes authored preview Create mint through its retained controller (%s)', async scenario => {
+    const actionId = 'deployments.environments.create';
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const base = createDeploymentEnvironmentDetailV1().environment;
+    const template = { ...base, id: 'preview-template', controllerMachineId: 'template-controller' };
+    const child = { ...base, id: 'retained-preview', controllerMachineId: 'retained-controller',
+        purpose: 'preview' as const, previewTemplateEnvironmentId: template.id, previewRepositoryId: 'repository',
+        previewPullRequestId: 'pull-request', previewTargetLinkId: 'original-runtime' };
+    const repository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' } as const;
+    const preview = { templateEnvironmentId: template.id, expectedTemplateRevision: template.revision,
+        pullRequestId: child.previewPullRequestId, runtimeTargetLinkId: child.previewTargetLinkId };
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId, projectSourceId: template.projectSourceId,
+        requestKey: 'ui-retained-preview', protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
+        ...(scenario === 'prepared child' ? { ...content, controllerMachineId: child.controllerMachineId, preview }
+            : { mode: 'preview', preview: { ...preview, headSha: 'a'.repeat(40), provenance: { v: 1,
+                templateEnvironmentId: template.id, runtimeTargetLinkId: child.previewTargetLinkId, repository,
+                pullRequestId: child.previewPullRequestId, pullRequestNumber: 7, author: { id: 'author', login: 'author' },
+                headRepository: repository } } }) });
+    homes.answer(serverId, `GET /v1/deployments/environments/${template.id}`, { body: {
+        ok: true, environment: template, targetLinks: [] } });
+    let pages = 0;
+    homes.answer(serverId, 'GET /v1/deployments/environments', { select: (_body, request) => {
+        pages++;
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return { body: DeploymentActionOutputSchemasV1['deployments.environments.list'].parse({ ok: true,
+            items: scenario === 'cold preview' ? [] : cursor === 'retained-page' ? [child]
+                : [{ ...child, id: 'other-runtime-preview', previewTargetLinkId: 'different-runtime' }],
+            nextCursor: scenario === 'cold preview' || cursor === 'retained-page' ? null : 'retained-page', coverage: 'complete' }) };
+    } });
+    const machineId = scenario === 'cold preview' ? template.controllerMachineId : child.controllerMachineId;
+    const result = scenario === 'prepared child' ? { ok: true, environmentId: child.id, revision: child.revision }
+        : { kind: 'preview', input: { ...input, controllerMachineId: machineId }, review: {
+            creationDefaults: { values: { retainPreviousDeployments: 1 }, sources: { retainPreviousDeployments: 'builtin' } } } };
+    await answerControllerAction(actionId, machineId, (admitted, transport) => {
+        expect(transport.target).toEqual({ kind: 'machine', machineId });
+        expect(admitted).toEqual(input);
+        return result;
+    });
+    // Prepared execution reaches the real Machine-wake reader, whose app-owned
+    // Sync singleton must be loaded through the same canonical test bridge.
+    const syncBridge = scenario === 'prepared child' ? await loadSyncSingletonForTests() : undefined;
+    const actual = await createDefaultActionExecutor().executeConfirmed(actionId, input, { ...uiHost,
+        serverId, expectedAccountId: 'owner', actionRequestId: 'ui-preview-routing',
+        ...(scenario === 'explicit conflict' ? { externalActionTarget: { kind: 'machine', machineId: template.controllerMachineId } as const } : {}) })
+        .finally(() => syncBridge?.dispose());
+    expect(actual, actual.ok ? 'success' : `failure:${actual.errorCode}`).toMatchObject(scenario === 'explicit conflict'
+        ? { ok: false, errorCode: 'target_not_local' } : { ok: true, result });
+    expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(scenario === 'explicit conflict' ? 0 : 1);
+    expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
+    expect(pages).toBe(scenario === 'prepared child' ? 0 : scenario === 'cold preview' ? 1 : 2);
+});
 
 it.each(['historical own UI', 'web terminal Session'] as const)('consumes one approved Environment create across the receiving Machine admission (%s)', async originKind => {
     const actionId = 'deployments.environments.create';

@@ -5187,6 +5187,50 @@ describe('createActionExecutor (approvals)', () => {
     expect(effects).toBe(1);
   });
 
+  it('preserves the Artifact read failure cause before approval execution', async () => {
+    let stored = createApprovalRequest('open');
+    let effects = 0;
+    const executor = createExecutor({
+      approvalsGet: async () => {
+        if (stored.status === 'approved') throw Object.assign(new Error('pool acquisition failed'), { code: 'P2024' });
+        return structuredClone(stored);
+      },
+      approvalsUpdate: async ({ request }) => {
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      sessionSendMessage: async () => { effects += 1; return { status: 'accepted', localId: 'unexpected' }; },
+    });
+    await expect(executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'P2024', effectAttempted: false,
+        failureCause: { errorClass: 'Error', errorCode: 'P2024', httpStatus: null, phase: 'approval.artifact_read' } });
+    expect(stored.status).toBe('approved');
+    expect(effects).toBe(0);
+  });
+
+  it('preserves the settlement failure cause when the execution outcome is unknown', async () => {
+    let stored = createApprovalRequest('approved');
+    let effects = 0;
+    const executor = createExecutor({
+      approvalsGet: async () => structuredClone(stored),
+      approvalsUpdate: async ({ request }) => {
+        if (request.status === 'executed') throw Object.assign(new Error('pool acquisition failed'), { code: 'P2024' });
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      sessionSendMessage: async () => { effects += 1; return { status: 'accepted', localId: 'executed' }; },
+    });
+    await expect(executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown',
+        failureCause: { errorClass: 'Error', errorCode: 'P2024', httpStatus: null, phase: 'approval.settlement' } });
+    expect(stored.status).toBe('executing');
+    expect(effects).toBe(1);
+  });
+
   it.each(['throws', 'refuses'] as const)('keeps a lost execution claim acknowledgement outcome unknown instead of inviting a retry (%s)', async acknowledgement => {
     let stored = createApprovalRequest('approved');
     let effects = 0;

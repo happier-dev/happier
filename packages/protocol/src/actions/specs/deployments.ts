@@ -7,7 +7,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type D
 import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymentBindingSelectionNarrowing.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
-import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments/deploymentBackupConfigureV1.js';
 
@@ -236,7 +236,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === 'deployments.bindings.set' ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish.prepare'
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: query || backup || backupConfigure || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: query || backup || backupConfigure || isDeploymentDomainChildActionIdV1(id) || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === 'deployments.environments.create' ? {
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
@@ -253,7 +253,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === 'deployments.teardown' ? { executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
-    ...(id === 'deployments.environments.create'
+    ...(id === 'deployments.environments.create' || isDeploymentDomainChildActionIdV1(id)
       ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || backupConfigure || id === 'deployments.backups.restore' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository'
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.

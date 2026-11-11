@@ -353,7 +353,8 @@ describe('installed deployment child ingress', () => {
             } } : {}),
             job: DeploymentChildRpcV1Schema.parse({ v: 1, kind, actionId: 'deployments.deploy',
                 machineId: 'receiver', installationId: 'receiver-installation',
-                ...(kind === 'prepare' ? { expectedRevision: 1, expectedTargetLinkRevision: 1 }
+                ...(kind === 'prepare' ? { expectedRevision: 1, expectedTargetLinkRevision: 1,
+                    previewDomain: { domainId: 'selected-template-domain', url: 'https://pr-17.preview.test' } }
                     : { deploymentId: 'deployment', actionOperationId: 'operation',
                         ...(kind === 'member' ? { phase: 'activate', selectedDeploymentId: 'selected-deployment' } : {}) }),
                 input: { serverId: kind === 'member' && encryptionMode === 'e2ee' ? 'captured-profile' : 'srv_archive_home',
@@ -506,6 +507,8 @@ describe('installed deployment child ingress', () => {
             for (const job of [
                 { ...fixture.job, input: { ...fixture.job.input, targetLinkId: 'substituted-link' } },
                 { ...fixture.job, expectedRevision: 2 },
+                ...(kind === 'prepare' ? [{ ...fixture.job,
+                    previewDomain: { domainId: 'other-domain', url: 'https://substituted.test' } }] : []),
             ]) await expect(handler(job, ingress)).resolves.toMatchObject({ ok: false, errorCode: 'deployment_child_binding_mismatch' });
             await expect(handler(fixture.job, { ...ingress, verifyMachineAdmissionCurrent: async () => false }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'deployment_child_admission_revoked' });

@@ -1,3 +1,4 @@
+import type { DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
 import { PluginError, BackupDestinationOpenV1ProtocolSchema, type BackupDestinationOpenV1, type BackupDestinationOpenInputV1 } from '@happier-dev/plugin-sdk';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -206,39 +207,71 @@ export function createPrepareDeploymentBackupConfigurationDestinationForHost(hos
     };
 }
 
-/** A volume source needs destination custody, not an invented database binding.
- * The native Compose owner resolves the selected volume and its actual writers. */
+export type OwnServerBackupRunOperandsForHost = Awaited<ReturnType<typeof prepareDeploymentBackupEnvironmentForHost>> & Readonly<{
+    configuration: DeploymentBackupConfigurationV1;
+    data: NonNullable<DeploymentBackupRunInputV1['data']>;
+    destinations: readonly (DeploymentBackupRestoreCaptureV1['target'] & Readonly<{ environmentId: string }>)[];
+}>;
+
+/** Resolve each configured logical source from the captured template once. P42
+ * resolves the selected variable bindings together under the same custody. */
 export async function prepareOwnServerBackupRunOperandsForHost(input: BackupDestinationPreparation & Readonly<{
     data: NonNullable<DeploymentEnvironmentContentV1['template']>['data'];
-}>): Promise<OwnServerBackupRepositoryOperandsForHost | OwnServerPreMigrationBackupOperandsForHost> {
+}>): Promise<OwnServerBackupRepositoryOperandsForHost | OwnServerBackupRunOperandsForHost> {
     const configuration = input.configuration;
     if (!configuration || 'notNeeded' in configuration) return refuse('backup_required');
-    return configuration.sources.some(source => source.kind === 'dump')
-        ? prepareOwnServerPreMigrationBackupOperandsForHost(input)
-        : prepareOwnServerBackupRepositoryOperandsForHost(input);
+    const dumps = configuration.sources.filter(source => source.kind === 'dump');
+    if (!dumps.length) return prepareOwnServerBackupRepositoryOperandsForHost(input);
+    const selected = dumps.map(source => {
+        const data = input.data?.find(row => row.service === source.service);
+        if (!data?.logicalBackup || data.logicalBackup.adapter !== 'postgres-v1' && data.logicalBackup.adapter !== 'sqlite-v1')
+            return refuse('unsupported_action');
+        if (data.logicalBackup.adapter === 'sqlite-v1') {
+            if (!data.logicalBackup.path) return refuse('unsupported_action');
+            return { data, path: data.logicalBackup.path };
+        }
+        const databaseKey = data.logicalBackup.database;
+        const binding = input.preparation.bindings.find(binding => binding.purpose === 'variable'
+            && binding.phase === 'runtime' && binding.name === databaseKey);
+        if (!binding || binding.purpose !== 'variable') throw new PluginError({ code: 'secret_missing',
+            message: 'The configured database binding is unavailable' });
+        return { data, binding };
+    });
+    const { opened, preparation } = await captureBackupDestination(input);
+    const databaseBindings = [...new Map(selected.flatMap(row => row.binding ? [[row.binding.name, row.binding] as const] : [])).values()];
+    const prepared = await prepareDeploymentBackupEnvironmentForHost({ ...opened, databaseBindings,
+        signal: input.signal, isCurrent: input.isCurrent, preparation });
+    return { ...prepared, configuration, data: selected.map(row => row.data), destinations: selected.map(row => ({
+        environmentId: input.preparation.environmentId, service: row.data.service,
+        ...(row.path ? { adapter: 'sqlite-v1' as const, path: row.path }
+            : { adapter: 'postgres-v1' as const, database: prepared.databases.get(row.binding!.name)! }),
+    })) };
 }
 
-/** Lazy operands for P41's admitted pre-migration backup. Binding keys are
- * resolved by P42, never interpreted as literal database names by the consumer. */
+/** P41's current PostgreSQL migration receipt consumes the same selected-source
+ * resolution; it does not open or resolve a second destination. */
 export async function prepareOwnServerPreMigrationBackupOperandsForHost(input: BackupDestinationPreparation & Readonly<{
     data: NonNullable<DeploymentEnvironmentContentV1['template']>['data'];
 }>): Promise<OwnServerPreMigrationBackupOperandsForHost> {
-    const configuration = input.configuration;
-    if (!configuration || 'notNeeded' in configuration) return refuse('backup_required');
-    if (configuration.ownership.environmentId !== input.preparation.environmentId) return refuse('stale_input');
-    const dump = configuration.sources.find(source => source.kind === 'dump');
-    const data = input.data?.find(database => database.service === dump?.service);
-    if (data?.engine !== 'postgres' || data.logicalBackup?.adapter !== 'postgres-v1') return refuse('unsupported_action');
-    const databaseKey = data.logicalBackup.database;
-    const databaseBinding = input.preparation.bindings.find(binding => binding.purpose === 'variable'
-        && binding.phase === 'runtime' && binding.name === databaseKey);
-    if (!databaseBinding || databaseBinding.purpose !== 'variable') throw new PluginError({
-        code: 'secret_missing', message: 'The configured database binding is unavailable' });
-    const { opened, preparation } = await captureBackupDestination(input);
-    const prepared = await prepareDeploymentBackupEnvironmentForHost({ ...opened, databaseBindings: [databaseBinding],
-        signal: input.signal, isCurrent: input.isCurrent,
-        preparation });
-    return { ...prepared, configuration, data,
-        destination: { environmentId: input.preparation.environmentId, service: data.service,
-            adapter: 'postgres-v1', database: prepared.databases.get(databaseBinding.name)! } };
+    const prepared = await prepareOwnServerBackupRunOperandsForHost(input);
+    try {
+        if (!('destinations' in prepared)) return refuse('unsupported_action');
+        const source = prepared.configuration.sources.find(source => source.kind === 'dump');
+        const destination = prepared.destinations.find(target => target.service === source?.service);
+        if (!destination || destination.adapter !== 'postgres-v1') return refuse('unsupported_action');
+        return { ...prepared, destination };
+    } catch (error) { if ('dispose' in prepared) await prepared.dispose(); throw error; }
+}
+
+/** The public database field remains literal. SQLite's declared service path is
+ * the native operand; neither callers nor source ids choose another file. */
+export function resolveOwnServerDatabaseRestoreTargetForHost(data: NonNullable<DeploymentEnvironmentContentV1['template']>['data'],
+    selected: Readonly<{ service: string; database: string }>): Extract<DeploymentBackupRestoreCaptureV1['target'], { adapter: 'postgres-v1' | 'sqlite-v1' }> {
+    const logical = data?.find(row => row.service === selected.service)?.logicalBackup;
+    if (logical?.adapter === 'sqlite-v1') {
+        if (!logical.path || selected.database !== logical.path) return refuse('stale_input');
+        return { adapter: 'sqlite-v1', service: selected.service, path: logical.path };
+    }
+    if (logical?.adapter !== 'postgres-v1') return refuse('unsupported_action');
+    return { adapter: 'postgres-v1', service: selected.service, database: selected.database };
 }

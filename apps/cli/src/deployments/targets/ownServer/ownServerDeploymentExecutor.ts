@@ -42,7 +42,7 @@ import { executeOwnServerNativeRestore, observeOwnServerNativeRestoreDestination
     confirmOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput, type OwnServerNativeUploadRestoreInput } from './nativeRestore';
 import { executeOwnServerBackupForHost } from './backup';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
-import { createOwnServerDatabaseUsernameReaderForHost } from './backupDestination';
+import { createOwnServerDatabaseUsernameReaderForHost, resolveOwnServerDatabaseRestoreTargetForHost } from './backupDestination';
 export { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
 import { executeOwnServerRollout, recordOwnServerCandidateCleanup, projectOwnServerCandidateCleanupFailure, OWN_SERVER_CANDIDATE_CLEANUP_STEP_ID } from './ownServerRollout';
 import type { OwnServerDeploymentRequest, OwnServerDeploymentReviewRequest, OwnServerDeploymentRuntimeRequest, OwnServerDeploymentResult, OwnServerDeploymentReview,
@@ -353,7 +353,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         onIncumbentServicesChanged?(services: readonly string[]): Promise<void>;
     }>, effect: (native: Readonly<{
         native: Parameters<typeof observeOwnServerNativeRestoreDestination>[0];
-        createInput: OwnServerNativeRestoreInputFactory;
+        createInput(capture: Pick<DeploymentRestoreResolvedCaptureV1, 'configuration' | 'repository'>): Promise<OwnServerNativeRestoreInput>;
         createUploadInput(upload: NonNullable<OwnServerRestoreRequestForHost['upload']>, destination: Parameters<typeof prepareOwnServerNativeRestore>[1]['destination']): Promise<OwnServerNativeUploadRestoreInput>;
         runtime: OwnServerDeploymentRuntimeAcquisition;
         createBackupInput(operands: Pick<OwnServerNativeRestoreInput, 'execEnv' | 'readAccess'>): Promise<OwnServerNativeRestoreInput>;
@@ -393,7 +393,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         const source = await captureOwnServerDeploymentSource({ source: recovery.source,
                             admission: recovery.runtime.source, sharedBinds: render.sharedData?.bindings, namedVolumes });
                         generation = await publishOwnServerDeploymentReceiptContentForHost(generation,
-                            { ...generation.content, ownServer: { ...generation.content.ownServer,
+                            { ...generation.content, ownServer: { ...generation.content.ownServer, approvedInputBasis: generationBasis,
                                 sources: replaceOwnServerDeploymentSource(generation.content.ownServer?.sources, source) } },
                             input.request.context, host.writeTransition);
                     },
@@ -402,7 +402,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             machineId: host.machineId, installationId: input.installationId,
                             bindings: environment.content.bindings, assertCurrent: recovery.assertCurrent } }),
                     onIncumbentServicesChanged: input.onIncumbentServicesChanged };
-                const createInput: OwnServerNativeRestoreInputFactory = async capture => {
+                const createInput = async (capture: Pick<DeploymentRestoreResolvedCaptureV1, 'configuration' | 'repository'>): Promise<OwnServerNativeRestoreInput> => {
                     if (!recovery.runtime.openBackupDestination) refuse('unsupported_action');
                     const opened = await recovery.runtime.openBackupDestination!(capture.configuration);
                     const identities = new Set(capture.configuration.credentialBindings.map(environmentSecretBindingIdentityV1));
@@ -429,7 +429,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 };
                 return effect({ native, createInput, runtime: recovery.runtime,
                     async createUploadInput(upload, destination) { return { ...native, upload,
-                        ...(destination.adapter === 'volume-v1' ? { runtimeImage: await project.prepareResticRuntime({ render, context }) } : {}), operationProgress: input.request.context.operationProgress,
+                        ...(destination.adapter !== 'postgres-v1' ? { runtimeImage: await project.prepareResticRuntime({ render, context }) } : {}), operationProgress: input.request.context.operationProgress,
                         onStopPending: () => input.onStopPending?.() }; },
                     async createBackupInput(operands) {
                         return { ...native, ...operands, runtimeImage: await project.prepareResticRuntime({ render, context }),
@@ -508,7 +508,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 : await runtime.prepareBackupRepositoryOperands?.();
             if (!operands) refuse('unsupported_action');
             try { return await executeOwnServerBackupForHost(admitted, await createBackupInput(operands), operands, operationId); }
-            finally { if ('dispose' in operands) await operands.dispose(); }
+            finally { if ('data' in operands) await operands.dispose(); }
         });
         const check = request.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 ? 'run'
             : request.actionId === DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 ? 'verify'
@@ -517,7 +517,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const delivery = await readEnvironmentAlertDeliveryForHost(host, snapshot.environment.environment.id, snapshot.signal);
         if (check === 'run') return execute(delivery);
         const settlement = { environment: snapshot.environment, targetLinkId: snapshot.link.id,
-            check, operationId, configRevision: configuration.configRevision, delivery };
+            check: check satisfies 'verify' | 'prune', operationId, configRevision: configuration.configRevision, delivery };
         try {
             const result = await execute(delivery);
             await publishBackupSettlementNotice({ ...settlement, outcome: 'succeeded' });
@@ -534,7 +534,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const repositorySource = input.source.kind === 'repository' ? input.source : undefined;
         const copy = repositorySource?.origin;
         const upload = input.source.kind === 'upload' ? request.upload : undefined;
-        if (!repositorySource && (!upload || upload.transferId !== input.source.transferId)) refuse('restore_upload_unavailable');
+        if (input.source.kind === 'upload' && (!upload || upload.transferId !== input.source.transferId)) refuse('restore_upload_unavailable');
         const snapshot = await readEnvironment(request, input.expectedRevision);
         if (input.machineId !== host.machineId || !snapshot.link.members.some(member => member.machineId === input.machineId
             && member.installationId === input.installationId)) refuse('target_mismatch');
@@ -575,7 +575,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             if (upload) {
                 const selected = input.mode === 'prepare' ? input.destination : retained?.prepared.destination;
                 const target = selected && ('kind' in selected ? selected.kind === 'database'
-                    ? { service: selected.service, database: selected.database, adapter: 'postgres-v1' as const }
+                    ? resolveOwnServerDatabaseRestoreTargetForHost(snapshot.environment.content.template?.data, selected)
                         : { service: selected.service, volume: selected.volume, adapter: 'volume-v1' as const }
                     : selected);
                 if (!target) refuse('unsupported_action');
@@ -590,7 +590,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     return confirmOwnServerNativeRestore(await createUploadInput(upload, destination), { prepare: retained.prepared,
                         source, sourceFormat: retained.prepared.sourceFormat, destination });
                 }
-                const safety = destination.hasMeaningfulData ? destination.adapter === 'volume-v1'
+                const safety = destination.hasMeaningfulData ? destination.adapter !== 'postgres-v1'
                     ? await runtime.prepareBackupRunOperands?.() : await runtime.preparePreMigrationBackupOperands?.() : undefined;
                 try {
                     if (destination.hasMeaningfulData && !safety) refuse('backup_required');
@@ -599,11 +599,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         || safety.destination.environmentId !== destination.environmentId)) refuse('stale_input');
                     const prepared = await prepareOwnServerNativeRestore(await createUploadInput(upload, destination), { operationId, source,
                         destination, ...(safety ? { safetyBackup: { environmentId: destination.environmentId,
-                            configuration: safety.configuration, ...('data' in safety ? { data: safety.data } : {}) } } : {}) }, safety ? await createBackupInput(safety) : undefined);
+                            configuration: safety.configuration, ...('data' in safety ? { data: safety.data, restoreTargets: 'destinations' in safety ? safety.destinations : [safety.destination] } : {}) } } : {}) }, safety ? await createBackupInput(safety) : undefined);
                     if (prepared.source.kind !== 'upload' || prepared.repository) refuse('outcome_unknown');
                     await reviewSnapshot(prepared.destination);
                     return { kind: 'prepared', prepared: { ...prepared, source: prepared.source } };
-                } finally { await safety?.dispose(); }
+                } finally { if (safety && 'data' in safety) await safety.dispose(); }
             }
             if (!repositorySource) refuse('unsupported_action');
             // Manifest-only retained runs have no historical database/configuration.
@@ -611,10 +611,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             // bytes are still verified against the original manifest before safety.
             const operands = input.mode === 'prepare' && request.backup && !backup
                 ? await runtime.preparePreMigrationBackupOperands?.() : undefined;
-            let safetyOperands: Awaited<ReturnType<NonNullable<typeof runtime.prepareBackupRunOperands>>> | undefined;
+            let safetyOperands: Awaited<ReturnType<NonNullable<typeof runtime.prepareBackupRunOperands>>>
+                | Awaited<ReturnType<NonNullable<typeof runtime.preparePreMigrationBackupOperands>>> | undefined;
             try {
                 const target = input.mode === 'prepare' ? copy
-                    ? input.destination?.kind === 'database' ? { service: input.destination.service, database: input.destination.database, adapter: 'postgres-v1' as const }
+                    ? input.destination?.kind === 'database' ? resolveOwnServerDatabaseRestoreTargetForHost(snapshot.environment.content.template?.data, input.destination)
                         : input.destination?.kind === 'volume' ? { service: input.destination.service, volume: input.destination.volume, adapter: 'volume-v1' as const } : undefined
                     : backup?.target ?? operands?.destination : retained?.prepared.destination;
                 if (!target) refuse('operation_unavailable');
@@ -631,7 +632,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             source: { environmentId: copy.environmentId, ...backup.target },
                             destination: destination.adapter === 'volume-v1'
                                 ? { environmentId: input.environmentId, service: destination.service, volume: destination.volume, adapter: destination.adapter }
-                                : { environmentId: input.environmentId, service: destination.service, database: destination.database, adapter: destination.adapter },
+                                : destination.adapter === 'sqlite-v1'
+                                    ? { environmentId: input.environmentId, service: destination.service, path: destination.path, adapter: destination.adapter }
+                                    : { environmentId: input.environmentId, service: destination.service, database: destination.database, adapter: destination.adapter },
                         } } : {}),
                         restoreBackupId: repositorySource.snapshotId, destination, ...(backup ? { capture: backup }
                             : operands && access && request.backup ? { manifest: request.backup.manifest,
@@ -640,8 +643,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 : { receipt: captureReceipt! }) });
                     if (resolved.kind === 'refused') refuse(resolved.code);
                     const capture = resolved.capture;
-                    if (destination.hasMeaningfulData && (copy || destination.adapter === 'volume-v1')) {
-                        safetyOperands = destination.adapter === 'volume-v1' ? await runtime.prepareBackupRunOperands?.()
+                    if (destination.hasMeaningfulData && (copy || destination.adapter !== 'postgres-v1')) {
+                        safetyOperands = destination.adapter !== 'postgres-v1' ? await runtime.prepareBackupRunOperands?.()
                             : await runtime.preparePreMigrationBackupOperands?.();
                         if (!safetyOperands) refuse('backup_required');
                         const safetyDestination = 'destination' in safetyOperands ? safetyOperands.destination : undefined;
@@ -653,23 +656,22 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         { ...capture, operationId,
                             // Copy reads the source repository and protects an existing
                             // destination through that Environment's own backup custody.
-                            ...(copy || destination.adapter === 'volume-v1' ? safetyOperands ? { safetyBackup: { environmentId: destination.environmentId,
-                                configuration: safetyOperands.configuration, ...('data' in safetyOperands ? { data: safetyOperands.data } : {}) } } : {}
+                            ...(copy || destination.adapter !== 'postgres-v1' ? safetyOperands ? { safetyBackup: { environmentId: destination.environmentId,
+                                configuration: safetyOperands.configuration, ...('data' in safetyOperands ? { data: safetyOperands.data, restoreTargets: 'destinations' in safetyOperands ? safetyOperands.destinations : [safetyOperands.destination] } : {}) } } : {}
                                 : { safetyBackup: { environmentId: destination.environmentId, configuration: capture.configuration,
-                                data: { engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } } } }) },
+                                data: [{ engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } }] } }) },
                         safetyOperands ? await createBackupInput(safetyOperands) : undefined);
                     await reviewSnapshot(prepared.destination);
                     return { kind: 'prepared', prepared, configuration: capture.configuration };
                 }
-                if (!retained || !('configuration' in retained) || !('repository' in retained.prepared)
-                    || retained.prepared.source.kind === 'upload') refuse('stale_input');
+                if (!retained || !('configuration' in retained) || !('repository' in retained.prepared)) refuse('stale_input');
                 const prepared = retained.prepared;
                 const capture: DeploymentRestoreResolvedCaptureV1 = { source: prepared.source, sourceFormat: prepared.sourceFormat,
                     destination, repository: prepared.repository, configuration: retained.configuration };
                 return confirmOwnServerNativeRestore(await createInput(capture), { prepare: prepared, source: prepared.source,
                     sourceFormat: prepared.sourceFormat, destination });
             } finally {
-                try { if (safetyOperands) await safetyOperands.dispose(); }
+                try { if (safetyOperands && 'data' in safetyOperands) await safetyOperands.dispose(); }
                 finally { if (operands) await operands.dispose(); }
             }
         });
@@ -884,6 +886,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 environment: restored && selectedBasis ? { ...snapshot.environment, content: { ...snapshot.environment.content,
                     bindings: selectedBasis.bindings, ownServer: selectedBasis.ownServer } } : snapshot.environment,
                 content: { ...receipt.content, sourceIntent: selected.content.sourceIntent,
+                ...((selected.content.previewDomain ?? receipt.content.previewDomain)
+                    ? { previewDomain: selected.content.previewDomain ?? receipt.content.previewDomain } : {}),
                 services: selected.content.services,
                 images: selected.content.images, ownServer: selected.content.ownServer } };
             const prepared = await prepare({ ...request, materialization: restored ? { kind: 'restoration',
@@ -1129,7 +1133,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                     await executeOwnServerNativeRestore(createInput, { receipt: captureReceipt,
                                         operationId: receipt.deployment.actionOperationId, restoreBackupId, destination,
                                         safetyBackup: { environmentId: destination.environmentId, configuration: backup.configuration,
-                                            data: { engine: 'postgres', service: destination.service, logicalBackup: { adapter: 'postgres-v1' } } } });
+                                            data: [{ engine: 'postgres', service: destination.service, logicalBackup: { adapter: 'postgres-v1' } }] } });
                                 });
                                 await writeRestoreStep('succeeded');
                                 await publishBackupSettlementNotice({ environment: snapshot.environment, targetLinkId: snapshot.link.id,

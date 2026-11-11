@@ -29,7 +29,7 @@ import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifie
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
-  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -1166,6 +1166,7 @@ export const ExternalActionWorkflowOriginV1Schema = lazyZodSchema(() => z.strict
 /** Installed Machine roots retain the receiver's host caller through approval. */
 export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boolean {
   return ManagedMachineActionIdV1Schema.safeParse(actionId).success
+    || actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
     || actionId === 'deployments.prepare'
     || actionId === 'deployments.templates.instantiate'
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
@@ -1379,7 +1380,8 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     context.addIssue({ code: 'custom', path: ['handoffPreflight'], message: 'Handoff preflight retains its exact original root and admitted peer' });
   }
 })));
-export type ExternalActionExecutionAuthorizationBindingV1 = z.infer<typeof ExternalActionExecutionAuthorizationBindingV1Schema>;
+export type ExternalActionExecutionAuthorizationBindingV1 = z.infer<typeof ExternalActionExecutionAuthorizationBindingV1Schema>
+  & Readonly<{ deploymentNativeAdmission?: import('../deployments/deploymentCandidatePublicationV1.js').DeploymentNativeAdmissionV1 }>;
 
 /** Existing finite roots and declared runtime work share one original-root wake bridge. */
 export function isExternalActionManagedWakeRootV1(root: Pick<ExternalActionExecutionAuthorizationBindingV1,

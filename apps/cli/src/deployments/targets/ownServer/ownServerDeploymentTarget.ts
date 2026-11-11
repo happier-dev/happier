@@ -78,6 +78,7 @@ export type OwnServerDeploymentMemberRouteEnrollmentForHost = Readonly<{
 }>;
 export type OwnServerDeploymentReadContext = Readonly<{
     environmentId: string;
+    targetLinkId?: string;
     context: ActionExecutorContext;
 }>;
 export type OwnServerDeploymentTransition = OwnServerDeploymentReadContext & Readonly<{
@@ -86,7 +87,7 @@ export type OwnServerDeploymentTransition = OwnServerDeploymentReadContext & Rea
     receiptHeader: DeploymentReceiptHeaderV1;
     expectedRevision: number;
     state: DeploymentStateV1;
-    content: DeploymentOwnServerContentV1;
+    content: DeploymentContentV1;
     teardownProof?: DeploymentTeardownProofV1;
 }>;
 
@@ -174,7 +175,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         preparePreMigrationBackupOperands?(): Promise<import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
         prepareBackupRepositoryOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost>;
         prepareBackupRunOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost
-            | import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
+            | import('./backupDestination').OwnServerBackupRunOperandsForHost>;
         /** Explicit Source/workspace physical custody witness with the local installed-runtime guard. */
         assertSourceCurrent(): Promise<void>;
         /** Local admitted-runtime cancellation, installation and invocation lifetime. */

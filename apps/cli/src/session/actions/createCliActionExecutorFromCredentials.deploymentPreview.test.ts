@@ -58,6 +58,9 @@ it.each([
     ['deployments.environments.create', 'preview', true], ['deployments.environments.create', 'apply', true],
     ['deployments.environments.create', 'preview', false], ['deployments.environments.create', 'apply', false],
     ['deployments.environments.create', 'apply', false, 'host', false, true],
+    ['deployments.environments.create', 'apply', false, 'host', false, false, 'retained'],
+    ['deployments.environments.create', 'apply', false, 'host', false, false, 'cold'],
+    ['deployments.environments.create', 'apply', true, 'plugin', false, false, 'retained'],
     ['deployments.targets.link', 'apply', true],
     ['deployments.templates.instantiate', 'preview', false], ['deployments.templates.instantiate', 'apply', false],
     ['deployments.templates.instantiate', 'preview', true],
@@ -71,7 +74,7 @@ it.each([
     ['deployments.environments.moveToRepository', 'preview', true, 'plugin', true],
     ['deployments.environments.moveToRepository', 'preview', true, 'plugin', false],
     ['session.spawn_new', 'execute', false], ['session.spawn_new', 'prepare', false],
-] as const)('admits %s (%s, explicit=%s, caller=%s, repository=%s, preparedPreview=%s) at Home even on the own local daemon', async (actionId, mode, explicit, caller: 'host' | 'plugin' = 'host', repositoryWorkspace = false, preparedPreview = false) => {
+] as const)('admits %s (%s, explicit=%s, caller=%s, repository=%s, preparedPreview=%s, authoredPreview=%s) at Home even on the own local daemon', async (actionId, mode, explicit, caller: 'host' | 'plugin' = 'host', repositoryWorkspace = false, preparedPreview = false, authoredPreview?: 'retained' | 'cold') => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-deployment-preview-',
         env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
@@ -96,13 +99,20 @@ it.each([
         const move = actionId === 'deployments.environments.moveToRepository';
         const workspaceMachine = { ...machine, id: 'repository-daemon', installationId: 'repository-installation' };
         const originMachine = { ...machine, id: 'origin-host', installationId: 'origin-installation' };
-        const selectedMachine = preparedPreview ? originMachine : move || template && repositoryWorkspace ? workspaceMachine : machine;
+        const selectedMachine = preparedPreview || authoredPreview === 'retained' ? originMachine : move || template && repositoryWorkspace ? workspaceMachine : machine;
         const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
         const workspace = { id: 'repository-workspace', serverId: 'srv_home', machineId: workspaceMachine.id,
             rootPath: '/repository/app', createdAtMs: 1, repositoryIdentity: repository, source: { sourceId: 'source', revision: 1 } };
         const accountSettings = accountSettingsParse(setupSpawn ? { actionsSettingsV1: { v: 1,
             actions: { 'session.spawn_new': { approvalRequiredSurfaces: ['cli'] } } } } : {});
-        const input = move ? DeploymentMoveToRepositoryInputV1Schema.parse({ mode, serverId: 'srv_home', environmentId: 'environment',
+        const input = authoredPreview ? { mode, serverId: 'srv_home', projectSourceId: 'source', requestKey: 'create-preview',
+            name: 'pr-17', protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers', preview: {
+                templateEnvironmentId: 'template', expectedTemplateRevision: 1, runtimeTargetLinkId: 'template-runtime',
+                pullRequestId: '17', headSha: 'a'.repeat(40), provenance: { v: 1, templateEnvironmentId: 'template',
+                    runtimeTargetLinkId: 'template-runtime', repository, headRepository: { ...repository, repository: 'contributor/app' },
+                    pullRequestId: '17', pullRequestNumber: 17, author: { id: 'contributor', login: 'contributor' } },
+            },
+        } : move ? DeploymentMoveToRepositoryInputV1Schema.parse({ mode, serverId: 'srv_home', environmentId: 'environment',
             definition: { contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, path: 'compose.yaml',
             workspace: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.id },
             ...(repositoryWorkspace ? { repository,
@@ -164,6 +174,18 @@ it.each([
         const homeRequests = vi.spyOn(axios, 'request').mockImplementation(async request => {
             if (new URL(request.url!).pathname === managedMachineActionEndpointPathV1('machines.managed.list'))
                 return { status: 200, data: { machines: [] } };
+            if (authoredPreview && new URL(request.url!).pathname === '/v1/deployments/environments') {
+                expect(new URL(request.url!).searchParams.get('projectSourceId')).toBe('source');
+                expect(new URL(request.url!).searchParams.get('previewTemplateEnvironmentId')).toBe('template');
+                return { status: 200, data: { ok: true, items: authoredPreview === 'retained'
+                    ? [createDeploymentEnvironmentHeaderV1({ id: 'retained', serverId: 'srv_home', projectSourceId: 'source',
+                        purpose: 'preview', controllerMachineId: originMachine.id, previewTemplateEnvironmentId: 'template',
+                        previewTargetLinkId: 'template-runtime', previewPullRequestId: '17', previewRepositoryId: 'repository' })] : [],
+                    coverage: 'complete', nextCursor: null } };
+            }
+            if (authoredPreview && new URL(request.url!).pathname === '/v1/deployments/environments/template')
+                return { status: 200, data: { ok: true, environment: createDeploymentEnvironmentHeaderV1({ id: 'template',
+                    serverId: 'srv_home', projectSourceId: 'source', controllerMachineId: machine.id }), targetLinks: [] } };
             expect(request.url).toBe('https://home.test/v1/deployments/environments/environment?serverId=srv_home');
             return { status: 200, data: { ok: true,
                 environment: createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'srv_home',
@@ -229,7 +251,7 @@ it.each([
             expect(result).toEqual(expected);
             expect(requests).toEqual([`https://home.test/v1/actions/${actionId}/execution-authorization`,
                 `https://home.test/v1/actions/${actionId}`]);
-            if (setupSpawn || template || move) expect(localTransport).not.toHaveBeenCalled();
+            if (setupSpawn || template || move || authoredPreview) expect(localTransport).not.toHaveBeenCalled();
             if (move || template && repositoryWorkspace) expect(homeRequests.mock.calls.filter(([request]) =>
                 request.url?.includes('/v1/deployments/environments/'))).toHaveLength(0);
             if (template && !repositoryWorkspace) expect(homeRequests.mock.calls.filter(([request]) =>
