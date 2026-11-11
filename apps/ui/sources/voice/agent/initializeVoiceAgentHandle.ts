@@ -23,7 +23,7 @@ import type {
     VoiceAgentStartParams,
 } from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { ensureVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
+import { ensureVoiceConversationSessionId, resolveVoiceConversationBackendTarget } from '@/voice/persistence/voiceConversationSession';
 import {
     doesVoiceAgentRunMetadataMatchBackendTarget,
 } from '@/voice/persistence/voiceAgentRunMetadata';
@@ -421,6 +421,17 @@ export async function initializeVoiceAgentHandle({
     // Start admits this fact before capture; text-only entry points admit here.
     // Recovery consumes the admitted Agent rather than reading a different one.
     let admittedBackendTarget: BackendTargetRefV1;
+    const homeCarrierMetadata = readVoiceSessionOwnerMetadataFromState(
+        storage.getState(), daemonConversationSessionId ?? rpcSessionId,
+    );
+    const homeDefaultBackendTarget = isGlobalVoiceAgent && agentSource === 'session' && !boundTargetSessionAddress
+        && isVoiceConversationSystemSessionMetadata(homeCarrierMetadata)
+        ? convertBackendTargetRefV2ToV1(await resolveVoiceConversationBackendTarget(
+            storage.getState(),
+            homeCarrierMetadata?.machineId ?? throwVoiceAgentSelectionUnavailable(),
+            signal,
+        ))
+        : null;
     if (agentSource === 'agent') {
         const resolved = await resolveVoiceConfiguredAgentTarget({
             machineId: readVoiceSessionOwnerMetadataFromState(
@@ -437,7 +448,7 @@ export async function initializeVoiceAgentHandle({
         if (!resolved.ok) throw createRpcCallError({ errorCode: resolved.errorCode, error: resolved.errorCode });
         admittedBackendTarget = convertBackendTargetRefV2ToV1(resolved.backendTarget);
     } else {
-        admittedBackendTarget = admittedSessionAgentTarget ?? requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(
+        admittedBackendTarget = admittedSessionAgentTarget ?? homeDefaultBackendTarget ?? requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(
             readVoiceSessionOwnerMetadataFromState(storage.getState(), boundTargetSessionAddress ?? rpcSessionId),
         ));
     }

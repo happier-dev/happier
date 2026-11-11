@@ -7,12 +7,16 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { resolveBoundConversationSessionId, resolveBoundTargetSessionAddress } from '@/voice/agent/voiceAgentRunState';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } from '@/voice/agent/resolveVoiceSessionAgentSelection';
+import { resolveVoiceConversationBackendTarget } from '@/voice/persistence/voiceConversationSession';
+import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 
 import { createVoiceRunRecovery } from './voiceRunRecovery';
 import { VoiceRunStopUnconfirmedError } from './voiceRunStopReconciliation';
@@ -77,6 +81,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         if (agent.agentSource === 'agent' || agent.providerChat?.status === 'configured') return;
         const account = captureActiveServerAccountScopeLifetime();
         if (!account) throw new Error('voice_agent_account_scope_unavailable');
+        const isGlobalTarget = sessionId === VOICE_AGENT_GLOBAL_SESSION_ID;
         const target = resolveBoundTargetSessionAddress(sessionId) ?? {
             serverId: account.scope.serverId,
             sessionId: resolveBoundConversationSessionId(sessionId) ?? sessionId,
@@ -88,9 +93,17 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         }
         signal.throwIfAborted();
         if (!account.isCurrent()) throw new Error('voice_agent_account_scope_retired');
-        const backendTarget = requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(
-            readVoiceSessionOwnerMetadataFromState(storage.getState(), target),
-        ));
+        const targetMetadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), target);
+        if (isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata) && !targetMetadata?.machineId) {
+            throw Object.assign(new Error('voice_agent_selection_unavailable'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+        }
+        const backendTarget = isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata)
+            ? convertBackendTargetRefV2ToV1(await resolveVoiceConversationBackendTarget(
+                storage.getState(),
+                targetMetadata.machineId,
+                signal,
+            ))
+            : requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(targetMetadata));
         // Capture and Send are separate gestures. Keep this admitted choice for
         // their shared attempt, including handle recovery, without starting a model.
         const retirement = account.onRetire(() => clearAgentSelection(sessionId));

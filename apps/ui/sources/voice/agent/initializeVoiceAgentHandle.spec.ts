@@ -308,6 +308,66 @@ describe('initializeVoiceAgentHandle', () => {
         expect(admittedStart().commitModelId).toBe(getAgentModelConfig('codex')?.defaultMode);
     });
 
+    it('uses the Home default Agent when a global carrier retains Session-source settings', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+        const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+        const carrierId = 'home-default-carrier';
+        const current = storage.getState();
+        rememberLastUsedBackendSelection(current.settingsScope, { lastUsedBackendTarget: null, lastUsedAgent: 'codex' });
+        storage.setState({ ...current, sessions: { ...current.sessions,
+            [carrierId]: createSessionFixture({ id: carrierId, serverId: connection.home.id, active: true,
+                presence: 'online', encryptionMode: 'plain', metadata: {
+                    machineId: 'machine-1', path: '/voice', flavor: 'claude',
+                    ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
+                    voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
+                } }),
+        } });
+        voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: carrierId,
+            conversationSessionAddress: { serverId: connection.home.id, sessionId: carrierId },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
+        try {
+            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            await initializeVoiceAgentHandle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
+                setDeferredTargetSessionContext: vi.fn() });
+            expect(buildBackendTargetKeyV2(admittedStart().backendTarget)).toBe(buildAgentUniverseBackendTargetKey('codex'));
+        } finally {
+            voiceSessionBindingStore.getState().unbind(carrierId);
+        }
+    });
+
+    it('uses the Home default Agent when transport admission prepares a global carrier', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+        const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+        const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+        const carrierId = 'home-default-carrier-preflight';
+        const current = storage.getState();
+        rememberLastUsedBackendSelection(current.settingsScope, { lastUsedBackendTarget: null, lastUsedAgent: 'codex' });
+        storage.setState({ ...current, sessions: { ...current.sessions,
+            [carrierId]: createSessionFixture({ id: carrierId, serverId: connection.home.id, active: true,
+                presence: 'online', encryptionMode: 'plain', metadata: {
+                    machineId: 'machine-1', path: '/voice', flavor: 'claude',
+                    ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
+                    voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
+                } }),
+        } });
+        voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: carrierId,
+            conversationSessionAddress: { serverId: connection.home.id, sessionId: carrierId },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
+        try {
+            const transport = createVoiceExecutionTransport();
+            await transport.prepareAgentSelection(VOICE_AGENT_GLOBAL_SESSION_ID, new AbortController().signal);
+            await transport.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
+            expect(buildBackendTargetKeyV2(admittedStart().backendTarget)).toBe(buildAgentUniverseBackendTargetKey('codex'));
+        } finally {
+            voiceSessionBindingStore.getState().unbind(carrierId);
+        }
+    });
+
     it('takes the transcript epoch from Account memory when starting a different carrier', async () => {
         omitIncidentalProfile();
         await transcriptMemory.handleFetch('https://voice-initialize.example.test/v1/kv', { method: 'POST',

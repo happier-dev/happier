@@ -215,7 +215,7 @@ export function resolveVoiceHomeDaemonMachineId(state: any = storage.getState())
     return resolveVoiceExecutionMachineIdFromState(withCanonicalVoiceSettings(state));
 }
 
-async function resolveVoiceConversationBackendTarget(state: any, machineId: string, signal?: AbortSignal, onAgentSelection?: VoiceAgentSelectionObserver): Promise<BackendTargetRefV2> {
+export async function resolveVoiceConversationBackendTarget(state: any, machineId: string, signal?: AbortSignal, onAgentSelection?: VoiceAgentSelectionObserver): Promise<BackendTargetRefV2> {
     const settings = state?.settings ?? {};
     const agentCfg = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(state)).agent;
     const agentSource = normalizeNonEmptyString(agentCfg?.agentSource) ?? 'session';
@@ -1174,8 +1174,10 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
 
     let state: any = storage.getState();
     const agentCfg = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(state)).agent;
-    const followsRoot = agentCfg.agentSource === 'session' && agentCfg.providerChat?.status !== 'configured';
     const rootMetadata = readVoiceSessionOwnerMetadataFromState(state, rootAddress);
+    const followsRoot = agentCfg.agentSource === 'session'
+        && agentCfg.providerChat?.status !== 'configured'
+        && !isVoiceConversationSystemSessionMetadata(rootMetadata);
     const rootBackend = followsRoot ? resolveSessionActionDefaultBackend({
         session: { metadata: rootMetadata },
     }) : null;

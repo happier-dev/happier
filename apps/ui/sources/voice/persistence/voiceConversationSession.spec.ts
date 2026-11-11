@@ -51,6 +51,7 @@ import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalo
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { storage } from '@/sync/domains/state/storage';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { StorageState } from '@/sync/store/types';
@@ -2516,6 +2517,25 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       modelSelection: expect.objectContaining({ ref: { agentTargetKey: 'agent:happier.agent.claude/claude',
         modelId: 'claude-haiku-4-5', providerConnectionId } }),
       connectedServices,
+    }));
+  });
+
+  it('uses the Home default Agent when a Home carrier has persisted Session-source settings', async () => {
+    state.sessions['root-session'] = { id: 'root-session', active: true, updatedAt: 5, metadata: {
+      machineId: 'machine-target', path: '/Users/test/.happier/voice-agent', host: 'target.local', flavor: 'claude',
+      voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
+      systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+    } };
+
+    const { ensureVoiceConversationSessionForSessionRoot } = await loadConversationSession();
+    const machine = storage.getState().machines['machine-target'];
+    if (machine) publishMachineActivity(machine, { active: true, activeAt: Date.now() }, [machine]);
+    await expect(ensureVoiceConversationSessionForSessionRoot({
+      sessionRootAddress: { serverId: homeId, sessionId: 'root-session' },
+      conversationSelection: { kind: 'new', creationKey: 'home-default-agent' },
+    })).resolves.toBe('voice-root-session');
+    expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     }));
   });
 
