@@ -1234,6 +1234,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     target: ExternalActionTargetV1Schema,
     managedContinuation: z.optional(ExternalActionManagedContinuationV1Schema),
     managedAdmission: z.optional(z.union([ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema])),
+    /** Home admitted this exact preset using custodian-reviewed Team delegation. */
+    managedAcquireDelegation: z.optional(z.literal(true)),
     /** Issuer-qualified private Account executor, scoped by the signed control admission. */
     managedAccountExecutor: z.optional(z.strictObject({ enrolledMachineId: ExternalActionTargetIdV1Schema })),
     /** Home-derived exact parent identity; only its installed post-approval child can establish this fact. */

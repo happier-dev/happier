@@ -10,10 +10,10 @@ import {
     MachineOperationProtocolCapabilitiesV1Schema, signAccountContentKeyBindingV1,
 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1, createExternalActionDaemonDispatchResponse,
-    prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, sealExternalActionRequestV2,
+    prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2,
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -29,6 +29,7 @@ import { auth } from '@/app/auth/auth';
 import { verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { resolveMachineAccess } from '@/app/machines/machineAccess';
+import { createMachinePreset } from '@/app/machines/managed/machinePresetService';
 import { db, initDbPostgres } from '@/storage/db';
 import { createDbMaintenanceClient } from '@/storage/prisma';
 import { readDatabaseTransactionConfigFromEnv } from '@/config/databaseTransactions';
@@ -63,6 +64,9 @@ import { createRequesterCurrentnessSocketHarness } from '../../../../../../cli/s
 import { artifactsRoutes } from '../artifacts/artifactsRoutes';
 import { initEncrypt } from '@/modules/encrypt';
 import { dispatchOriginalAccountAction, dispatchLocalManagedMachineAgentIsolation, verifyExternalActionExecutionAuthorizationCurrent, createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 describe('composed CLI managed Action origination', () => {
     const homeId = managedQb56Input.selection.homeId;
@@ -519,6 +523,147 @@ describe('composed CLI managed Action origination', () => {
             restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
             if (policy === 'qb56') console.info('qb58-replay-phases', JSON.stringify(phases));
         }
+    });
+
+    it.each([
+        { mode: 'plain', delegated: true, surface: 'cli' }, { mode: 'e2ee', delegated: true, surface: 'cli' },
+        { mode: 'plain', delegated: true, surface: 'ui' }, { mode: 'plain', delegated: false, surface: 'ui' },
+    ] as const)('consumes only admitted delegation with custodian credentials under approval policy ($mode, $surface, delegated=$delegated)', async ({ mode, delegated, surface }) => {
+        const selected = await fixture(true);
+        const requester = await fixture(true, mode);
+        const team = await db.team.create({ data: { name: 'Reviewed Team compute' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        if (!delegated) await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+            accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
+        const presetId = crypto.randomUUID();
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id: presetId, homeId, name: 'Delegated guest', owner: { kind: 'team', teamId: team.id },
+                launch: selected.input.selection.launch, controller: selected.controller, teamAcquireDelegated: delegated,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } })).toMatchObject({ kind: 'saved' });
+        const access = await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: selected.controller.machineId });
+        if (delegated) expect(access).toBeNull();
+        else expect(access).toMatchObject({ role: 'manage' });
+        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+            selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
+        const storedSettings = { actionsSettingsV1: { v: 1, actions: {
+            'machines.managed.acquire': { approvalRequiredSurfaces: ['ui'] },
+        } } };
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
+            rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const serverHttpBaseUrl = 'http://managed-seam.test';
+        const actionId = 'machines.managed.acquire';
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const binding = { serverIdentityId: homeId, accountId: requester.account.id,
+            authentication: { kind: 'account' as const, tokenEpoch: requester.account.tokenEpoch },
+            actionId, requestId: crypto.randomUUID(), target };
+        const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
+        const envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
+            : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding, material, input, randomBytes: tweetnacl.randomBytes });
+        let nativeEffects = 0;
+        let artifactWrites = 0;
+        const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl,
+            runtimeActionMachineId: selected.controller.machineId,
+            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId,
+            managedMachineAction: async ({ actionId: effectActionId, context }) => {
+                const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
+                    homeId, admittedActionRequestId: binding.requestId } } });
+                expect(row).toMatchObject({ custodianAccountId: selected.account.id,
+                    admittedInput: { enrollmentAccountId: requester.account.id } });
+                const client = createManagedMachineControllerClient({ token: credentials.token, serverUrl: serverHttpBaseUrl,
+                    homeId, controller: selected.controller, externalActionMachineRequestPrivateKey: selected.keys.secretKey } as ManagedMachineAcquisitionDriverInput,
+                { requestId: binding.requestId, context }, effectActionId);
+                await client.post('/v1/machines/managed/controller/submit', { homeId, managedId: row.id,
+                    expectedIntentRevision: 0, requestId: binding.requestId, controller: selected.controller },
+                ManagedControllerSubmitOutputV1Schema);
+                nativeEffects++;
+                return { managedId: row.id };
+            },
+        });
+        const instance = await app(async request => {
+            const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            expect(request.targetUserId).toBe(selected.account.id);
+            expect(admitted.executionAuthorization?.binding).toMatchObject({ accountId: requester.account.id,
+                custodianAccountId: selected.account.id });
+            const result = await executeExternalAction({ ...admitted, executor: receiver,
+                currentAccountId: selected.account.id, currentMachineId: selected.controller.machineId,
+                currentInstallationId: selected.controller.installationId, currentServerId: homeId,
+                currentServerHttpBaseUrl: serverHttpBaseUrl, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+                    privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+                prepareRequesterAccountContext: async () => { throw new Error('Delegation must not acquire requester credentials'); },
+            });
+            if (result.kind !== 'response') throw new Error(`Daemon rejected delegated ingress: ${result.kind}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
+        }, http => {
+            http.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 2 }));
+            http.post('/v1/artifacts', async () => { artifactWrites++; throw new Error('Delegation must not write a private Ask'); });
+        }, []);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        try {
+            const issued = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                headers: { authorization: `Bearer ${requester.token}` },
+                payload: { v: 1, machineId: target.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = sealManagedControllerActionCodecV1({
+                authorization: ExternalActionExecutionAuthorizationV1Schema.parse(issued.json()), material,
+                invocation: { caller: { kind: 'host' }, surface, authority: 'present_user' },
+                installationPublicKey: selected.keys.publicKey, randomBytes: tweetnacl.randomBytes });
+            if (delegated && mode === 'plain' && surface === 'cli') {
+                const origin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null, context: {
+                    surface, authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: binding.requestId,
+                    runtimeAccountId: requester.account.id, serverId: homeId, serverIdentityId: homeId,
+                    defaultSessionMachineId: selected.controller.machineId, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization,
+                    signExternalActionApprovalInput: request => signExternalActionApprovalInputV1({
+                        authorizationToken: authorization.token, actionId: request.actionId, target: request.target,
+                        input: request.input, privateKey: selected.keys.secretKey }),
+                } });
+                expect(origin).not.toBeNull();
+                const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: Date.now(), updatedAtMs: Date.now(),
+                    createdBy: { surface: 'cli' }, executionOriginV1: origin, actionId, actionArgs: input,
+                    summary: 'Create reviewed Team guest', requestInputDigest: computeActionInputApprovalDigestV1(actionId, input) });
+                const privateApprovals = createCliApprovalsArtifactStore({ credentials, serverId: homeId, serverHttpBaseUrl });
+                await expect(privateApprovals.approvalsCreate({ request, serverId: homeId }))
+                    .rejects.toMatchObject({ code: 'credential_scope_denied' });
+                const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: selected.account.id,
+                    metadata: encodePlainMachineStoredContent({ host: 'other', platform: 'linux', happyCliVersion: 'test',
+                        homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
+                    dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+                    installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(selected.keys.publicKey) } });
+                await expect(auth.mintExternalActionExecutionAuthorization({ ...authorization.binding,
+                    managedAcquireDelegation: undefined, machineId: other.id, target: { kind: 'machine', machineId: other.id } },
+                { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            }
+            const executed = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1,
+                    machineId: target.machineId, envelope, executionAuthorization: authorization } });
+            expect(executed.statusCode, executed.body).toBe(200);
+            const response = executed.json();
+            const execution = envelope.v === 1 ? response.execution
+                : openExternalActionResponseV2({ envelope: response, request: envelope, binding, material });
+            expect(execution, JSON.stringify(execution)).toMatchObject(delegated
+                ? { ok: true, result: { managedId: expect.any(String) } }
+                : { ok: false, errorCode: 'action_interactive_review_required' });
+            expect(nativeEffects).toBe(delegated ? 1 : 0);
+            expect(artifactWrites).toBe(0);
+            expect(authorization.binding.managedAcquireDelegation).toBe(delegated ? true : undefined);
+            await expect(auth.mintExternalActionExecutionAuthorization({ ...authorization.binding,
+                managedAcquireDelegation: true }, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            if (delegated) expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: target.machineId })).toBeNull();
+        } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
     });
 
     it.each(['cli', 'mcp'] as const)('preserves the admitted %s power root through Ask and approved controller admission', async surface => {

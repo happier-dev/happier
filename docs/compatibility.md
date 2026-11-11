@@ -8994,6 +8994,19 @@ scoped-clean `../0.2` frontier at
 `cli-v0.2.17` / `cli-v0.2.17-preview.1` have no corresponding clone contract in
 the affected Protocol/SDK/clone-route paths.
 
+The unpublished 0.3 signed external Action binding adds optional literal
+`managedAcquireDelegation: true`. Only Home derives it from the exact reviewed
+Team preset and bound custodian controller. The receiving daemon consumes that
+decision through its existing approval owner while retaining the member
+principal and custodian credentials. Callers cannot supply the fact; omission
+retains ordinary approval policy. This is authority in a closed signed binding,
+so matching Home, Protocol and daemon source reload together; earlier strict
+development readers reject the addition. This uses the existing V1 epoch and
+unpublished direct cut, with no persistence migration or reverse-development
+adapter. The inspected `../0.2` frontier
+`b825a99dfedcb68e223155a1ba0be84babe9e2d0` has neither the corresponding binding
+nor daemon executor path.
+
 The unpublished 0.3 managed acquire-result V1 contract adds optional literal
 `startPending: true` only to its closed bound-result envelope. Nested resource
 identity and value admission are unchanged. It reports a start accepted by that

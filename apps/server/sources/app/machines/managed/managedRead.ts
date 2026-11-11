@@ -190,21 +190,30 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
     });
 }
 /** Cancellation retires creation; only the existing intent owner can perform native cleanup. */
-export async function cancelManagedCreation(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.cancel"> }>) {
+export async function cancelManagedCreation(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.cancel"> }>,
+    options: Readonly<{ onlyIfUnsubmitted?: boolean }> = {}) {
     const input = ManagedCancelInputV1Schema.parse(params.input);
     return await inManagedMachinePublicationTx(input, async tx => {
         const row = await readManagedMachineInTx(tx, input);
         await requireHome(tx, input.homeId);
         await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
+        // A refused dispatch can retire only work which never crossed submit.
+        // The allocation predicate below shares that boundary with native admission.
+        if (options.onlyIfUnsubmitted && (row.allocation !== 'unsubmitted'
+            || row.creationState !== 'active' || row.intentRevision !== input.expectedIntentRevision)) {
+            return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
+        }
         if (row.intentRevision !== input.expectedIntentRevision) throw new ManagedMachineError("intent_changed");
         if (row.creationState !== "active") return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
         if (row.enrolledMachineId) throw new ManagedMachineError("intent_changed");
         const possibleResource = hasPossibleManagedNativeResource(row);
-        const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: input.expectedIntentRevision, creationState: "active", enrolledMachineId: null }, data: {
+        const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: input.expectedIntentRevision, creationState: "active", enrolledMachineId: null,
+            ...(options.onlyIfUnsubmitted ? { allocation: 'unsubmitted' } : {}),
+        }, data: {
             creationState: "canceled", intentRevision: { increment: 1 }, desired: "delete", desiredWhen: "now", desiredAfterMs: null,
             ...(!possibleResource ? { allocation: "confirmed-absent" } : { cleanup: { disposition: "pending", reason: "creation_canceled" } }),
         } });
-        if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
+        if (changed.count !== 1 && !options.onlyIfUnsubmitted) throw new ManagedMachineError("intent_changed");
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, current);
         return { machine: await projectManagedMachineForActorInTx(tx, current, params.actorAccountId) };

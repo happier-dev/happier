@@ -23,6 +23,7 @@ import type { Server } from "socket.io";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { auth, ApiTokenOperationError, type ExternalActionGrantEvaluationContext, type ExternalActionExecutionAuthorizationMintInput } from "@/app/auth/auth";
 import { admitManagedAcquire, ExternalActionAdmissionUnexpectedError } from '@/app/machines/managed/managedAcquire';
+import { cancelManagedCreation } from '@/app/machines/managed/managedRead';
 import { ManagedMachineError, sameManagedInput } from '@/app/machines/managed/managedRows';
 import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrincipalInTx,
     hasCurrentExternalActionSessionSource, isExternalActionAuthorizationBoundToEnvelope,
@@ -795,6 +796,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 input: request.envelope.v === 1 ? request.envelope.input
                 : deploymentMetadataEnvironmentId === undefined
                     ? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
+                        ?? (request.actionId === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(request.envelope)?.input : undefined)
                     : { environmentId: deploymentMetadataEnvironmentId },
                 deploymentNativeAdmission,
                 deploymentLinkEnvironmentId,
@@ -888,6 +890,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 throw new ExternalActionAdmissionUnexpectedError(cause, admissionCommitted);
             }
         }
+        const dispatchAdmitted = async (): Promise<ExternalActionDaemonDispatchResult> => {
         const requiredSessionInputAdmissionProtocolVersion = requiresSessionInputAdmissionV2(request)
             ? 2 as const
             : undefined;
@@ -1138,5 +1141,17 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ? { kind: "submitted_unknown", cause: rpcRefusal?.success ? rpcRefusal.data : { reason: 'daemon_response_invalid' } }
                 : createPlacementError({ code: 'target_unavailable', refusalBranch: 'daemon_response_unparsable',
                     requestId: request.envelope.requestId, machineId });
+        };
+        const result = await dispatchAdmitted();
+        if (managedAdmission && (result.kind === 'placement_error' && !result.managedAdmission
+            || result.kind === 'invalid_request'
+            || result.kind === 'response' && result.prepared.response.v === 1
+                && !result.prepared.response.execution.ok)) {
+            await cancelManagedCreation({ actorAccountId: request.principal.accountId, input: {
+                homeId: managedAdmission.machine.homeId, managedId: managedAdmission.machine.id,
+                expectedIntentRevision: managedAdmission.machine.intentRevision,
+            } }, { onlyIfUnsubmitted: true });
+        }
+        return result;
     };
 }

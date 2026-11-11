@@ -73,6 +73,7 @@ import { createMachinePreset } from '@/app/machines/managed/machinePresetService
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc/errors';
 import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from '@/app/teams/credentials/sessionBinding.testkit';
 import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx, stampSessionTeamCredentialNativeDeliveryInTx, writeSessionTeamCredentialBindingsInTx,
     readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
@@ -1399,6 +1400,73 @@ describe('ordinary Account managed Action origination', () => {
             expect(diagnostic.json()).toEqual({ status: 'prepared', binding: peerReady.binding.safeFacet });
             expect((await issue(peerInput)).statusCode).not.toBe(200);
             expect(await resolveMachineAccess({ actorAccountId: f.creator.id, machineId: f.controller.id })).toBeNull();
+        } finally { await instance.close(); }
+    });
+
+    it.each(['refused', 'encrypted-refused', 'response-refused', 'submitted-refused', 'unknown'] as const)('releases only unsubmitted delegated acquire capacity after dispatch is %s', async outcome => {
+        const custodian = await fixture(true);
+        const member = await fixture(true, outcome === 'encrypted-refused' ? 'e2ee' : 'plain');
+        const team = await db.team.create({ data: { name: 'Delegated dispatch settlement' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: custodian.account.id, role: 'owner' },
+            { teamId: team.id, accountId: member.account.id, role: 'member' },
+        ] });
+        const preset = { id: crypto.randomUUID(), homeId, name: 'One delegated slot',
+            owner: { kind: 'team' as const, teamId: team.id }, controller: custodian.controller,
+            launch: custodian.input.selection.launch, teamAcquireDelegated: true,
+            simultaneousLimit: { maximum: 1 }, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        expect(await createMachinePreset({ accountId: custodian.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: preset })).toMatchObject({ kind: 'saved' });
+        expect(await resolveMachineAccess({ actorAccountId: member.account.id, machineId: custodian.controller.machineId })).toBeNull();
+        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: custodian.input.enrollmentIdentity,
+            selection: { kind: 'preset', homeId, id: preset.id, revision: 0 }, controller: custodian.controller,
+            retention: preset.retention, wakeOnAcceptedMessage: false });
+        const requestId = crypto.randomUUID();
+        let deliveries = 0;
+        const instance = await app(async params => {
+            const dispatched = ExternalActionDaemonDispatchRequestSchema.parse(params.callParams);
+            const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
+                homeId, admittedActionRequestId: dispatched.envelope.requestId! } } });
+            deliveries++;
+            if (outcome === 'submitted-refused') await submitManagedAcquire({ homeId, managedId: row.id,
+                controller: custodian.controller, requestId: row.admittedActionRequestId, expectedIntentRevision: 0 });
+            if (outcome === 'unknown') {
+                params.onSubmittedUnknown?.();
+                return { ok: false, error: 'Acknowledgement lost' };
+            }
+            if (outcome === 'response-refused') return { ok: true,
+                result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                    v: 1, actionId: dispatched.actionId, requestId: dispatched.envelope.requestId,
+                    execution: { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' },
+                })) };
+            // The daemon transport is the boundary; admission, signing, retained
+            // allocation and slot counting all use their production owners.
+            return { ok: true, result: { errorCode: RPC_ERROR_CODES.FORBIDDEN } };
+        });
+        const dispatch = (id: string) => instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire',
+            headers: { authorization: `Bearer ${member.token}` }, payload: outcome === 'encrypted-refused'
+                ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    binding: { serverIdentityId: homeId, accountId: member.account.id,
+                        actionId: 'machines.managed.acquire', requestId: id,
+                        target: { kind: 'machine', machineId: custodian.controller.machineId },
+                        authentication: { kind: 'account', tokenEpoch: member.account.tokenEpoch } }, input,
+                    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
+                    randomBytes: length => new Uint8Array(length).fill(2) })
+                : { v: 1, requestId: id, target: { kind: 'machine', machineId: custodian.controller.machineId }, input } });
+        try {
+            const failed = await dispatch(requestId);
+            expect(failed.json(), failed.body).toMatchObject(outcome === 'unknown'
+                ? { error: 'invalid_request', code: 'action_outcome_unknown' } : outcome === 'response-refused'
+                    ? { execution: { ok: false, errorCode: 'credential_scope_denied' } } : { error: 'credential_scope_denied' });
+            const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
+                homeId, admittedActionRequestId: requestId } } });
+            const released = outcome === 'refused' || outcome === 'encrypted-refused' || outcome === 'response-refused';
+            expect(row).toMatchObject(released
+                ? { creationState: 'canceled', allocation: 'confirmed-absent' }
+                : { creationState: 'active', allocation: outcome === 'unknown' ? 'unsubmitted' : 'may-exist' });
+            await dispatch(crypto.randomUUID());
+            expect(deliveries).toBe(released ? 2 : 1);
+            expect(await resolveMachineAccess({ actorAccountId: member.account.id, machineId: custodian.controller.machineId })).toBeNull();
         } finally { await instance.close(); }
     });
 

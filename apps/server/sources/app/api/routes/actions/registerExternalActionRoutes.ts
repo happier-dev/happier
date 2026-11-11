@@ -63,7 +63,7 @@ import { ManagedMachineError, readManagedAdmissionState, readManagedEnrollmentAc
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
+import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission, readExternalActionManagedAcquireAdmission } from '@/app/auth/externalActionManagedAdmission';
 import { prepareManagedCredentialDeliveryForAction, readManagedCredentialDeliveryAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
@@ -846,6 +846,7 @@ export function registerExternalActionRoutes(
                     input: body.data.envelope.v === 1 ? body.data.envelope.input
                         : deploymentMetadataEnvironmentId === undefined
                             ? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input
+                                ?? (actionId.data === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(body.data.envelope)?.input : undefined)
                             : { environmentId: deploymentMetadataEnvironmentId },
                     deploymentNativeAdmission,
                     deploymentLinkEnvironmentId,

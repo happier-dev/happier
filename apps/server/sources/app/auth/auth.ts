@@ -48,6 +48,7 @@ import { DECISION_ACTION_IDS } from '@happier-dev/protocol/actions/decisionAutho
 import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { resolveApiTokenDeploymentGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandoffMachineInTx } from './externalActionHandoffAdmission';
 import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readWorkspaceSyncAdmissionInTx } from './workspaceSyncAdmission';
@@ -655,6 +656,27 @@ class AuthModule {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
         let managedAdmission = input.managedAdmission;
+        // This is a Home decision, never an invocation author's approval bypass.
+        if (input.managedAcquireDelegation !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
+        let managedAcquireDelegation: true | undefined;
+        if (input.actionId === 'machines.managed.acquire' && input.accountId !== machine.accountId) {
+            const { ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+            const acquire = ManagedAcquireInputV1Schema.safeParse(context.input);
+            if (acquire.success && acquire.data.selection.kind === 'preset') {
+                const { resolveMachinePresetForAcquireInTx } = await import('@/app/machines/managed/machinePresetService');
+                const controller = resolveManagedAcquireReviewV1(acquire.data).controller;
+                const selected = await resolveMachinePresetForAcquireInTx(db, { accountId: input.accountId,
+                    ...acquire.data.selection, checkCapacity: false, boundController: controller,
+                    authentication: { authenticationAuthority: readExternalActionBindingAuthority(input), authenticationEvidence: 'authentication' in input
+                        ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence } });
+                if (selected.kind === 'ready' && selected.delegated && selected.custodianAccountId === machine.accountId) {
+                    if (!controller || controller.machineId !== input.machineId || controller.installationId !== machine.installationId) {
+                        throw new ApiTokenOperationError('credential_scope_denied');
+                    }
+                    managedAcquireDelegation = true;
+                }
+            }
+        }
         let managedAccountExecutor: ExternalActionExecutionAuthorizationBindingV1['managedAccountExecutor'];
         if (input.actionId === 'machines.managed.power.set' || input.actionId === 'machines.managed.delete') {
             const { ExternalActionManagedControlAdmissionV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
@@ -683,6 +705,7 @@ class AuthModule {
             ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
             ...(managedAdmission ? { managedAdmission } : {}),
+            ...(managedAcquireDelegation ? { managedAcquireDelegation } : {}),
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),

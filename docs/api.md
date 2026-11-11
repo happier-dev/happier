@@ -2787,6 +2787,14 @@ enrollment, preset cap, retention and native prerequisite execution consume the
 bound controller without another Pool selection. This creates no direct Machine
 grant, scheduler, capacity reservation or automatic retry.
 
+For a delegated Team acquire, Home signs the preset owner's reviewed delegation
+into the execution binding. The custodian's controller uses its own native
+credentials; the member receives no credential access and needs no private
+approval Artifact on that controller. Ordinary controller managers retain their
+own approval policy. A definitive dispatch refusal retires an unsubmitted
+creation through the existing cancellation owner and releases its preset slot.
+Submitted or acknowledgement-unknown work retains its slot and recovery state.
+
 A successfully observed unavailable resolution is still HTTP 200 carrying the
 discriminated result, not a transport failure. Failures use four stable domain
 codes with a fixed status mapping:

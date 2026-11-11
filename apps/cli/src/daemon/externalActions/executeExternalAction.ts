@@ -885,6 +885,11 @@ async function executeExternalActionRequest(input: Readonly<{
     && sameStrictJsonValue(nativeAdmission.input, decodedInput)
     && (nativeAdmission.input.operation === 'release'
       || admittedAuthorization?.binding.nativeCredentialSpawnChild !== undefined);
+  // Home already admitted the exact custodian-reviewed preset. Consume that
+  // signed decision instead of creating a requester Ask in custodian custody.
+  const approvedDelegatedAcquire = actionId.data === 'machines.managed.acquire'
+    && originalRootCurrentness !== undefined && managedControllerCodec
+    && admittedAuthorization?.binding.managedAcquireDelegation === true;
   const logsReference = logsOperands.resourceContinuation?.params.resource;
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
@@ -899,7 +904,7 @@ async function executeExternalActionRequest(input: Readonly<{
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
-    ...(approvedNativeLifetimeEffect ? { bypassApprovals: true } : {}),
+    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire ? { bypassApprovals: true } : {}),
     ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
     ...(admittedAuthorization && originalRootCurrentness ? {
       verifiedExternalActionRequester: { authorization: admittedAuthorization, isCurrent: originalRootCurrentness },
