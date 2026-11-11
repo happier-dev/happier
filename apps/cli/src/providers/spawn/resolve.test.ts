@@ -6,6 +6,7 @@ import * as persistence from '@/persistence';
 import type { AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-sdk/agents/runtime';
 // Composed first-party test: exercise the native materializer, not a replacement
 // for the internal binding logic. No production host/plugin import is introduced.
+import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../packages/plugins/codex/src/constants';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../packages/plugins/opencode/src/agent/providerBinding/adapter';
 
 import {
@@ -2802,7 +2803,7 @@ describe('provider spawn authorization resolver', () => {
           endpoint: { endpointTemplateId: 'responses', protocol: 'openai-responses' },
           runtimeCredentialTransport: { id: 'bearer' },
         },
-        support: { authIsolation: { suppressConnectedServiceIds: ['openai-codex'] } },
+        support: { authIsolation: { suppressConnectedServiceIds: [CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY] } },
         credentialReference: { kind: 'apiKey', secretId: 'secret-a' },
         ticket: { connectionRevision: 7, selectedSecretBindingId: 'secret-a' },
         sessionBindingMetadata: {
