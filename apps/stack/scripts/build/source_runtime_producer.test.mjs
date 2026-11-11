@@ -76,6 +76,11 @@ test('QA requests adopt one producer capture across source movement and join an 
   const first = await Promise.all(stacks.map(stackBaseDir => native.build({ ...options, stackBaseDir })));
   assert.equal(first[0].entrypoint, first[1].entrypoint);
   assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer'], 'only the repository producer may compile, once for concurrent consumers');
+  const unchangedFreshnessRequest = await native.build({ ...options, stackBaseDir: stacks[0], sourceCapturedAfter: Date.now() });
+  assert.equal(unchangedFreshnessRequest.entrypoint, first[0].entrypoint,
+    'an unchanged authored input identity reuses the completed product across a reload freshness boundary');
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer'],
+    'unchanged daemon reloads launch no additional producer compiler');
   await writeFile(entry, 'export const value = 2;');
   const adopted = await native.build({ ...options, stackBaseDir: stacks[0] });
   assert.equal(adopted.entrypoint, first[0].entrypoint, 'moving authored source does not force QA compilation');

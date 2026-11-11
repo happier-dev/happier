@@ -178,11 +178,12 @@ export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, o
   });
 }
 
-async function readReusableSourceBundle({ outputDir, record, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env, newestCompleted = false, sourceCapturedAfter }) {
+async function readReusableSourceBundle({ outputDir, record, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env, newestCompleted = false, sourceCapturedAfter, allowOlderSourceWhenInputsMatch = false }) {
   if (!record.sourceInputDigests) return null;
   if (component === 'server'
       && (record.serverComponent !== serverComponent || record.dbProvider !== (dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres')))) return null;
-  if (sourceCapturedAfter != null && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter)) return null;
+  if (sourceCapturedAfter != null && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter)
+      && (!allowOlderSourceWhenInputsMatch || newestCompleted || sourceCapturedAfter > Date.now())) return null;
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sharedFiles = sharedManifest && new Set(sharedManifest.filesByComponent[component]);
   const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
@@ -204,6 +205,10 @@ async function readReusableSourceBundle({ outputDir, record, repoDir, component,
       && readCachedFileDigestSync(absolute, statSync(absolute, {bigint:true})) === digest;
   });
   if (!current) return null;
+  // A freshness boundary only requires a new capture when the authored inputs
+  // changed. An older capture with the same current input identity already
+  // contains the exact bytes the new capture would read, so rebuilding it
+  // would only repeat plugin/UI and author-package work on a daemon reload.
   const {reuseFingerprint, sourceInputDigests, inputIdentity, ...built} = record;
   return {outputDir, built: { ...built,
     dependencyPublication: { ...record.dependencyPublication, ...dependencyPublication } }};
@@ -754,7 +759,14 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
       const record = await readOptionalJson(join(outputDir, 'source-bundle.json'));
       if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) return null;
       const reusable = await readReusableSourceBundle({ outputDir, record, repoDir, serverComponent: 'happier-server-light',
-        ...descriptor, env, newestCompleted: !requireCurrentSource, sourceCapturedAfter });
+        ...descriptor, newestCompleted: !requireCurrentSource
+          && !(components.length === 1 && descriptor.component === 'daemon' && sourceCapturedAfter != null),
+        // A daemon-only reload consumes only this component. Once its current
+        // authored identity matches, an older capture is byte-equivalent and
+        // can be adopted; paired/server reloads retain the explicit freshness
+        // boundary so their coordinated capture remains after the request.
+        sourceCapturedAfter,
+        allowOlderSourceWhenInputsMatch: components.length === 1 && descriptor.component === 'daemon' });
       if (!reusable) return null;
       await probePreparedSourceRuntimeBundle({ built: reusable.built, component: descriptor.component, repoDir, env, signal });
       prepared[descriptor.component] = reusable.built;
