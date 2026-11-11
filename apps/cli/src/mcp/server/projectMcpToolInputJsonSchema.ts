@@ -10,35 +10,78 @@ function requiredFields(schema: JsonSchemaObject): string[] {
 }
 
 function referencedObject(document: JsonSchemaObject, ref: unknown): JsonSchemaObject | undefined {
+    if (ref === '#') return document;
     if (typeof ref !== 'string' || !ref.startsWith('#/')) return undefined;
     let value: unknown = document;
     for (const part of ref.slice(2).split('/')) {
         const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
-        const object = asObject(value);
-        if (!object || !Object.hasOwn(object, key)) return undefined;
-        value = object[key];
+        if (value === null || typeof value !== 'object' || !Object.hasOwn(value, key)) return undefined;
+        value = Reflect.get(value, key);
     }
     return asObject(value);
 }
 
 /** Visit schema nodes without interpreting literal const/default/enum data. */
-function mapMcpJsonSchema(schema: JsonSchemaObject, project: (schema: JsonSchemaObject) => JsonSchemaObject): JsonSchemaObject {
-    const result: Record<string, unknown> = { ...project(schema) };
-    for (const key of ['properties', 'definitions', '$defs']) {
+function mapSchemaChildren(schema: JsonSchemaObject, map: (child: JsonSchemaObject) => JsonSchemaObject): JsonSchemaObject {
+    const result: Record<string, unknown> = { ...schema };
+    for (const key of ['properties', 'patternProperties', 'dependentSchemas', 'definitions', '$defs']) {
         const entries = asObject(schema[key]);
         if (entries) result[key] = Object.fromEntries(Object.entries(entries).map(([name, child]) =>
-            [name, asObject(child) ? mapMcpJsonSchema(child as JsonSchemaObject, project) : child]));
+            [name, asObject(child) ? map(child as JsonSchemaObject) : child]));
     }
-    for (const key of ['items', 'additionalProperties', 'propertyNames', 'not']) {
+    for (const key of ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else', 'unevaluatedProperties', 'unevaluatedItems']) {
         const child = asObject(schema[key]);
-        if (child) result[key] = mapMcpJsonSchema(child, project);
+        if (child) result[key] = map(child);
     }
-    for (const key of ['anyOf', 'oneOf', 'allOf', 'items']) {
+    for (const key of ['anyOf', 'oneOf', 'allOf', 'items', 'prefixItems']) {
         const children = schema[key];
         if (Array.isArray(children)) result[key] = children.map(child =>
-            asObject(child) ? mapMcpJsonSchema(child, project) : child);
+            asObject(child) ? map(child) : child);
     }
     return result;
+}
+
+function mapMcpJsonSchema(schema: JsonSchemaObject, project: (schema: JsonSchemaObject) => JsonSchemaObject): JsonSchemaObject {
+    return mapSchemaChildren(project(schema), child => mapMcpJsonSchema(child, project));
+}
+
+/** Cut reference back-edges in discovery only; never impose an input depth limit. */
+function projectRecursiveReferences(document: JsonSchemaObject): JsonSchemaObject {
+    const active = new Set<JsonSchemaObject>();
+    const visited = new Set<JsonSchemaObject>();
+    const recursive = new Set<JsonSchemaObject>();
+    const visit = (node: JsonSchemaObject): JsonSchemaObject => {
+        if (visited.has(node)) return node;
+        active.add(node);
+        const target = referencedObject(document, node.$ref);
+        if (target) {
+            if (active.has(target)) recursive.add(node);
+            else visit(target);
+        }
+        mapSchemaChildren(node, visit);
+        active.delete(node);
+        visited.add(node);
+        return node;
+    };
+    visit(document);
+    return mapMcpJsonSchema(document, node => {
+        if (!recursive.has(node)) return node;
+        const { $ref, ...siblings } = node;
+        const target = referencedObject(document, $ref)!;
+        const readTypes = (schema: JsonSchemaObject): string[] => {
+            if (typeof schema.type === 'string') return [schema.type];
+            if (Array.isArray(schema.type) && schema.type.every(type => typeof type === 'string')) return schema.type;
+            const branches = schema.anyOf ?? schema.oneOf;
+            if (!Array.isArray(branches)) return [];
+            const types = branches.map(branch => readTypes(asObject(branch) ?? {}));
+            return types.every(types => types.length > 0) ? [...new Set(types.flat())] : [];
+        };
+        const types = readTypes(target);
+        return { ...(types.length ? { type: types.length === 1 ? types[0] : types } : {}), ...siblings,
+            description: [node.description,
+                'Recursive value: discover the full input shape with action_spec_get; the server validates every nested value.',
+            ].filter(Boolean).join(' ') };
+    });
 }
 
 /** Rewrite schema references without interpreting literal const/default/enum data. */
@@ -68,7 +111,7 @@ function projectProviderEnum(schema: JsonSchemaObject): JsonSchemaObject {
  * Cross-field/variant correlations remain authoritative at call validation.
  */
 export function projectMcpToolInputJsonSchema(schema: JsonSchemaObject): JsonSchemaObject {
-    schema = mapMcpJsonSchema(schema, projectProviderEnum);
+    schema = projectRecursiveReferences(mapMcpJsonSchema(schema, projectProviderEnum));
     const projected = projectObjectInputSchema(schema, schema, new Set());
     const removed = ['anyOf', 'oneOf', 'allOf'].filter(key => Array.isArray(schema[key]));
     if (removed.length === 0) return projected;
@@ -88,7 +131,7 @@ export function projectMcpToolInputJsonSchema(schema: JsonSchemaObject): JsonSch
     if (!needsOriginal) return projected;
     const relocated = rewriteMcpJsonSchemaReferences(projected, rewrite);
     // Only retain a source definition when an advertised reference needs its
-    // removed root path (or recursive root). Call validation still uses schema.
+    // removed root path. Call validation still uses schema.
     return { ...relocated, definitions: { ...asObject(relocated.definitions), [name]: original } };
 }
 

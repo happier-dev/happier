@@ -5540,8 +5540,12 @@ variant correlations and unknown fields, and canonical dispatch still owns
 normalization. String enums exceeding either 250 values or 15,000 combined
 characters are advertised as strings with `action_spec_search` discovery guidance;
 smaller enums remain inline. This applies recursively to input schema definitions
-and nested fields without changing literal defaults or constants. MCP output
-schemas and Action discovery schemas are unchanged.
+and nested fields without changing literal defaults or constants. Cyclic input
+references are presented as unconstrained objects or arrays (preserving primitive
+alternatives for recursive JSON values), with `action_spec_get` guidance. This
+imposes no input depth limit; the original parser validates nested values.
+Acyclic shared references, MCP output schemas and Action discovery schemas
+are unchanged.
 
 The development definition family delegates to Protocol's
 `createWorkflowDefinitionActions`; CLI Artifact transport is a host adapter,
