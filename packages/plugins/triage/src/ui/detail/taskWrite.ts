@@ -3,6 +3,7 @@ import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import { TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1, type TriageEntryRefV1,
   type TriageEntryStateV1, type TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1,
@@ -137,7 +138,8 @@ function createTaskWriteOperation() {
       if (address === null || signal?.aborted) return false;
       const controller = new AbortController();
       active = controller;
-      const readSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal]);
+      const merged = mergeAbortSignals([signal, controller.signal]);
+      const readSignal = merged.signal!;
       publish({ ...snapshot, checking: true });
       try {
         const result = TriageReobserveEntryResultV1Schema.parse(await host.executeAction(TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, {
@@ -170,6 +172,7 @@ function createTaskWriteOperation() {
         return true;
       } catch { return false; }
       finally {
+        merged.dispose();
         active = null;
         if (!retired && snapshot.checking) publish({ ...snapshot, checking: false });
       }
