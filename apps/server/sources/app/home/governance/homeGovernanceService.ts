@@ -1,3 +1,4 @@
+import type { HomeSessionDefaultsProjectionV1 } from '@happier-dev/protocol/home/governance/projection';
 import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readKeysetCursorTextV1 } from '@happier-dev/protocol/pagination/keysetCursorV1';
 import { HOME_ACCOUNT_DETAIL_RECENT_EVENTS_LIMIT_V1, HOME_ACCOUNT_PAGE_LIMIT_DEFAULT_V1, isActiveHomeAccountStatus, type HomeAccountDetailV1, type HomeAccountListResultV1, type HomeAccountPickerRowV1, type HomeAccountRowV1, type HomeAccountSearchScopeV1, type HomeAuthenticationPolicyReadV1, type HomeRoleV1 } from '@happier-dev/protocol/home/governance';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
@@ -260,16 +261,28 @@ async function projectHomeAuthenticationOptionsV1(
 /**
  * The Home Administration snapshot for one viewer of one explicit Home.
  *
- * Only a current administrator may read it. Ordinary members use the separate
- * minimum eligibility projection, so policy and deployment facts never cross
- * this boundary and depend on client-side filtering for privacy.
+ * Administration stays admin-only. The explicit session_defaults projection
+ * authorizes active Home membership once and discloses no other policy fields.
  */
-export async function readHomeGovernanceProjectionInTx(tx: Tx, input: Readonly<{
+type HomeGovernanceReadInput = Readonly<{
     viewerAccountId: string;
     teamsEnabled: boolean;
     env: NodeJS.ProcessEnv;
     emailDeliveryReady: boolean;
-}>): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1>> {
+    projection?: 'session_defaults';
+}>;
+export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput & { projection: 'session_defaults' }): Promise<HomeGovernanceResult<HomeSessionDefaultsProjectionV1>>;
+export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput & { projection?: undefined }): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1>>;
+export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1 | HomeSessionDefaultsProjectionV1>>;
+export async function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1 | HomeSessionDefaultsProjectionV1>> {
+    if (input.projection === 'session_defaults') {
+        const member = await readHomeGovernanceAccountInTx(tx, input.viewerAccountId);
+        if (!member || !isActiveHomeAccountStatus(member.status)) {
+            return { status: 'rejected', code: 'home_governance_forbidden' };
+        }
+        const policy = await readHomeGovernancePolicyInTx(tx);
+        return { status: 'ok', result: { homeDefaults: policy.sessionDefaults ?? null } };
+    }
     // Ownerless Homes are a deployment-recovery state, not an authorization
     // opportunity. Return only the typed setup signal before reading policy,
     // provider/network configuration, or any other administration fact.

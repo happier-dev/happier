@@ -8,10 +8,12 @@ export type HomeGovernanceActionIdV1 = typeof HOME_GOVERNANCE_ACTION_IDS_V1[numb
 export const HomeGovernanceActionIdV1Schema = lazyZodSchema(() => z.enum(HOME_GOVERNANCE_ACTION_IDS_V1));
 
 /**
- * `home.governance.get` takes no arguments: the Home and the viewer both come
+ * `home.governance.get` optionally selects a projection; the Home and viewer come
  * from the authenticated request, never from caller-supplied input.
  */
-export const HomeGovernanceGetInputV1Schema = lazyZodSchema(() => z.strictObject({}));
+export const HomeGovernanceGetInputV1Schema = lazyZodSchema(() => z.strictObject({
+  projection: z.optional(z.literal('session_defaults')),
+}));
 
 /**
  * The minimum eligibility read is intentionally a distinct strict contract:

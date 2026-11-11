@@ -26,7 +26,7 @@ import {
 import {
   HomeGovernancePolicyProjectionV1Schema,
   HomeGovernanceEligibilityV1Schema,
-  HomeGovernanceProjectionV1Schema,
+  HomeGovernanceReadResultV1Schema,
   HomeEmptinessV1Schema,
 } from '../../home/governance/projection.js';
 import {
@@ -132,7 +132,7 @@ function createHomeGovernanceActionSpecs() {
     cliPath: ['home', 'governance', 'get'],
     path: '/v1/home/governance/get',
     inputSchema: HomeGovernanceGetInputV1Schema,
-    outputSchema: HomeGovernanceProjectionV1Schema,
+    outputSchema: HomeGovernanceReadResultV1Schema,
   }),
   homeDomainActionRow({
     id: 'home.governance.eligibility.get', approval: {result: 'required'},

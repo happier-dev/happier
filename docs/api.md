@@ -2,6 +2,17 @@
 
 This document covers the HTTP API surface and authentication flows. For WebSocket updates and event payloads, see `protocol.md`. For encryption boundaries and encoding details, see `encryption.md`.
 
+## Member Session defaults (unreleased 0.3)
+
+The existing `home.governance.get` Action accepts `{ projection: 'session_defaults' }`.
+Its existing Home governance read owner admits an active Account in that Home once,
+then returns only `{ homeDefaults }`, using the same managed-defaults document exposed
+as `TeamSummary.policy.homeDefaults`. Missing or inactive Accounts are refused; no
+Team is required. The ordinary `{}` request still requires administration authority
+and retains its existing response. No other governance fields enter the member result.
+Organization-policy file locks remain owned by the machine policy reader; this
+projection does not manufacture lock values from unlocked Home defaults.
+
 ## Method conventions
 - **GET** is used for reads.
 - **POST** is used for mutations or actions, even when the operation doesn't map cleanly to a single entity.

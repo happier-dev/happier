@@ -1,7 +1,7 @@
 import { HomeAccountDeleteResultV1Schema, HomeAccountDetailV1Schema, HomeAccountListInputV1Schema, HomeAccountListResultV1Schema, HomeAccountRoleSetInputV1Schema, HomeAccountRowV1Schema, HomeAccountSearchInputV1Schema, HomeAccountSearchResultV1Schema, HomeAccountTargetInputV1Schema, HomeGovernanceErrorV1Schema, HomeGovernancePolicySetInputV1Schema, homeGovernanceErrorHttpStatusV1, type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
 import { HomeGovernanceClaimInputV1Schema, HomeGovernanceClaimResultV1Schema } from '@happier-dev/protocol/home/governance/claim';
 import { HomeGovernanceEligibilityGetInputV1Schema, HomeGovernanceGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
-import { HomeGovernanceEligibilityV1Schema, HomeGovernancePolicyProjectionV1Schema, HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { HomeGovernanceEligibilityV1Schema, HomeGovernancePolicyProjectionV1Schema, HomeGovernanceReadResultV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { HomeAccountDeleteInputV1Schema } from '@happier-dev/protocol/home/governance';
 import { HomeEmptinessGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
 import { HomeEmptinessV1Schema } from '@happier-dev/protocol/home/governance/projection';
@@ -88,7 +88,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
             attachValidation: true,
             schema: {
                 body: HomeGovernanceGetInputV1Schema,
-                response: { 200: HomeGovernanceProjectionV1Schema, ...ERROR_RESPONSES },
+                response: { 200: HomeGovernanceReadResultV1Schema, ...ERROR_RESPONSES },
             },
             config: GOVERNANCE_RATE_LIMIT,
         },
@@ -98,6 +98,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
             const emailDeliveryReady = await isAuthEmailDeliveryReady({ env: requestHomeEnv });
             const projection = await inTx(async (tx) => await readHomeGovernanceProjectionInTx(tx, {
                 viewerAccountId: request.userId,
+                ...(request.body.projection ? { projection: request.body.projection } : {}),
                 teamsEnabled: teamsEnabled(requestHomeEnv),
                 env: requestHomeEnv,
                 emailDeliveryReady,

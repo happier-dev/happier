@@ -857,3 +857,27 @@ describe("Personal Home initial owner reconciliation", () => {
         await expect(db.account.count({ where: { homeRole: "owner", status: "active" } })).resolves.toBe(0);
     });
 });
+
+// Coordination's 2026-11-11 authorization: only Session defaults are member-readable.
+describe('Home member Session defaults projection', () => {
+    it('discloses defaults without admin fields to an active member, and refuses non-members', async () => {
+        const owner = await createAccount('owner');
+        const member = await createAccount('member');
+        const suspended = await createAccount('member', 'suspended');
+        const defaults = { permissionModeByAgentTargetKey: { 'agent:example.agent/example': 'read-only' as const } };
+        await setHomeGovernancePolicy({ actorAccountId: owner, env: POLICY_ENV,
+            patch: { expectedRevision: 0, sessionDefaults: defaults } });
+        const { readHomeGovernanceProjectionInTx } = await import('./homeGovernanceService');
+        const read = (viewerAccountId: string) => {
+            const input = { viewerAccountId, teamsEnabled: false, env: POLICY_ENV, emailDeliveryReady: false, projection: 'session_defaults' as const };
+            return inTx(tx => readHomeGovernanceProjectionInTx(tx, input));
+        };
+        expect(await read(member)).toEqual({ status: 'ok', result: { homeDefaults: defaults } });
+        expect(await read(owner)).toEqual({ status: 'ok', result: { homeDefaults: defaults } });
+        expect(await read('not-a-home-member')).toEqual({ status: 'rejected', code: 'home_governance_forbidden' });
+        expect(await read(suspended)).toEqual({ status: 'rejected', code: 'home_governance_forbidden' });
+        expect(await inTx(tx => readHomeGovernanceProjectionInTx(tx, {
+            viewerAccountId: member, teamsEnabled: false, env: POLICY_ENV, emailDeliveryReady: false,
+        }))).toEqual({ status: 'rejected', code: 'home_governance_forbidden' });
+    });
+});

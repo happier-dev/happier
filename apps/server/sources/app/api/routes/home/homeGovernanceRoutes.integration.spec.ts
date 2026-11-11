@@ -14,12 +14,21 @@ import { homeGovernanceRoutes } from "./homeGovernanceRoutes";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function createTestApp() {
+function createTestApp(authenticatedAccountId?: string) {
     const app = Fastify({ logger: false });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
-    enableAuthentication(typed);
+    if (authenticatedAccountId === undefined) {
+        enableAuthentication(typed);
+    } else {
+        // Credential verification is the transport boundary. Pin its principal
+        // to exercise the route's own membership decision, including a principal
+        // whose Account disappeared or was suspended after authentication.
+        typed.decorate("authenticate", async (request: { userId: string }) => {
+            request.userId = authenticatedAccountId;
+        });
+    }
     homeGovernanceRoutes(typed);
     return trackApp(typed);
 }
@@ -98,6 +107,37 @@ afterEach(async () => {
 });
 
 describe("Home governance routes", () => {
+    it("serves only Session defaults to an authenticated active Home member", async () => {
+        const app = createTestApp();
+        const owner = await createAccount("owner");
+        const member = await createAccount("member");
+        const defaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" } };
+        const written = await post(app, "/v1/home/policy/set", owner.token, {
+            expectedRevision: 0, sessionDefaults: defaults,
+        });
+        expect(written.statusCode, written.body).toBe(200);
+        for (const token of [member.token, owner.token]) {
+            const response = await post(app, "/v1/home/governance/get", token, { projection: "session_defaults" });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ homeDefaults: defaults });
+            expect(response.json()).not.toHaveProperty("policy");
+            expect(response.json()).not.toHaveProperty("capabilities");
+        }
+        const adminRead = await post(app, "/v1/home/governance/get", member.token, {});
+        expect(adminRead.statusCode).toBe(403);
+        expect(adminRead.json()).toEqual({ error: "home_governance_forbidden" });
+    });
+
+    it("refuses the Session defaults projection when the authenticated principal is missing or suspended", async () => {
+        const suspended = await createAccount("member", "suspended");
+        for (const accountId of ["not-a-home-member", suspended.accountId]) {
+            const app = createTestApp(accountId);
+            const response = await post(app, "/v1/home/governance/get", "transport-principal", { projection: "session_defaults" });
+            expect(response.statusCode, response.body).toBe(403);
+            expect(response.json()).toEqual({ error: "home_governance_forbidden" });
+        }
+    });
+
     it("returns the exact Home account total on every page, including inactive people", async () => {
         const app = createTestApp();
         const owner = await createAccount("owner");
@@ -1016,7 +1056,25 @@ describe("Home governance routes", () => {
         }
     });
 
-    it("keeps provider and network policy invalidation bounded to active administrators", async () => {
+    it("keeps another Account's administration-only Home role patch from advancing a member revision", async () => {
+        const app = createTestApp();
+        const owner = await createAccount("owner");
+        const admin = await createAccount("admin");
+        const member = await createAccount("member");
+        const before = await db.account.findUniqueOrThrow({ where: { id: member.accountId }, select: { seq: true } });
+
+        // Every current Home policy field affects Session admission. Home role
+        // administration supplies the negative control without inventing a field.
+        const response = await post(app, "/v1/home/accounts/role/set", owner.token, {
+            accountId: admin.accountId, homeRole: "owner",
+        });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json()).toMatchObject({ accountId: admin.accountId, homeRole: "owner" });
+        expect(await db.account.findUniqueOrThrow({ where: { id: member.accountId }, select: { seq: true } }))
+            .toEqual(before);
+    });
+
+    it("advances member revisions for network policy admission changes (c4df8d48698)", async () => {
         const app = createTestApp();
         const owner = await createAccount("owner");
         const admin = await createAccount("admin");
@@ -1041,7 +1099,7 @@ describe("Home governance routes", () => {
         expect(after.find((account) => account.id === admin.accountId)?.seq)
             .toBe(beforeById.get(admin.accountId)! + 1);
         expect(after.find((account) => account.id === member.accountId)?.seq)
-            .toBe(beforeById.get(member.accountId));
+            .toBe(beforeById.get(member.accountId)! + 1);
     });
 
     it("tells an admitted member how Teams are created here and who administers them, by name only", async () => {

@@ -189,6 +189,15 @@ export const HomeGovernanceProjectionV1Schema = lazyZodSchema(() => z.strictObje
 
 export type HomeGovernanceProjectionV1 = z.infer<typeof HomeGovernanceProjectionV1Schema>;
 
+/** Member-readable Session defaults; the same field projected in Team policy. */
+export const HomeSessionDefaultsProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  homeDefaults: z.nullable(ManagedSessionDefaultsV1Schema),
+}));
+export type HomeSessionDefaultsProjectionV1 = z.infer<typeof HomeSessionDefaultsProjectionV1Schema>;
+export const HomeGovernanceReadResultV1Schema = lazyZodSchema(() => z.union([
+  HomeGovernanceProjectionV1Schema, HomeSessionDefaultsProjectionV1Schema,
+]));
+
 /** A fresh owner-only Home read for the optional empty-Personal-Home removal affordance. */
 export const HomeEmptinessV1Schema = lazyZodSchema(() => z.strictObject({ isEmpty: z.boolean() }));
 export type HomeEmptinessV1 = z.infer<typeof HomeEmptinessV1Schema>;
