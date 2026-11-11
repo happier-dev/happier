@@ -40,12 +40,14 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { StoreMachineScopeContext } from '@/components/settings/plugins/model/useStoreMachineScope';
 
 import type {
   StoreAppListingState,
   StoreAppPreparationInput,
   StoreAppCreateChoices,
 } from './useStoreAppListing';
+import { useStoreAppListing } from './useStoreAppListing';
 import { createStoreAppPreparationState, type StoreAppPreparationStore } from './storeAppPreparationState';
 
 type Ready = Extract<StoreAppListingState, { kind: 'ready' }>;
@@ -85,7 +87,23 @@ export function showStoreAppPreparation(
 function StoreAppPreparationModal(
   props: ReviewProps & CustomModalInjectedProps,
 ) {
-  return <StoreAppPreparationReview {...props} />;
+  const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
+  const machineId = useStore(reviewState, state => state.machineId);
+  const machine = React.useMemo(() => machineId ? {
+    serverId: props.lifetime.scope.serverId, machineId,
+  } : undefined, [machineId, props.lifetime.scope.serverId]);
+  return <StoreMachineScopeContext.Provider value={machine}>
+    <StoreAppPreparationTargeted {...props} reviewState={reviewState} />
+  </StoreMachineScopeContext.Provider>;
+}
+
+function StoreAppPreparationTargeted(props: ReviewProps & CustomModalInjectedProps) {
+  const { ready: initialReady, lifetime, reviewState } = props;
+  const selection = { sourceId: initialReady.item.summary.sourceId, itemId: initialReady.item.summary.itemId,
+    ...(initialReady.item.summary.version ? { version: initialReady.item.summary.version } : {}) };
+  const listing = useStoreAppListing({ selection, lifetime, demand: { presented: true } });
+  const ready = listing.kind === 'ready' ? listing : null;
+  return ready ? <StoreAppPreparationReview {...props} ready={ready} reviewState={reviewState} /> : null;
 }
 
 /**
