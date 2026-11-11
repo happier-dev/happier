@@ -19,6 +19,7 @@ import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { LocalServiceLauncherHistoryStore } from '../launch/leaves';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type ManagedServicesOwner = ReturnType<typeof createManagedServicesOwner>;
 type AdmittedLocalServiceAction = Readonly<{ request: LocalServiceActionRequestV1; requestedAt: number;
@@ -26,7 +27,7 @@ type AdmittedLocalServiceAction = Readonly<{ request: LocalServiceActionRequestV
 
 export type LocalServiceActionRoutes = Readonly<{
     execute(request: LocalServiceActionRequestV1, execution?: LocalServiceActionExecutionContext): Promise<LocalServiceActionResultV1>;
-    prepareRestart(request: LocalServiceActionRequestV1, execution: LocalServiceActionExecutionContext): Promise<HostReviewedChildrenPreparationV1>;
+    prepareRestart(request: LocalServiceActionRequestV1, execution: LocalServiceActionExecutionContext): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult>;
 }>;
 
 function createAuditEvent(input: Readonly<{
@@ -244,8 +245,7 @@ export function createLocalServiceActionRoutes(input: Readonly<{
             return 'result' in admitted ? admitted.result : await executeAdmitted(admitted, execution);
         },
         async prepareRestart(request, execution) {
-            const settled = (result: LocalServiceActionResultV1): HostReviewedChildrenPreparationV1 => ({ children: [],
-                executeAdmittedAction: async () => ({ ok: true, result }) });
+            const settled = (result: LocalServiceActionResultV1): ActionExecuteResult => ({ ok: true, result });
             const admitted = await admit(request, execution);
             if ('result' in admitted) return settled(admitted.result);
             if (request.action !== 'restart_managed' || admitted.target.kind !== 'managed_service'

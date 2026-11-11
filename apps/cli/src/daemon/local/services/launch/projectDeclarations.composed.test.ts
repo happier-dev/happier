@@ -2992,6 +2992,46 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(original.instanceId);
         expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
     });
+    it('settles a refused Restart preparation without opening a generic approval or stopping the original Service', async () => {
+        const h = await fixture();
+        const review = await h.selectStart();
+        expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
+            .toMatchObject({ status: 'succeeded' });
+        const original = h.owner.listProjectServices()[0]!;
+        const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,
+            inventoryRegistry: createLocalServiceInventoryRegistry(), restartManagedService: h.starter.restartManagedService,
+            prepareRestartManagedService: h.starter.prepareRestartManagedService,
+            verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request) });
+        const gate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+            features: FeaturesResponseSchema.parse({ features: { localServices: { enabled: true, inventory: { enabled: true },
+                managed: { enabled: true }, actions: { enabled: true }, launcher: { enabled: true } },
+                browser: { enabled: true, viewTargets: { enabled: true } } }, capabilities: {} }) }) });
+        await gate.refresh();
+        const transport = h.post.getMockImplementation()!;
+        h.post.mockImplementation(async (url, body, options) => String(url).includes('/account/project-rows/')
+            ? { status: 403, data: { error: 'forbidden' } } : transport(url, body, options));
+        const approvals: string[] = [];
+        const executor = createActionExecutor({
+            ...createCliActionDeps({ token: h.runtime.credentials.token, credentials: h.runtime.credentials,
+                serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
+            prepareHostReviewedChildren: createLocalServicesDaemonRestartPreparation({ featureGate: gate,
+                ingress: h.ingress, routes: { actionRoutes } }),
+            approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'unusable-review' }; },
+        });
+        const request = { requestId: 'refused-restart', action: 'restart_managed' as const, force: false,
+            target: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: original.instanceId } };
+        const context = { ...h.context, serverIdentityId: h.serverIdentityId, runtimeAccountId: 'owner',
+            actionRequestId: request.requestId, surface: 'ui' as const, authority: 'present_user' as const };
+        const input = { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) };
+        const preparation = await createLocalServicesDaemonRestartPreparation({ featureGate: gate,
+            ingress: h.ingress, routes: { actionRoutes } })({ actionId: 'localServices.actions.restartManaged', input, context });
+        expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_workspace_unavailable' } });
+        const result = await executor.execute('localServices.actions.restartManaged', input, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_workspace_unavailable' } });
+        expect(approvals).toEqual([]);
+        expect(original.snapshot().state).toBe('running');
+        await original.stop();
+    });
     it('keeps the legacy Machine control transport behind the same current Agent approval policy', async () => {
         const h = await fixture();
         const review = await h.selectStart();
