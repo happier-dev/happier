@@ -20,6 +20,8 @@ function sessionAccessFailureMessage(code: string, status?: number): string {
             return `${t('teams.settings.externalSharingSection')}: ${t('teams.policy.externalSharingAdmins')}`;
         case 'session_access_team_policy_required':
             return t('session.access.teamPolicyRequired');
+        case 'session_access_context_policy_unavailable':
+            return t('session.access.contextPolicyUnavailable');
         // A manager cannot change their own direct grant. That is an ordinary,
         // explainable row state, so it must never surface as a generic failure.
         case 'session_access_self_grant_invalid':

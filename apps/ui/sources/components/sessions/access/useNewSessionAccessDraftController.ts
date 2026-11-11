@@ -309,7 +309,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             if (!active) return;
             if (decision === null) {
                 setContextDecisionError(true);
-                setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('errors.operationFailed') });
+                setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') });
                 return;
             }
             const target = projectCreationDecisionPolicy(decision);
@@ -329,7 +329,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         }).catch(() => {
             if (!active) return;
             setContextDecisionError(true);
-            setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('errors.operationFailed') });
+            setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') });
         });
         return () => { active = false; };
     }, [availability, pendingContextDecision, primaryTeamPolicy, scope.accountId, scope.serverId, submitContext]);
@@ -460,7 +460,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                 ...(pendingContextDecision || contextDecisionError ? {
                     operation: contextDecisionError ? 'error' as const : 'saving' as const,
                     ...(contextDecisionError ? { error: {
-                        code: 'session_access_context_policy_unavailable', message: t('errors.operationFailed'), retryable: true,
+                        code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'), retryable: true,
                     } } : {}),
                 } : {}),
                 options: [
@@ -468,18 +468,18 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                         ...(primaryTeamPolicy?.sessionCreationPolicy === 'team_required' ? { blockedReason: {
                             code: 'session_access_team_policy_required', message: t('session.access.required'),
                         } } : primaryTeamPolicyUnavailable ? { blockedReason: {
-                            code: 'session_access_context_policy_unavailable', message: t('errors.operationFailed'),
+                            code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
                         } } : {}) },
                     ...[
                         ...(primaryTeamPolicy && !directory.teamContexts.some((team) => team.teamId === primaryTeamPolicy.teamId) ? [primaryTeamPolicy] : []),
                         ...directory.teamContexts,
                     ].map((team) => ({ teamId: team.teamId, label: team.name,
                         ...(primaryTeamDecisionPending || pendingContextDecision?.teamId === team.teamId ? { blockedReason: {
-                            code: 'session_access_context_policy_unavailable', message: t('errors.operationFailed'),
+                            code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
                         } } : creationDecision?.requiredByPolicy === true && team.teamId !== primaryTeamId
                             ? { blockedReason: { code: 'session_access_team_policy_required', message: t('session.access.required') } }
                             : team.teamId === primaryTeamId && primaryTeamPolicyUnavailable ? { blockedReason: {
-                            code: 'session_access_context_policy_unavailable', message: t('errors.operationFailed'),
+                            code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
                         } } : {}),
                     })),
                 ],

@@ -129,4 +129,13 @@ describe('session access failure presentation', () => {
         expect(forbidden).toMatchObject({ code: 'session_access_forbidden', retryable: false });
         expect(forbidden.message).not.toMatch(/sign in/i);
     });
+
+    it('uses the typed context-policy reason instead of generic operation failure copy', () => {
+        const unavailable = presentSessionAccessFailure(new SessionAccessApiError('session_access_context_policy_unavailable'));
+        expect(unavailable).toEqual({
+            code: 'session_access_context_policy_unavailable',
+            message: t('session.access.contextPolicyUnavailable'),
+            retryable: true,
+        });
+    });
 });
