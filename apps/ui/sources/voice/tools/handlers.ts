@@ -409,7 +409,11 @@ export function createVoiceToolHandlers(
     const hasNaturalSessionReference = Boolean(
       normalizeId(input?.sessionId) || normalizeId(input?.sessionTitle),
     );
-    const serverId = boundAddress?.serverId ?? ctx?.serverId ?? (
+    const capturedTargetServerId = normalizeId(input?.sessionId)
+      && normalizeId(input?.sessionId) === normalizeId(deps.currentSessionAddress?.sessionId)
+      ? deps.currentSessionAddress?.serverId
+      : null;
+    const serverId = boundAddress?.serverId ?? ctx?.serverId ?? capturedTargetServerId ?? (
       !hasNaturalSessionReference ? deps.currentSessionAddress?.serverId ?? deps.currentServerId : null
     ) ?? (actionId === 'session.list' ? getActiveServerSnapshot().serverId : null);
     let actionInput = boundAddress ? { ...input, returnToSessionId: boundAddress.sessionId }

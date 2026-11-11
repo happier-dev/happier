@@ -1941,6 +1941,26 @@ describe('voice tool handlers', () => {
     expect(routerNavigate).toHaveBeenCalledWith(`/session/s_other?serverId=${homeB}`, expect.any(Object));
   });
 
+  it('uses the captured target Home for a newly created Session before list hydration', async () => {
+    const targetSessionId = 'created-before-list-hydration';
+    const target = createSessionFixture({ id: targetSessionId, serverId: homeA, active: true,
+      encryptionMode: 'plain',
+      agentState: { controlledByUser: false, requests: {
+        permission: { kind: 'permission', tool: 'Bash', arguments: { command: "printf 'APPLE' > first.txt" }, createdAt: 1 },
+      } } });
+    sessionDetailReplies.set(targetSessionId, target);
+
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => targetSessionId,
+      currentSessionAddress: { serverId: homeA, sessionId: targetSessionId } });
+    const result = JSON.parse(await tools.action_execute!({ actionId: 'session.status.get',
+      input: { sessionId: targetSessionId, live: true } }, { effectId: 'created-status' }));
+
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+      session: { id: targetSessionId }, pendingRequests: [{ requestId: 'permission', kind: 'permission', tool: 'Bash' }],
+    } });
+    expect(sessionDetailReads).toContain(targetSessionId);
+  });
+
   it('resolves a unique natural Session title through the complete mounted Sessions corpus', async () => {
     retainVoiceSessionReferenceCorpus({
       addresses: [{ serverId: homeA, sessionId: 's_matrix' }],
