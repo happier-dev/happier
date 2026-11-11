@@ -25,7 +25,7 @@ export const MACHINE_PROVISIONER = {
   title: 'E2B', icon: 'cloud', resourceKind: 'e2b-sandbox', schemaVersion: 1, enrollmentRole: 'sandbox',
   kindTitle: 'Sandbox', description: 'A Linux sandbox on E2B, connected as an ordinary Happier Machine.',
   launchSchema: E2bLaunchSchema.jsonSchema, resourceSchema: E2bResourceSchema.jsonSchema,
-  resourceIdPath: 'sandboxId', platforms: ['darwin', 'linux', 'win32'], prerequisites: [], browserReachable: false,
+  resourceIdPath: 'sandboxId', platforms: ['darwin', 'linux', 'win32'], prerequisites: [], browserReachable: true,
   billing: BILLING, retention: RETENTION, nativeDurationInput: { path: 'timeoutSeconds', unit: 'seconds' },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },

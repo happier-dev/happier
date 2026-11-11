@@ -874,6 +874,7 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
     checkInput: MachineProvisionerCheckInputV1Schema,
     nativeCredentialApplyInput: defineNativeCredentialApplyInput(schemas.resource),
     acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey, guestHome,
+      reviewedEffectDigest: defineProtocolString({ minLength: 1 }).optional(),
       ...(schemas.continueAcquire ? { resource: schemas.resource.optional() } : {}) }, closed),
     acquireResult: defineAcquireResult(schemas.resource),
     rebuildInput: defineProtocolObject({ resource: schemas.resource, reviewedEffectDigest: defineProtocolString({ minLength: 1 }), guestHome }, closed),

@@ -2,6 +2,12 @@ import { expect, it } from 'vitest';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as entry from './index.js';
+import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
+
+it('admits the HTTP create and envd bootstrap recipe on a browser host', () => {
+  expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: entry.MACHINE_PROVISIONER }))
+    .toEqual({ available: true, executionTarget: 'account' });
+});
 
 it.each(['network', 'credential'] as const)('Check and Options return schema-valid unavailable results on %s failure', async failure => {
   // The host credential store and vendor network are the only substituted boundaries.
