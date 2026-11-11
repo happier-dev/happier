@@ -734,8 +734,46 @@ describe('usePluginUiProjectionCurrentness', () => {
         } finally { await rendered.unmount(); }
     });
 
-    it('resolves and lists the real Hetzner cloud-api purpose through one admission query', async () => {
-        const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-machine-hetzner/manifest');
+    it.each(['hetzner', 'cua'] as const)('resolves the real %s provisioner purpose after merging Account declarations', async provider => {
+        const { PLUGIN_MANIFEST } = provider === 'cua'
+            ? await import('@happier-dev/plugins-machine-cua/manifest')
+            : await import('@happier-dev/plugins-machine-hetzner/manifest');
+        const { useScopedPluginUiProjection } = await import('@/components/plugins/projection/useScopedPluginUiProjection');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const features = createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
+            ui: { enabled: true, reactNativeBundles: { enabled: true } } } },
+            capabilities: { serverIdentity: { serverIdentityId } } });
+        harness.answer(homeId, '/v1/features', { body: features });
+        harness.answer(homeId, '/v1/features/authenticated', { body: features });
+        primeServerFeaturesSnapshot({ serverId: serverIdentityId, snapshot: { status: 'ready', features } });
+        const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } =
+            await import('@/sync/domains/plugins/availability/projection');
+        const accountScope = captureActiveServerAccountScopeLifetime()!.scope;
+        const { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginPortableReleaseManifestV1Schema } =
+            await import('@happier-dev/protocol/plugins/availability');
+        const { createPackageAssetArchiveV1, readDeclaredPackageAssetsV1 } =
+            await import('@happier-dev/protocol/plugins/availability');
+        const declaredAssets = readDeclaredPackageAssetsV1(PLUGIN_MANIFEST);
+        if (!declaredAssets) throw new Error('Expected admitted packaged assets');
+        const archive = createPackageAssetArchiveV1({ manifest: PLUGIN_MANIFEST,
+            files: declaredAssets.map(asset => ({ path: asset.path, bytes: new Uint8Array([1]) })) });
+        if (!archive) throw new Error('Expected produced package archive');
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            availabilityCursor: 1, hostingCapability: { enabled: false },
+            intent: { pluginId: PLUGIN_MANIFEST.id, desiredVersion: PLUGIN_MANIFEST.version,
+                enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'purpose-fixture' },
+            release: { ref: { pluginId: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                normalizedManifest: PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST),
+                collectionContracts: [], uiSlots: [],
+                packageAssetArchive: archive.descriptor },
+            uiArtifacts: [], packageAssets: [],
+        });
+        replacePluginAccountAvailabilityProjection({ scope: accountScope, snapshot: {
+            availabilityCursor: 1, intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response }], materializations: [], snapshots: [] } });
+        const accountReader = readPluginAccountAvailability(accountScope);
+        expect(await accountReader.ensureCurrentAccountExecution(PLUGIN_MANIFEST.id)).toMatchObject({ kind: 'available' });
+        expect(accountReader.readAccountUiProjection()).not.toBeNull();
         const { createLoadedMachineProvisionerFixture } = await import(new URL('../../../../../../cli/src/plugins/projection/registry/machineProvisioners.testkit.ts', import.meta.url).href);
         const { normalizePluginManifestV2 } = await import(new URL('../../../../../../cli/src/plugins/manifest/normalize.ts', import.meta.url).href);
         const { projectLoadedPluginContributes } = await import(new URL('../../../../../../cli/src/plugins/projection/registry/fullProjection.ts', import.meta.url).href);
@@ -751,7 +789,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             loadResult: { loadedPlugins: [loaded], diagnosticsByPluginId: {} }, provenance: 'first_party',
         }), occurrenceIdsByPluginId: { [pluginId]: createPluginRuntimeOccurrenceId(pluginId) } });
         const produced = PluginProjectionV2Schema.parse(buildPluginConnectedAccountAdmissionProjectionV2({ registry, generation: 41 }));
-        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+        const projectionResponse = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1, projectionDigest: 'b'.repeat(64), projection: produced,
         });
         const requests: ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>[] = [];
@@ -759,17 +797,20 @@ describe('usePluginUiProjectionCurrentness', () => {
             const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse((options as { payload: unknown }).payload);
             requests.push(request);
             expect(request).not.toHaveProperty('sections');
-            return response;
+            return projectionResponse;
         });
-        const rendered = await renderHook(() => usePluginUiProjectionCurrentness({
+        const rendered = await renderHook(() => useScopedPluginUiProjection({
             machineId: 'machine-1', serverId: serverIdentityId, includeConnectedAccountPurposes: true,
         }));
         try {
             await waitForHomeGovernance(() => expect(rendered.getCurrent().phase).toBe('current'));
             const runtime = rendered.getCurrent();
+            expect(runtime.interactionEnabled).toBe(true);
+            expect(runtime.accountLifetime?.isCurrent()).toBe(true);
+            expect(runtime.connectedAccountProjection?.kind).toBe('ready');
             const scope = captureActiveServerAccountScopeLifetime()!.scope;
-            const purpose = { consumer: { pluginId, localId: 'hetzner' }, purpose: 'cloud-api' };
-            const service = { pluginId, localId: 'hetzner-account' };
+            const purpose = { consumer: { pluginId, localId: provider === 'cua' ? 'byoc' : 'hetzner' }, purpose: provider === 'cua' ? 'cloud-account' : 'cloud-api' };
+            const service = { pluginId, localId: provider === 'cua' ? 'cloud-native' : 'hetzner-account' };
             expect(readConnectedAccountPurposeSetupDeclaration({ scope, machineId: 'machine-1', purpose }, scope, runtime))
                 .toMatchObject({ consumerKind: 'machineProvisioner', serviceRefs: [service] });
             expect(readConnectedAccountPurposeSetupDeclaration({ scope, machineId: 'machine-1', purpose }, scope,
@@ -788,6 +829,25 @@ describe('usePluginUiProjectionCurrentness', () => {
             expect(requests).toHaveLength(1);
             expect(requests[0]).toMatchObject({ selection: 'connectedAccountAdmission' });
             expect(requests[0]).not.toHaveProperty('deferredSections');
+            if (provider === 'cua') {
+                // R120-E captured these request identities and the current/ready flags above.
+                const captured = { machineId: '18402cb2-7a54-4137-b8f1-d30855fc102d', purpose,
+                    scope: { serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
+                        accountId: '783bba8a-e455-41b2-9bc0-50f18325cc45' } };
+                expect(readConnectedAccountPurposeSetupDeclaration(captured, captured.scope,
+                    { ...runtime, serverId: captured.scope.serverId, machineId: captured.machineId }))
+                    .toMatchObject({ consumerKind: 'machineProvisioner', serviceRefs: [service] });
+                expect(readConnectedAccountPurposeSetupDeclaration({ scope, machineId: 'machine-1',
+                    purpose: { ...purpose, purpose: 'cua-account' } }, scope, runtime))
+                    .toMatchObject({ consumerKind: 'machineProvisioner', serviceRefs: [{ pluginId, localId: 'cua-account' }] });
+            }
+            await act(async () => { setMachine({ active: false }); });
+            await rendered.rerender();
+            await flushHookEffects();
+            expect(rendered.getCurrent().interactionEnabled).toBe(false);
+            expect(accountReader.readAccountUiProjection()).not.toBeNull();
+            expect(readConnectedAccountPurposeSetupDeclaration({ scope, machineId: 'machine-1', purpose }, scope,
+                rendered.getCurrent())).toBeNull();
         } finally { await rendered.unmount(); }
     });
 

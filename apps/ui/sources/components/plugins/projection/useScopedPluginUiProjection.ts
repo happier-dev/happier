@@ -34,7 +34,10 @@ export function useScopedPluginUiProjection(params: Readonly<{
     const hostBundledUiEnabled = useFeatureEnabled('plugins.ui.reactNativeBundles', {
         scopeKind: 'spawn', serverId: accountLifetime?.scope.serverId ?? serverId,
     });
-    const accountUiProjection = hostBundledUiEnabled ? availability?.accountUiProjection ?? null : null;
+    // Purpose admission consumes the selected Machine's complete declaration and currentness.
+    // The app-wide Account/UI union omits Machine catalogs and has independent readiness.
+    const accountUiProjection = hostBundledUiEnabled && !params.includeConnectedAccountPurposes
+        ? availability?.accountUiProjection ?? null : null;
     const [machineUnion] = React.useState(createPluginUiProjectionUnionPublication);
     const [accountMerge] = React.useState(createInstalledPluginUiProjectionPublication);
     // Stamp the exact Machine's retained/current rows before introducing an
