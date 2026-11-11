@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -24,8 +24,10 @@ import { githubHostingProviderAdapter } from '../../../../../../packages/plugins
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/scm-github/src/manifest';
 
 describe('git RPC handlers (hosting repository publish)', () => {
-    it.each([false, true])('discovers hosting accounts through Action and RPC with repository present: %s', async (repositoryPresent) => {
+    it.each(['directory', 'repository', 'missing'] as const)('discovers hosting accounts through Action and RPC at a %s destination', async (destinationKind) => {
+        const repositoryPresent = destinationKind === 'repository';
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-hosting-targets-nonrepo-'));
+        const cwd = destinationKind === 'missing' ? join(workspace, 'src') : workspace;
         // Only credential acquisition and GitHub HTTP are mocked; detection,
         // dispatch, the registered Git runtime and provider projection stay real.
         const adapter = createGithubRepositoryRestAdapter({
@@ -57,7 +59,7 @@ describe('git RPC handlers (hosting repository publish)', () => {
                 git(workspace, ['init', '-b', 'main']);
                 git(workspace, ['remote', 'add', 'origin', 'https://github.com/alice/existing.git']);
             }
-            const request = { cwd: workspace, providerKind: 'github' } as const;
+            const request = { cwd, providerKind: 'github' } as const;
             const { call } = createTestRpcManager({ workingDirectory: workspace, registry });
             const responses = [
                 await executeScmActionOperation({ actionId: 'scm.hostingRepository.describePublishTargets', input: request, workingDirectory: workspace, registry }),
@@ -66,13 +68,37 @@ describe('git RPC handlers (hosting repository publish)', () => {
             ];
             for (const response of responses) {
                 expect(response, JSON.stringify(response)).toMatchObject({ success: true, auth: { state: 'authenticated' },
-                    defaultRepositoryName: basename(workspace), targets: [
+                    defaultRepositoryName: basename(cwd), targets: [
                         expect.objectContaining({ owner: 'alice' }), expect.objectContaining({ owner: 'bakery-team' }),
                     ] });
                 expect(response).toMatchObject({ targets: expect.arrayContaining([expect.objectContaining({
                     provider: repositoryPresent ? expect.objectContaining({ nameWithOwner: 'alice/existing', remoteName: 'origin' })
                         : expect.not.objectContaining({ nameWithOwner: expect.anything() }),
                 })]) });
+            }
+            // Account discovery must not create the future checkout parent. The
+            // clone owner creates it only after the person confirms creation.
+            if (destinationKind === 'missing') {
+                expect(existsSync(cwd)).toBe(false);
+                const executor = createActionExecutor({
+                    scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({
+                        actionId, input, workingDirectory: workspace, registry,
+                    }),
+                });
+                // This fixture admits publishing discovery but has no network
+                // clone capability: reach that checkout refusal, not ROOT_NOT_FOUND
+                // while checking the account against the default <home>/src path.
+                expect(await executor.execute('projects.starters.create', {
+                    serverId: 'home', machineId: 'machine', requestKey: 'starter-missing-parent', starterId: 'static-website',
+                    description: 'A bakery website', destinationParentPath: cwd, destinationDirectoryName: 'bakery',
+                    repository: { owner: 'alice', name: 'bakery' },
+                }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+                    .toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout', code: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED } });
+                expect(existsSync(cwd)).toBe(false);
+                expect(await executeScmActionOperation({ actionId: 'scm.hostingRepository.describePublishTargets',
+                    input: request, workingDirectory: workspace, registry,
+                    accessPolicy: { kind: 'restrictedRoots', roots: [join(workspace, 'allowed')] } }))
+                    .toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH });
             }
             if (!repositoryPresent) {
                 const destination = join(workspace, 'bakery');

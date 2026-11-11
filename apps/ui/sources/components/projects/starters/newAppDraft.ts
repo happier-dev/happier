@@ -1,4 +1,6 @@
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
+import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
 
 /**
  * The New app flow's typed boundary to `projects.starters.create` (Plan 60 §3.2, contract posted by
@@ -136,10 +138,16 @@ export function readStarterCreateOutcome(
       code,
       repositoryCreated: text(value.repositoryUrl) !== null,
       // The SCM owner's remediation carries its own label (Choose another name, Connect GitHub…).
-      remediation:
-        value.remediation && typeof value.remediation === 'object'
+      remediation: (() => {
+        const carried = value.remediation && typeof value.remediation === 'object'
           ? text((value.remediation as Record<string, unknown>).label)
-          : null,
+          : null;
+        if (carried) return carried;
+        const parsedCode = ScmOperationErrorCodeSchema.safeParse(code);
+        return parsedCode.success
+          ? getScmUserFacingError({ errorCode: parsedCode.data, fallback: code })
+          : null;
+      })(),
     };
   }
   return {

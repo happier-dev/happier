@@ -119,4 +119,10 @@ describe('New app draft (projects.starters.create operands)', () => {
       remediation: { kind: 'retry', label: 'Choose another name' } }))
       .toMatchObject({ kind: 'failed', remediation: 'Choose another name' });
   });
+
+  it('explains a missing folder with the existing SCM recovery when no remediation was supplied', () => {
+    const outcome = readStarterCreateOutcome({ kind: 'failed', phase: 'account', code: 'ROOT_NOT_FOUND' });
+    expect(outcome).toMatchObject({ kind: 'failed', code: 'ROOT_NOT_FOUND', phase: 'account',
+      remediation: expect.stringMatching(/folder.*choose another folder/i) });
+  });
 });
