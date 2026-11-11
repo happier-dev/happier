@@ -5,19 +5,17 @@ import { buildExecutionRunConfiguration } from '@/agent/runtime/bridges/executio
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 
-// Refused permission selections retain their typed startup cause.
-it.each(['yolo', 'safe-yolo', 'plan'] as const)('refuses explicit %s intent before native launch', async intent => {
+// An explicit workspace denial takes precedence over every launch intent.
+it.each(['yolo', 'safe-yolo', 'plan'] as const)('keeps explicit %s read-only when workspace writes are denied', async intent => {
   const fixture = await createAdmittedMuseSessionFixture();
-  const configuration: AgentSessionConfigurationUpdate = {
-    model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
-    permissionIntent: { value: intent, updatedAtMs: 0 }, options: {},
-  };
   try {
-    await expect(fixture.open({ kind: 'create', sessionId: fixture.context.session.id,
-      cwd: process.cwd(), configuration })).rejects.toMatchObject({ code: 'agent_startup_invalid_state', retryable: false,
-        details: { failureCause: { code: 'agent_startup_invalid_state', phase: 'client_start',
-          failureReason: 'unclassified_provider_error' } } });
-    expect(fixture.launchCount).toBe(0);
+    await fixture.open({ kind: 'create', sessionId: fixture.context.session.id, cwd: process.cwd(),
+      configuration: { model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: intent, updatedAtMs: 0 }, workspaceWrites: 'deny', options: {} } });
+    await fixture.closeSession();
+    expect((await fixture.readAudit()).commandTargets).toMatchObject([
+      { method: 'session/start', permissionProfile: ':read-only', approvalMode: 'promptUnmatched' },
+    ]);
   } finally { await fixture.dispose(); }
 });
 
@@ -44,15 +42,21 @@ it.each(['intent', 'workspaceWrites'] as const)('opens native read-only permissi
   } finally { await fixture.dispose(); }
 });
 
-it('refuses a read-only fork before native launch because fork cannot override the source profile', async () => {
-  const fixture = await createAdmittedMuseSessionFixture();
+it('applies read-only fork permissions through native release and resume before returning the child', async () => {
+  const recording = JSON.parse(await readFile(new URL('./testkit/fixtures/fork-mcp.json', import.meta.url), 'utf8'));
+  const fixture = await createAdmittedMuseSessionFixture({ native: { recording,
+    playbackSteps: [{ requestRow: 5, receiveUntilRow: 9 }, { requestRow: 9, receiveUntilRow: 14 },
+      { requestRow: 14, receiveUntilRow: 16 }] } });
   try {
-    await expect(fixture.open({ kind: 'fork', sessionId: fixture.context.session.id, cwd: process.cwd(),
-      source: { sessionId: 'source-host-session', providerSessionId: '00000000-0000-7000-8000-000000000002', cwd: process.cwd() },
+    await fixture.open({ kind: 'fork', sessionId: fixture.context.session.id, cwd: process.cwd(),
+      source: { sessionId: 'source-host-session', providerSessionId: recording.rows[4].message.result.session.sessionId, cwd: process.cwd() },
       configuration: { model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
-        permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
-    })).rejects.toMatchObject({ code: 'agent_startup_invalid_state', retryable: false });
-    expect(fixture.launchCount).toBe(0);
+        permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} } });
+    await fixture.closeSession();
+    const audit = await fixture.readAudit();
+    expect(audit.commandTargets.find(command => command.method === 'session/resume'))
+      .toMatchObject({ permissionProfile: ':read-only' });
+    expect(audit.methods.indexOf('session/leave')).toBeLessThan(audit.methods.indexOf('session/resume'));
   } finally { await fixture.dispose(); }
 });
 

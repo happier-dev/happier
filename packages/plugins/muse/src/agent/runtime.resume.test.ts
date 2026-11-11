@@ -10,6 +10,9 @@ import { readMuseRecord } from './events.js';
 it.each([
   { historyMode: 'inline', permissionIntent: null },
   { historyMode: 'snapshot', permissionIntent: 'read-only' },
+  { historyMode: 'inline', permissionIntent: 'yolo' },
+  { historyMode: 'inline', permissionIntent: 'safe-yolo' },
+  { historyMode: 'inline', permissionIntent: 'default' },
 ] as const)('resumes the same native conversation with $historyMode history and $permissionIntent permissions, then continues once', async ({ historyMode, permissionIntent }) => {
   const providerSessionId = '00000000-0000-7000-8000-000000000002';
   const after = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-resume-fork-after.json', import.meta.url), 'utf8')));
@@ -79,7 +82,8 @@ it.each([
       .toMatchObject([{ sessionId: providerSessionId }, { sessionId: providerSessionId }]);
     expect(audit.selectedHome).toBe('/selected/native/home');
     expect(audit.commandTargets.find(command => command.method === 'session/resume')?.permissionProfile)
-      .toBe(permissionIntent === 'read-only' ? ':read-only' : undefined);
+      .toBe(permissionIntent === null ? undefined : permissionIntent === 'yolo' ? ':unrestricted'
+        : permissionIntent === 'read-only' ? ':read-only' : ':ask-me');
   } finally {
     events.dispose();
     await fixture.dispose();
