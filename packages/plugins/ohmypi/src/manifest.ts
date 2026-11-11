@@ -176,6 +176,10 @@ export const OH_MY_PI_PLUGIN = definePlugin({
       factory: createOhMyPiAgentRuntime,
       providerBinding: OH_MY_PI_PROVIDER_BINDING_ADAPTER,
       connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_shared_state_required',
+          supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+        },
         fileEnvironmentUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => row.fileCredential
           ? [{ purpose: row.purpose, ...row.fileCredential }] : []),
         environmentUnsetUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => ohMyPiPurposeOwnedEnvironmentKeys(row).map(environmentKey => ({

@@ -1,7 +1,8 @@
 import type { AgentConnectedAccountStateSharingDescriptorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const geminiConnectedServiceStateSharingDescriptor = Object.freeze({
-  providerSupportStatus: 'unsupported',
+  nativeHome: { environmentKey: 'GEMINI_CLI_HOME', defaultRelativePath: '.' },
+  providerSupportStatus: 'supported',
   config: {
     supported: false,
     modes: ['isolated'],
@@ -9,9 +10,13 @@ export const geminiConnectedServiceStateSharingDescriptor = Object.freeze({
     unavailableReason: 'not_implemented',
   },
   state: {
-    supported: false,
-    modes: ['isolated'],
-    entries: [],
+    supported: true,
+    modes: ['isolated', 'shared'],
+    entries: [
+      { path: '.gemini/tmp', mode: 'linked' },
+      { path: '.gemini/projects.json', mode: 'linked' },
+    ],
+    sharedStatePrivacyRiskAcknowledgementRequired: true,
     symlinkUnavailableDegradePolicy: 'block_continuity',
     unavailableReason: 'not_implemented',
   },

@@ -8,7 +8,6 @@ const ACP_COMMANDS = Object.freeze([
   Object.freeze({ toolId: 'gemini-cli', args: Object.freeze(['--experimental-acp']) }),
 ]);
 export const GEMINI_ACP_COMMAND = ACP_COMMANDS[0];
-export const GEMINI_ACP_COMMAND = ACP_COMMANDS[0];
 
 export const GEMINI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   jsonRpcCommands: Object.freeze([HELP_COMMAND, ...ACP_COMMANDS]),

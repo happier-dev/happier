@@ -94,6 +94,10 @@ export const MUSE_PLUGIN = definePlugin({
       },
       factory: createMuseAgentRuntime,
       connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_same_home',
+          supportedTransitions: ['connected_to_connected'],
+        },
         continuity: { verifyResumeReachable: verifyMuseResumeReachable },
         stateSharingDescriptor: museStateSharingDescriptor,
         environmentUses: MUSE_DIRECT_AUTH_ENV_KEYS.map(environmentKey => ({ purpose: MUSE_NATIVE_PURPOSE, environmentKey })),

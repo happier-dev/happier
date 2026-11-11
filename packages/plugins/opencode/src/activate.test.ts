@@ -70,10 +70,10 @@ describe('activate', () => {
           },
         }],
         stateSharingDescriptor: expect.objectContaining({
-          providerSupportStatus: 'unsupported',
+          providerSupportStatus: 'supported',
           authIsolation: {
             mode: 'process_env',
-            secretEntries: ['OPENCODE_AUTH_CONTENT', 'auth.json'],
+            secretEntries: ['OPENCODE_AUTH_CONTENT', 'opencode/auth.json'],
           },
         }),
         switchContinuity: {
@@ -88,9 +88,14 @@ describe('activate', () => {
       });
       const verify = activation.registration('agents', 'opencode')?.connectedAccountLaunch?.continuity?.verifyResumeReachable;
       expect(verify).toBeTypeOf('function');
+      const requests: string[] = [];
       expect(await verify?.({ vendorResumeId: 'native-session', sessionFiles: {
-        async findDeclaredCandidate() { throw new Error('OpenCode has no declared shared session files'); },
-      } })).toEqual({ ok: false, reason: 'opencode_state_not_shared' });
+        async findDeclaredCandidate() { return { found: false }; },
+      }, nativeInspection: { cwd: '/workspace', withDeclaredJsonRpcClient: async (_command, inspect) => await inspect({
+        request: async method => { requests.push(method); return {}; },
+        notify: async () => undefined, onNotification: () => () => undefined, onRequest: () => () => undefined,
+      }, new AbortController().signal) } })).toEqual({ ok: true, proof: 'native_session' });
+      expect(requests).toEqual(['initialize', 'session/load']);
       expect(activation.registration('agents', 'opencode')?.connectedAccountLaunch?.stateSharingDescriptor)
         .not.toHaveProperty('providerId');
     } finally {

@@ -133,7 +133,8 @@ describe('Gemini native runtime migration', () => {
       expect(requests.map(request => request.method)).toEqual(['initialize', 'session/load']);
       expect(requests[1]?.params).toMatchObject({ sessionId: 'native-session', cwd: '/real/gemini/workspace' });
       expect(launch?.stateSharingDescriptor).toEqual({
-        providerSupportStatus: 'unsupported',
+        nativeHome: { environmentKey: 'GEMINI_CLI_HOME', defaultRelativePath: '.' },
+        providerSupportStatus: 'supported',
         config: {
           supported: false,
           modes: ['isolated'],
@@ -141,11 +142,14 @@ describe('Gemini native runtime migration', () => {
           unavailableReason: 'not_implemented',
         },
         state: {
-          supported: false,
-          modes: ['isolated'],
-          entries: [],
+          supported: true,
+          modes: ['isolated', 'shared'],
+          entries: [
+            { path: '.gemini/tmp', mode: 'linked' },
+            { path: '.gemini/projects.json', mode: 'linked' },
+          ],
+          sharedStatePrivacyRiskAcknowledgementRequired: true,
           symlinkUnavailableDegradePolicy: 'block_continuity',
-          unavailableReason: 'not_implemented',
         },
         authIsolation: {
           mode: 'process_env',

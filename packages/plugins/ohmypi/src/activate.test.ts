@@ -169,6 +169,10 @@ describe('OhMyPi plugin activation', () => {
         nativeHome: { environmentKey: 'PI_CODING_AGENT_DIR' },
         authIsolation: { mode: 'materialized_home', secretEntries: [] },
       });
+      expect(launch?.switchContinuity).toEqual({
+        continuityMode: 'restart_shared_state_required',
+        supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+      });
     } finally {
       await fixture.dispose();
     }

@@ -1,10 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
-import { DROID_CHATGPT_PURPOSE, DROID_CONNECTED_ACCOUNT_PURPOSES, prepareDroidConnectedAccount } from './connectedAccount.js';
+import { DROID_CHATGPT_PURPOSE, DROID_CONNECTED_ACCOUNT_LAUNCH, DROID_CONNECTED_ACCOUNT_PURPOSES, prepareDroidConnectedAccount } from './connectedAccount.js';
 
 const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected-chatgpt' };
 
 describe('Droid connected-account declaration', () => {
+  it('proves a resumed session from host-custodied Factory session candidates', async () => {
+    const result = await DROID_CONNECTED_ACCOUNT_LAUNCH.continuity.verifyResumeReachable?.({
+      vendorResumeId: 'droid-session-1',
+      sessionFiles: {
+        verifyDeclaredPaths: async () => ({ found: false }),
+        findDeclaredCandidate: async ({ matchesCandidate }) => ({ found: matchesCandidate({
+          fileName: 'droid-session-1.jsonl', nativeSessionId: 'droid-session-1',
+        }) }),
+      },
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
   it('does not advertise a ChatGPT account when only Factory and BYOK auth are supported', () => {
     expect(DROID_CONNECTED_ACCOUNT_PURPOSES).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ purpose: DROID_CHATGPT_PURPOSE }),

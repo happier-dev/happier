@@ -19,7 +19,7 @@ import {
   OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from './agent/auth/services/requestAuth/env.js';
 import { OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR } from './agent/auth/services/stateSharing.js';
-import { resolveOpenCodeResumeReachabilityUnsupported } from './agent/auth/services/resumeReachability.js';
+import { verifyOpenCodeResumeReachable } from './agent/auth/services/resumeReachability.js';
 import {
   OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
   OPENCODE_PROVIDER_OWNED_ENV_KEYS,
@@ -216,7 +216,7 @@ export const OPENCODE_PLUGIN = definePlugin({
           row.requestAuthOrigin === null ? row.environmentKeys.map(environmentKey => ({
             purpose: row.declaration.purpose, environmentKey,
           })) : []),
-        continuity: { verifyResumeReachable: async () => resolveOpenCodeResumeReachabilityUnsupported() },
+        continuity: { verifyResumeReachable: verifyOpenCodeResumeReachable },
         switchContinuity: {
           continuityMode: 'restart_same_home',
           supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],

@@ -91,8 +91,17 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
 
 const unsupported = () => ({ supported: false, status: 'unsupported' as const, reason: 'hot_apply_unsupported', recovery: 'restart_resume' as const });
 
+const droidStateSharingDescriptor = {
+  nativeHome: { environmentKey: 'HOME', defaultRelativePath: '.' },
+  providerSupportStatus: 'supported',
+  config: { supported: false, modes: ['isolated'], entries: [], unavailableReason: 'not_implemented' },
+  state: { supported: true, modes: ['isolated', 'shared'], entries: [{ path: '.factory/sessions', mode: 'linked', createIfMissing: 'directory', requiresRealDirectory: true }], sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
+  authIsolation: { mode: 'process_env', secretEntries: ['FACTORY_API_KEY'] },
+} as const;
+
 export const DROID_CONNECTED_ACCOUNT_LAUNCH = {
-  switchContinuity: { continuityMode: 'restart_same_home', supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'] },
+  stateSharingDescriptor: droidStateSharingDescriptor,
+  switchContinuity: { continuityMode: 'restart_shared_state_required', supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'] },
   continuity: {
     generationApplicationScope: 'per_session_runtime',
     runtimeAuthAdapter: {
@@ -103,11 +112,12 @@ export const DROID_CONNECTED_ACCOUNT_LAUNCH = {
       probeQuota: async () => ({ supported: false, status: 'unsupported', reason: 'runtime_quota_probe_unsupported' }),
       refreshActiveProfile: async () => unsupported(),
     },
-    async verifyResumeReachable() {
-      // The native history reader scopes reads to its supplied home, while this
-      // callback carries neither the actual launch home nor a Droid descriptor
-      // proving it. A matching id in the daemon's default home is insufficient.
-      return { ok: false, reason: 'droid_native_resume_home_unproven' };
+    async verifyResumeReachable({ vendorResumeId, sessionFiles }) {
+      if (!vendorResumeId) return { ok: false, reason: 'droid_native_resume_id_missing' };
+      const candidate = await sessionFiles.findDeclaredCandidate({
+        matchesCandidate: ({ nativeSessionId, fileName }) => nativeSessionId === vendorResumeId || fileName === `${vendorResumeId}.jsonl`,
+      });
+      return candidate.found ? { ok: true } : { ok: false, reason: 'droid_native_session_not_found' };
     },
   },
 } satisfies AgentConnectedAccountLaunchContributionV1;

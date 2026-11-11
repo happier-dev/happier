@@ -73,7 +73,10 @@ export const FX_PLUGIN = definePlugin({
       requestAuthUses: [FX_REQUEST_AUTH_USE],
       environmentUses: FX_NATIVE_KEY_ENVIRONMENT_USES,
       stateSharingDescriptor: FX_STATE_SHARING,
-      switchContinuity: { continuityMode: 'restart_shared_state_required' },
+      switchContinuity: {
+        continuityMode: 'restart_shared_state_required',
+        supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+      },
       continuity: { generationApplicationScope: 'per_session_runtime', nativeAuthCodec: FX_NATIVE_AUTH_CODEC, runtimeAuthAdapter: FX_RUNTIME_AUTH_ADAPTER, verifyResumeReachable: verifyFxResumeReachable },
     },
     providerBinding: FX_PROVIDER_BINDING_ADAPTER,
