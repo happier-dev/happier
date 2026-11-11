@@ -42,3 +42,9 @@ export function resolveHappierTitleRowTitleLiftPx(fontSizePx: number): number {
  * provides it around its panes; absent (a phone, a window without the shell) a page keeps its own top air.
  */
 export const HappierShellTitleRowContext = createContext(false);
+
+/**
+ * A page header whose title line its container already places level with a neighbouring row (an Add dialog's
+ * details beside the list's search, owner 2026-11-11): the header adds no top air of its own.
+ */
+export const HappierPageHeaderFlushTopContext = createContext(false);

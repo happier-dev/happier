@@ -10,6 +10,15 @@ describe('catalog artwork admission', () => {
         expect(admitCatalogBrandMark({ ...input, iconDarkUrl: 'https://catalog.test/replacement.png' }, first)).not.toBe(first);
     });
 
+    it('admits a declared monochrome icon as a monochrome mark, and only with admitted artwork', () => {
+        const input = { displayName: 'Devin', iconUrl: 'https://cdn.agentclientprotocol.com/registry/v1/latest/devin.svg', iconMonochrome: true };
+        const first = admitCatalogBrandMark(input);
+        expect(first).toEqual({ displayName: 'Devin', light: { uri: input.iconUrl }, monochrome: true });
+        expect(admitCatalogBrandMark({ ...input }, first)).toBe(first);
+        expect(admitCatalogBrandMark({ ...input, iconMonochrome: undefined }, first)).not.toBe(first);
+        expect(admitCatalogBrandMark({ displayName: 'Devin', iconMonochrome: true })).toEqual({ displayName: 'Devin' });
+    });
+
     it.each(['file:///tmp/private.png', 'data:image/png;base64,AAAA', 'https://person:secret@catalog.test/icon.png', 'not a URL'])
     ('keeps inadmissible artwork %s out of the platform image source', iconUrl => {
         expect(admitCatalogBrandMark({ displayName: 'Release helper', iconUrl, iconDarkUrl: iconUrl }))

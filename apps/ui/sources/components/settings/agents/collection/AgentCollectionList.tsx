@@ -121,13 +121,12 @@ export function useOpenAgentBrowse() {
 }
 
 /** The same native continuation routes for the Add dialog and a Store listing. */
-export function useAgentAddContinuations(): Pick<OpenAgentAddModalParams, 'onCommand' | 'onOpenDefinition' | 'onOpenAgent'> {
+export function useAgentAddContinuations(): Pick<OpenAgentAddModalParams, 'onOpenDefinition' | 'onOpenAgent'> {
     const router = useRouter();
     const pathname = usePathname().replace(/\/+$/, '');
     const besideDetail = useHappierCollectionLayout()?.mode === 'split'
         && pathname.startsWith('/settings/agents/');
-    return React.useMemo<Pick<OpenAgentAddModalParams, 'onCommand' | 'onOpenDefinition' | 'onOpenAgent'>>(() => ({
-        onCommand: () => openCustomAcpEditor(router, null, besideDetail),
+    return React.useMemo<Pick<OpenAgentAddModalParams, 'onOpenDefinition' | 'onOpenAgent'>>(() => ({
         onOpenDefinition: (definitionId) => openCustomAcpEditor(router, definitionId, besideDetail),
         onOpenAgent: (entry) => {
             const href = createAgentSettingsRoute(entry) as never;

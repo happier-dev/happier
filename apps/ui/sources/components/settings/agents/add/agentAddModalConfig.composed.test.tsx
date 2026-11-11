@@ -95,7 +95,7 @@ async function mount(params: Parameters<typeof AgentAddModal>[0]['params']) {
     return { screen, config, measure, onClose, onAddedStay };
 }
 
-const callbacks = () => ({ onCommand: vi.fn(), onOpenAgent: vi.fn(), onOpenDefinition: vi.fn() });
+const callbacks = () => ({ onOpenAgent: vi.fn(), onOpenDefinition: vi.fn() });
 
 it('keeps the exact Agent seed and Plugin review continuation in a Store listing controller', async () => {
     const { plugins } = await setup('store-controller-plugin');
@@ -282,4 +282,25 @@ it('keeps a former source preview inert while the newly selected source is still
         await act(async () => { release(); await invocation; });
     }
     await waitForHomeGovernance(() => expect(modal.config().catalog.items.map((row: { summary: { itemId: string } }) => row.summary.itemId)).toEqual(['sample.agent']));
+});
+
+it('From a command shows the custom-agent form in the dialog, and Save opens the new agent', async () => {
+    const env = await setup('command-mode');
+    const params = { ...callbacks(), sourceId: ACP };
+    const modal = await mount(params);
+    promptRegistriesRouterPushSpy.mockClear();
+    await act(async () => { await modal.screen.pressByTestIdAsync('agents.add:mode:command'); });
+    const editor = 'settings.acpCatalog.backendEditor';
+    const field = (testID: string) => modal.screen.findAll(node => node.props?.testID === testID && typeof node.props?.onChangeText === 'function')[0];
+    // The segment switches the dialog's body in place: no close, no navigation.
+    await waitForHomeGovernance(() => expect(field(`${editor}.title`)).toBeDefined());
+    expect(modal.onClose).not.toHaveBeenCalled();
+    expect(promptRegistriesRouterPushSpy).not.toHaveBeenCalled();
+    await act(async () => { field(`${editor}.title`)!.props.onChangeText('Kiro'); });
+    await act(async () => { field(`${editor}.command`)!.props.onChangeText('kiro-cli'); });
+    await waitForHomeGovernance(() => expect(modal.screen.findHostByTestId(`${editor}.save`)?.props.disabled).toBe(false));
+    await act(async () => { await modal.screen.pressByTestIdAsync(`${editor}.save`); });
+    await waitForHomeGovernance(() => expect(params.onOpenDefinition).toHaveBeenCalledWith('kiro'));
+    expect(env.acpWrites()).toBe(1);
+    expect(modal.onClose).toHaveBeenCalled();
 });

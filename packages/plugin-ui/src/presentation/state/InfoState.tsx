@@ -93,9 +93,10 @@ export function HappierStateLine(props: Readonly<{
   accessibilitySemantics?: 'status' | 'alert';
   /**
    * `menu`: the line sits among a transient menu's rows, so it takes the menu row's height, inset and
-   * glyph column, and its sentence starts on the options' label edge.
+   * glyph column, and its sentence starts on the options' label edge. `catalog`: it sits among described
+   * catalog records (an Add dialog's list), so its glyph takes their mark column and the sentence their titles' edge.
    */
-  density?: 'menu';
+  density?: 'menu' | 'catalog';
 }>) {
   const metrics = HAPPIER_STATE_LINE_METRICS;
   const menu = props.density === 'menu';
@@ -112,6 +113,8 @@ export function HappierStateLine(props: Readonly<{
   // draws its own edge has no glyph column, so there the glyph itself stands on that edge.
   const glyphColumn = menu
     ? { boxPx: HAPPIER_MENU_ROW_METRICS.iconBoxSizePx, gapPx: HAPPIER_MENU_ROW_METRICS.iconMarginRightPx }
+    : props.density === 'catalog'
+      ? { boxPx: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox, gapPx: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap }
     : onBodyEdge
       ? { boxPx: metrics.glyphPx, gapPx: metrics.gapPx }
     : pageSection

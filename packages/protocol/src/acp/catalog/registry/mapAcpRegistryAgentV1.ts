@@ -3,6 +3,13 @@ import { deriveRegistrySourceIdV1 } from '../../../registries/registrySourcesV1.
 import { PinnedArchiveAssetsByPlatformSchema } from '../../../installables/sourceKind.js';
 import { AcpBackendDefinitionV1Schema, type AcpBackendDefinitionV1, type AcpBackendLaunchV1 } from '../settingsV1.js';
 
+/**
+ * The ACP Registry admits only single-colour icons: fill and stroke are `currentColor`, `none` or `inherit`
+ * (agentclientprotocol/registry CONTRIBUTING, "Icon Validation"). Its listings and the agents added from them are
+ * drawn in theme ink.
+ */
+export const ACP_REGISTRY_ICONS_MONOCHROME_V1 = true;
+
 /** One distribution choice for admission and previews; it never varies by machine. */
 export function selectAcpRegistryDistributionV1(distributions: AcpRegistryAgentV1['distributions']) {
   if (distributions.npm) return { kind: 'npm' as const, distribution: distributions.npm };

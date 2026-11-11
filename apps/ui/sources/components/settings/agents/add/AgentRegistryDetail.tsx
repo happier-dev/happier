@@ -25,7 +25,6 @@ import { PluginListingAddsSection, PluginListingFacts } from '@/components/setti
 import { catalogReviewStatusLabel } from '@/components/settings/plugins/model/pluginMarketplaceModel';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { projectRegistryMarketplacePage } from '@/components/settings/plugins/readPluginMarketplaceCatalog';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
 
@@ -600,26 +599,21 @@ export function AgentBuiltInDetail(
           targetSelection={props.targetSelection}
         />
       ) : null}
-      <View style={styles.alternative}>
-        <Icon name="info" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-        <View style={styles.alternativeText}>
-          <TextLinkButton
-            tone="strong"
-            label={t('capabilities.agentAdd.builtIn.addSeparate')}
-            onPress={props.onAddSeparate}
-            testID={`${props.testID}.detail.addSeparate`}
-          />
-          <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
-            {t('capabilities.agentAdd.builtIn.addSeparateBody', { agent: props.entry.title })}
-          </Text>
-        </View>
-      </View>
+      {/* The other way forward is an action of its own: its own section, a plus like every add row. */}
+      <ItemGroup>
+        <Item
+          testID={`${props.testID}.detail.addSeparate`}
+          title={t('capabilities.agentAdd.builtIn.addSeparate')}
+          subtitle={t('capabilities.agentAdd.builtIn.addSeparateBody', { agent: props.entry.title })}
+          icon={<Icon name="plus" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+          onPress={props.onAddSeparate}
+          showChevron={false}
+        />
+      </ItemGroup>
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  alternative: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s8 },
-  alternativeText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
   mono: { fontVariant: ['tabular-nums'] },
 }));

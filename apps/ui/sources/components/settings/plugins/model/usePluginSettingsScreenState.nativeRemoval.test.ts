@@ -768,7 +768,7 @@ describe('My plugins presented demand and shared Add continuation', () => {
         const { actionRequests, catalog } = await renderRemovalOwner('disable', [], { catalog: true });
         const { AgentAddModal } = await import('../../agents/add/agentAddModalConfig');
         const screen = await renderSettingsView(React.createElement(AgentAddModal, { onClose: () => {}, onAddedStay: () => {},
-            params: { sourceId: catalog.source.id, onCommand: () => {}, onOpenDefinition: () => {}, onOpenAgent: () => {} } }));
+            params: { sourceId: catalog.source.id, onOpenDefinition: () => {}, onOpenAgent: () => {} } }));
         await measureAddCollection(screen, 'agents.add');
         await waitForControl(screen, 'agents.add.row.example.compute');
         await act(async () => { screen.pressByTestId('agents.add.row.example.compute'); });

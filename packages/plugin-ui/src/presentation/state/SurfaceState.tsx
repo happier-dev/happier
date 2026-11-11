@@ -140,7 +140,7 @@ export type HappierSurfaceStateProps = Readonly<{
   /** A line that replaces a body sits in the middle of the room it holds. */
   fillsContainer?: boolean;
   /** `menu`: a line among a transient menu's rows takes their height, inset and label edge. */
-  lineDensity?: 'menu';
+  lineDensity?: 'menu' | 'catalog';
   /** The present; a caller-owned node (a ticking "Still waiting") replaces the model. */
   live?: HappierSurfaceStateLive | ReactNode;
   /** Caller-owned domain summary, after copy and live, before the actions. Lines omit it. */

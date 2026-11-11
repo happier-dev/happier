@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
 import { HappierColumnEdgeContext } from '../layout/columnEdge.js';
+import { HappierPageHeaderFlushTopContext } from '../layout/shellTitleRow.js';
 import {
   HappierCollectionNavigationBackClosesDetailContext,
   useHappierCollectionLayout,
@@ -576,11 +577,8 @@ export function HappierCapabilityAddBody<Item, Icon extends string = string>(
     const failureLines =
       failures.length === 0 ? null : (
         <View
-          style={
-            onlyFailures
-              ? [{ paddingTop: space.s16 }, edge]
-              : { paddingTop: space.s12 }
-          }
+          // Among rows the lines carry their own row edges; replacing the list they stand on the body's edge.
+          style={onlyFailures ? [{ paddingTop: space.s16 }, edge] : undefined}
         >
           {failures.map((failure) => (
             <host.SourceFailure
@@ -623,12 +621,9 @@ export function HappierCapabilityAddBody<Item, Icon extends string = string>(
           width: 'fill',
           testID: `${config.testID}:search`,
         }}
-        header={(search) => (
-          <>
-            {tools(search)}
-            {onlyFailures ? null : failureLines}
-          </>
-        )}
+        header={(search) => tools(search)}
+        // A failed source is a line among the rows, on their edges, not a part of the tools band.
+        notices={onlyFailures ? null : failureLines}
         renderDetail={config.renderDetail}
         detailFooter={config.detailFooter}
         {...(config.onAdded === undefined ? {} : { onAdded: config.onAdded })}
@@ -687,6 +682,8 @@ function AddCollection<Item>(
     empty: React.ReactNode;
     search?: NonNullable<CollectionProps<Item>['search']>;
     header: (search: React.ReactNode) => React.ReactNode;
+    /** Lines above the rows that stand on the rows' own edges (a failed source), after the tools band. */
+    notices?: React.ReactNode;
     renderDetail: HappierCapabilityAddConfig<Item>['renderDetail'];
     detailFooter?: HappierCapabilityAddConfig<Item>['detailFooter'];
     onAdded?: (result: Readonly<{ itemId: string }>) => void;
@@ -783,6 +780,7 @@ function AddCollection<Item>(
           : { detailFooter: props.detailFooter })}
         testID={props.testID}
         pushed={context.pushed}
+        besideTools={!context.pushed}
         added={props.isAdded(key)}
         operation={props.operation(key)}
         beginOperation={() => {
@@ -868,7 +866,7 @@ function AddCollection<Item>(
               // The search, the source and an input's field lead their own list; the details start at the top beside it.
               headerPlacement="list"
               header={(slots) => (
-                <ToolsBand open={explicit && openKey !== null}>
+                <ToolsBand open={explicit && openKey !== null} notices={props.notices}>
                   {props.header(slots.search)}
                 </ToolsBand>
               )}
@@ -935,18 +933,20 @@ function CatalogModes<Icon extends string>(
 
 /** The tools band; on a phone the pushed details are the page, so the band steps aside while they show. */
 function ToolsBand(
-  props: Readonly<{ open: boolean; children: React.ReactNode }>,
+  props: Readonly<{ open: boolean; notices?: React.ReactNode; children: React.ReactNode }>,
 ): React.ReactElement | null {
   const layout = useHappierCollectionLayout();
   const { edge, space, host } = useShared();
   if (props.open && layout?.mode === 'stacked') return null;
   // The band already stands on the body's edge: a section an input places here (Where it's on) adds no second inset.
   const ContainedPage = host.ContainedPage ?? PassThrough;
-  return (
+  const band = (
     <View style={[{ paddingBottom: space.s12 }, edge]}>
       <ContainedPage>{props.children}</ContainedPage>
     </View>
   );
+  // Notices are lines of the list: the band's edge and reading column would pull them off the rows' edges.
+  return props.notices === null || props.notices === undefined ? band : <>{band}{props.notices}</>;
 }
 
 /**
@@ -1108,6 +1108,8 @@ function AddDetail<Item>(
     detailScrollOffset?: { current: number };
     testID: string;
     pushed: boolean;
+    /** Beside the list: the details' title line stands level with the list's search, with no air above it. */
+    besideTools?: boolean;
     added: boolean;
     operation: AddOperation;
     beginOperation: () => boolean;
@@ -1248,19 +1250,21 @@ function AddDetail<Item>(
         } : {})}
         // The details' header carries its own top space; the title row then sits level with the close button.
         contentContainerStyle={[
-          { paddingTop: space.s8, paddingBottom: space.s24, gap: space.s24 },
+          { paddingTop: props.besideTools ? 0 : space.s8, paddingBottom: space.s24, gap: space.s24 },
           edge,
         ]}
       >
         <ContainedPage>
           {/* The details pad their content by the body's edge: a public page header or section inside adds none. */}
           <HappierColumnEdgeContext.Provider value={edge.paddingHorizontal}>
-            <DetailActionContext.Provider value={headAction}>
-              {props.renderDetail(props.item, {
-                pushed: props.pushed,
-                added: props.added,
-              })}
-            </DetailActionContext.Provider>
+            <HappierPageHeaderFlushTopContext.Provider value={props.besideTools === true}>
+              <DetailActionContext.Provider value={headAction}>
+                {props.renderDetail(props.item, {
+                  pushed: props.pushed,
+                  added: props.added,
+                })}
+              </DetailActionContext.Provider>
+            </HappierPageHeaderFlushTopContext.Provider>
           </HappierColumnEdgeContext.Provider>
         </ContainedPage>
       </ScrollView>

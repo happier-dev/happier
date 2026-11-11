@@ -3,6 +3,7 @@ import type { AcpCatalogCleanupV1 } from '@happier-dev/protocol/acp/catalog/cata
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { canPublishCatalogReceipt, retainCatalogRevision } from './wholeCatalogReceiptOrdering';
+import { ACP_REGISTRY_ICONS_MONOCHROME_V1 } from '@happier-dev/protocol/acp/catalog/registry/mapAcpRegistryAgentV1';
 import { admitCatalogBrandMark } from '@/components/ui/media/catalogBrandMark';
 import type { HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 
@@ -18,6 +19,8 @@ function projectBrandMarks(record: AcpCatalogRecordV1 | null, previous: AcpCatal
     return Object.fromEntries(record.definitions.map(definition => [definition.id, admitCatalogBrandMark({
         displayName: definition.title || definition.name,
         iconUrl: definition.origin?.kind === 'registry' ? definition.origin.iconUrl : undefined,
+        // A registry origin is written only by the ACP Registry mapper, whose icons are declared single-colour.
+        iconMonochrome: definition.origin?.kind === 'registry' && ACP_REGISTRY_ICONS_MONOCHROME_V1,
     }, previous?.brandMarks?.[definition.id])]));
 }
 export function subscribeAcpCatalogSnapshots(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; }

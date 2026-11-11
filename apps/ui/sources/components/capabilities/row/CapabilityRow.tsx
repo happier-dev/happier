@@ -67,7 +67,11 @@ const EMPTY_FACTS = {};
  * fact and never with a stray "·". Unlike a no-break space it adds no width and leaves the words' own breaks alone.
  */
 const QUIET_DOT = ' \u2060· ';
-const anatomy = buildCapabilityCollectionAnatomy<CapabilityRowProps>({
+// Built on first render, not at module load: this module sits in an import cycle with the anatomy owner
+// (via SessionCapabilitiesContent), and a load-time call reads that owner's parts before they exist.
+let rowAnatomy: ReturnType<typeof buildRowAnatomy> | null = null;
+const getRowAnatomy = () => (rowAnatomy ??= buildRowAnatomy());
+const buildRowAnatomy = () => buildCapabilityCollectionAnatomy<CapabilityRowProps>({
   title: (row) => row.title,
   description: (row) => row.description ?? null,
   whereSummary: (row) => row.whereSummary === t('capabilities.where.everywhere') || row.whereSummary === t('capabilities.where.off')
@@ -93,6 +97,7 @@ const anatomy = buildCapabilityCollectionAnatomy<CapabilityRowProps>({
 export const CapabilityRow = React.memo(function CapabilityRow(
   props: CapabilityRowProps,
 ) {
+  const anatomy = getRowAnatomy();
   const density = props.density ?? 'page';
   const menu = density === 'menu';
   // A page row on a phone has the width for two description lines (lab phone rows); everywhere else one keeps the list dense.

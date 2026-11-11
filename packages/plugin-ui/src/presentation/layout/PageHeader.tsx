@@ -7,7 +7,7 @@ import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMe
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
 import { useHappierCollectionDetailWidth, useHappierCollectionLayout } from '../collection/collectionLayout.js';
 import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappierPageBackPlacement } from './pageMetrics.js';
-import { HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
+import { HappierPageHeaderFlushTopContext, HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
 import { useHappierColumnEdgeRemainder } from './columnEdge.js';
 import { HappierPressable } from '../interaction/Pressable.js';
@@ -69,6 +69,12 @@ export type HappierPageHeaderProps = Readonly<{
   meta?: readonly HappierPageHeaderMetaFact[];
   /** A leading identity mark (entity logo, avatar). */
   leading?: ReactNode;
+  /**
+   * `identity` (default): the mark leads the whole identity block. `title`: only the mark and the title form the
+   * icon row, the mark on the title's line; the description, details and facts start on the column's text edge
+   * under them (a catalog listing, owner 2026-11-11).
+   */
+  markSpan?: 'identity' | 'title';
   /** At most one primary page action plus context controls (e.g. a machine chip). */
   actions?: ReactNode;
   /**
@@ -193,6 +199,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const showsBack = showTitle && renderBack !== null;
   const collectionLayout = useHappierCollectionLayout();
   const onShellTitleRow = useContext(HappierShellTitleRowContext);
+  const flushTop = useContext(HappierPageHeaderFlushTopContext);
   const collectionMode = collectionLayout?.mode ?? null;
   const detailWidthPx = useHappierCollectionDetailWidth();
   // The pane's width decides whether back fits in the gutter left of the
@@ -297,6 +304,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // Shrinking controls never leave the name's line: they give up their own width instead.
   const hangsFromTitle = hangIdentity && (shrinkActions || !hangLeavesNoName);
   const inlineActions = hangsFromTitle || (!centered && props.actionsLayout === 'inline');
+  // The mark keeps to the title's row; what supports the title runs under both, from the column's edge.
+  const markOnTitleRow = props.markSpan === 'title' && Boolean(props.leading) && showTitle && !centered;
   // The header's own measurement wins; until it arrives, the split's detail width places back.
   const backPlacement = resolveHappierPageBackPlacement({ paneWidthPx: paneWidthPx ?? detailWidthPx, columnMaxWidthPx, backShown: showsBack });
 
@@ -444,7 +453,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           // shell's one title row, level with the rail's first icon and every column title (owner 2026-11-10).
           // Elsewhere (a phone's body title, a window without the shell) the page keeps the page's top.
           // A large title hangs from the phone bar that left it the name, as close as the purpose line would.
-          paddingTop: !showTitle || props.largeTitle === true
+          paddingTop: flushTop && showTitle ? 0 : !showTitle || props.largeTitle === true
             ? HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx
             : onShellTitleRow || collectionLayout?.detailBeside === true
               ? resolveHappierTitleRowInsetPx(HAPPIER_PAGE_METRICS.controlHeightPx)
@@ -492,7 +501,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                 >
                   {props.leading ? null : gutterBack}
                   {splitTitleLine ? <View onLayout={handleTitleNaturalLayout} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>{titleLine}</View> : titleLine}
-                  {splitTitleLine || hangsFromTitle ? null : textBelowTitle}
+                  {splitTitleLine || hangsFromTitle || markOnTitleRow ? null : textBelowTitle}
                 </View>
                 {actionsBlock ? (
                   <View
@@ -516,9 +525,10 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                   </View>
                 ) : null}
               </View>
-              {splitTitleLine || hangsFromTitle ? textBelowTitle : null}
+              {(splitTitleLine || hangsFromTitle) && !markOnTitleRow ? textBelowTitle : null}
           </View>
         </View>
+        {markOnTitleRow ? textBelowTitle : null}
         {/* The controls keep their title-line parent even while drawn below the whole identity row.
             This empty row reserves exactly their measured height without mounting a second control. */}
         {actionsBelowIdentity ? <View testID={props.testID ? `${props.testID}-actions-reserve` : undefined} pointerEvents="none" style={{ height: actionsHeightPx, marginTop: 12 }} /> : null}

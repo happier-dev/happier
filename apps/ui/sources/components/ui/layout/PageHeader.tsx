@@ -87,6 +87,8 @@ export type PageHeaderProps = Readonly<{
     meta?: readonly PageHeaderMetaFact[];
     /** A leading identity mark (entity logo, avatar). */
     leading?: React.ReactNode;
+    /** `title`: only the mark and title form the icon row; the purpose and facts start on the content edge. */
+    markSpan?: HappierPageHeaderProps['markSpan'];
     /**
      * An identity mark on the title's own line, before the title, where the purpose line runs flush left under both
      * (a docked New bot's face). Like `leading`, an entity mark keeps the page title's size.
@@ -260,6 +262,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             compactPresentation={props.compactPresentation}
             meta={meta}
             leading={props.leading}
+            markSpan={props.markSpan}
             actions={actions ? <RoundButtonSizeScope size="normal">{actions}</RoundButtonSizeScope> : actions}
             actionsLayout={props.actionsLayout}
             status={props.status}

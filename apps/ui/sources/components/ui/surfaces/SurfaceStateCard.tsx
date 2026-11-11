@@ -139,7 +139,7 @@ export function SurfaceStateCard(props: Readonly<{
     /** Existing inline anatomy for a state inside a sheet; whole-pane states stay centered. */
     layout?: 'centered' | 'inline';
     /** `menu`: a line state among a transient menu's rows (a picker's empty or failed list) sits on their label edge. */
-    lineDensity?: 'menu';
+    lineDensity?: 'menu' | 'catalog';
     /** Already-translated title: what is here, or what failed, in the person's words. */
     title: string;
     /** Optional glyph decoration inside the existing title Text; semantic copy stays in `title`. */

@@ -173,6 +173,8 @@ const HOST_SLOTS: HappierCapabilityAddHost<IconName> = {
     <SurfaceStateCard
       kind="warning"
       size="line"
+      // A failed registry is a line among the catalog's records: its glyph and words on their columns.
+      lineDensity="catalog"
       title={title}
       action={{ label: retryLabel, onPress: onRetry, testID: retryTestID }}
       testID={testID}

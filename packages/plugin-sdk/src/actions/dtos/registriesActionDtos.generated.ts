@@ -11,11 +11,11 @@ export type RegistriesActionInputById = {
             expectedRevision: number;
         }[];
     } | {
-        kind?: 'agent' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | undefined;
+        kind?: 'agent' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter' | undefined;
         keys?: string[] | undefined;
     };
     readonly "registries.sources.list": {
-        kind?: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | undefined;
+        kind?: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter' | undefined;
     };
     readonly "registries.sources.detect": {
         url: string;
@@ -23,7 +23,7 @@ export type RegistriesActionInputById = {
     readonly "registries.sources.create": {
         url: string;
         title?: string | undefined;
-        kinds?: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[] | undefined;
+        kinds?: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[] | undefined;
         token?: undefined | {
             secretRef: string;
             header?: undefined | {
@@ -53,7 +53,7 @@ export type RegistriesActionInputById = {
         sourceId: string;
     };
     readonly "registries.items.list": {
-        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
         sourceIds?: string[] | undefined;
         contributionFamily?: 'accessProviders' | 'accountCollections' | 'actions' | 'agents' | 'atmospherePictures' | 'backgroundServices' | 'backupDestinations' | 'botTemplates' | 'browserActions' | 'browserTargets' | 'captureSources' | 'composerAttachments' | 'composerControls' | 'composerReferences' | 'composerRegions' | 'connectedAccountDescriptors' | 'daemonDatabases' | 'deploymentTargets' | 'dragSources' | 'dropTargets' | 'events' | 'executionRunProfiles' | 'healthCheckKinds' | 'hooks' | 'inputTypes' | 'languageServers' | 'machineProvisioners' | 'machineRecipes' | 'machineSetupPresets' | 'managedDependencies' | 'mcp' | 'notificationChannels' | 'notifications' | 'openableContentViewers' | 'pluginContributionPoints' | 'projectNativeAdapters' | 'promptAssets' | 'providers' | 'registrySources' | 'requestInterceptors' | 'resources' | 'roles' | 'scmBackends' | 'scmHostingProviders' | 'searchProviders' | 'secretSources' | 'sessionHeaderActions' | 'sessionInfoSections' | 'settings' | 'skills' | 'storeKinds' | 'systemTools' | 'targetedPluginContributions' | 'transcriptActivities' | 'ui' | 'voiceModelPacks' | 'voiceProviders' | 'webhooks' | 'workItems' | 'workflows' | undefined;
         query?: string | undefined;
@@ -61,7 +61,7 @@ export type RegistriesActionInputById = {
         refresh?: boolean | undefined;
     };
     readonly "registries.items.read": {
-        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
         sourceId: string;
         itemId: string;
         version?: string | undefined;
@@ -75,7 +75,7 @@ export type RegistriesActionResultById = {
     readonly "registries.updates.check": {
         checkedAt: number;
         results: {
-            kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+            kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
             key: string;
             upstream: {
                 state: 'current' | 'removed_from_source' | 'update_available';
@@ -135,7 +135,7 @@ export type RegistriesActionResultById = {
             id: string;
             title: string;
             format: 'happier-catalog';
-            kinds: 'app'[];
+            kinds: ('app' | 'starter')[];
             packageContent: {
                 pluginId: string;
                 pluginVersion: string;
@@ -169,8 +169,8 @@ export type RegistriesActionResultById = {
             removable: boolean;
             id: string;
             title: string;
-            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
             url: string;
             enabled: boolean;
             addedAt: number;
@@ -188,8 +188,8 @@ export type RegistriesActionResultById = {
     };
     readonly "registries.sources.detect": {
         detected: {
-            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
             title: string;
             itemCount?: number | undefined;
         } | {
@@ -201,7 +201,7 @@ export type RegistriesActionResultById = {
             id: string;
             title: string;
             format: 'happier-catalog';
-            kinds: 'app'[];
+            kinds: ('app' | 'starter')[];
             packageContent: {
                 pluginId: string;
                 pluginVersion: string;
@@ -235,8 +235,8 @@ export type RegistriesActionResultById = {
             removable: boolean;
             id: string;
             title: string;
-            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
             url: string;
             enabled: boolean;
             addedAt: number;
@@ -258,7 +258,7 @@ export type RegistriesActionResultById = {
             id: string;
             title: string;
             format: 'happier-catalog';
-            kinds: 'app'[];
+            kinds: ('app' | 'starter')[];
             packageContent: {
                 pluginId: string;
                 pluginVersion: string;
@@ -292,8 +292,8 @@ export type RegistriesActionResultById = {
             removable: boolean;
             id: string;
             title: string;
-            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
             url: string;
             enabled: boolean;
             addedAt: number;
@@ -314,7 +314,7 @@ export type RegistriesActionResultById = {
             id: string;
             title: string;
             format: 'happier-catalog';
-            kinds: 'app'[];
+            kinds: ('app' | 'starter')[];
             packageContent: {
                 pluginId: string;
                 pluginVersion: string;
@@ -348,8 +348,8 @@ export type RegistriesActionResultById = {
             removable: boolean;
             id: string;
             title: string;
-            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
             url: string;
             enabled: boolean;
             addedAt: number;
@@ -393,13 +393,14 @@ export type RegistriesActionResultById = {
             };
             items: {
                 sourceId: string;
-                kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+                kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
                 itemId: string;
                 title: string;
                 description?: string | undefined;
                 version?: string | undefined;
                 iconUrl?: string | undefined;
                 iconDarkUrl?: string | undefined;
+                iconMonochrome?: true | undefined;
                 publisher?: undefined | {
                     name: string;
                     verification?: 'domain' | 'github-account' | 'happier-reviewed' | 'registry-checked' | undefined;
@@ -485,7 +486,7 @@ export type RegistriesActionResultById = {
                         contributionKey: string;
                     } | {
                         type: 'registryItem';
-                        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+                        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
                         sourceId: string;
                         itemId: string;
                         version?: string | undefined;
@@ -539,13 +540,14 @@ export type RegistriesActionResultById = {
         item: {
             summary: {
                 sourceId: string;
-                kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+                kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
                 itemId: string;
                 title: string;
                 description?: string | undefined;
                 version?: string | undefined;
                 iconUrl?: string | undefined;
                 iconDarkUrl?: string | undefined;
+                iconMonochrome?: true | undefined;
                 publisher?: undefined | {
                     name: string;
                     verification?: 'domain' | 'github-account' | 'happier-reviewed' | 'registry-checked' | undefined;
@@ -831,6 +833,27 @@ export type RegistriesActionResultById = {
                         scheme?: string | undefined;
                         env?: Record<string, string> | undefined;
                     }> | undefined;
+                    companions?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        services: string[];
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        exports?: Record<string, {
+                            service: string;
+                            port: number;
+                            defaultExposure: 'internal' | 'privateNetwork' | 'public';
+                            scheme?: string | undefined;
+                            env?: Record<string, string> | undefined;
+                        }> | undefined;
+                    }[];
                     loginFields?: undefined | {
                         password: string;
                         username?: string | undefined;
@@ -1057,6 +1080,43 @@ export type RegistriesActionResultById = {
                         mcpServers: number;
                         agents: number;
                     };
+                };
+            } | {
+                kind: 'starter';
+                starter: {
+                    repository: string;
+                    title: string;
+                    description: string;
+                    tags: string[];
+                    buildGoal: string;
+                    path?: string | undefined;
+                    previewImage?: string | undefined;
+                };
+                ref: {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
                 };
             };
             fetchedAt: number;

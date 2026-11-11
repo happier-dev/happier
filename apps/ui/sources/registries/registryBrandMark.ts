@@ -7,5 +7,5 @@ export type RegistryCatalogItemSummary = RegistryItemSummaryV1 & Readonly<{ bran
 
 export function admitRegistrySummaryMark(summary: RegistryItemSummaryV1, previous?: RegistryCatalogItemSummary): RegistryCatalogItemSummary {
     return { ...summary, brandMark: admitCatalogBrandMark({ displayName: summary.title,
-        iconUrl: summary.iconUrl, iconDarkUrl: summary.iconDarkUrl }, previous?.brandMark) };
+        iconUrl: summary.iconUrl, iconDarkUrl: summary.iconDarkUrl, iconMonochrome: summary.iconMonochrome }, previous?.brandMark) };
 }

@@ -4,6 +4,7 @@ import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
 import { ACP_REGISTRY_PLATFORM_TARGETS_V1 as targets } from '../../acp/catalog/registry/acpPlatformTargetsV1.js';
+import { ACP_REGISTRY_ICONS_MONOCHROME_V1 } from '../../acp/catalog/registry/mapAcpRegistryAgentV1.js';
 import { summarizeAcpRegistryDistributionV1 } from '../../acp/catalog/registry/acpPlatformFitV1.js';
 
 // ACP Registry envelope 1.0.0 and agent.schema.json, observed from the public CDN on 2026-10-13.
@@ -61,7 +62,7 @@ async function readIndex(ctx: RegistryFetchContextV1, source: RegistrySourceV1) 
 function summary(source: RegistrySourceV1, entry: Awaited<ReturnType<typeof readIndex>>['entries'][number]): RegistryItemSummaryV1 {
   const { metadata, agent } = entry;
   return { sourceId: source.id, kind: 'agent', itemId: metadata.id, title: metadata.name, description: metadata.description,
-    version: metadata.version, ...(metadata.icon ? { iconUrl: metadata.icon } : {}),
+    version: metadata.version, ...(metadata.icon ? { iconUrl: metadata.icon, iconMonochrome: ACP_REGISTRY_ICONS_MONOCHROME_V1 } : {}),
     ...(agent ? { agentDistribution: summarizeAcpRegistryDistributionV1(agent.distributions) } : {}),
     ...(metadata.authors?.length ? { publisher: { name: metadata.authors.join(', ') } } : {}),
     ...(metadata.license ? { license: metadata.license } : {}),

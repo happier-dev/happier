@@ -37,6 +37,7 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
+import { AcpBackendEditorScreen } from '@/components/settings/acpCatalog/AcpBackendEditorScreen';
 import { confirmAgentInstallChange } from '../install/agentInstallChangeConfirm';
 import { useAgentAdministrationCatalog } from '../collection/useAgentAdministrationCatalog';
 import { buildPluginListingRoute } from '../../plugins/model/pluginsSurfaceRoutes';
@@ -57,8 +58,6 @@ import {
 } from './agentAddRows';
 
 export type OpenAgentAddModalParams = Readonly<{
-  /** From a command: the page's draft editor (`/settings/agents/custom/new`). */
-  onCommand: () => void;
   /** Open an added agent's page (on dismiss after an add, focus returns to its row). */
   onOpenDefinition: (definitionId: string) => void;
   /** Open a built-in agent's page ("Open Claude Code"). */
@@ -438,11 +437,21 @@ export function AgentAddController(props: AgentAddModalProps & Readonly<{
           kind: 'catalog',
         },
         {
+          // From a command is a tab of this dialog: the one custom-agent editor, in place. Saving opens the new agent.
           key: 'command',
           label: t('capabilities.agentAdd.modes.command'),
           icon: 'terminal',
-          kind: 'handoff',
-          onSelect: params.onCommand,
+          kind: 'input',
+          renderBody: () => (
+            <AcpBackendEditorScreen
+              backendId={null}
+              onCreated={(definitionId) => {
+                props.onClose();
+                params.onOpenDefinition(definitionId);
+              }}
+              onDiscard={props.onClose}
+            />
+          ),
         },
       ],
       sources: slot.sources,

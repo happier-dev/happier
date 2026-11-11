@@ -38,6 +38,14 @@ describe('ACP Registry through the registered host reader', () => {
       }
     }
   });
+  it('declares its icons monochrome, as the registry admits only currentColor icons', async () => {
+    // agentclientprotocol/registry CONTRIBUTING "Icon Validation": fill/stroke only currentColor, none or inherit.
+    const response = await context().host.execute('registries.items.list', { kind: 'agent', sourceIds: ['builtin:acp-registry'] });
+    if (!('pages' in response)) throw new Error('Missing list');
+    const items = response.pages.flatMap(page => page.items).map(item => RegistryItemSummaryV1Schema.parse(item));
+    expect(items.find(item => item.itemId === 'claude-acp')).toMatchObject({
+      iconUrl: 'https://cdn.agentclientprotocol.com/registry/v1/latest/claude-acp.svg', iconMonochrome: true });
+  });
   it('lists, detects and reads pinned live records through strict consumer schemas', async () => {
     const { host, http } = context();
     expect(await detectRegistrySourceV1({ http }, sourceUrl)).toMatchObject({ format: 'acp-registry', kinds: ['agent'], itemCount: 4 });

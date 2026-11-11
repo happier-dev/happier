@@ -151,6 +151,13 @@ function createInitialState(existing: Draft | null, authority: DraftAuthority | 
  */
 export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen(props: Readonly<{
     backendId: string | null;
+    /**
+     * Hosted in a dialog (Add an agent → From a command): the host continues to the saved agent instead of
+     * the editor replacing its own route. Absent, the editor is the Agents collection's page.
+     */
+    onCreated?: (backendId: string) => void;
+    /** Hosted in a dialog: leaving the draft returns to the host instead of the Agents page. */
+    onDiscard?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -301,11 +308,18 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                 ? { ...current.draft, id: saved.id, ...(!current.identifiersEdited ? { name: saved.name } : {}) }
                 : saved,
             identifiersEdited: true, errors: {}, authority: acknowledgedAuthority }));
-        if (isNew) setPendingHref(createCustomAcpAgentSettingsRoute(saved.id));
+        if (isNew) {
+            if (props.onCreated) props.onCreated(saved.id);
+            else setPendingHref(createCustomAcpAgentSettingsRoute(saved.id));
+        }
         return true;
-    }, [authority, capturedScope, draft, effectiveDraft, executeAction, identifiersFollowName, isEditorCurrent, isNew, settings, settingsLoaded]);
+    }, [authority, capturedScope, draft, effectiveDraft, executeAction, identifiersFollowName, isEditorCurrent, isNew, props.onCreated, settings, settingsLoaded]);
 
-    const leave = React.useCallback(() => setPendingHref(AGENTS_ROUTE), []);
+    const { onDiscard } = props;
+    const leave = React.useCallback(() => {
+        if (onDiscard) onDiscard();
+        else setPendingHref(AGENTS_ROUTE);
+    }, [onDiscard]);
     // Set by delete: the page is leaving, so its agent disappearing is not "not found".
     const deletedRef = React.useRef(false);
     const discard = React.useCallback(() => {

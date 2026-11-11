@@ -134,3 +134,80 @@ it.each([
         host.remove();
     }
 });
+
+it('stands a failed registry line on the rows: its sentence on their titles, its Retry on their trailing edge', async () => {
+    viewport.width = 1440;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const failing: CapabilityAddModalConfig<Entry> = {
+        ...config,
+        catalog: {
+            ...config.catalog,
+            anatomy: buildCapabilityCollectionAnatomy<Entry>({
+                title: (entry) => entry.name,
+                description: () => 'Create and edit documents.',
+                mark: (entry) => <View testID={`mark:${entry.name}`} style={{ width: 20, height: 20 }} />,
+                facts: () => ({}),
+                // The title line's trailing meta ("Built into Happier") marks the rows' trailing edge.
+                whereSummary: () => 'Built in',
+                accessibilityLabel: (entry) => entry.name,
+                testID: (entry) => `row:${entry.name}`,
+            }),
+            sourceFailures: [{ sourceId: 'curated', message: 'Curated marketplace · Couldn’t reach this registry.', onRetry: () => {} }],
+        },
+    };
+    try {
+        await act(async () => root.render(
+            <CustomModal visible onClose={() => {}}
+                config={{ id: 'add', type: 'custom', component: CapabilityAddModalBody as never, props: { config: failing } as never, chrome: capabilityAddChrome(failing) }} />,
+        ));
+        const sentence = 'Curated marketplace · Couldn’t reach this registry.';
+        const layout = await measureWebLayout(document.body, { viewport: { width: 1440, height: 800 }, texts: [sentence, 'docx', 'Built in', 'Retry'], settle: (replay) => act(replay) });
+        const rowTitle = layout.textRects('docx')[0]!;
+        // Visible text edges; the rows' own focus-ring arithmetic leaves a sub-3 px remainder (was ~20 px).
+        expect.soft(Math.abs(layout.textRects(sentence)[0]!.left - rowTitle.left)).toBeLessThanOrEqual(3);
+        expect.soft(Math.abs(layout.textRects('Retry')[0]!.right - layout.textRects('Built in')[0]!.right)).toBeLessThanOrEqual(3);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+it('opens a listing whose icon row is mark + name, its purpose and facts on the content edge', async () => {
+    viewport.width = 1440;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const { CapabilityDetailHeader } = await import('@/components/capabilities/detail/CapabilityDetailHeader');
+    const listing: CapabilityAddModalConfig<Entry> = {
+        ...config,
+        renderDetail: (entry) => (
+            <CapabilityDetailHeader testID="detail-header" title={entry.name}
+                mark={<View testID="detail-mark" style={{ width: 28, height: 28 }} />}
+                purpose="Create and edit documents with tracked changes."
+                facts={{ source: { kind: 'registry', label: 'ACP Registry' }, extra: ['Cognition'] }} />
+        ),
+    };
+    try {
+        await act(async () => root.render(
+            <CustomModal visible onClose={() => {}}
+                config={{ id: 'add', type: 'custom', component: CapabilityAddModalBody as never, props: { config: listing } as never, chrome: capabilityAddChrome(listing) }} />,
+        ));
+        const purpose = 'Create and edit documents with tracked changes.';
+        const layout = await measureWebLayout(document.body, { viewport: { width: 1440, height: 800 }, texts: [purpose, 'ACP Registry', 'docx'], settle: (replay) => act(replay) });
+        const mark = layout.rect('detail-mark');
+        const title = layout.textRects('docx').find((rect) => rect.left > mark.right)!;
+        // The mark centres on the name's line, not on the three-line block.
+        expect.soft(Math.abs((mark.top + mark.bottom) / 2 - (title.top + title.bottom) / 2)).toBeLessThanOrEqual(2);
+        // Purpose and facts start on the content edge (the icon row's, where the mark's slot starts), under the mark.
+        const contentEdge = layout.rect('detail-header-title-row').left;
+        expect.soft(Math.abs(layout.textRects(purpose)[0]!.left - contentEdge)).toBeLessThanOrEqual(1);
+        expect.soft(Math.abs(layout.textRects('ACP Registry')[0]!.left - contentEdge)).toBeLessThanOrEqual(1);
+        expect.soft(mark.left - contentEdge).toBeLessThanOrEqual(8);
+        expect.soft(layout.textRects(purpose)[0]!.top).toBeGreaterThan(mark.bottom - 2);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
