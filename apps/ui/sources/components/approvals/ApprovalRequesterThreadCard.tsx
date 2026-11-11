@@ -303,7 +303,7 @@ const RequesterConfirmationThreadCard = React.memo(
       >
         {state.kind === 'open' && executionMachine.reachability === 'unreachable' ? <SurfaceFreshnessLine
           testID="approval-requester-thread-machine-offline" glyph="cloud-slash"
-          reason={t('approvals.requestMachineOffline', { machine: executionMachine.sentenceName ?? executionMachine.name ?? t('session.thisMachine') })}
+          reason={t('approvals.requestMachineOffline', { machine: executionMachine.sentenceName ?? executionMachine.name ?? t('machineDetailPage.thisMachineTitle') })}
         /> : null}
         {operationUses?.length ? (
           <ApprovalOperationActorLine
