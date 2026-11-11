@@ -188,7 +188,9 @@ export function buildGlassBorderColor(dark: boolean): string {
 export function buildSeamCastShadow(dark: boolean, side: 'leading' | 'trailing' = 'leading'): string {
     const sign = side === 'leading' ? '-' : '';
     return dark
-        ? `${sign}3px 0 16px rgba(0, 0, 0, 0.14), ${sign}1px 0 0 rgba(0, 0, 0, 0.3)`
+        // Dark draws its hairline as a faint light rim: a black line read as a hard cut beside a lighter glass column
+        // (owner 2026-11-11 desktop #25).
+        ? `${sign}3px 0 16px rgba(0, 0, 0, 0.14), ${sign}1px 0 0 rgba(255, 255, 255, 0.06)`
         : `${sign}3px 0 16px rgba(0, 0, 0, 0.035), ${sign}1px 0 0 rgba(0, 0, 0, 0.05)`;
 }
 
