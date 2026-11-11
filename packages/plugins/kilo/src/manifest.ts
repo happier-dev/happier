@@ -131,9 +131,19 @@ export const KILO_PLUGIN = definePlugin({
           kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'],
         } }],
         continuity: {
-          // Kilo's current SQLite store has no host-declared resume-file lookup.
-          // Native ACP resume still works; pre-switch reachability is unproven.
-          verifyResumeReachable: async () => ({ ok: false, reason: 'kilo_resume_reachability_unsupported' }),
+          verifyResumeReachable: async ({ vendorResumeId, nativeInspection }) => {
+            if (!vendorResumeId) return { ok: false, reason: 'vendor_resume_id_missing' };
+            if (!nativeInspection) return { ok: false, reason: 'kilo_resume_inspection_unavailable' };
+            try {
+              await nativeInspection.withDeclaredJsonRpcClient(KILO_ACP_COMMAND, async (client) => {
+                await client.request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+                await client.request('session/load', { sessionId: vendorResumeId, cwd: nativeInspection.cwd, mcpServers: [] });
+              });
+              return { ok: true, proof: 'native_session' as const };
+            } catch {
+              return { ok: false, reason: 'kilo_resume_unreachable' };
+            }
+          },
         },
       },
       providerBinding: KILO_PROVIDER_BINDING_ADAPTER_V1,

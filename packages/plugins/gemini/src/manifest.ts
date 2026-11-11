@@ -4,7 +4,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
-import { GEMINI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/catalogs.js';
+import { GEMINI_ACP_COMMAND, GEMINI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/catalogs.js';
 import { geminiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/descriptor.js';
 import { createGeminiConnectedServiceRuntimeAuthAdapter } from './agent/connectedServices/runtimeAuthAdapter.js';
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
@@ -214,7 +214,19 @@ export const GEMINI_PLUGIN = definePlugin({
         continuity: {
           generationApplicationScope: 'per_session_runtime',
           runtimeAuthAdapter: createGeminiConnectedServiceRuntimeAuthAdapter(),
-          verifyResumeReachable: async () => ({ ok: false, reason: 'gemini_resume_reachability_unsupported' }),
+          verifyResumeReachable: async ({ vendorResumeId, nativeInspection }) => {
+            if (!vendorResumeId) return { ok: false, reason: 'vendor_resume_id_missing' };
+            if (!nativeInspection) return { ok: false, reason: 'gemini_resume_inspection_unavailable' };
+            try {
+              await nativeInspection.withDeclaredJsonRpcClient(GEMINI_ACP_COMMAND, async (client) => {
+                await client.request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+                await client.request('session/load', { sessionId: vendorResumeId, cwd: nativeInspection.cwd, mcpServers: [] });
+              });
+              return { ok: true, proof: 'native_session' as const };
+            } catch {
+              return { ok: false, reason: 'gemini_resume_unreachable' };
+            }
+          },
         },
       },
       cliSessionCommand: {

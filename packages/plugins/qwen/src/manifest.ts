@@ -7,6 +7,7 @@ import { QWEN_ACP_COMMAND } from './agent/acp/preflight.js';
 import { qwenExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { createQwenAgentRuntime } from './agent/factory.js';
 import { QWEN_ACCOUNT_SOURCES, QWEN_ACCOUNT_ENV_KEYS, prepareQwenConnectedAccount } from './agent/connectedAccount.js';
+import { QWEN_PROVIDER_BINDING_ADAPTER, QWEN_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.agent.qwen',
@@ -23,7 +24,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       id: 'qwen-process',
       capability: 'process',
       reason: 'Run the declared Qwen CLI executable.',
-      scope: { executables: [{ kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId }], envKeys: [...QWEN_ACCOUNT_ENV_KEYS] },
+      scope: { executables: [{ kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId }], envKeys: [...new Set([...QWEN_ACCOUNT_ENV_KEYS, ...QWEN_PROVIDER_OWNED_ENV_KEYS])] },
     }],
     optional: [],
   },
@@ -93,18 +94,33 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         }),
       },
       factory: createQwenAgentRuntime,
+      providerBinding: QWEN_PROVIDER_BINDING_ADAPTER,
       sessionRunnerFactory: { module: './agent/factory', export: 'createQwenAgentRuntime', runtimeApiVersion: 1,
         externalSessionsExport: 'qwenExternalSessionsContribution' },
       preflightSessionControls: {
-        async prepareLaunchEnvironment({ environment, connectedAccounts, signal }) {
-          const prepared = await prepareQwenConnectedAccount({}, { services: { connectedAccounts }, signal });
-          return { environment, dispose() { prepared?.dispose(); } };
+        async prepareLaunchEnvironment({ environment, connectedAccounts, signal, modelId }) {
+          const prepared = await prepareQwenConnectedAccount({ modelId }, { services: { connectedAccounts }, signal });
+          return { environment: { ...environment, ...prepared?.env },
+            ...(prepared ? { commandArgsSuffix: prepared.args, catalogConfidence: prepared.models.catalogConfidence } : {}),
+            dispose() { prepared?.dispose(); } };
         },
         catalogs: { kind: 'acp', command: QWEN_ACP_COMMAND },
       },
       connectedAccountLaunch: {
         continuity: {
-          verifyResumeReachable: async () => ({ ok: false, reason: 'qwen_resume_reachability_unsupported' }),
+          verifyResumeReachable: async ({ vendorResumeId, nativeInspection }) => {
+            if (!vendorResumeId) return { ok: false, reason: 'vendor_resume_id_missing' };
+            if (!nativeInspection) return { ok: false, reason: 'qwen_resume_inspection_unavailable' };
+            try {
+              await nativeInspection.withDeclaredJsonRpcClient(QWEN_ACP_COMMAND, async (client) => {
+                await client.request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+                await client.request('session/load', { sessionId: vendorResumeId, cwd: nativeInspection.cwd, mcpServers: [] });
+              });
+              return { ok: true, proof: 'native_session' as const };
+            } catch {
+              return { ok: false, reason: 'qwen_resume_unreachable' };
+            }
+          },
         },
         switchContinuity: { continuityMode: 'restart_same_home',
         supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'] } },

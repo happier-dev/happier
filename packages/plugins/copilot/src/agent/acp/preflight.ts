@@ -3,8 +3,9 @@ import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected
 
 import { projectCopilotPreflightModels } from './modelControls.js';
 import { prepareCopilotConnectedAccount } from '../runtime/connectedAccount.js';
+import { COPILOT_ACP_COMMAND } from './command.js';
 
-export const COPILOT_ACP_COMMAND = Object.freeze({ toolId: 'copilot-cli', args: Object.freeze(['--acp']) });
+export { COPILOT_ACP_COMMAND } from './command.js';
 
 export const COPILOT_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   async prepareLaunchEnvironment({ environment, connectedAccounts, signal, modelId }) {

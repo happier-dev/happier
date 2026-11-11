@@ -11,6 +11,23 @@ import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Kilo activation', () => {
+  it('proves native resume through ACP session/load when the prepared runtime can inspect it', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const launch = activation.registration('agents', 'kilo')?.connectedAccountLaunch;
+    if (!launch?.continuity?.verifyResumeReachable) throw new Error('Expected Kilo resume continuity hook');
+    const methods: string[] = [];
+    await expect(launch.continuity.verifyResumeReachable({
+      vendorResumeId: 'kilo-provider-session',
+      sessionFiles: { verifyDeclaredPaths: async () => ({ found: false }), findDeclaredCandidate: async () => ({ found: false }) },
+      nativeInspection: { cwd: '/real/kilo/workspace', withDeclaredJsonRpcClient: async (_command, inspect) => await inspect({
+        request: async method => { methods.push(method); return {}; },
+        notify: async () => undefined, onNotification: () => () => undefined, onRequest: () => () => undefined,
+      }, new AbortController().signal) },
+    })).resolves.toEqual({ ok: true, proof: 'native_session' });
+    expect(methods).toEqual(['initialize', 'session/load']);
+    await activation.dispose();
+  });
+
   it('reexports the activation compiled by its canonical public plugin definition', async () => {
     expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
       'agents',

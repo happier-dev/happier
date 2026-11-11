@@ -196,14 +196,24 @@ describe('Copilot ChatGPT static native launch', () => {
     await expect(access(path!)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('reports restart recovery without claiming account adoption or creating a broker', async () => {
+  it('proves native resume through ACP session/load without claiming account adoption or creating a broker', async () => {
     const { registration } = await fixture();
     const launch = registration.connectedAccountLaunch!;
     expect(launch.requestAuthUses).toBeUndefined();
     expect(launch.stateSharingDescriptor).toBeUndefined();
     expect(launch.continuity!.runtimeAuthAdapter!.canHotApply({ target: { agentId: 'copilot' }, selection: {} })).toMatchObject({ supported: false, recovery: 'restart_resume' });
     expect(await launch.continuity!.runtimeAuthAdapter!.verifyActiveAccount!({ target: { agentId: 'copilot' }, selection: {} })).toMatchObject({ status: 'unavailable', retryable: false });
-    expect(await launch.continuity!.verifyResumeReachable!({ vendorResumeId: 'native-session' } as never))
-      .toEqual({ ok: false, reason: 'copilot_native_resume_home_unproven' });
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const result = await launch.continuity!.verifyResumeReachable!({
+      vendorResumeId: 'native-session',
+      sessionFiles: { verifyDeclaredPaths: async () => ({ found: false }), findDeclaredCandidate: async () => ({ found: false }) },
+      nativeInspection: { cwd: '/real/copilot/workspace', withDeclaredJsonRpcClient: async (_command, inspect) => await inspect({
+        request: async (method, params) => { requests.push({ method, params }); return {}; },
+        notify: async () => undefined, onNotification: () => () => undefined, onRequest: () => () => undefined,
+      }, new AbortController().signal) },
+    } as never);
+    expect(result).toEqual({ ok: true, proof: 'native_session' });
+    expect(requests.map(request => request.method)).toEqual(['initialize', 'session/load']);
+    expect(requests[1]?.params).toMatchObject({ sessionId: 'native-session', cwd: '/real/copilot/workspace', mcpServers: [] });
   });
 });

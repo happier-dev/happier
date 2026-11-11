@@ -315,7 +315,11 @@ export type AgentConnectedAccountResumeReachabilityInputV1 = Readonly<{
   /** Protocol-only inspection in the already-prepared native launch environment.
    * Absent for file adoption/import: native reachability never authorizes copying.
    */
-  nativeInspection?: Pick<AgentPreflightSessionControlsProbeContextV1, 'withDeclaredJsonRpcClient'>;
+  nativeInspection?: Readonly<{
+    /** The session's admitted working directory, supplied by the host resume request. */
+    cwd: string;
+    withDeclaredJsonRpcClient: AgentPreflightSessionControlsProbeContextV1['withDeclaredJsonRpcClient'];
+  }>;
 }>;
 
 export type AgentConnectedAccountResumeReachabilityResultV1 =

@@ -121,7 +121,17 @@ describe('Gemini native runtime migration', () => {
         classifyRuntimeAuthFailure: expect.any(Function),
         verifyProviderOutcome: expect.any(Function),
       });
-      expect(launch?.continuity?.verifyResumeReachable).toBeUndefined();
+      expect(launch?.continuity?.verifyResumeReachable).toBeTypeOf('function');
+      const requests: Array<{ method: string; params: unknown }> = [];
+      expect(await launch?.continuity?.verifyResumeReachable?.({ vendorResumeId: 'native-session', sessionFiles: {
+        async verifyDeclaredPaths() { return { found: false }; },
+        async findDeclaredCandidate() { return { found: false }; },
+      }, nativeInspection: { cwd: '/real/gemini/workspace', withDeclaredJsonRpcClient: async (_command, inspect) => await inspect({
+        request: async (method, params) => { requests.push({ method, params }); return {}; },
+        notify: async () => undefined, onNotification: () => () => undefined, onRequest: () => () => undefined,
+      }, new AbortController().signal) } })).toEqual({ ok: true, proof: 'native_session' });
+      expect(requests.map(request => request.method)).toEqual(['initialize', 'session/load']);
+      expect(requests[1]?.params).toMatchObject({ sessionId: 'native-session', cwd: '/real/gemini/workspace' });
       expect(launch?.stateSharingDescriptor).toEqual({
         providerSupportStatus: 'unsupported',
         config: {

@@ -1295,7 +1295,10 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         const cleanupScope = createPreflightCatalogCleanupScope();
         try {
             const context = await createContext({ ...probeParams, cleanupScope });
-            return await inspect(Object.freeze({ withDeclaredJsonRpcClient: context.withDeclaredJsonRpcClient }));
+            return await inspect(Object.freeze({
+                cwd: probeParams.cwd,
+                withDeclaredJsonRpcClient: context.withDeclaredJsonRpcClient,
+            }));
         } finally {
             await cleanupScope.dispose();
         }

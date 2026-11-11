@@ -1,4 +1,5 @@
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { CODEBUDDY_ACP_COMMAND } from '../acp/preflight.js';
 
 const restartRequired = () => ({
   supported: false, supportsInTurnApply: false, applied: false,
@@ -22,7 +23,18 @@ export const CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH = {
         reason: 'codebuddy_native_account_quota_unavailable' }),
       refreshActiveProfile: async () => restartRequired(),
     },
-    // The host has no declared native history/home proof for this runtime.
-    verifyResumeReachable: async () => ({ ok: false as const, reason: 'codebuddy_resume_reachability_unavailable' }),
+    verifyResumeReachable: async ({ vendorResumeId, nativeInspection }) => {
+      if (!vendorResumeId) return { ok: false as const, reason: 'vendor_resume_id_missing' };
+      if (!nativeInspection) return { ok: false as const, reason: 'codebuddy_resume_inspection_unavailable' };
+      try {
+        await nativeInspection.withDeclaredJsonRpcClient(CODEBUDDY_ACP_COMMAND, async (client) => {
+          await client.request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+          await client.request('session/load', { sessionId: vendorResumeId, cwd: nativeInspection.cwd, mcpServers: [] });
+        });
+        return { ok: true as const, proof: 'native_session' as const };
+      } catch {
+        return { ok: false as const, reason: 'codebuddy_resume_unreachable' };
+      }
+    },
   },
 } satisfies AgentConnectedAccountLaunchContributionV1;
