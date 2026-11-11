@@ -187,13 +187,11 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         if (!row) {
             throw new Error("Expected option row to render");
         }
-        expect(row.type).toBe("View");
-        expect(row.props.accessibilityRole).toBe("button");
+        expect(row.props.role).toBe("button");
         expect(row.props.accessibilityLabel).toBe("Codex");
-        expect(row.props.accessibilityState).toEqual({
-            disabled: false,
-            selected: false,
-        });
+        expect(row.props["aria-disabled"]).toBeUndefined();
+        expect(row.props["aria-pressed"]).toBe(false);
+        // The rail's one Tab stop (no Agent shown yet: the first enabled one).
         expect(row.props.tabIndex).toBe(0);
 
         await screen.pressByTestIdAsync("agent-input-chip-picker.option:engine:codex");
@@ -232,10 +230,10 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         await screen.pressByTestIdAsync("agent-input-chip-picker.option:engine:codex");
 
         expect(onFocusOption).not.toHaveBeenCalled();
-        expect(screen.findByTestId("agent-input-chip-picker.option:engine:codex")?.props.accessibilityState).toEqual({
-            disabled: true,
-            selected: false,
-        });
+        const row = screen.findByTestId("agent-input-chip-picker.option:engine:codex");
+        expect(row?.props["aria-disabled"]).toBe(true);
+        // A disabled row is no Tab stop.
+        expect(row?.props.tabIndex).toBe(-1);
     });
 
     it("reveals selected rail option actions for the focused row without requiring hover", async () => {

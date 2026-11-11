@@ -17,6 +17,8 @@ import {
     createAgentInputChipPickerOptionTransientStyles,
 } from './agentInputChipPickerOptionStyles';
 import { normalizeAgentInputChipPickerOptionIcon } from './agentInputChipPickerOptionIcon';
+import { useAgentInputChipPickerRovingFocus } from './useAgentInputChipPickerRovingFocus';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 export type AgentInputChipPickerTopSelectorProps = Readonly<{
     sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
@@ -50,6 +52,10 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
         () => props.sections.flatMap((section) => section.options),
         [props.sections],
     );
+    const roving = useAgentInputChipPickerRovingFocus({
+        options,
+        currentOptionId: props.focusedOptionId ?? props.selectedOptionId,
+    });
 
     return (
         <View testID="agent-input-chip-picker.top-selector" style={styles.container}>
@@ -80,6 +86,9 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                             selected={props.selectedOptionId === option.id}
                             hitReach={PICKER_OPTION_HIT_REACH}
                             disabled={disabled}
+                            tabIndex={roving.tabIndexFor(index)}
+                            controlRef={(target) => roving.registerTarget(index, target)}
+                            onKeyDown={(key) => roving.onKeyDown(index, key)}
                             onPress={() => {
                                 if (disabled) return;
                                 props.onFocusOption(option.id);
@@ -100,6 +109,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                                     active ? transientStyles.optionRowFocused : null,
                                     pressed ? transientStyles.optionRowPressed : null,
                                     (disabled || muted) ? transientStyles.optionRowDisabled : null,
+                                    focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                                 ];
                             }}
                         >

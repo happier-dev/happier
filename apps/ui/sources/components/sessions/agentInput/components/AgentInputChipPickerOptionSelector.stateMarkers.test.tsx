@@ -89,8 +89,9 @@ describe("AgentInputChipPickerOptionSelector state semantics", () => {
         const running = screen.findByTestId(`agent-input-chip-picker.option:${RUNNING.id}`);
         const armed = screen.findByTestId(`agent-input-chip-picker.option:${ARMED.id}`);
 
-        expect(armed?.props.accessibilityState?.selected).toBe(true);
-        expect(running?.props.accessibilityState?.selected).toBe(false);
+        // On the web the row announces its selection as pressed (React Native Web drops accessibilityState).
+        expect(armed?.props["aria-pressed"]).toBe(true);
+        expect(running?.props["aria-pressed"]).toBe(false);
         // The running Agent no longer carries a marker of its own — the send button
         // names the armed target instead — but its row must still say what it is.
         expect(running?.props.accessibilityLabel).toBe(RUNNING.accessibilityLabel);

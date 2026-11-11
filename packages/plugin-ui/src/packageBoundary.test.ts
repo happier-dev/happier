@@ -409,6 +409,8 @@ describe('author package boundary', () => {
         // This host leaf must evaluate before the public presentation graph's import cycle.
         ...(specifier === './presentation' ? [{ from: './layout/widgetGroupLayout.js', names: ['orderWidgetGroupCellsForStack'], typeOnly: false }] : []),
         { from: './index.public.js', names: '*', typeOnly: false },
+        // The roving tab-stop rule, for the app composites that bind their own focus targets (the Agent rail).
+        ...(specifier === './presentation' ? [{ from: './collection/semantics.js', names: ['resolveHappierRovingTabStop'], typeOnly: false }] : []),
       ]);
     }
   });

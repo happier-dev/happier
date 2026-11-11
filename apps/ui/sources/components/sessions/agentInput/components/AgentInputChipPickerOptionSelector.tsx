@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -21,7 +21,9 @@ import type {
   AgentInputChipPickerOption,
   AgentInputChipPickerOptionSection,
 } from "./AgentInputChipPickerTypes";
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, type HappierFocusable } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { useAgentInputChipPickerRovingFocus, type AgentInputChipPickerRovingFocus } from './useAgentInputChipPickerRovingFocus';
 
 const RAIL_ACTION_SIZE = 20;
 // An option row is control-height under every pointer; the row is a full-width target in a list.
@@ -30,22 +32,8 @@ const PICKER_OPTION_ROW_MIN_HEIGHT = HAPPIER_PAGE_METRICS.controlHeightPx;
 type WebHoverablePressableState = Readonly<{
   pressed: boolean;
   hovered?: boolean;
+  focused?: boolean;
 }>;
-
-type WebClickableViewProps = React.ComponentPropsWithRef<typeof View> & {
-  onClick?: (event?: unknown) => void;
-  onKeyDown?: (event: {
-    key?: string;
-    preventDefault?: () => void;
-    stopPropagation?: () => void;
-    nativeEvent?: { stopPropagation?: () => void };
-  }) => void;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
-  tabIndex?: number;
-};
-
-const WebClickableView = View as unknown as React.ComponentType<WebClickableViewProps>;
 
 type WebRailRowContainerProps = React.ComponentPropsWithRef<typeof View> & {
   onFocus?: (event: { currentTarget?: { contains?: (target: unknown) => boolean } }) => void;
@@ -83,17 +71,6 @@ export function shouldShowAgentInputChipPickerRailAction(params: Readonly<{
 export function AgentInputChipPickerOptionSelector(
   props: AgentInputChipPickerOptionSelectorProps,
 ) {
-  const { theme } = useUnistyles();
-  const styles = stylesheet;
-  const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
-  const transientStyles = React.useMemo(() => ({
-    ...createAgentInputChipPickerOptionTransientStyles(theme),
-    optionRowCompact: {
-      minHeight: PICKER_OPTION_ROW_MIN_HEIGHT,
-      paddingVertical: theme.space.s6,
-    },
-  }), [theme]);
-
   if (props.variant === "stacked") {
     return (
       <AgentInputChipPickerTopSelector
@@ -104,6 +81,28 @@ export function AgentInputChipPickerOptionSelector(
       />
     );
   }
+  return <AgentInputChipPickerRail {...props} />;
+}
+
+function AgentInputChipPickerRail(props: AgentInputChipPickerOptionSelectorProps) {
+  const { theme } = useUnistyles();
+  const styles = stylesheet;
+  const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
+  const transientStyles = React.useMemo(() => ({
+    ...createAgentInputChipPickerOptionTransientStyles(theme),
+    optionRowCompact: {
+      minHeight: PICKER_OPTION_ROW_MIN_HEIGHT,
+      paddingVertical: theme.space.s6,
+    },
+  }), [theme]);
+  const railOptions = React.useMemo(
+    () => props.sections.flatMap((section) => section.options),
+    [props.sections],
+  );
+  const roving = useAgentInputChipPickerRovingFocus({
+    options: railOptions,
+    currentOptionId: props.focusedOptionId ?? props.selectedOptionId ?? null,
+  });
 
   return (
     <View
@@ -123,6 +122,9 @@ export function AgentInputChipPickerOptionSelector(
               <AgentInputChipPickerOptionButton
                 key={option.id}
                 option={option}
+                rovingIndex={railOptions.indexOf(option)}
+                roving={roving}
+                focusRingColor={theme.colors.border.focus}
                 focused={props.focusedOptionId === option.id}
                 selected={props.selectedOptionId === option.id}
                 compact={false}
@@ -147,6 +149,9 @@ type AgentInputChipPickerOptionButtonProps = Readonly<{
   compact: boolean;
   checkColor: string;
   transientStyles: AgentInputChipPickerOptionSelectorTransientStyles;
+  rovingIndex: number;
+  roving: AgentInputChipPickerRovingFocus;
+  focusRingColor: string;
   onPress: () => void;
 }>;
 
@@ -181,11 +186,15 @@ function AgentInputChipPickerOptionButton(
     || disabled
     || props.option.muted === true
     || props.option.railAction?.disabled === true;
+  const { roving, rovingIndex } = props;
+  const registerTarget = React.useCallback(
+    (target: HappierFocusable | null) => roving.registerTarget(rovingIndex, target),
+    [roving, rovingIndex],
+  );
+  const onRovingKeyDown = React.useCallback((key: string) => roving.onKeyDown(rovingIndex, key), [roving, rovingIndex]);
   const buildOptionRowStyle = (state: WebHoverablePressableState) => {
     const { pressed } = state;
-    // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
-    const stateHovered = state.hovered === true;
-    const rowHovered = hovered || stateHovered;
+    const rowHovered = hovered || state.hovered === true;
     return [
       styles.optionRow,
       Platform.OS === "web" && !disabled ? styles.optionRowInteractive : null,
@@ -199,17 +208,8 @@ function AgentInputChipPickerOptionButton(
       props.focused ? props.transientStyles.optionRowFocused : null,
       pressed ? props.transientStyles.optionRowPressed : null,
       (disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
+      focusRingStyle({ focused: state.focused === true, color: props.focusRingColor }),
     ];
-  };
-  const activateFromWebEvent = (event?: unknown) => {
-    const maybeEvent = event as {
-      stopPropagation?: () => void;
-      nativeEvent?: { stopPropagation?: () => void };
-    } | undefined;
-    try { maybeEvent?.stopPropagation?.(); } catch {}
-    try { maybeEvent?.nativeEvent?.stopPropagation?.(); } catch {}
-    if (disabled) return;
-    props.onPress();
   };
 
   const statusAction = !props.selected && props.option.statusMarker ? props.option.statusAction : undefined;
@@ -265,6 +265,28 @@ function AgentInputChipPickerOptionButton(
     </>
   );
 
+  // The rail's one option row, on every platform: its press shows the Agent, and on the web it takes part in the
+  // rail's roving focus (one Tab stop, arrows along the rail) and draws the focus ring.
+  const row = (
+    <HappierPressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
+      selected={props.selected}
+      disabled={disabled}
+      tabIndex={roving.tabIndexFor(rovingIndex)}
+      controlRef={registerTarget}
+      onKeyDown={onRovingKeyDown}
+      onPress={() => {
+        if (disabled) return;
+        props.onPress();
+      }}
+      style={(state) => buildOptionRowStyle(state)}
+    >
+      {content}
+    </HappierPressable>
+  );
+
   if (shouldRenderRailAction) {
     return (
       <WebRailRowContainer
@@ -281,26 +303,7 @@ function AgentInputChipPickerOptionButton(
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <WebClickableView
-          testID={testID}
-          accessibilityRole="button"
-          accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
-          accessibilityState={{
-            disabled,
-            selected: props.selected,
-          }}
-          onClick={activateFromWebEvent}
-          onKeyDown={(event) => {
-            const key = String(event?.key ?? "");
-            if (key !== "Enter" && key !== " ") return;
-            event?.preventDefault?.();
-            activateFromWebEvent(event);
-          }}
-          tabIndex={disabled ? -1 : 0}
-          style={buildOptionRowStyle({ pressed: false })}
-        >
-          {content}
-        </WebClickableView>
+        {row}
         {props.option.railAction ? (
           <HappierPressable
             testID={props.option.railAction.testID}
@@ -329,27 +332,7 @@ function AgentInputChipPickerOptionButton(
     );
   }
 
-  return (
-    <Pressable
-      testID={testID}
-      accessibilityRole="button"
-      accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
-      accessibilityState={{
-        disabled,
-        selected: props.selected,
-      }}
-      disabled={disabled}
-      onPress={() => {
-        if (disabled) return;
-        props.onPress();
-      }}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={(state) => buildOptionRowStyle(state as WebHoverablePressableState)}
-    >
-      {content}
-    </Pressable>
-  );
+  return row;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
