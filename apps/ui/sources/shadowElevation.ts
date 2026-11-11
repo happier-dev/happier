@@ -170,9 +170,11 @@ export function buildGlassBorderColor(dark: boolean): string {
 /**
  * The seam between the lifted page sheet and the navigation plane beside it (calm-shell `csedge.S1`).
  *
- * Two layers: a long, faint blur that carries the depth, and a 1 px contact shade that draws the
- * edge the old hairline used to. X-offset only, no spread: the cast travels sideways onto the
- * neighbouring plane rather than pooling under the sheet.
+ * Two layers: a crisp 1 px hairline that draws the edge, and a short, very soft blur that only hints at
+ * the lift. X-offset only, no spread: the cast travels sideways onto the neighbouring plane rather than
+ * pooling under the sheet. The edge is carried by the line, not by ink: a long dark cast is invisible on
+ * the near-black dark canvas but reads as a dark band over glass, a picture or a coloured canvas
+ * (owner, 2026-11-11 #06/#10), so the blur stays short and faint in both themes.
  *
  * `side` says which page edge casts: `leading` falls on the column left of the page; `trailing` is
  * its mirror, for a side panel standing on the canvas right of the page. Same blur and alpha.
@@ -186,8 +188,8 @@ export function buildGlassBorderColor(dark: boolean): string {
 export function buildSeamCastShadow(dark: boolean, side: 'leading' | 'trailing' = 'leading'): string {
     const sign = side === 'leading' ? '-' : '';
     return dark
-        ? `${sign}6px 0 32px rgba(0, 0, 0, 0.34), ${sign}1px 0 2px rgba(0, 0, 0, 0.42)`
-        : `${sign}6px 0 30px rgba(0, 0, 0, 0.055), ${sign}1px 0 2px rgba(0, 0, 0, 0.035)`;
+        ? `${sign}3px 0 16px rgba(0, 0, 0, 0.14), ${sign}1px 0 0 rgba(0, 0, 0, 0.3)`
+        : `${sign}3px 0 16px rgba(0, 0, 0, 0.035), ${sign}1px 0 0 rgba(0, 0, 0, 0.05)`;
 }
 
 /**

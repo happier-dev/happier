@@ -14,6 +14,7 @@ import {
   happierFocusRingStyle,
   happierPageTextMetrics,
   isHappierFocusVisible,
+  useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 import { GROUPED_SURFACE_RADIUS_PX } from '@/components/ui/lists/pageListMetrics';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -389,6 +390,9 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
 ) {
   const row = props.presentation === 'row';
   const { theme } = useUnistyles();
+  // The chip rests on its containing material: over glass it is the glass's field tint (owner 11-11 #11/#12);
+  // hover and the open menu only add a step of ink.
+  const paintColor = useHappierMaterialColorResolver();
   const [open, setOpen] = React.useState(false);
   const [focusVisible, setFocusVisible] = React.useState(false);
   const branch = props.checkout.branch;
@@ -442,8 +446,8 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
               borderColor: theme.colors.border.default,
               backgroundColor:
                 open || hovered || pressed
-                  ? theme.colors.surface.selected
-                  : theme.colors.surface.base,
+                  ? theme.colors.surface.selectedFocused
+                  : paintColor(theme.colors.surface.base),
             },
             happierFocusRingStyle({
               visible: focusVisible,

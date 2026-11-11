@@ -16,6 +16,7 @@ import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { resolvePaneSurfaceMaterial } from './paneSurfaceMaterial';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
 import { SessionCockpitBottomChromeHeightContext, useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
@@ -194,7 +195,7 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                                 <PluginSurfaceFocusEligibilityProvider
                                     active={bottomPresentation !== 'hidden' && (bottomPresentation !== 'overlay' || !bottomPresence.closing)}
                                 >
-                                    <GlassSurface surfaceGroup="content" solidColor={theme.colors.surface.base} finishRole={null}
+                                    <GlassSurface {...resolvePaneSurfaceMaterial(bottomPresentation === 'overlay', theme.colors)} finishRole={null}
                                         nested={bottomPresentation !== 'overlay'} style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
                                         <PaneHeaderScrollIsolation>{renderedBottomPane}</PaneHeaderScrollIsolation>
                                     </GlassSurface>

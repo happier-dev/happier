@@ -24,6 +24,23 @@ vi.mock('expo-clipboard', () => ({
 const TEST_ID = 'browser-address';
 beforeEach(() => installBrowserClipboardBoundary(async text => { await clipboardSpies.setClipboardStringSafe(text); }));
 
+describe('BrowserUrlField on glass', () => {
+    // Owner 2026-11-11 (desktop #13): the Browser panel's Enter URL field was an opaque block on the glass panel.
+    it('fills its field with the containing material, so on glass it is the field-on-glass tint', async () => {
+        const { HappierMaterialRoleProvider } = await import('@happier-dev/plugin-ui/presentation');
+        const glass = 'rgba(235, 230, 225, 0.1)';
+        const screen = await renderScreen(
+            <HappierMaterialRoleProvider role="content" resolveMaterialColor={() => glass}>
+                <BrowserUrlField testID={TEST_ID} value="" onSubmitUrl={vi.fn()} />
+            </HappierMaterialRoleProvider>,
+        );
+        const style = screen.findHostByTestId(`${TEST_ID}-field-row`)?.props.style;
+        const flat = Object.assign({}, ...[style].flat(Infinity).filter(Boolean));
+        expect(flat.backgroundColor).toBe(glass);
+        await screen.unmount();
+    });
+});
+
 describe('BrowserUrlField — toolbar address density', () => {
     it('keeps Copy out of sight until the address is hovered or focused (lab browser Q)', async () => {
         const screen = await renderScreen(

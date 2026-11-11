@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Platform, View, type NativeSyntheticEvent, type TextInput as RNTextInput, type TextInputKeyPressEventData, type TextStyle, type ViewStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { useHappierCopyFeedback, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -77,7 +77,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
     },
     fieldRowInvalid: {
         borderColor: theme.colors.status.error,
@@ -202,6 +201,8 @@ export type BrowserUrlFieldProps = Readonly<{
  * one focus ring, and one less pill in a toolbar that had six.
  */
 export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const writeClipboard = useClipboardWrite();
     const densityKey = props.density ?? 'toolbar';
     const density = DENSITY[densityKey];
@@ -328,6 +329,8 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
     }), [density]);
 
     const copyRevealed = focused || hovered || trailingFocused || copyFeedback.isCopied('url');
+    // The field's fill resolves through the containing material: on a glass panel it is the field-on-glass tint.
+    const fieldFill = paintColor(theme.colors.surface.inset);
     return (
         <View style={stylesheet.root}>
             <View
@@ -338,6 +341,7 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
                     stylesheet.fieldRow,
                     fieldRowStyle,
                     message ? stylesheet.fieldRowInvalid : null,
+                    { backgroundColor: fieldFill },
                 ]}
             >
                 {props.leading && !resting ? <View style={stylesheet.leading}>{props.leading}</View> : null}

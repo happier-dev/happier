@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -134,6 +135,28 @@ describe('AgentInputChipPickerPanel', () => {
         ]));
         expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
+    });
+
+    // Owner 2026-11-11 (desktop #23): the engine popover's agent rail was an opaque near-black slab beside the glass.
+    it('fills the split rail through the containing material, so on glass it is part of the same glass', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const glass = 'rgba(235, 230, 225, 0.02)';
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="floating" resolveMaterialColor={() => glass}>
+            <AgentInputChipPickerPanel
+                title="Pick"
+                maxHeight={321}
+                options={[
+                    { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
+                    { id: 'two', label: 'Two', detailDescription: 'Feature checkout' } as any,
+                ]}
+                selectedOptionId="one"
+                onSelect={() => {}}
+                onRequestClose={() => {}}
+            />
+        </HappierMaterialRoleProvider>);
+        const rail = screen.findByTestId('agent-input-chip-picker.option-rail-scroll')!.parent!;
+        const fill = Object.assign({}, ...[rail.props.style].flat(Infinity).filter(Boolean)).backgroundColor;
+        expect(fill).toBe(glass);
     });
 
     it('keeps the selector rail visible for a single detailed option', async () => {

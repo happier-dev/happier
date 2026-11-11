@@ -13,6 +13,8 @@ vi.mock('@/utils/web/reactDomCjs', () => ({
 }));
 
 const { ProjectShellHeader } = await import('./ProjectShellHeader');
+const { HappierMaterialRoleProvider } = await import('@happier-dev/plugin-ui/presentation');
+const { lightTheme } = await import('@/theme');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { EntityFlatReorderList } = await import('@/components/ui/treeDragDrop/ui/EntityFlatReorder');
 const { resolveProjectPageCatalog } = await import('../detail/projectPageCatalog');
@@ -29,6 +31,22 @@ describe('Project header page descriptors', () => {
         const texts = screen.root.findAll(node => typeof node.props?.children === 'string').map(node => node.props.children as string);
         expect(texts).toContain('NLDW3-5-36-33');
         expect(texts).toContain(' · 5ac7');
+        await screen.unmount();
+    });
+
+    it('rests the checkout chip on its containing material, so over glass it is the glass tint and hover only adds a step (owner 11-11 #11/#12)', async () => {
+        const glass = 'rgba(235, 230, 225, 0.1)';
+        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' }, surface: 'projects' });
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => glass}>
+            <ProjectShellHeader projectName="Project"
+                checkout={{ machineName: 'NLDW3', machineNameParts: { name: 'NLDW3', hint: null }, machineIcon: 'desktop', branch: null, choices: [], onSelect: () => {} }}
+                pages={pages.slice(0, 1)} activePage="overview" onSelectPage={() => {}} onNewSession={null} menuActions={[]} />
+        </HappierMaterialRoleProvider>);
+        const chip = screen.findHostByTestId('project-shell-header.checkout')!;
+        const fill = (state: { pressed: boolean; hovered: boolean }) =>
+            [chip.props.style(state)].flat(Infinity).reduce((acc: Record<string, unknown>, entry: unknown) => ({ ...acc, ...(entry as object ?? {}) }), {}).backgroundColor;
+        expect(fill({ pressed: false, hovered: false })).toBe(glass);
+        expect(fill({ pressed: false, hovered: true })).toBe(lightTheme.colors.surface.selectedFocused);
         await screen.unmount();
     });
 

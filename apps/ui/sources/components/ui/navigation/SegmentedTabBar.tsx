@@ -527,6 +527,8 @@ function SlidingThumb(props: Readonly<{
     plain?: boolean;
     /** An inherited value: the thumb is an outline, no fill and no lift. */
     outlined?: boolean;
+    /** On a glass track the chosen segment is a step of ink over the glass, never a solid island. */
+    glass?: boolean;
     testID?: string;
 }>) {
     const styles = stylesheet;
@@ -564,9 +566,9 @@ function SlidingThumb(props: Readonly<{
         <Animated.View
             testID={props.testID}
             pointerEvents="none"
-            style={[styles.thumb, props.compact ? styles.thumbCompact : null, props.plain ? styles.plainThumb : null, props.outlined ? styles.thumbOutlined : { backgroundColor: paintColor(props.plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, props.plain ? undefined : 'solidControl') }, animatedStyle]}
+            style={[styles.thumb, props.compact ? styles.thumbCompact : null, props.plain ? styles.plainThumb : null, props.outlined ? styles.thumbOutlined : props.glass ? { backgroundColor: theme.colors.surface.selectedFocused } : { backgroundColor: paintColor(props.plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, props.plain ? undefined : 'solidControl') }, animatedStyle]}
         >
-            {props.plain || props.outlined ? null : <GradientSurface
+            {props.plain || props.outlined || props.glass ? null : <GradientSurface
                 fallbackColor={paintColor(theme.colors.segmentedControl.activeBackground, undefined, 'solidControl')}
                 gradient={happierMaterialGradient(theme.colors.segmentedControl.activeGradient, color => paintColor(color, undefined, 'solidControl'))}
                 borderRadius={HAPPIER_SEGMENTED_METRICS.segmentRadiusPx[props.compact ? 'compact' : 'default']}
@@ -609,6 +611,8 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     const paintColor = useHappierMaterialColorResolver();
     const pills = props.presentation === 'pills';
     const plain = props.presentation === 'plain';
+    // A glass track (the project header over art) keeps the glass under its chosen segment (owner 11-11 #11).
+    const glassThumb = props.glassTrack === true && !pills && !plain;
     const compact = pills || plain ? false : props.compact;
     const iconGlyphPx = props.iconGlyphPx;
     const iconGlyphStyles = React.useMemo(() => {
@@ -848,6 +852,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                         compact={compact === true}
                         plain={plain}
                         outlined={inherited}
+                        glass={glassThumb}
                         testID={props.testIDPrefix ? `${props.testIDPrefix}:thumb` : undefined}
                     />
                 ) : null}
@@ -924,12 +929,12 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     plain && showOwnActiveSurface ? styles.plainActive : null,
                                     pills ? styles.pillSurface : null,
                                     pills && active ? styles.pillActive : null,
-                                    showOwnActiveSurface && !inherited ? { backgroundColor: paintColor(pills ? theme.colors.surface.inset : plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, pills || plain ? undefined : 'solidControl') } : null,
+                                    showOwnActiveSurface && !inherited ? { backgroundColor: glassThumb ? theme.colors.surface.selectedFocused : paintColor(pills ? theme.colors.surface.inset : plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, pills || plain ? undefined : 'solidControl') } : null,
                                     happierFocusRingStyle({ visible: !tabDisabled && focusedTabId === tab.id, color: theme.colors.border.focus }),
                                     !disabled && tab.disabled === true ? styles.tabDisabled : null,
                                 ]}
                             >
-                                {showOwnActiveSurface && !pills && !plain && !inherited ? (
+                                {showOwnActiveSurface && !pills && !plain && !inherited && !glassThumb ? (
                                     <GradientSurface
                                         fallbackColor={paintColor(theme.colors.segmentedControl.activeBackground, undefined, 'solidControl')}
                                         gradient={happierMaterialGradient(theme.colors.segmentedControl.activeGradient, color => paintColor(color, undefined, 'solidControl'))}

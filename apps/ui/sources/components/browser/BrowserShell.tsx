@@ -139,11 +139,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     // plugin panel are the flexible regions and yield TOGETHER, each in proportion to its size, so
     // none is starved to zero; each clips or scrolls inside its own box. Plugin panels render inside
     // this column (`panels`), above the bottom bar, so no sibling can be painted over Browser chrome.
+    // No fill of its own: the pane that holds the Browser owns its material (glass or solid). A page-colour fill
+    // here covered a glass panel with an opaque slab (owner 2026-11-11 desktop #13).
     root: {
         flex: 1,
         minHeight: 0,
         overflow: 'hidden',
-        backgroundColor: theme.colors.surface.base,
     },
     // One quiet row that recedes (lab `browser` Q): plain navigation glyphs, the address capsule with
     // its trust glyph inside, Mark up, Attach page and `⋯`. It never wraps; a running recording docks
@@ -157,7 +158,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: theme.space.s6,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     },
     addressFieldSlot: {
         // Priority slot: never collapses below a usable width, so the secondary controls shrink

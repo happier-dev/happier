@@ -249,6 +249,50 @@ describe('SegmentedTabBar', () => {
     },
   );
 
+  it.each([false, true])(
+    'draws the chosen segment of a glass track as a tint of ink over the glass, never a solid island (owner 11-11 #11, dark=%s)',
+    async (dark) => {
+      const { SegmentedTabBar } = await import('./SegmentedTabBar');
+      const activeTheme = dark ? darkTheme : lightTheme;
+      materialThemeState.dark = dark;
+      try {
+        for (const measured of [false, true]) {
+          const screen = await renderScreen(
+            <SegmentedTabBar
+              tabs={TABS}
+              activeTabId="beta"
+              onSelectTab={() => {}}
+              presentation="segmented"
+              glassTrack
+              testIDPrefix="glass-seg"
+            />,
+          );
+          if (measured) {
+            await act(async () => {
+              requireTab(screen, 'glass-seg:beta').props.onLayout({
+                nativeEvent: { layout: { x: 46, width: 44, y: 2, height: 24 } },
+              });
+            });
+          }
+          const thumb = measured
+            ? screen.findByTestId('glass-seg:thumb')!
+            : requireTabSurface(screen, 'glass-seg:beta');
+          expect(flattenStyle(thumb.props.style).backgroundColor).toBe(
+            activeTheme.colors.surface.selectedFocused,
+          );
+          const gradient = thumb
+            .findAllByType('View' as never)
+            .map((node) => flattenStyle(node.props.style))
+            .find((style) => typeof style.backgroundImage === 'string');
+          expect(gradient).toBeUndefined();
+          await screen.unmount();
+        }
+      } finally {
+        materialThemeState.dark = false;
+      }
+    },
+  );
+
   it('renders all tab labels', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const screen = await renderScreen(

@@ -119,9 +119,8 @@ const SECTION_ORDER: readonly BrowserLaunchpadSection[] = [
 ];
 
 const stylesheet = StyleSheet.create((theme) => ({
-    list: {
-        backgroundColor: theme.colors.surface.base,
-    },
+    // The launchpad stands on its pane's material, like the Browser chrome around it (owner 2026-11-11 desktop #13).
+    list: {},
     listContent: {
         paddingBottom: theme.space.s16,
     },

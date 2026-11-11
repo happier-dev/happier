@@ -10,6 +10,7 @@ import {
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Tree, type TreeItem } from './Tree.js';
 import { HappierTreeRow } from '../presentation/navigation/TreeRow.js';
+import { HappierMaterialRoleProvider } from '../presentation/layout/Surface.js';
 
 /**
  * The public Tree draws an author's own visible projection with the shared tree row (plan 70 §5): disclosure
@@ -80,6 +81,37 @@ function mount(
 }
 
 describe('Tree', () => {
+  it('fills a selected row through the containing material, so on a glass sidebar the selection is a tint, not an opaque chip (owner 11-11 #13)', () => {
+    const glassSelection = 'rgba(235, 230, 225, 0.1)';
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <HappierMaterialRoleProvider role="sidebar" resolveMaterialColor={() => glassSelection}>
+          <HappierTreeRow
+            node={{ key: 'worktree', parentKey: null, depth: 0, kind: 'leaf', expanded: false }}
+            title="worktree"
+            selected
+            tabStop
+            theme={context.theme}
+            onActivate={() => {}}
+            onFocus={() => {}}
+            onKeyDown={() => false}
+            controlRef={() => {}}
+            testID="selected-row"
+          />
+        </HappierMaterialRoleProvider>
+      </PluginUiProvider>,
+    );
+    const probe = document.createElement('div');
+    probe.style.backgroundColor = glassSelection;
+    document.body.appendChild(probe);
+    const expected = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const row = view.container.querySelector<HTMLElement>('[data-testid="selected-row"]')!;
+    expect(getComputedStyle(row).backgroundColor).toBe(expected);
+    view.unmount();
+  });
+
   it('keeps compound leading, selection, title accessory and row actions inside the shared row anatomy', async () => {
     const context = createSurfaceContext();
     const hostApi = createHostApiStub(context);

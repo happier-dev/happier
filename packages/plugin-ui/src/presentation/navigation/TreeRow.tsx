@@ -8,6 +8,7 @@ import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT } from '.
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import type { HappierHitReach } from '../../environment/interactiveTarget.js';
 import {
   HAPPIER_PRESS_FEEDBACK_V1,
@@ -232,6 +233,8 @@ const ROW_ACTIONS_HIDDEN_ANCHOR_STYLE = {
 export function HappierTreeRow(props: HappierTreeRowProps) {
   const { node, theme } = props;
   const palette = useOptionalHappierUiPalette(theme);
+  // The selection chip and hover resolve through the plane's material: on a glass sidebar they are its tint.
+  const paintColor = useHappierMaterialColorResolver();
   const typography = useOptionalHappierUiTypography();
   const branch = node.kind === 'branch';
   const editing = Boolean(props.inlineEdit);
@@ -312,9 +315,9 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
           }),
           backgroundColor:
             props.selected === true
-              ? (palette?.navigationSelected ?? theme.colors.elevatedSurface)
+              ? paintColor(palette?.navigationSelected ?? theme.colors.elevatedSurface)
               : state.hovered && !state.disabled
-                ? (palette?.navigationHover ?? 'transparent')
+                ? paintColor(palette?.navigationHover ?? 'transparent')
                 : 'transparent',
           opacity: state.disabled
             ? 0.5
@@ -420,7 +423,7 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
                     {actions ? (
                       <View style={props.touch
                         ? ROW_ACTIONS_HIDDEN_ANCHOR_STYLE
-                        : [ROW_ACTIONS_OVERLAY_STYLE, { backgroundColor: palette?.navigationHover ?? theme.colors.elevatedSurface }]}
+                        : [ROW_ACTIONS_OVERLAY_STYLE, { backgroundColor: paintColor(palette?.navigationHover ?? theme.colors.elevatedSurface) }]}
                       >
                         {actions}
                       </View>

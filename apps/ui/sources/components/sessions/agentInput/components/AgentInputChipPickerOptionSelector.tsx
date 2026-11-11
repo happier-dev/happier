@@ -337,10 +337,10 @@ function AgentInputChipPickerOptionButton(
 
 const stylesheet = StyleSheet.create((theme) => ({
   // The Agent rail is a list picker: its rows run edge to edge like every menu (owner 2026-11-08).
+  // The panel's rail frame owns the rail's fill (its material); the list adds none of its own.
   railContainer: {
     width: "100%",
     paddingVertical: theme.space.s12,
-    backgroundColor: theme.colors.background.canvas,
   },
   sectionBlock: {
     gap: theme.space.s4,

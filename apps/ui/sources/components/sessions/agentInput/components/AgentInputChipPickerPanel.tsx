@@ -1,6 +1,7 @@
 import React from "react";
 import { ScrollView, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from "@/components/ui/lists/Item";
 import { ItemGroup } from "@/components/ui/lists/ItemGroup";
@@ -38,6 +39,10 @@ export function AgentInputChipPickerPanel(
 ) {
   const { width: windowWidth } = useWindowDimensions();
   const { theme } = useUnistyles();
+  // The rail is part of the panel's material: solid it is the canvas step, over glass only a faint secondary tint
+  // (owner 2026-11-11 desktop #23: an opaque near-black rail beside the glass model column).
+  const paintColor = useHappierMaterialColorResolver();
+  const railFill = paintColor(theme.colors.background.canvas, theme.colors.surface.sectionTint);
   const railFades = useScrollEdgeFades({ enabledEdges: { top: true, bottom: true } });
   const styles = stylesheet;
   const sections = React.useMemo(
@@ -194,7 +199,7 @@ export function AgentInputChipPickerPanel(
           >
             {showDetailedSelector ? (
               detailedLayout === "split" ? (
-                <View style={[styles.railFrame, { width: railWidth, maxWidth: railMaxWidth, maxHeight: railMaxHeight }]}>
+                <View style={[styles.railFrame, { width: railWidth, maxWidth: railMaxWidth, maxHeight: railMaxHeight, backgroundColor: railFill }]}>
                   <ScrollView
                     testID="agent-input-chip-picker.option-rail-scroll"
                     style={styles.railScroll}
@@ -346,7 +351,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     // Wide enough for an engine name beside the row's reserved favorite and check slots.
     width: 232,
     maxWidth: "34%",
-    backgroundColor: theme.colors.background.canvas,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border.default,
   },

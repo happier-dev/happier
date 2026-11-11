@@ -71,6 +71,22 @@ describe('MultiPaneHost docked sheet', () => {
         }
     });
 
+    it('floats an overlay pane over the page in the floating panel glass, like dialogs and anchored panels (owner 11-11 #12)', async () => {
+        // Auto glass with nothing behind: the page plane is solid there, floating surfaces are still glass.
+        const screen = await renderScreen(<GlassMaterialSettingsProvider value={{}}>
+            <MultiPaneHost main={null} rightPane={null} detailsPane={<Panel />}
+                layout={{ main: 'docked', kind: 'twoPane', right: 'hidden', details: 'overlay' }}
+                rightDockWidthPx={360} detailsDockWidthPx={520} onCloseRight={() => {}} onCloseDetails={() => {}}
+                onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}} />
+        </GlassMaterialSettingsProvider>);
+        try {
+            const pane = screen.findByTestId('multi-pane-details-overlay')!;
+            const layers = pane.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+            const backdrop = styleOf(layers[0]!);
+            expect(String(backdrop.backdropFilter ?? backdrop.WebkitBackdropFilter ?? '')).toContain('blur(');
+        } finally { await screen.unmount(); }
+    });
+
     it.each([false, true])('leaves the docked pane\'s seam unclipped so its resize target reaches over the page beside it (on canvas: %s)', async (onCanvas) => {
         // The handle's web target reaches past the pane edge; a clipping column would cut that outer part off.
         const screen = await renderScreen(<MultiPaneHost main={null} rightPane={<Panel />} detailsPane={null}

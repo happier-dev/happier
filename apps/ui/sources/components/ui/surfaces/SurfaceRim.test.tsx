@@ -39,7 +39,9 @@ describe('SurfaceRim', () => {
             // Native SVG replaces the stopColor alpha with stopOpacity. The
             // boundary must receive the ink's opacity explicitly, exactly once.
             expect(Color(stop.props.stopColor).rgb().array().slice(0, 3)).toEqual(ink.rgb().array().slice(0, 3));
-            expect(stop.props.stopOpacity ?? 1).toBeCloseTo(index === 2 || index === 4 ? 0 : Math.round(ink.alpha() * 255) / 255);
+            // The rim light keeps a share of its mid ink at the far edge (owner 2026-11-11: no cut in the seam); the sheen fades out.
+            const share = index === 2 ? 0.35 : index === 4 ? 0 : 1;
+            expect(stop.props.stopOpacity ?? 1).toBeCloseTo(share * Math.round(ink.alpha() * 255) / 255);
             expect(Color(stop.props.stopColor).alpha()).toBe(1);
         }
     });

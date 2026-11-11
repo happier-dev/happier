@@ -5,7 +5,9 @@ import type { HappierPageTextStep } from '../layout/pageText.js';
 /**
  * One transient-menu scale, independent of a collection's density preference. Rows run edge to edge
  * (owner 2026-11-08): the hover and selection fill spans the menu's full width with no side inset and no
- * rounded pill; the row's own padding keeps its words and glyph off the edge.
+ * rounded pill; the row's own padding keeps its words and glyph off the edge. The first and last rows meet
+ * the menu's own top and bottom too (no section inset): an inset there left a strip of bare glass above a
+ * highlighted first row (owner 2026-11-11, desktop #05). The menu's rounded clip shapes the corner rows.
  */
 export const HAPPIER_MENU_ROW_METRICS = {
   iconGlyphSizePx: 16,
@@ -20,7 +22,7 @@ export const HAPPIER_MENU_ROW_METRICS = {
   minHeightPx: 36,
   paddingVerticalPx: 8,
   paddingHorizontalPx: 12,
-  sectionPaddingVerticalPx: 4,
+  sectionPaddingVerticalPx: 0,
   subtitleGapPx: 2,
 } as const;
 

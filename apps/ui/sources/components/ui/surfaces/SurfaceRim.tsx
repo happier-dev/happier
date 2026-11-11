@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 import { happierSvgGradientStop } from '@happier-dev/plugin-ui/presentation';
@@ -10,11 +10,14 @@ import { surfaceUsesRim, type SurfaceEdgeRole } from './surfaceEdgeTreatment';
 
 /**
  * The corner light falls off across the surface's own box (so a tooltip and a dialog read the same), on
- * an ellipse 1 × 1.6 of the box anchored top-left: `edge.rimHi` at the corner, `edge.rimMid` at 22%, gone
- * by 35%. A whisper, not a frame (design lab calibration: `radial-gradient(100% 160% at 0 0, …)`).
+ * an ellipse 1 × 1.6 of the box anchored top-left: `edge.rimHi` at the corner, `edge.rimMid` at 22%, then
+ * easing to a share of `edge.rimMid` at the far corners. It never ends part way along an edge: a light that
+ * was gone by 35% read as a cut in the seam on every large surface (owner, 2026-11-11 desktop #12).
  */
 const RIM_MID_OFFSET = 0.22;
-const RIM_END_OFFSET = 0.35;
+const RIM_END_OFFSET = 1;
+/** What remains of `edge.rimMid` at the far end of the edges: a whisper over the hairline, never zero. */
+const RIM_TAIL_SHARE = 0.35;
 const RIM_LIGHT_ELLIPSE = 'scale(1 1.6)';
 /** The sheen stays short: a soft glow in the corner's first third (lab: an ellipse 32% × 46% of the box). */
 const SHEEN_RADIUS = 0.32;
@@ -56,19 +59,25 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     if (!surfaceUsesRim(props.role, theme.dark)) return null;
     const edge = theme.colors.edge;
     const stroke = HAIRLINE * 2; // centred on the edge: the outer half falls outside and only the inner hairline shows
-    const rect = { x: 0, y: 0, width: size?.width ?? '100%', height: size?.height ?? '100%', rx: props.radius, ry: props.radius } as const;
+    // The browser resolves "100%" against the live box; only native needs the measured size. A measured size on
+    // the web pinned a pane's rim to the box it had while opening (owner 2026-11-11 desktop #12: the seam and its
+    // sheen stopped part way along an overlay pane).
+    const drawn = Platform.OS === 'web' ? null : size;
+    const rect = { x: 0, y: 0, width: drawn?.width ?? '100%', height: drawn?.height ?? '100%', rx: props.radius, ry: props.radius } as const;
     const cy = props.anchor === 'bottom-left' ? 1 : 0;
     const anchored = (ellipse: string) => cy === 0 ? ellipse : `translate(0 ${cy}) ${ellipse} translate(0 ${-cy})`;
     return (
         // A plain view measures the surface (react-native-svg's view reports only its first layout on Fabric, and
         // its width/height props would pin the view's own size); the drawing takes that measured size.
         <View pointerEvents="none" style={StyleSheet.absoluteFill} onLayout={handleLayout}>
-        <Svg pointerEvents="none" style={StyleSheet.absoluteFill}>
+        {/* On the web the drawing spans the surface: an unsized <svg> is the browser's 300 × 150 default box (the owner's cut
+            seam). Native keeps no size props: they pin react-native-svg's view to its first layout. */}
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} {...(Platform.OS === 'web' ? { width: '100%', height: '100%' } : null)}>
             <Defs>
                 <RadialGradient id={`${id}l`} cx={0} cy={cy} r={1} gradientUnits="objectBoundingBox" gradientTransform={anchored(RIM_LIGHT_ELLIPSE)}>
                     <Stop offset={0} {...happierSvgGradientStop(edge.rimHi)} />
                     <Stop offset={RIM_MID_OFFSET} {...happierSvgGradientStop(edge.rimMid)} />
-                    <Stop offset={RIM_END_OFFSET} {...happierSvgGradientStop(edge.rimMid, 0)} />
+                    <Stop offset={RIM_END_OFFSET} {...happierSvgGradientStop(edge.rimMid, RIM_TAIL_SHARE)} />
                 </RadialGradient>
                 <RadialGradient id={`${id}s`} cx={0} cy={cy} r={SHEEN_RADIUS} gradientUnits="objectBoundingBox" gradientTransform={anchored(SHEEN_ELLIPSE)}>
                     <Stop offset={0} {...happierSvgGradientStop(edge.sheen)} />
