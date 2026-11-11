@@ -385,6 +385,138 @@ it('retains exact native package inputs and literal toolchain config through the
     expect(network.requests).toHaveLength(3);
 });
 
+it('collects deliberate Docker settings through the mounted native Software listing', async () => {
+    const { target, entries } = await setup();
+    const { PLUGIN_MANIFEST } = await import('../../../../../packages/plugins/machine-recipes/src/manifest');
+    const { DOCKER_ENGINE_RECIPE_REF_V1: dockerRef } = await import('@happier-dev/protocol/machines/setup/machineRecipeReferenceV1');
+    const definition = PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === dockerRef.recipeId)!;
+    entries.splice(0, entries.length, PluginProjectedMachineRecipeEntryV1Schema.parse({
+        id: `${dockerRef.pluginId}/${dockerRef.recipeId}`, pluginId: dockerRef.pluginId,
+        pluginVersion: PLUGIN_MANIFEST.version, definition,
+    }));
+    const screen = await renderScreen(<SoftwareListing target={target} item={{ value: dockerRef, label: 'Docker Engine' }}
+        machines={{ targets: [{ target, machine: { machineId: target.machine.machineId, platform: 'posix', os: 'linux', arch: 'x64',
+            agentIds: [], name: 'Docker host', online: true } }] }} pushed={false} onClose={() => {}} />);
+    await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.software.listing.input.daemonConfig').length).toBeGreaterThan(0));
+    const { Switch } = await import('@/components/ui/forms/Switch');
+    for (const config of [{}, { icc: false, 'no-new-privileges': true }]) {
+        await act(async () => { changeTextTestInstance(screen.findByTestId('store.software.listing.input.daemonConfig'), JSON.stringify(config)); });
+        await flushHookEffects();
+        expect(screen.findByTestId('store.software.listing.input.daemonConfig').props.value).toBe(JSON.stringify(config, null, 2));
+        const targetSwitch = screen.root.findAllByType(Switch).find(node => node.props.accessibilityLabel === 'Docker host')!;
+        await act(async () => { targetSwitch.props.onValueChange(true); });
+        expect(screen.findHostByTestId('store.software.listing:primary')?.props.accessibilityHint).toBeUndefined();
+    }
+});
+
+it.each([false, true])('collects deliberate inputs before preparing an Apps Machine host while retaining ready hosts (%s)', async alreadyReady => {
+    const { target, entries, homeId, machines } = await setup();
+    const { PLUGIN_MANIFEST } = await import('../../../../../packages/plugins/machine-recipes/src/manifest');
+    const { DOCKER_ENGINE_RECIPE_REF_V1: dockerRef } = await import('@happier-dev/protocol/machines/setup/machineRecipeReferenceV1');
+    entries.splice(0, entries.length, PluginProjectedMachineRecipeEntryV1Schema.parse({
+        id: `${dockerRef.pluginId}/${dockerRef.recipeId}`, pluginId: dockerRef.pluginId,
+        pluginVersion: PLUGIN_MANIFEST.version,
+        definition: PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === dockerRef.recipeId)!,
+    }));
+    const applied = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const previousState = storage.getState();
+    const previousApplied = applied.getAppliedActiveServerSnapshot();
+    const previousAvailable = applied.isAppliedActiveServerRuntimeAvailable();
+    onTestFinished(() => {
+        storage.setState(previousState, true);
+        applied.publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    });
+    await act(async () => {
+        storage.setState({ profileScope: target.scope, settingsScope: target.scope, endpointStatus: 'online' });
+        applied.publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        await publishMachineInventoryForTest(target.scope, [{ ...machines[0]!, installationId: 'docker-host' }]);
+    });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(homeId);
+    onTestFinished(() => account.dispose());
+    const readMachine = (machineId: string) => createPlainMachineRowFixture({ id: machineId, accountId: 'alice' });
+    network.setHttpResponder(async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, readMachine);
+        const exact = /^\/v1\/machines\/([^/]+)$/.exec(path);
+        return exact ? Response.json({ machine: readMachine(decodeURIComponent(exact[1]!)) }) : homes.request(input, init);
+    });
+    const current = await getMachineSetupDesiredV1({
+        read: async () => ({ status: 'ready', metadataVersion: 1, metadata: { setup: { version: 1, revision: 1,
+            sources: [{ kind: 'direct', setup: alreadyReady ? { items: [{ kind: 'setupRecipe',
+                selection: { ref: dockerRef, inputs: { daemonConfig: {} } } }] } : {} }], exclusions: [],
+        } } }), compareAndSwap: async () => { throw new Error('Draft cannot write desired setup'); },
+    });
+    const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { ManagedMachineActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+    const plans: ReturnType<typeof ManagedMachineActionInputSchemasV1['machines.setup.plan']['parse']>[] = [];
+    // Only the HTTP/process boundaries are substituted: the public Action, Software merge and native planner remain real.
+    const deps = createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
+        if ('targets' in input) throw new Error('The native leaf receives one exact target');
+        return prepareMachineSetupPlanV1({ input, current, readRecipes: async () => entries,
+            observation: { version: 1, desiredRevision: 1, status: 'satisfied',
+                recipes: alreadyReady ? [{ ref: dockerRef, status: 'satisfied', steps: [] }] : [] },
+            readAdminAccessObservation: async () => ({ version: 1, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier',
+                daemonPrimaryGroup: 'happier', daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
+                managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
+            runNative: async command => {
+                const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
+                if (command.executable === 'grep' || command.executable === 'which') return ok();
+                if (command.executable === 'getent') return ok(command.args.includes('group')
+                    ? 'docker:x:109:happier\n' : 'happier:x:1000:1000::/home/happier:/bin/bash\n');
+                if (command.executable === 'id') return ok('1000 109\n');
+                if (command.executable === 'systemctl' && command.args[0] === 'show')
+                    return ok('LoadState=loaded\nUnitFileState=enabled\nActiveState=active\n');
+                throw new Error(`Draft attempted an unexpected native operation: ${command.executable} ${command.args.join(' ')}`);
+            } });
+    } });
+    const combined = createCombinedMachineSetupActionDeps({ readDeps: () => deps, targetPlan: deps.machineSetupPlan!,
+        readHostFacts: async () => ({ machines: [{ machineId: target.machine.machineId, online: true }] }), orchestrationDirectory: '.',
+        startCombined: async () => { throw new Error('Draft cannot start a Run'); },
+        waitForRun: async () => { throw new Error('Draft cannot wait for a Run'); },
+    });
+    const executor = createActionExecutor({ ...deps, machineSetupPlan: combined.machineSetupPlan });
+    homes.answer(homeId, '/v1/actions/machines.setup.plan', { select: async input => {
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+        const request = ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse(envelope.input);
+        plans.push(request);
+        return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId,
+            execution: await executor.execute('machines.setup.plan', request, { surface: 'ui', authority: 'present_user' }) } };
+    } });
+    const { DeploymentEnvironmentDraft } = await import('@/components/projects/deployments/DeploymentEnvironmentDraft');
+    const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="docker-project"
+        phone={false} actions={null} definitionKind="compose" onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+    const fieldId = 'project-deployments.draft.hostSetup.inputs.0.daemonConfig';
+    await waitForHomeGovernance(() => expect(plans.length).toBeGreaterThan(0));
+    const modes = () => plans.flatMap(plan => 'targets' in plan ? plan.targets.map(target => target.mode) : [plan.mode]);
+    if (alreadyReady) {
+        await flushHookEffects();
+        expect(screen.findAllByTestId(fieldId)).toHaveLength(0);
+        expect(modes()).toEqual([undefined]);
+        return;
+    }
+    await waitForHomeGovernance(() => expect(screen.findAllByTestId(fieldId).length).toBeGreaterThan(0));
+    expect(modes()).toEqual([undefined]);
+    const { MachineSetupPlanReview } = await import('@/components/settings/machines/managed/MachineSetupPlanReview');
+    for (const daemonConfig of [{}, { icc: false, 'no-new-privileges': true }]) {
+        const beforeReview = modes();
+        await act(async () => { changeTextTestInstance(screen.findByTestId(fieldId), JSON.stringify(daemonConfig)); });
+        await flushHookEffects();
+        expect(modes()).toEqual(beforeReview);
+        await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');
+        await waitForHomeGovernance(() => expect(screen.findAllByType(MachineSetupPlanReview)[0]?.props.prepared).toMatchObject({
+            ok: true, input: { targets: [{ sources: [{ kind: 'direct', setup: {
+                items: [{ selection: { ref: dockerRef, inputs: { daemonConfig } } }],
+            } }], recipePlans: [{ plan: { steps: expect.arrayContaining([expect.objectContaining({ kind: 'file',
+                content: { kind: 'jsonMerge', value: daemonConfig } })]) } }] }] },
+        }));
+    }
+    expect(modes()).toEqual([undefined, 'effects', 'effects']);
+    expect(homes.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+});
+
 it('keeps offline and retired Machines unavailable without a queued read or ambient target substitution', async () => {
     const { target } = await setup();
     const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
@@ -796,4 +928,24 @@ it('keeps the Software Machine chooser out of a mixed-kind Search that found no 
     // The chooser narrows Software results; with none it would sit above every other kind's results.
     expect(screen.root.findAll(node => node.props.filter?.testID === 'store.search.software.machine')).toHaveLength(0);
     expect(screen.findHostByTestId('store.search.software.source')).toBeNull();
+});
+
+
+it('leads an unselected Node.js listing to the existing Machine chooser before Review', async () => {
+    const { target } = await setup();
+    const item = { value: { kind: 'toolchain' as const, adapterId: 'mise', tool: 'node' }, label: 'Node.js' };
+    const machines = { targets: [{ target, machine: { machineId: 'machine-0', platform: 'posix' as const,
+        os: 'linux', arch: 'x64', agentIds: [], name: 'Build box', online: true } }] };
+    const screen = await renderScreen(<SoftwareListing target={target} item={item} machines={machines} pushed={false} onClose={() => {}} />);
+    const primary = () => screen.findHostByTestId('store.software.listing:primary')!;
+    await waitForHomeGovernance(() => expect(primary().props.accessibilityHint).toBe('Turn on at least one Machine'));
+    const chooser = screen.root.findAll(node => node.props.filter?.testID === 'store.software.listing.chooseMachine')[0];
+    expect(chooser).toBeDefined();
+    await act(async () => { chooser!.props.filter.onChange('machine-0'); });
+    expect(primary().props.accessibilityHint).toBe('Mise configuration');
+    const { Switch } = await import('@/components/ui/forms/Switch');
+    expect(screen.root.findAllByType(Switch).find(node => node.props.accessibilityLabel === 'Build box')?.props.value).toBe(true);
+    await act(async () => { changeTextTestInstance(screen.findHostByTestId('store.software.listing.config'), '[tools]\nnode = "22"'); });
+    expect(primary().props.accessibilityState?.disabled).not.toBe(true);
+    expect(screen.root.findAll(node => node.props.filter?.testID === 'store.software.listing.chooseMachine')).toHaveLength(0);
 });

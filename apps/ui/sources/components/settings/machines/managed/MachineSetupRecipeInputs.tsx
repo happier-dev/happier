@@ -24,12 +24,13 @@ export function MachineSetupRecipeInputs(props: Readonly<{
     testID: string;
     scope?: ServerAccountScope | null;
     suppliedInputKeys?: readonly string[];
+    action?: React.ReactNode;
 }>) {
     const localize = usePluginLocalizedTextResolver({ projection: props.projection });
     const state = readMachineSetupRecipeInputState(props.setup, props.projection, { suppliedInputKeys: props.suppliedInputKeys });
     const pickerContext = React.useMemo(() => props.scope ? { serverId: props.scope.serverId } : undefined, [props.scope?.serverId]);
     return <>{state.rows.filter(row => row.fields.length > 0).map(row => <ItemGroup key={row.index}
-        title={localize(row.recipe.pluginId, row.recipe.definition.title)}>
+        title={localize(row.recipe.pluginId, row.recipe.definition.title)} action={props.action}>
         <SectionContentRow><SoftwareInputFields fields={row.fields} draft={row.input} testID={`${props.testID}.${row.index}`}
             pickerContext={pickerContext}
             onPatch={patch => props.onChange({ ...props.setup, items: props.setup.items?.map((item, index) =>

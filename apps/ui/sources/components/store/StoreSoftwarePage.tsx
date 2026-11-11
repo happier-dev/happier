@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { actionInputOptionValueKey, isSameActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { MachineSetupToolchainSoftwareChoiceV1Schema } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import { MachineRecipeReferenceV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
 import { useOpenStoreListing, useStoreListingSelection } from './StoreListing';
 import type { StoreSoftwareListingReference } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -286,7 +287,7 @@ function SoftwareListingBody(
   const { state, item } = props;
   const toolchain = isToolchain(item);
   const [config, setConfig] = React.useState('');
-  // A recipe that declares input fields asks for them here; what is typed is the draft.
+  // A recipe's schema and presentation hints ask for its inputs; what is typed is the draft.
   const [draft, setDraft] = React.useState<SoftwareInputDraft>({});
   // No Machine is chosen for the person: each one they turn on joins the one review. The Store page holds the
   // choice, so closing this listing and opening it again keeps it.
@@ -302,12 +303,13 @@ function SoftwareListingBody(
   const localize = usePluginLocalizedTextResolver({ projection: null });
   const hints = React.useMemo(() => {
     const declared = state.machineRecipeDetails?.[0];
-    return declared?.definition.inputHints
+    const inputHints = declared && normalizePluginActionInputHintsV2(declared.definition.inputHints, declared.definition.inputSchema);
+    return declared && inputHints
       ? (resolvePluginProjectedActionPresentation({
           pluginId: declared.pluginId,
           presentation: {
             title: declared.definition.title,
-            inputHints: declared.definition.inputHints,
+            inputHints,
           },
           projection: null,
           localize,

@@ -33,4 +33,10 @@ describe('Software recipe input drafts', () => {
             .toEqual({ package: { manager: 'apt', apt: { name: 'curl' } } });
         expect(omitBlankSoftwareInputs({ package: { manager: '', apt: { name: '' } } })).toBeUndefined();
     });
+
+    it('retains an explicitly entered empty JSON object as a deliberate recipe input', () => {
+        expect(omitBlankSoftwareInputs({ daemonConfig: {} })).toEqual({ daemonConfig: {} });
+        expect(readSoftwareInputFields({ fields: [{ path: 'daemonConfig', title: 'Docker settings', widget: 'json', required: true }] },
+            { daemonConfig: {} }).missing).toBeNull();
+    });
 });

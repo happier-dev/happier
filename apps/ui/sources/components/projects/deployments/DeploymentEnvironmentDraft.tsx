@@ -28,6 +28,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -44,7 +45,8 @@ import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
 import { renderDeploymentCreationDefaultsRows } from './DeploymentCreationDefaultsRows';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
-import { MachineSetupPlanReview, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { MachineSetupPlanReview, describeMachineSetupPlanFailure, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
@@ -172,8 +174,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const storedDefinition = definitionKind !== null;
     const imagePortNumber = Number(imagePort.trim());
     const imagePortValid = /^\d+$/.test(imagePort.trim()) && imagePortNumber >= 1 && imagePortNumber <= 65535;
-    // A Compose Environment runs on the chosen Machine: its Docker host setup is planned once per choice, and a
-    // Machine that needs it shows the setup review in place. Saving can wait for it; nothing runs until Apply.
+    // A Compose Environment reads the chosen Machine's readiness once; required host settings and an explicit
+    // Review precede its setup Plan. Saving can wait for it; nothing runs until Apply.
     const host = useDeployHostReadiness(onPlatform ? null : props.lifetime, onPlatform ? null : chosen?.id ?? null);
     const [hostApply, setHostApply] = React.useState<Readonly<{ pending: boolean; error: string | null }>>(HOST_APPLY_IDLE);
     React.useEffect(() => setHostApply(HOST_APPLY_IDLE), [chosen?.id]);
@@ -463,7 +465,12 @@ export const DeploymentEnvironmentDraft = React.memo(
               initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
               onApproval={onApprovalRequested} onClose={props.onDiscard} />
           ) : null}
-          {!onPlatform && chosen && host.readiness === 'needsSetup' && host.prepared?.ok ? <>
+          {!onPlatform && host.setup ? <MachineSetupRecipeInputs setup={host.setup} projection={host.inputProjection}
+            scope={props.lifetime?.scope} onChange={host.setSetup} testID="project-deployments.draft.hostSetup.inputs"
+            action={<SectionActionButton testID="project-deployments.draft.hostSetup.prepare" icon="eye"
+              title={t('capabilities.store.appPage.review')} disabled={!host.canReview || hostApply.pending}
+              loading={host.reviewing} onPress={() => { void host.review(); }} />} /> : null}
+          {!onPlatform && chosen && host.prepared?.ok ? <>
             <AttentionBanner
               testID="project-deployments.draft.hostSetup"
               tone="warning"
@@ -477,7 +484,10 @@ export const DeploymentEnvironmentDraft = React.memo(
             />
             <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
               nameOf={machineName} disabled={hostApply.pending} />
-          </> : !onPlatform && chosen && host.readiness === 'unknown' && host.prepared?.ok ? (
+          </> : !onPlatform && host.prepared?.ok === false ? (
+            <AttentionBanner tone="warning" title={t('machinePresets.setup.title')}
+              description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
+          ) : !onPlatform && chosen && host.readiness === 'unknown' ? (
             <ItemGroup>
               <Item testID="project-deployments.draft.hostUnchecked" mode="info"
                 title={t('projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })} />

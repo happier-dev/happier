@@ -156,6 +156,27 @@ it.each(['agent', 'ui'] as const)('offers Docker through the shared Software Act
   } finally { await f.runtime.dispose(); }
 });
 
+it.each(['ubuntu', 'debian'] as const)('resolves %s native packages while retaining the exact reviewed Docker settings', async family => {
+  const f = await fixture(family);
+  try {
+    for (const daemonConfig of [{}, { icc: false, 'no-new-privileges': true }]) {
+      const result = await f.executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'machine', mode: 'effects', sources: [{
+        kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: { daemonConfig } } }] },
+      }] }, f.context);
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      if (!result.ok) throw new Error('Docker review unavailable');
+      const plan = MachineSetupPlanResultV1Schema.parse(result.result).recipePlans?.[0]?.plan;
+      expect(plan?.steps.filter(step => step.kind === 'package')).toMatchObject([{ manager: 'apt', packages: [
+        { name: 'docker.io' }, { name: 'docker-buildx' }, { name: family === 'ubuntu' ? 'docker-compose-v2' : 'docker-compose' },
+      ] }]);
+      expect(plan?.steps.find(step => step.kind === 'file')).toMatchObject({
+        content: { kind: 'jsonMerge', value: daemonConfig }, validate: 'docker',
+      });
+      expect(f.effects).toEqual([]);
+    }
+  } finally { await f.runtime.dispose(); }
+});
+
 it('discloses Docker root-equivalent effects in the ordinary spawn approval before execution', async () => {
   const f = await fixture('ubuntu');
   try {

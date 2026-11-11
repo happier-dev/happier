@@ -1,4 +1,4 @@
-import { MachineSetupCombinedPlanResultV1Schema, MachineSetupRemoveInputV1Schema, type MachineSetupPlanUnavailableTargetV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupCombinedPlanResultV1Schema, MachineSetupRemoveInputV1Schema, type MachineSetupCombinedPlanResultV1, type MachineSetupPlanUnavailableTargetV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { machineSetupItemKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -9,13 +9,16 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import type { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { prepareMachineSetupSourcesApplyInput, type MachineSetupPreparedApply, type MachineSetupPreparedRemove, type MachineSetupReviewTarget } from './machineSetupReview';
 
-/** Direct Software changes the implicit source; preset copies and literal scripts stay untouched. */
-export async function prepareMachineSetupSoftwareApplyInput(params: Readonly<{
+type SoftwarePlanReadParams = Readonly<{
     executeAction: ReturnType<typeof createDefaultActionExecutor>['execute']; context: ActionExecutorContext; homeId: string; machineId: string;
-    targets: readonly Readonly<{ homeId: string; machineId: string }>[]; setup: MachineSetupV1;
+    targets: readonly Readonly<{ homeId: string; machineId: string }>[];
     selectedMachineId?: string; isCurrent: () => boolean;
-    intent?: 'install' | 'remove'; removeItemKeys?: Readonly<Record<string, string[]>>;
-}>): Promise<MachineSetupPreparedApply> {
+}>;
+
+/** Read and parse current sources once; an inline settings review can reuse this typed answer. */
+export async function readMachineSetupSoftwareCurrentPlan(params: SoftwarePlanReadParams): Promise<
+    Readonly<{ ok: true; plan: MachineSetupCombinedPlanResultV1 }> | ActionExecuteFailure
+> {
     const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
     const current = () => params.isCurrent() && !params.context.signal?.aborted;
     if (!current()) return fail('continuation_retired');
@@ -29,12 +32,27 @@ export async function prepareMachineSetupSoftwareApplyInput(params: Readonly<{
     if (outcome.kind !== 'completed') return fail('approval_required');
     const parsed = MachineSetupCombinedPlanResultV1Schema.safeParse(outcome.result);
     if (!parsed.success || parsed.data.targets.length !== params.targets.length) return fail('managed_response_invalid');
+    return { ok: true, plan: parsed.data };
+}
+
+/** Direct Software changes the implicit source; preset copies and literal scripts stay untouched. */
+export async function prepareMachineSetupSoftwareApplyInput(params: SoftwarePlanReadParams & Readonly<{
+    setup: MachineSetupV1; currentPlan?: MachineSetupCombinedPlanResultV1;
+    intent?: 'install' | 'remove'; removeItemKeys?: Readonly<Record<string, string[]>>;
+}>): Promise<MachineSetupPreparedApply> {
+    const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+    const current = () => params.isCurrent() && !params.context.signal?.aborted;
+    if (!current()) return fail('continuation_retired');
+    const observed = params.currentPlan ? { ok: true as const, plan: params.currentPlan }
+        : await readMachineSetupSoftwareCurrentPlan(params);
+    if (!current()) return fail('continuation_retired');
+    if (!observed.ok) return observed;
     const targets: MachineSetupReviewTarget[] = [];
     const unavailableTargets: MachineSetupPlanUnavailableTargetV1[] = [];
     const detaching = params.intent === 'remove';
     const detachedKeys = new Set(detaching ? (params.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]) : []);
     for (const target of params.targets) {
-        const row = parsed.data.targets.find(row => row.homeId === target.homeId && row.machineId === target.machineId);
+        const row = observed.plan.targets.find(row => row.homeId === target.homeId && row.machineId === target.machineId);
         if (!row) return fail('managed_response_invalid');
         if ('status' in row) { unavailableTargets.push(row); continue; }
         const plan = row.plan;

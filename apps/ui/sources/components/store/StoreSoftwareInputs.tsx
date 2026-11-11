@@ -17,15 +17,17 @@ export type SoftwareInputDraft = Readonly<Record<string, unknown>>;
 
 /**
  * What the form holds is text as typed; the recipe's schema speaks of values that are present or absent. A box left
- * empty is absent, and an object with nothing left in it is absent too, so an optional exact pin never reaches the
- * owner as an empty string.
+ * empty is absent, and an object emptied by those blanks is absent too, so an optional exact pin never reaches the
+ * owner as an empty string. An explicitly entered empty JSON object is a value in its own right.
  */
 export function omitBlankSoftwareInputs(value: unknown): JsonValue | undefined {
   if (typeof value === 'string') return value.trim() === '' ? undefined : value;
   if (Array.isArray(value))
     return value.flatMap((item) => omitBlankSoftwareInputs(item) ?? []);
   if (value && typeof value === 'object') {
-    const kept = Object.entries(value).flatMap(([key, item]) => {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return {};
+    const kept = entries.flatMap(([key, item]) => {
       const next = omitBlankSoftwareInputs(item);
       return next === undefined ? [] : [[key, next] as const];
     });

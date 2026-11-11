@@ -6,6 +6,53 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { createCombinedMachineSetupActionDeps } from '../../../../../../cli/src/machines/setup/composeMachineSetup';
 import { prepareMachineSetupPlanV1 } from '../../../../../../cli/src/machines/setup/prepareMachineSetupPlan';
 import { prepareMachineSetupSoftwareApplyInput } from './machineSetupSoftware';
+import { MachineSetupCombinedPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+
+it('reuses the observed Software plan while reviewing deliberate inputs without a second current-state read', async () => {
+    const ref = { pluginId: 'example.software', recipeId: 'configured', revision: '1' };
+    const recipe = PluginProjectedMachineRecipeEntryV1Schema.parse({ id: `${ref.pluginId}/${ref.recipeId}`,
+        pluginId: ref.pluginId, pluginVersion: '1', definition: { id: ref.recipeId, revision: ref.revision, software: true,
+            title: 'Configured software', inputSchema: { type: 'object', properties: { config: { type: 'object',
+                properties: { reviewed: { type: 'boolean' } }, additionalProperties: false } },
+                required: ['config'], additionalProperties: false },
+            steps: [{ id: 'check', kind: 'command', executable: 'test', args: ['-e', 'fixture'],
+                check: { executable: 'test', args: ['-e', 'fixture'], unsatisfiedExitCodes: [1] } }],
+        } });
+    const current = await getMachineSetupDesiredV1({
+        read: async () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+        compareAndSwap: async () => { throw new Error('Review cannot write desired Software'); },
+    });
+    const modes: unknown[] = [];
+    const deps = createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
+        if ('targets' in input) throw new Error('The native leaf receives one target');
+        modes.push(input.mode);
+        return prepareMachineSetupPlanV1({ input, current, readRecipes: async () => [recipe], runNative: async command => {
+            if (command.executable !== 'test') throw new Error('Review attempted a native effect');
+            return { code: 1, stdout: '', stderr: '' };
+        } });
+    } });
+    const combined = createCombinedMachineSetupActionDeps({ readDeps: () => deps, targetPlan: deps.machineSetupPlan!,
+        readHostFacts: async () => ({ machines: [{ machineId: 'guest', online: true }] }), orchestrationDirectory: '.',
+        startCombined: async () => { throw new Error('Review cannot start a Run'); },
+        waitForRun: async () => { throw new Error('Review cannot wait for a Run'); },
+    });
+    const executor = createActionExecutor({ ...deps, machineSetupPlan: combined.machineSetupPlan });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const };
+    const target = { homeId: 'home', machineId: 'guest' };
+    const observed = await executor.execute('machines.setup.plan', { ...target, targets: [target] }, context);
+    if (!observed.ok) throw new Error(observed.errorCode);
+    const currentPlan = MachineSetupCombinedPlanResultV1Schema.parse(observed.result);
+    for (const config of [{}, { reviewed: true }]) {
+        const request = { executeAction: executor.execute, context, ...target, targets: [target], currentPlan,
+            setup: { items: [{ kind: 'softwareRecipe' as const, selection: { ref, inputs: { config } } }] }, isCurrent: () => true };
+        const prepared = await prepareMachineSetupSoftwareApplyInput(request);
+        expect(prepared).toMatchObject({ ok: true, input: { targets: [{ sources: [{ kind: 'direct', setup: {
+            items: [{ selection: { ref, inputs: { config } } }],
+        } }] }] } });
+    }
+    // One current-state read serves both reviews. Each edit gets its own effects Plan, never an Apply.
+    expect(modes).toEqual([undefined, 'effects', 'effects']);
+});
 
 it('reviews direct Software detachment with native opt-in removal while preserving shared, foreign and pre-existing items', async () => {
     const item = (name: string) => ({ kind: 'softwareRecipe' as const, selection: {
