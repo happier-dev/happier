@@ -143,6 +143,7 @@ describe('OpenCode provider-binding adapter V1', () => {
       materialization: 'configFile',
       applyPolicy: 'restart_session',
       supportsFreeformModelIds: true,
+      supportsReasoningEffort: true,
     });
     expect(OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput())).toEqual({
       v: 1,

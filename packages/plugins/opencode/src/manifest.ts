@@ -174,6 +174,7 @@ export const OPENCODE_PLUGIN = definePlugin({
           materialization: 'configFile',
           applyPolicy: 'restart_session',
           supportsFreeformModelIds: true,
+          supportsReasoningEffort: true,
         },
         surfaces: { externalSession: {
           externalLinkedTakeover: { writerSafety: 'unsupported' },

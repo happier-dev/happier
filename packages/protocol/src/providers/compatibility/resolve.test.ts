@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isProviderBindingCompatibilityDeclarationSatisfiableV1,
   projectProviderBindingCompatibilityForConnectionV1,
   resolveProviderBindingCompatibilityWithFingerprintV1,
   selectProviderRuntimeCredentialTransportV1,
@@ -35,6 +36,17 @@ const baseRequirements = {
   applyPolicy: 'restart_session',
   supportsFreeformModelIds: false,
 } as const;
+
+it('classifies model capability evidence as declaration-satisfiable experimental compatibility', () => {
+  const result = resolveProviderBindingCompatibilityWithFingerprintV1({
+    agentTargetKey: 'agent:codex', adapterVersion: 1, endpoints: [baseEndpoint], credential: undefined,
+    agent: baseRequirements,
+    model: { id: 'muse-spark-1.2-contributor', name: 'Muse', capabilities: { reasoningControls: 'supported', toolRoundTrips: 'unknown' } },
+  }).result;
+  expect(result).toMatchObject({ status: 'experimental', reasons: ['capability_toolRoundTrips_unknown', 'model_capability_toolRoundTrips_unknown'] });
+  expect(isProviderBindingCompatibilityDeclarationSatisfiableV1(result)).toBe(true);
+  expect(isProviderBindingCompatibilityDeclarationSatisfiableV1({ status: 'experimental', selectedProtocol: 'openai-responses', reasons: ['compatibility_override_experimental'], confirmationScope: { kind: 'connection' } })).toBe(false);
+});
 
 const evidence = {
   sourceUrls: ['https://docs.example.test/compatibility'],

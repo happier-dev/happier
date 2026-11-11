@@ -1,4 +1,4 @@
-import { resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { isProviderBindingCompatibilityDeclarationSatisfiableV1, resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { hasProviderExperimentalConfirmation } from '@happier-dev/protocol/providers/settings/v1';
 import type { AgentProviderRequirementsV1, ProviderModelDescriptorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 
@@ -33,7 +33,7 @@ export function resolveProviderModelCompatibility(input: Readonly<{
     && facts.catalog.staticModels.some(model => model.id === input.model.id);
   const declarationSatisfiesEvidence = declaredManagedModel
     && compatibility.result.status === 'experimental'
-    && compatibility.result.reasons.every(reason => reason === 'compatibility_evidence_missing');
+    && isProviderBindingCompatibilityDeclarationSatisfiableV1(compatibility.result);
   return Object.freeze({
     ...compatibility,
     confirmed: compatibility.result.status === 'experimental'

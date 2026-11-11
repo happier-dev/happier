@@ -2550,6 +2550,7 @@ describe('provider spawn authorization resolver', () => {
       model,
     });
     expect(compatibility.result.status).toBe('experimental');
+    expect(compatibility.confirmed).toBe(true);
     if (compatibility.result.status !== 'experimental') {
       throw new Error('Expected experimental compatibility');
     }

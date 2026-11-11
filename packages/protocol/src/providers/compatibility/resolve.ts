@@ -295,6 +295,18 @@ export function projectProviderBindingCompatibilityForConnectionV1(
   return { status: 'incompatible', reasons: result.reasons };
 }
 
+/**
+ * Managed declarations may supply the missing model capability evidence for an
+ * experimental result. Explicit experimental overrides remain a separate
+ * review decision and therefore still require confirmation.
+ */
+export function isProviderBindingCompatibilityDeclarationSatisfiableV1(
+  result: ProviderBindingCompatibilityV1,
+): boolean {
+  return result.status === 'experimental'
+    && !result.reasons.includes('compatibility_override_experimental');
+}
+
 function positiveAdapterVersion(value: number): number {
   if (!Number.isInteger(value) || value < 1) throw new TypeError('Adapter version must be a positive integer');
   return value;
