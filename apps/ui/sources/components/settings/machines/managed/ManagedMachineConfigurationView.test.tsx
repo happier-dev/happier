@@ -367,6 +367,44 @@ describe('mounted managed configurator', () => {
       expect(nativeBoundary.rpc).not.toHaveBeenCalled();
     } finally { await screen.unmount(); }
   });
+  it.each(['cold', 'ready-to-unavailable'] as const)('settles an unavailable delegated review without showing choices loading (%s)', async entry => {
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://delegated-refusal.example.test',
+      serverIdentityId: 'srv_delegated_refusal', accountId: 'owner', currentAccount: true, teamsEnabled: true });
+    const { teamSummaryFixture, teamCapabilitiesFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
+    const { TeamSummaryV1Schema } = await import('@happier-dev/protocol/teams');
+    harness.answer(serverId, '/v1/teams/get', { body: TeamSummaryV1Schema.parse(teamSummaryFixture({ id: 'team-1', viewerRole: 'member', capabilities: teamCapabilitiesFixture({}) })) });
+    const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const saved = ManagedMachinePresetV1Schema.parse({ id: 'delegated-refusal', homeId: 'srv_delegated_refusal', revision: 0,
+      name: 'Shared machine', owner: { kind: 'team', teamId: 'team-1' }, controller: defaultController,
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } },
+      teamAcquireDelegated: true });
+    let current = createDelegatedManagedPresetFixture({ preset: saved, descriptor: provisioner.descriptor,
+      installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url'), custodianAccountId: 'custodian' });
+    const unavailable = ManagedMachinePresetV1Schema.parse({ ...saved, delegatedAcquire: { kind: 'unavailable', code: 'provider_unavailable' } });
+    if (entry === 'cold') current = unavailable;
+    harness.answer(serverId, '/v1/machines/presets/get', { select: () => ({ body: { kind: 'found', preset: current } }) });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id} />);
+    try {
+      if (entry === 'ready-to-unavailable') {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create'), screen.getTextContent()).not.toBeNull());
+        current = unavailable;
+        await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'socket', machineResourcesAffect: true }));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
+        expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      } else {
+        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.catalog'
+          && node.props.diagnosticCode === 'provider_unavailable')).not.toHaveLength(0));
+        expect(screen.findByTestId('managed-config.create')).toBeNull();
+      }
+      expect(screen.getTextContent()).not.toContain(t('managedMachines.options.loading', { provider: 'Virtual machine' }));
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
   it.each([false, true])('requires saved recipe inputs before creation or composer use (composer: %s)', async composer => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://recipe-inputs-${composer}.example.test`,
       serverIdentityId: 'srv_recipe_inputs', accountId: 'owner', currentAccount: true });
