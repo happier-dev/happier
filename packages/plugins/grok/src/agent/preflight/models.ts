@@ -1,7 +1,6 @@
 import type { AgentPreflightSessionControlsContributionV1, AgentPreflightSessionControlsProbeInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { selectGrokAuthenticationFromFacts } from '../acp/auth.js';
-import { GROK_UNVERIFIED_ACCOUNT_MODEL_CATALOG } from '../acp/modelControls.js';
 import { GROK_CONNECTED_ACCOUNT_MODE_ENV, GROK_OAUTH2_ISSUER_ENV, type GrokConnectedAccountMode } from '../connectedAccount.js';
 
 export const GROK_ACP_COMMAND = Object.freeze({ toolId: 'grok-cli', args: Object.freeze(['--no-auto-update', 'agent', 'stdio']) });
@@ -82,16 +81,7 @@ export const GROK_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
       parseGrokModelsOutput(stdout) ?? parseGrokModelsOutput(stderr),
   }),
   async probeModels(context) {
-    const selectedMode = readSelectedMode(context);
-    if (!selectedMode) {
-      const result = await context.runDeclaredSystemToolCommand({ toolId: GROK_ACP_COMMAND.toolId, args: GROK_MODELS_COMMAND_ARGS });
-      return result.ok ? parseGrokModelsOutput(result.stdout) ?? parseGrokModelsOutput(result.stderr) : null;
-    }
-    try {
-      await context.probeDeclaredAcpSessionControls?.(GROK_ACP_COMMAND);
-    } catch {
-      // A failed selected probe also withdraws rows cached from another auth route.
-    }
-    return GROK_UNVERIFIED_ACCOUNT_MODEL_CATALOG;
+    const result = await context.runDeclaredSystemToolCommand({ toolId: GROK_ACP_COMMAND.toolId, args: GROK_MODELS_COMMAND_ARGS });
+    return result.ok ? parseGrokModelsOutput(result.stdout) ?? parseGrokModelsOutput(result.stderr) : null;
   },
 } satisfies AgentPreflightSessionControlsContributionV1);

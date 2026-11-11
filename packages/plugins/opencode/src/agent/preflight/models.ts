@@ -86,7 +86,7 @@ export function buildOpenCodeModelCatalogFromProviders(
   return {
     models: unavailable && models?.length === 0 ? null : models,
     ...(unavailable && models?.length === 0 ? { catalogConfidence: 'account_unverified' as const } : {}),
-    ...(unavailable ? { unavailableReason: 'ChatGPT account model entitlement is unavailable from the native OpenCode inventory.' } : {}),
+    ...(unavailable && models?.length === 0 ? { unavailableReason: 'ChatGPT account model entitlement is unavailable from the native OpenCode inventory.' } : {}),
   };
 }
 

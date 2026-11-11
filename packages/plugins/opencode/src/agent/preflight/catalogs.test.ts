@@ -90,11 +90,9 @@ describe('OpenCode before-session native catalogs', () => {
       }
       const f = fixture({ ...selection, chatgptInventory: true, openaiBaseURL });
       const contribution: AgentPreflightSessionControlsContributionV1 = OPENCODE_PREFLIGHT_SESSION_CONTROLS;
-      await expect(contribution.probeModels!(f.context)).resolves.toMatchObject({
-        availableModels: [{ id: 'native/native-selected', name: 'Selected account model' }],
-        source: 'dynamic', refreshError: true,
-        refreshErrorMessage: expect.stringContaining('entitlement'),
-      });
+      await expect(contribution.probeModels!(f.context)).resolves.toMatchObject([
+        { id: 'native/native-selected', name: 'Selected account model' },
+      ]);
       await expect(contribution.probeModels!(fixture({ ...selection, chatgptInventory: true, emptyNativeInventory: true, openaiBaseURL }).context)).resolves.toMatchObject({
         availableModels: [], source: 'unavailable', refreshError: true,
       });

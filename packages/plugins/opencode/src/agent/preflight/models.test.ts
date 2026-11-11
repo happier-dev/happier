@@ -11,6 +11,19 @@ describe('OpenCode native model normalization', () => {
     } }], Date.now()).models).toEqual([]);
   });
 
+  it.each([false, true])('keeps Muse account models usable beside a ChatGPT route (%s)', withChatGpt => {
+    const catalog = buildOpenCodeModelCatalogFromProviders([
+      { id: 'meta', models: { 'muse-spark-1.3-contributor': {
+        id: 'muse-spark-1.3-contributor', name: 'Muse Spark 1.3 Contributor',
+      } } },
+      ...(withChatGpt ? [{ id: 'openai', usesChatGptAccount: true as const,
+        models: { 'gpt-5.4': { id: 'gpt-5.4', name: 'GPT 5.4' } } }] : []),
+    ], Date.now());
+    expect(catalog).toEqual({ models: [
+      { id: 'meta/muse-spark-1.3-contributor', name: 'Muse Spark 1.3 Contributor' },
+    ] });
+  });
+
   it('retains native metadata, reasoning choices and supported text models without tools', () => {
     expect(buildOpenCodeModelCatalogFromProviders([{ id: 'openai', models: {
       'gpt-5.4': {

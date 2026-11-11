@@ -35,8 +35,9 @@ and probe caches. A ready Agent takes precedence over an unavailable automatic
 default. Explicit Agent choices remain unchanged. If readiness is supplied but
 no Agent is ready, the shared selector returns no automatic default and the
 inventory omits `defaultTargetKey`; creation does not attempt an unavailable
-remembered Agent. Preference-only selection without Machine readiness still
-retains the remembered choice for display and repair.
+remembered Agent. An inventory listing without a Machine also omits that key:
+it cannot establish execution readiness. Preference-only selection without
+Machine readiness still retains the remembered choice for display and repair.
 
 ---
 
@@ -1030,7 +1031,8 @@ unverified rows and model configuration choices while retaining native
 active-model state and controls for acknowledged model changes. Grok declares
 `account_unverified` for selected Connected Accounts because its native ACP
 catalog can contain bundled fallback rows without exposing whether account
-discovery succeeded. Its model-list preflight reports the same unavailable catalog.
+discovery succeeded. Its separate model-list preflight uses the normal native
+`models` command for selected accounts, as it does for native login.
 
 In the current development source, daemon model, mode and config probes demand the exact Agent
 registration from the authoritative plugin runtime and retain its lease for the operation.
@@ -2847,7 +2849,10 @@ purpose declares the credential kinds its account producer actually emits;
 an unknown stored kind remains admissible, while a known disallowed kind is
 excluded by the shared matcher. Account-backed Session Agents declare their
 native ACP model source or a preflight model source, and a resume reachability
-hook when they support resume. A hook that
+hook when they support resume. In 0.3 development, Grok uses its native `models`
+command for both selected Connected Accounts and native login. Absence of a
+separate entitlement signal does not suppress that model list; the upstream
+runtime still decides whether a selected model can execute. A hook that
 cannot attest reachability returns its typed unsupported result explicitly.
 The package install spelling must resolve through the shared Agent identity
 owner to the same catalog id.

@@ -1228,8 +1228,11 @@ inherited. A missing native model could select another provider's saved default,
 so preparation returns the typed `model_selection_required` startup reason
 instead. Selected-account and Provider-bound Session inventories remain
 `account_unverified`; the shared catalog owner withholds their choices while
-preserving the active model and explicit model controls. Unbound native launches
-retain OpenCode's own default selection.
+preserving the active model and explicit model controls. For preflight model
+listing, a withheld ChatGPT route does not mark usable models from other native
+providers, including Muse, as a failed refresh. A ChatGPT-only inventory retains
+its unavailable result. Unbound native launches retain OpenCode's own default
+selection.
 
 Copilot writes a private temporary providers file, Droid writes private temporary
 custom-model settings referencing a child-only access-token environment value,
