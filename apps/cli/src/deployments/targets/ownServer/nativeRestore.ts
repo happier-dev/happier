@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createHash } from 'node:crypto';
 import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
@@ -10,7 +11,7 @@ import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, runDeploymentBa
     type DeploymentRestoreNativeRequestV1, type DeploymentRestoreNativeResultV1,
     type DeploymentBackupRunInputV1, type DeploymentBackupRunResultV1, type DeploymentRestoreResolvedCaptureV1,
     type ResticAccessV1, type DeploymentRestoreDestinationV1, type DeploymentRestoreDatabaseDestinationV1,
-    type DeploymentRestoreVolumeDestinationV1, type DeploymentRestoreCopyMappingV1 } from '@happier-dev/deployments';
+    type DeploymentRestoreVolumeDestinationV1, type DeploymentRestoreSqliteDestinationV1, type DeploymentRestoreCopyMappingV1 } from '@happier-dev/deployments';
 import type { OwnServerDeploymentReceipt, OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import type { OwnServerDatabaseUsernameForHost } from './backupDestination';
 import { createNativeComposeLifecycle, executeAdmittedServiceCommand, admitServiceCommandStreamForHost,
@@ -21,6 +22,7 @@ import { readCredentialRedactionValues } from '@/plugins/runtime/invocation/serv
 import { admitServiceCommandInputForHost } from '@/daemon/local/services/launch/serviceCommand';
 import { createBufferTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
+import { createNativeSqliteRestore } from './nativeSqliteRestore';
 import { admitOwnServerRestoreUpload } from './restoreUpload';
 
 /** Captured by the existing own-server host, inside its admitted native job.
@@ -117,12 +119,35 @@ function restoreServices(input: NativeRestoreServiceInput) {
 }
 
 /** Native destination observation precedes backup credential acquisition. */
+type DatabaseObservation = Readonly<{ operationId: string; environmentId: string; revision: number }>;
+type PostgresTarget = Pick<DeploymentRestoreDatabaseDestinationV1, 'service' | 'adapter' | 'database'>;
+type SqliteTarget = Pick<DeploymentRestoreSqliteDestinationV1, 'service' | 'adapter' | 'path'>;
+export function observeOwnServerNativeRestoreDestination(input: NativeRestoreServiceInput, capture: DatabaseObservation & Readonly<{ target: PostgresTarget }>): Promise<DeploymentRestoreDatabaseDestinationV1>;
+export function observeOwnServerNativeRestoreDestination(input: NativeRestoreServiceInput, capture: DatabaseObservation & Readonly<{ target: SqliteTarget }>): Promise<DeploymentRestoreSqliteDestinationV1>;
+export function observeOwnServerNativeRestoreDestination(input: NativeRestoreServiceInput, capture: DatabaseObservation & Readonly<{ target: PostgresTarget | SqliteTarget }>): Promise<DeploymentRestoreDatabaseDestinationV1 | DeploymentRestoreSqliteDestinationV1>;
 export async function observeOwnServerNativeRestoreDestination(input: NativeRestoreServiceInput,
-    capture: Readonly<{ operationId: string; environmentId: string; revision: number;
-        target: Pick<DeploymentRestoreDatabaseDestinationV1, 'service' | 'adapter' | 'database'> }>): Promise<DeploymentRestoreDatabaseDestinationV1> {
+    capture: DatabaseObservation & Readonly<{ target: PostgresTarget | SqliteTarget }>): Promise<DeploymentRestoreDatabaseDestinationV1 | DeploymentRestoreSqliteDestinationV1> {
     const services = restoreServices(input);
     try {
         return await machineNativeEffectAdmission.runStage(input.context, async () => {
+            if (capture.target.adapter === 'sqlite-v1') {
+                const target = capture.target;
+                const selected = input.render.review.services.find(service => service.name === target.service);
+                const mounted = selected?.mounts.filter(mount => {
+                    if (!mount.target) return false;
+                    const relative = posix.relative(mount.target, target.path);
+                    return relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
+                }).sort((a, b) => (b.target?.length ?? 0) - (a.target?.length ?? 0))[0];
+                if (!mounted?.source || mounted.type !== 'volume' && mounted.type !== 'bind') return unsupported();
+                const writerServices: string[] = [];
+                for (const service of input.render.review.services) {
+                    if (!service.mounts.some(mount => mount.type === mounted.type && mount.source === mounted.source && !mount.readOnly)) continue;
+                    const state = await services.lifecycle(service.name).inspect({ signal: input.context.operation.signal });
+                    if (state.phase === 'running') writerServices.push(service.name);
+                    else if (state.phase !== 'stopped') throw new PluginError({ code: 'outcome_unknown', message: 'A SQLite writer has unknown native state' });
+                }
+                return createNativeSqliteRestore(input, async () => unsupported()).observe(target, { ...capture, writerServices });
+            }
             const names = await executeAdmittedServiceCommand(await services.admit(capture.target.service,
                 ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '--dbname=postgres', '-At', '-c',
                     'SELECT COALESCE(json_agg(datname),\'[]\'::json) FROM pg_database']));
@@ -176,10 +201,11 @@ export async function observeOwnServerNativeVolumeRestoreDestination(input: Nati
     } finally { try { await input.project.settleNative(); } finally { await services.dispose(); } }
 }
 
+type NativeBackupTarget = Pick<DeploymentRestoreDatabaseDestinationV1, 'service' | 'database'>
+    | Pick<DeploymentRestoreSqliteDestinationV1, 'service' | 'path'> | Pick<DeploymentRestoreVolumeDestinationV1, 'service' | 'volume'>;
 async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServerNativeUploadRestoreInput,
-    destination: Pick<DeploymentRestoreDatabaseDestinationV1, 'service' | 'database'>
-        | Pick<DeploymentRestoreVolumeDestinationV1, 'service' | 'volume'> | undefined, effect: (native: NativeRestore) => Promise<T>,
-    operation: 'restore' | 'restoreWithSafety' | 'backup' | 'repository' = 'restore'): Promise<T> {
+    destination: NativeBackupTarget | undefined, effect: (native: NativeRestore) => Promise<T>,
+    operation: 'restore' | 'restoreWithSafety' | 'backup' | 'repository' = 'restore', backupTargets: readonly NativeBackupTarget[] = []): Promise<T> {
     const signal = input.context.operation.signal;
     if (!signal) throw new PluginError({ code: 'unsupported_action', message: 'Restore requires its admitted job signal' });
     const attachment = 'execEnv' in input ? await input.execEnv.prepare({ backupDestination: { configKey: 'destination' } }, { signal }) : undefined;
@@ -196,14 +222,29 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
                 runtimeImage: input.runtimeImage, request, destinationAttachment: attachment,
                 signal: input.context.operation.signal });
         };
+        const sqlite = createNativeSqliteRestore(input, admitRestic);
         const execute = (request: DeploymentRestoreNativeRequestV1): Promise<DeploymentRestoreNativeResultV1> =>
             machineNativeEffectAdmission.runStage(input.context, async () => {
                 switch (request.kind) {
+                    case 'sqliteStage': return sqlite.stageSource(request);
+                    case 'sqlite': return sqlite.execute(request);
                     case 'restic': return executeAdmittedServiceCommand(await admitRestic(request.request));
                     case 'service': {
                         const command = await admitService(request.service, request.argv, request.environmentOverrides, request.sensitiveValues);
                         return executeAdmittedServiceCommand(request.stdin === undefined ? command : admitServiceCommandInputForHost({
                             command, source: createBufferTransferPayloadSource(Buffer.from(request.stdin)) }));
+                    }
+                    case 'volumeArchive': {
+                        if (!('upload' in input) || !input.runtimeImage || input.upload.transferId !== request.source.transferId
+                            || input.upload.sha256 !== request.source.sha256 || input.upload.sizeBytes !== request.source.sizeBytes) return unsupported();
+                        const command = { render: input.render, context: input.context, runtimeImage: input.runtimeImage,
+                            archive: { mode: request.mode }, signal };
+                        const admitted = request.mode === 'extract'
+                            ? await input.project.admitVolumeRestoreCommand({ ...command, physicalName: request.destination.stagingVolume })
+                            : await input.project.admitResticCommand(command);
+                        return executeAdmittedServiceCommand(admitServiceCommandInputForHost({ command: admitted,
+                            source: { kind: 'native', sizeBytes: input.upload.sizeBytes, manifestHash: `sha256:${input.upload.sha256}`,
+                                readChunk: input.upload.readChunk } }));
                     }
                     case 'restoreUpload': {
                         if (!('upload' in input) || input.upload.transferId !== request.source.transferId
@@ -298,24 +339,28 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
                         }
                     }, { protected: true, onStopPending: input.onStopPending });
                 }
-                // This restore adapter supports only its captured PostgreSQL DB.
-                // The backup parent owns source recipes, evidence and read-back.
-                if (!destination || !('database' in destination) || source.service !== destination.service) return unsupported();
+                const selected = backupTargets.find(target => target.service === source.service) ?? destination;
+                if (!selected || source.service !== selected.service) return unsupported();
+                if ('path' in selected) return sqlite.backup(request, selected);
+                if (!('database' in selected)) return unsupported();
                 return executeAdmittedServiceCommand(admitServiceCommandStreamForHost({
                     producer: await admitService(source.service,
-                        ['pg_dump', '-Fc', '--no-owner', '--no-acl', databaseConninfo(destination.database)]),
+                        ['pg_dump', '-Fc', '--no-owner', '--no-acl', databaseConninfo(selected.database)]),
                     consumer: await admitRestic(request),
                 }));
             });
         // Prove tools in the admitted service image, not on the host, before
         // mutations. pg_amcheck requires PostgreSQL 14+. No per-step probes.
-        const tools = operation === 'repository' || destination && !('database' in destination) ? [] : operation === 'backup' ? ['pg_dump']
-            : ['pg_amcheck', 'psql', 'createdb', 'pg_restore', ...(operation === 'restoreWithSafety' ? ['pg_dump'] : [])];
-        for (const tool of tools) {
-            if (!destination || !('database' in destination)) return unsupported();
-            const preflight = await execute({ kind: 'service', mode: 'exec', service: destination.service, argv: [tool, '--version'] });
-            if (preflight.kind !== 'completed') throw new PluginError({ code: 'outcome_unknown', message: 'Native restore tool preflight did not settle' });
-            if (preflight.exitCode !== 0) return unsupported();
+        const targets = operation === 'backup' && backupTargets.length ? backupTargets : destination ? [destination] : [];
+        for (const target of targets) {
+            if (operation === 'repository' || !('database' in target)) continue;
+            const tools = operation === 'backup' ? ['pg_dump']
+                : ['pg_amcheck', 'psql', 'createdb', 'pg_restore', ...(operation === 'restoreWithSafety' ? ['pg_dump'] : [])];
+            for (const tool of tools) {
+                const preflight = await execute({ kind: 'service', mode: 'exec', service: target.service, argv: [tool, '--version'] });
+                if (preflight.kind !== 'completed') throw new PluginError({ code: 'outcome_unknown', message: 'Native restore tool preflight did not settle' });
+                if (preflight.exitCode !== 0) return unsupported();
+            }
         }
         return await effect({ access, signal, execute, executeBackup, onBackupSettled: input.onBackupSettled,
             onStep: step => input.operationProgress?.update(deploymentRestoreStepProgressV1(step)),
@@ -335,10 +380,9 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
 /** Repository reads and retention borrow the same attachment/native custody,
  * without requiring a database source or invoking restore preparation. */
 export function withOwnServerNativeBackup<T>(input: OwnServerNativeRestoreInput,
-    destination: Pick<DeploymentRestoreDatabaseDestinationV1, 'service' | 'database'>
-        | Pick<DeploymentRestoreVolumeDestinationV1, 'service' | 'volume'> | undefined,
+    destinations: readonly NativeBackupTarget[] | undefined,
     effect: (native: Pick<NativeRestore, 'signal' | 'executeBackup'> & Readonly<{ access: ResticAccessV1 }>) => Promise<T>): Promise<T> {
-    return withNativeRestore(input, destination, native => effect({ ...native, access: native.access ?? unsupported() }), destination ? 'backup' : 'repository');
+    return withNativeRestore(input, undefined, native => effect({ ...native, access: native.access ?? unsupported() }), destinations?.length ? 'backup' : 'repository', destinations);
 }
 
 export type OwnServerNativeRestorePrepareCapture = Omit<DeploymentRestorePrepareInputV1,
@@ -418,8 +462,7 @@ async function resolveNativeRestore(factory: OwnServerNativeRestoreInputFactory,
 
 function restoreOperation(capture: Pick<OwnServerNativeRestorePrepareCapture, 'safetyBackup' | 'destination'>) {
     const safety = capture.safetyBackup;
-    if (safety && capture.destination.adapter === 'postgres-v1' && (safety.data?.logicalBackup?.adapter !== 'postgres-v1'
-        || safety.data.service !== capture.destination.service)) return unsupported();
+    if (safety && capture.destination.adapter === 'postgres-v1' && (!safety.data?.some(data => data.logicalBackup?.adapter === 'postgres-v1' && data.service === capture.destination.service))) return unsupported();
     return safety ? 'restoreWithSafety' as const : 'restore' as const;
 }
 
@@ -427,7 +470,7 @@ async function prepareNativeRestore(capture: OwnServerNativeRestorePrepareCaptur
     safetyNative: Pick<NativeRestore, 'access' | 'signal' | 'executeBackup' | 'onBackupSettled'> = native,
     upload?: AdmittedDeploymentRestoreUpload): Promise<OwnServerNativeRestorePrepareReceipt> {
     const safety = capture.safetyBackup;
-    const sourceFormat = upload ? await admitOwnServerRestoreUpload({ upload, destination: capture.destination,
+    const sourceFormat = upload ? await admitOwnServerRestoreUpload({ upload, destination: capture.destination, operationId: capture.operationId,
         signal: native.signal, execute: native.execute }) : 'sourceFormat' in capture ? capture.sourceFormat : unsupported();
     return { ...await prepareDeploymentRestoreV1({ ...capture, ...native, sourceFormat,
         safetyBackup: safety ? { ...safety, access: safetyNative.access ?? unsupported(), signal: safetyNative.signal, execute: safetyNative.executeBackup,
@@ -458,10 +501,10 @@ export async function prepareOwnServerNativeRestore(input: OwnServerNativeRestor
     // A copy reads the source repository but protects an incumbent destination
     // through that destination's own backup credentials and native service.
     if (capture.safetyBackup && destinationSafetyInput) return withNativeRestore(nativeInput, capture.destination,
-        native => withOwnServerNativeBackup(destinationSafetyInput, capture.destination,
+        native => withOwnServerNativeBackup(destinationSafetyInput, capture.safetyBackup.restoreTargets ?? [capture.destination],
             safetyNative => prepareNativeRestore(capture, native, safetyNative, 'upload' in nativeInput ? nativeInput.upload : undefined)), 'restore');
     return withNativeRestore(nativeInput, capture.destination,
-        native => prepareNativeRestore(capture, native, native, 'upload' in nativeInput ? nativeInput.upload : undefined), operation);
+        native => prepareNativeRestore(capture, native, native, 'upload' in nativeInput ? nativeInput.upload : undefined), operation, capture.safetyBackup?.restoreTargets);
 }
 
 export function confirmOwnServerNativeRestore(input: OwnServerNativeRestoreInput | OwnServerNativeUploadRestoreInput,

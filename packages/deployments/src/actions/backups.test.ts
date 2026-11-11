@@ -24,7 +24,7 @@ const snapshot = { id: snapshotId, tree: treeId, hostname: `happier-env-${enviro
 function nativeBoundary(options: Readonly<{ readBackChecksum?: string; producerExitCode?: number; unknownBackup?: boolean;
   truncatedBackup?: boolean; snapshotsExitCode?: number; missingProducer?: boolean; missingProducerChecksum?: boolean;
   repositoryExitCode?: number; repositoryOutput?: string; unknownRepository?: boolean; initExitCode?: number; unknownInit?: boolean;
-  initOutput?: string; truncatedInit?: boolean }> = {}) {
+  initOutput?: string; truncatedInit?: boolean; filename?: string; sourceId?: string }> = {}) {
   const requests: ResticRequestV1[] = [];
   let initialized = false;
   // Only native process IO is substituted. The parent, request builder and
@@ -46,9 +46,11 @@ function nativeBoundary(options: Readonly<{ readBackChecksum?: string; producerE
         total_bytes_processed: 123, total_files_processed: 1 })].join('\n')), stdoutTruncated: options.truncatedBackup ?? false,
         producer: options.missingProducer ? undefined : { exitCode: options.producerExitCode ?? 0,
           checksumSha256: options.missingProducerChecksum ? undefined : checksum } };
-    if (request.argv.includes('snapshots')) return { ...result(JSON.stringify([snapshot])), exitCode: options.snapshotsExitCode ?? 0 };
+    if (request.argv.includes('snapshots')) return { ...result(JSON.stringify([{ ...snapshot,
+      paths: [`/${options.filename ?? 'db.dump'}`],
+      tags: snapshot.tags.map(tag => tag.startsWith('src:') ? `src:${options.sourceId ?? 'main'}` : tag) }])), exitCode: options.snapshotsExitCode ?? 0 };
     if (request.argv.includes('tree')) return { ...result(''), exitCode: 1 };
-    if (request.argv.includes('blob')) return result(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123,
+    if (request.argv.includes('blob')) return result(JSON.stringify({ nodes: [{ name: options.filename ?? 'db.dump', type: 'file', size: 123,
       content: ['e'.repeat(64)] }] }));
     if (request.argv.includes('dump')) return { ...result(''), stdoutChecksumSha256: options.readBackChecksum ?? checksum, stdoutBytes: 123 };
     throw new Error('Unexpected native command');
@@ -57,16 +59,80 @@ function nativeBoundary(options: Readonly<{ readBackChecksum?: string; producerE
   return { execute: execute as owners.DeploymentBackupRunInputV1['execute'], requests };
 }
 
-type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>;
+type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>[number];
 const data: CapturedData = { engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } };
 async function run(native: ReturnType<typeof nativeBoundary>, signal = new AbortController().signal,
   capturedData: CapturedData | null = data): Promise<unknown> {
   const run = Reflect.get(owners, 'runDeploymentBackupV1');
   expect(run, 'The actual backup parent must consume native requests and read-back results').toBeTypeOf('function');
-  return run({ environmentId, configuration, ...(capturedData ? { data: capturedData } : {}), access, execute: native.execute, signal });
+  return run({ environmentId, configuration, ...(capturedData ? { data: [capturedData] } : {}), access, execute: native.execute, signal });
 }
 
 describe('backup Action parent', () => {
+  it('resolves each selected dump from its own service in a mixed PostgreSQL and SQLite template', async () => {
+    const sqlite: CapturedData = { engine: 'sqlite', service: 'embedded', logicalBackup: { adapter: 'sqlite-v1', path: '/data/app.sqlite' } };
+    const selected = DeploymentBackupConfigurationV1Schema.parse({ ...configuration, sources: [...configuration.sources,
+      { kind: 'dump', sourceId: 'embedded', service: sqlite.service, consistency: 'logical' }] });
+    const postgresNative = nativeBoundary(), sqliteNative = nativeBoundary({ filename: 'embedded.sqlite', sourceId: 'embedded' });
+    let current = postgresNative;
+    const execute: owners.DeploymentBackupRunInputV1['execute'] = (request, source) => {
+      if (source) current = source.service === sqlite.service ? sqliteNative : postgresNative;
+      return current.execute(request);
+    };
+    const result = await Reflect.apply(owners.runDeploymentBackupV1, undefined, [{ environmentId, configuration: selected,
+      data: [data, sqlite], access, execute, signal: new AbortController().signal }]);
+    expect(result).toMatchObject({ kind: 'verified', manifests: [
+      { sourceId: 'main', snapshot: { paths: ['/db.dump'] } },
+      { sourceId: 'embedded', snapshot: { paths: ['/embedded.sqlite'] } },
+    ] });
+  });
+  it('verifies the consistent SQLite owned-file stream through the existing dump checksum and read-back owner', async () => {
+    const native = nativeBoundary({ filename: 'db.sqlite' });
+    expect(await run(native, new AbortController().signal, { engine: 'sqlite', service: 'db',
+      logicalBackup: { adapter: 'sqlite-v1', path: '/data/database.sqlite' } })).toMatchObject({
+      kind: 'verified', manifests: [{ kind: 'dump', producerChecksumSha256: checksum,
+        snapshot: { paths: ['/db.sqlite'] } }],
+    });
+    expect(native.requests.find(request => request.argv.includes('backup'))?.argv)
+      .toEqual(expect.arrayContaining(['--stdin', '--stdin-filename', 'db.sqlite']));
+    expect(native.requests.at(-1)?.argv).toEqual(expect.arrayContaining(['dump', snapshotId, '/db.sqlite']));
+  });
+  it.each(['volume', 'mixed'] as const)('backs up named-volume bytes without a dump producer and reads back its authenticated subtree: %s', async mode => {
+    const requests: ResticRequestV1[] = [];
+    const volumeSnapshot = { ...snapshot, paths: ['/happier/source'],
+      tags: ['happier', `env:${environmentId}`, 'kind:volume', 'src:uploads'] };
+    const volumeConfiguration = DeploymentBackupConfigurationV1Schema.parse({ ...configuration,
+      sources: [...(mode === 'mixed' ? configuration.sources : []),
+        { kind: 'volume', sourceId: 'uploads', service: 'app', volume: 'uploads', consistency: 'stopDuringCopy' }] });
+    const dumpNative = nativeBoundary();
+    let dumping = false;
+    const execute: owners.DeploymentBackupRunInputV1['execute'] = async request => {
+      requests.push(request);
+      if (request.argv.includes('backup')) dumping = request.argv.includes('--stdin');
+      if (dumping) return dumpNative.execute(request);
+      const result = (stdout: string) => ({ kind: 'completed' as const, exitCode: 0, stdout, stdoutTruncated: false });
+      if (request.argv.includes('config')) return result(JSON.stringify({ id: repositoryId, version: 2 }));
+      if (request.argv.includes('backup')) return result(JSON.stringify({ message_type: 'summary', snapshot_id: snapshotId,
+        total_bytes_processed: 3, total_files_processed: 1 }));
+      if (request.argv.includes('snapshots')) return result(JSON.stringify([volumeSnapshot]));
+      if (request.argv.includes('blob')) return result(JSON.stringify({ nodes: request.argv.includes(treeId)
+        ? [{ name: 'happier', type: 'dir', subtree: '1'.repeat(64) }]
+        : request.argv.includes('1'.repeat(64)) ? [{ name: 'source', type: 'dir', subtree: '2'.repeat(64) }]
+          : [{ name: 'image.bin', type: 'file', size: 3, content: ['3'.repeat(64)] }] }));
+      if (request.argv.includes('dump')) return { ...result(''), stdoutBytes: 3, stdoutChecksumSha256: checksum };
+      throw new Error('Unexpected native command');
+    };
+    const result = await owners.runDeploymentBackupV1({ environmentId, configuration: volumeConfiguration,
+      ...(mode === 'mixed' ? { data: [data], restoreTargets: [{ service: 'db', adapter: 'postgres-v1' as const, database: 'main' }] } : {}),
+      access, execute, signal: new AbortController().signal });
+    expect(result.kind).toBe('verified');
+    expect(result.manifests.at(-1)).toMatchObject({ kind: 'volume', sourceId: 'uploads', totalBytesProcessed: 3 });
+    expect(result.restoreCaptures?.at(-1)).toMatchObject({ source: { kind: 'volume', sourceId: 'uploads' },
+      sourceFormat: 'volume', target: { adapter: 'volume-v1', service: 'app', volume: 'uploads' } });
+    if (mode === 'mixed') expect(result.restoreCaptures?.[0]).toMatchObject({ source: { kind: 'dump', sourceId: 'main' } });
+    expect(requests.find(request => request.argv.includes('backup') && !request.argv.includes('--stdin'))?.argv).toEqual(expect.arrayContaining(['--', '/happier/source']));
+    expect(requests.at(-1)?.argv).toEqual(expect.arrayContaining(['dump', snapshotId, '/happier/source']));
+  });
   it('creates the first verified snapshot only after restic positively reports an absent S3 repository', async () => {
     // restic 0.19.1 cat config: S3 NoSuchKey -> ErrNoRepository -> exit 10.
     // The native process boundary supplies its exit contract, never English stderr matching.
@@ -154,8 +220,8 @@ describe('backup Action parent', () => {
     expect(native.requests).toEqual([]);
   });
 
-  it('never infers an undeclared dump adapter or treats SQLite owned-file backup as a stdout producer', async () => {
-    for (const capturedData of [null, { engine: 'sqlite', service: 'db', logicalBackup: { adapter: 'sqlite-v1', path: '/data/app.sqlite' } }] as const) {
+  it('refuses an undeclared dump adapter or a SQLite source without its declared path', async () => {
+    for (const capturedData of [null, { engine: 'sqlite', service: 'db', logicalBackup: { adapter: 'sqlite-v1' } }] as const) {
       const native = nativeBoundary();
       await expect(run(native, undefined, capturedData)).rejects.toMatchObject({ code: 'unsupported_action' });
       expect(native.requests).toEqual([]);
@@ -181,7 +247,7 @@ async function completedPreMigrationReceipt(options: Parameters<typeof nativeBou
   let written = false;
   const native = nativeBoundary(options);
   const result = await owners.runDeploymentBackupV1({ environmentId,
-    configuration: DeploymentBackupConfigurationV1Schema.parse(configuration), data,
+    configuration: DeploymentBackupConfigurationV1Schema.parse(configuration), data: [data],
     access: { ...access, credentialFiles: [{ ...access.credentialFiles[0]!, readOnly: true }],
       environmentVariableNames: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] },
     execute: native.execute, signal: new AbortController().signal,

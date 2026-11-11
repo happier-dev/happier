@@ -1,3 +1,4 @@
+import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { tmpdir } from 'node:os';
 import type { NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
@@ -130,6 +131,8 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     images: readonly DeploymentImageV1[];
     /** Current host-admitted binding, never caller-supplied Docker credentials. */
     imageAcquisition?: NativeComposeImageAcquisition;
+    /** Development/archive custody uses the same admitted image acquisition. */
+    sqliteRuntime?: Readonly<{ image: DeploymentImageV1; version: string }>;
     storage?: Readonly<{ runtimeMachineCount: number; sharedData?: NativeComposeSharedDataInput;
         namedVolumes?: OwnServerDeploymentSourceV1['namedVolumes'];
         previewDataVolumes?: NonNullable<Parameters<typeof inspectNativeComposeStorage>[0]['previewData']>['volumes'] }>;
@@ -152,6 +155,12 @@ export type NativeComposeEnvironmentProject = Readonly<{
         purpose?: 'retire' }>): Promise<NativeComposeObservedActivation>;
     admitResticCommand(input: NativeResticCommandInput): Promise<AdmittedServiceExecContextV1>;
     admitVolumeRestoreCommand(input: NativeResticCommandInput & Readonly<{ physicalName: string }>): Promise<AdmittedServiceExecContextV1>;
+    openVolumeRestoreStage(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
+        operationId: string; physicalName: string; mode: 'fresh' | 'existing'; signal?: AbortSignal }>): Promise<Readonly<{
+            admit(input: NativeResticCommandInput): Promise<AdmittedServiceExecContextV1>; dispose(): Promise<void>;
+        }>>;
+    prepareSqliteRuntime(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext }>):
+        Promise<Readonly<{ image: DeploymentImageV1; reference: string }>>;
     createVolumeRestoreCandidate(bindings: NonNullable<OwnServerDeploymentSourceV1['namedVolumes']>): NativeComposeEnvironmentProject;
     prepareResticRuntime(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext }>): Promise<DeploymentImageV1>;
     createStartFirstCandidate(): NativeComposeEnvironmentProject;
@@ -1338,21 +1347,59 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 run: args => run(args, request.signal) });
         },
         async admitVolumeRestoreCommand(request) {
+            const stage = await owner.openVolumeRestoreStage({ ...request, operationId: request.context.operation.operationId, mode: 'fresh' });
+            return stage.admit(request);
+        },
+        async openVolumeRestoreStage(request) {
             const capture = renderedCaptures.get(request.render);
             if (input.phase === 'build' || !capture) return candidateRefusal('native_restic_source_unavailable');
             const authority = { context: request.context };
-            const existing = (await run(['volume', 'ls', '--format', '{{.Name}}'], request.signal)).stdout.trim().split('\n').filter(Boolean);
-            if (existing.includes(request.physicalName)) return candidateRefusal('native_volume_restore_target_not_fresh');
-            await run(['volume', 'create', '--label', `happier.operation=${request.context.operation.operationId}`,
-                request.physicalName], request.signal, undefined, true, authority);
-            // All containers count, including stopped ones. Never extract into
-            // data a service can already reference.
-            const references = (await run(['ps', '--all', '--no-trunc', '--filter', `volume=${request.physicalName}`,
-                '--format', '{{.ID}}'], request.signal)).stdout.trim();
-            if (references) return candidateRefusal('native_volume_restore_target_attached');
-            return admitNativeResticCommand(request, { source: input.source, exec: input.exec, io: input.io,
-                model: capture.model, identity: capture.identity, assertCurrent: () => assertCurrent(request.signal),
-                containerIds: () => [], targetVolume: request.physicalName, run: args => run(args, request.signal) });
+            if (request.mode === 'fresh') {
+                const existing = (await run(['volume', 'ls', '--format', '{{.Name}}'], request.signal)).stdout.trim().split('\n').filter(Boolean);
+                if (existing.includes(request.physicalName)) return candidateRefusal('native_volume_restore_target_not_fresh');
+                await run(['volume', 'create', '--label', `happier.operation=${request.operationId}`,
+                    request.physicalName], request.signal, undefined, true, authority);
+            } else {
+                const rows: unknown = JSON.parse((await run(['volume', 'inspect', request.physicalName], request.signal)).stdout);
+                if (!Array.isArray(rows) || rows.length !== 1 || !record(rows[0]) || rows[0].Name !== request.physicalName
+                    || !record(rows[0].Labels) || rows[0].Labels['happier.operation'] !== request.operationId)
+                    return candidateRefusal('native_volume_restore_target_unavailable');
+            }
+            const assertUnreferenced = async () => {
+                const references = (await run(['ps', '--all', '--no-trunc', '--filter', `volume=${request.physicalName}`,
+                    '--format', '{{.ID}}'], request.signal)).stdout.trim();
+                if (references) return candidateRefusal('native_volume_restore_target_attached');
+            };
+            await assertUnreferenced();
+            return {
+                admit: command => admitNativeResticCommand({ ...command, render: request.render, context: request.context }, {
+                    source: input.source, exec: input.exec, io: input.io, model: capture.model, identity: capture.identity,
+                    assertCurrent: () => assertCurrent(request.signal),
+                    containerIds: () => activation ? activation.services.flatMap(service => [...activation.nativeIdsForService(service)]) : [],
+                    targetVolume: request.physicalName, run: args => run(args, request.signal),
+                }),
+                async dispose() {
+                    await assertUnreferenced();
+                    await run(['volume', 'rm', request.physicalName], request.signal, undefined, true, authority);
+                },
+            };
+        },
+        async prepareSqliteRuntime(request) {
+            const capture = renderedCaptures.get(request.render);
+            if (input.phase === 'build' || !capture) return candidateRefusal('native_restic_source_unavailable');
+            return admittedImageEffect(request.context, async authority => {
+                const signal = request.context.operation.signal;
+                const declared = input.sqliteRuntime;
+                const runtime = SQLITE_RUNTIME_V1;
+                if (!declared && !runtime) return nativeRefusal('deployment_sqlite_runtime_unavailable');
+                const image = declared?.image ?? (await capture.identity.resolveVariants({ service: 'sqlite',
+                    reference: runtime!.image, platforms: [request.render.platform] }, { signal }))[0];
+                if (!image) return nativeRefusal('deployment_image_unavailable');
+                const acquired = await capture.identity.acquire(image, { references: [image.registryReference ?? image.manifestDigest],
+                    acquisition: input.imageAcquisition, purpose: 'operationRuntime', authority,
+                    pull: async (registry, reference) => { await run(['pull', '--platform', image.platform, reference], signal, registry, true, authority); } });
+                return { image, reference: acquired.reference };
+            });
         },
         createVolumeRestoreCandidate(bindings) {
             if (input.phase === 'build') return nativeRefusal('deployment_runtime_phase_required');

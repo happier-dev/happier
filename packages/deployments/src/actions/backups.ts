@@ -19,12 +19,12 @@ export type DeploymentBackupRunResultV1 = Readonly<{ kind: 'verified'; manifests
     restoreCaptures?: readonly DeploymentBackupRestoreCaptureV1[] }>;
 type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>[number];
 export type DeploymentBackupRunInputV1 = Readonly<{
-    environmentId: string; configuration: DeploymentBackupConfigurationV1; data?: CapturedData;
+    environmentId: string; configuration: DeploymentBackupConfigurationV1; data?: readonly CapturedData[];
     access: ResticAccessV1; signal: AbortSignal;
     /** The admitted host publishes this run's outcome, including safety/pre-migration runs. */
     onSettled?(outcome: 'succeeded' | 'failed' | 'outcome_unknown' | 'cancelled', configRevision: number): Promise<void>;
     /** Exact database resolved by the admitted native producer, never a binding key. */
-    restoreTarget?: DeploymentPreMigrationBackupV1['target'];
+    restoreTargets?: readonly DeploymentBackupRestoreCaptureV1['target'][];
     /** The pre-migration caller binds this completion to its existing receipt CAS.
      * A verified backup is not returned until its recovery capture is retained. */
     preMigrationBackup?: Readonly<Pick<DeploymentPreMigrationBackupV1, 'sourceFormat' | 'target'> & {
@@ -48,8 +48,7 @@ function failureCode(error: unknown): string {
 
 /** Canonical producer filenames also identify the supported legacy dump format. */
 export function deploymentBackupDumpFilenameV1(adapter: NonNullable<CapturedData['logicalBackup']>['adapter'], service: string): string {
-    if (adapter === 'sqlite-v1') return refuse('unsupported_action');
-    return `${service}.${{ 'postgres-v1': 'dump', 'mysql-v1': 'sql', 'mongo-v1': 'archive.gz' }[adapter]}`;
+    return `${service}.${{ 'postgres-v1': 'dump', 'mysql-v1': 'sql', 'mongo-v1': 'archive.gz', 'sqlite-v1': 'sqlite' }[adapter]}`;
 }
 
 /** Current config/data have already crossed admission/storage decoding. This owner trusts that capture, not caller revisions/subsets.
@@ -69,6 +68,8 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
 
 async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promise<DeploymentBackupRunResultV1> {
     const manifests: BackupManifestV1[] = [], snapshots: SnapshotEvidence[] = [];
+    const restoreCaptures: DeploymentBackupRestoreCaptureV1[] = [];
+    const repository = { repository: input.access.repository, ...(input.access.s3 ? { s3: input.access.s3 } : {}) };
     const checkCancelled = () => { if (input.signal.aborted) refuse('cancelled', 'backup'); };
     const execute = async (command: ResticCommandV1, source?: DeploymentBackupSourceV1) => {
         return backupOperationStepV1(command.kind, async () => {
@@ -81,19 +82,18 @@ async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promi
     try {
         checkCancelled();
         const recording = input.preMigrationBackup;
-        if (recording && (input.data?.logicalBackup?.adapter !== 'postgres-v1'
-            || input.data.service !== recording.target.service
+        const recordingData = recording && input.data?.find(row => row.service === recording.target.service);
+        if (recording && (recordingData?.logicalBackup?.adapter !== 'postgres-v1'
             || input.configuration.sources.filter(source => source.kind === 'dump' && source.service === recording.target.service).length !== 1)) {
             return refuse('unsupported_action');
         }
         const recipes = input.configuration.sources.map(source => {
-            if (source.kind === 'volume') return { source, filename: undefined };
-            const data = input.data;
+            if (source.kind === 'volume') return { source, filename: undefined, data: undefined };
+            const data = input.data?.find(row => row.service === source.service);
             if (source.kind !== 'dump' || !data?.logicalBackup || source.service !== data.service) return refuse('unsupported_action');
             const adapter = data.logicalBackup.adapter;
-            // SQLite VACUUM produces an owned file rather than a stdout stream.
-            if (adapter === 'sqlite-v1') return refuse('unsupported_action');
-            return { source, filename: deploymentBackupDumpFilenameV1(adapter, source.service) };
+            if (adapter === 'sqlite-v1' && !data.logicalBackup.path) return refuse('unsupported_action');
+            return { source, data, filename: deploymentBackupDumpFilenameV1(adapter, source.service) };
         });
         const configResult = await execute({ kind: 'config' });
         // The pinned restic's exit 10 positively classifies an absent repository
@@ -105,7 +105,7 @@ async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promi
                 initialized.stdout, initialized.exitCode, initialized.stdoutTruncated), initialized)
             : await backupOperationStepV1('repository', () =>
                 readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated), configResult);
-        for (const { source, filename } of recipes) {
+        for (const { source, filename, data } of recipes) {
             const backup = await execute(source.kind === 'volume'
                 ? { kind: 'backupPaths', sourceId: source.sourceId, paths: [RESTIC_VOLUME_SOURCE_PATH_V1] }
                 : { kind: 'backupStdin', sourceId: source.sourceId, filename: filename! }, source);
@@ -125,6 +125,24 @@ async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promi
                 ...(source.kind === 'dump' ? { kind: 'dump', producerChecksumSha256: producerChecksumSha256! } : { kind: 'volume' }) }), inventory);
             manifests.push(manifest);
             await readBackDeploymentBackupManifestV1({ ...input, manifest });
+            if (source.kind === 'volume') {
+                restoreCaptures.push({ source: manifest, sourceFormat: 'volume',
+                    target: { service: source.service, adapter: 'volume-v1', volume: source.volume },
+                    configuration: input.configuration, repository });
+            } else if (data?.logicalBackup?.adapter === 'sqlite-v1') {
+                restoreCaptures.push({ source: manifest, sourceFormat: 'sqlite',
+                    target: { service: source.service, adapter: 'sqlite-v1', path: data.logicalBackup.path! },
+                    configuration: input.configuration, repository });
+            } else {
+                const target = recording?.target.service === source.service ? recording.target
+                    : input.restoreTargets?.find(target => target.service === source.service);
+                if (target) {
+                    if (data?.logicalBackup?.adapter !== 'postgres-v1' || target.adapter !== 'postgres-v1') return refuse('unsupported_action');
+                    restoreCaptures.push({ source: manifest, sourceFormat: 'postgresCustom',
+                        target: { service: target.service, adapter: target.adapter, database: target.database },
+                        configuration: input.configuration, repository });
+                }
+            }
         }
         checkCancelled();
     } catch (error) {
@@ -134,22 +152,6 @@ async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promi
             details: { snapshots, manifests, ...readDeploymentBackupMaintenanceFailureEvidenceV1(error) } });
     }
     const recording = input.preMigrationBackup;
-    const target = recording?.target ?? input.restoreTarget;
-    const repository = { repository: input.access.repository, ...(input.access.s3 ? { s3: input.access.s3 } : {}) };
-    const restoreCaptures = manifests.flatMap<DeploymentBackupRestoreCaptureV1>(source => {
-        if (source.kind === 'volume') {
-            const selected = input.configuration.sources.find(selected => selected.sourceId === source.sourceId);
-            if (selected?.kind !== 'volume') return refuse('unsupported_action');
-            return [{ source, sourceFormat: 'volume', target: { service: selected.service, adapter: 'volume-v1', volume: selected.volume },
-                configuration: input.configuration, repository }];
-        }
-        if (!target) return [];
-        if (input.data?.logicalBackup?.adapter !== 'postgres-v1' || source.kind !== 'dump'
-            || input.data.service !== target.service) return refuse('unsupported_action');
-        return [{ source, sourceFormat: 'postgresCustom',
-            target: { service: target.service, adapter: target.adapter, database: target.database }, configuration: input.configuration,
-            repository }];
-    });
     if (recording) {
         const capture = restoreCaptures.find((item): item is DeploymentPreMigrationBackupV1 => item.sourceFormat === 'postgresCustom' && input.configuration.sources.some(source =>
             source.sourceId === item.source.sourceId && source.kind === 'dump' && source.service === recording.target.service))!;

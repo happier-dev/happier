@@ -22,7 +22,7 @@ import * as adapter from './nativeRestore';
 import { publishOwnServerDeploymentReceiptContentForHost } from './ownServerDeploymentExecutor';
 import { DeploymentRollbackActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
-import { archive, database, sourceManifest, installRestoreBoundary } from './nativeRestore.testkit';
+import { archive, volumeTarFixture, database, sourceManifest, installRestoreBoundary } from './nativeRestore.testkit';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
@@ -185,7 +185,7 @@ describe('native restore adapter', () => {
                                 sources: [{ kind: 'dump', sourceId: 'database', service: 'worker', consistency: 'logical' }],
                                 ownership: { environmentId: source.environmentId, prefix: source.environmentId }, retention: { kind: 'keepEverything' } };
                             const backup = await Reflect.apply(adapter.withOwnServerNativeBackup, undefined, [input,
-                                { environmentId: source.environmentId, service: 'worker', adapter: 'sqlite-v1', path: '/data/database.sqlite' },
+                                [{ environmentId: source.environmentId, service: 'worker', adapter: 'sqlite-v1', path: '/data/database.sqlite' }],
                                 (native: Readonly<{ access: ResticAccessV1; signal: AbortSignal; executeBackup: DeploymentBackupRunInputV1['execute'] }>) =>
                                     Reflect.apply(runDeploymentBackupV1, undefined, [{ environmentId: source.environmentId, configuration,
                                         data: [{ engine: 'sqlite', service: 'worker', logicalBackup: { adapter: 'sqlite-v1', path: '/data/database.sqlite' } }],
@@ -241,13 +241,7 @@ describe('native restore adapter', () => {
                             let nativeInput: adapter.OwnServerNativeRestoreInput | adapter.OwnServerNativeUploadRestoreInput = input;
                             let admittedCapture: unknown = capture;
                             if (mode === 'volumeUpload') {
-                                const bytes = Buffer.alloc(2048);
-                                const header = bytes.subarray(0, 512);
-                                header.write('restored.txt'); header.write('0000644\0', 100); header.write('0000000\0', 108);
-                                header.write('0000000\0', 116); header.write('00000000011\0', 124); header.write('00000000000\0', 136);
-                                header.fill(32, 148, 156); header.write('0', 156); header.write('ustar\0', 257); header.write('00', 263);
-                                header.write(header.reduce((sum, value) => sum + value, 0).toString(8).padStart(6, '0') + '\0 ', 148);
-                                bytes.write('restored\n', 512);
+                                const bytes = volumeTarFixture;
                                 const filePath = join(root, 'uploaded.tar');
                                 await writeFile(filePath, bytes);
                                 const upload = { kind: 'upload' as const, transferId: 'completed-volume-upload', filePath,
@@ -370,7 +364,7 @@ describe('native restore adapter', () => {
                             const prepare = adapter.prepareOwnServerNativeRestore(input, { ...capture, operationId: `restore-${mode}`,
                                 safetyBackup: { environmentId: destination.environmentId,
                                     configuration: { ...configuration, ownership: { environmentId: destination.environmentId, prefix: destination.environmentId } },
-                                    data: { engine: 'postgres', service: 'worker', logicalBackup: { adapter: 'postgres-v1' } } } }, destinationInput);
+                                    data: [{ engine: 'postgres', service: 'worker', logicalBackup: { adapter: 'postgres-v1' } }] } }, destinationInput);
                             if (mode === 'copySafetyFailure') await expect(prepare).rejects.toMatchObject({ code: 'backup_failed' });
                             else {
                                 const prepared = await prepare;
@@ -424,7 +418,7 @@ describe('native restore adapter', () => {
                             const backup = adapter.runOwnServerNativePreMigrationBackup(input, {
                                 receipt, destination, context: { signal: controller.signal },
                                 backup: { environmentId: source.environmentId, configuration,
-                                    data: { engine: 'postgres', service: 'worker', logicalBackup: { adapter: 'postgres-v1' } } },
+                                    data: [{ engine: 'postgres', service: 'worker', logicalBackup: { adapter: 'postgres-v1' } }] },
                                 async writeTransition(request) {
                                     expect(request.expectedRevision).toBe(receipt.deployment.revision);
                                     const header = { ...receipt.deployment, contentBodyVersion: receipt.deployment.contentBodyVersion + 1 };
@@ -513,7 +507,7 @@ describe('native restore adapter', () => {
                             { receipt: recoveryReceipt, restoreBackupId: 'd'.repeat(64), destination, operationId: `restore-${mode}` })
                             : await adapter.prepareOwnServerNativeRestore(input, { ...capture, operationId: `restore-${mode}`,
                             ...(mode === 'safety' ? { safetyBackup: { environmentId: source.environmentId, configuration,
-                                data: { engine: 'postgres' as const, service: 'worker', logicalBackup: { adapter: 'postgres-v1' as const } } } } : {}) });
+                                data: [{ engine: 'postgres' as const, service: 'worker', logicalBackup: { adapter: 'postgres-v1' as const } }] } } : {}) });
                         if (mode === 'safety') expect(prepared.safetyBackup).toMatchObject({ kind: 'verified',
                             manifests: [{ snapshot: { snapshotId: 'd'.repeat(64) }, producerChecksumSha256: sourceManifest.producerChecksumSha256 }] });
                         const preparedPassword = passwordPath;

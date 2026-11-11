@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { createHash } from 'node:crypto';
 import { access, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -9,12 +10,14 @@ import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
 import { RESTIC_RUNTIME_V1, RESTIC_VOLUME_SOURCE_PATH_V1, RESTIC_VOLUME_STAGE_PATH_V1, type ResticRequestV1, type ResticAccessV1, type DeploymentBackupNativeResultV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { admitNativeServiceCommandForHost, executeAdmittedServiceCommand, type AdmittedServiceExecContextV1 } from './serviceCommand';
 import { machineNativeEffectAdmission, type MachineNativeEffectContext, type MachineNativeEffectOperation } from './machineNativeEffectAdmission';
 import { createNativeComposeImageIdentity, normalizeNativeComposePlatform } from './nativeComposeImageIdentity';
 import { readNativeComposeEngine } from './nativeComposeEngine';
 import type { NativeComposeProjectRender } from './nativeComposeLifecycle';
+import { nativeSqliteCommand, type NativeSqliteOperation } from './nativeSqliteCommand';
 import { refuseNativeResticHostNetwork } from './nativeResticFailure';
 import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
@@ -25,7 +28,12 @@ export type NativeResticCommandInput = Readonly<{
     selector?: Readonly<{ kind: 'volume'; sourceId: string; service: string; volume: string; consistency: 'stopDuringCopy' }>;
     signal?: AbortSignal;
 }> & (Readonly<{ request: ResticRequestV1; destinationAttachment: DeploymentExecEnvAttachmentV1; archive?: never }>
-    | Readonly<{ archive: Readonly<{ mode: 'list' | 'extract' }>; request?: never; destinationAttachment?: never }>);
+    | Readonly<{ archive: Readonly<{ mode: 'list' | 'extract' }>; request?: never; destinationAttachment?: never }>
+    | Readonly<{ sqlite: Readonly<{ operation: NativeSqliteOperation; service: string; path: string; reference: string }>;
+        request?: never; destinationAttachment?: never; archive?: never }>
+    | Readonly<{ file: Readonly<{ mode: 'read' | 'write'; name: 'backup' | 'restore' }>
+        | Readonly<{ mode: 'exists'; service: string; path: string }>;
+        request?: never; destinationAttachment?: never; archive?: never }>);
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const refuse = (): never => { throw new PluginError({ code: 'service_admission_unavailable',
     message: 'The admitted native restic operation is unavailable' }); };
@@ -49,14 +57,17 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         const { runtimeImage, request, selector } = input;
         const index = RESTIC_RUNTIME_V1.image.split('@')[1];
         const platform = normalizeNativeComposePlatform(input.render.platform);
-        if (request && (request.runtime.image !== RESTIC_RUNTIME_V1.image || request.runtime.version !== RESTIC_RUNTIME_V1.version
+        const sqlite = 'sqlite' in input ? input.sqlite : undefined;
+        const file = 'file' in input ? input.file : undefined;
+        const reference = sqlite?.reference ?? runtimeImage.registryReference;
+        if (!reference || !sqlite && (request && (request.runtime.image !== RESTIC_RUNTIME_V1.image || request.runtime.version !== RESTIC_RUNTIME_V1.version
             || request.runtime.repositoryVersion !== RESTIC_RUNTIME_V1.repositoryVersion)
             || runtimeImage.indexDigest !== index && runtimeImage.manifestDigest !== index
             || normalizeNativeComposePlatform(runtimeImage.platform) !== platform
-            || !runtimeImage.registryReference) return refuse();
+            || !runtimeImage.registryReference) || normalizeNativeComposePlatform(runtimeImage.platform) !== platform) return refuse();
         // P45's request builder owns the fixed --repo pair. Loopback remote
         // endpoints need the selected Engine host's network namespace.
-        const argv = request?.argv ?? (input.archive?.mode === 'list' ? ['-tf', '-'] : ['-xf', '-', '-C', RESTIC_VOLUME_STAGE_PATH_V1]);
+        let argv: readonly string[] = request?.argv ?? (input.archive?.mode === 'list' ? ['-tf', '-'] : ['-xf', '-', '-C', RESTIC_VOLUME_STAGE_PATH_V1]);
         if (input.archive?.mode === 'extract' && !owner.targetVolume) return refuse();
         const repository = request?.argv[1];
         const endpoint = repository && /^s3:https?:\/\//u.test(repository) ? repository.slice(3)
@@ -79,6 +90,49 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         }
         if (owner.targetVolume) mounts.push('--mount', ['type=volume', `source=${owner.targetVolume}`,
             `target=${RESTIC_VOLUME_STAGE_PATH_V1}`, 'volume-nocopy'].map(csv).join(','));
+        const live = sqlite ?? (file?.mode === 'exists' ? file : undefined);
+        if (live) {
+            if (!posix.isAbsolute(live.path)) return refuse();
+            const path = posix.normalize(live.path);
+            const definition = record(owner.model.services) ? owner.model.services[live.service] : undefined;
+            const candidates = record(definition) && Array.isArray(definition.volumes) ? definition.volumes.filter(value => {
+                if (!record(value) || typeof value.target !== 'string') return false;
+                const relative = posix.relative(value.target, path);
+                return relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
+            }).sort((left, right) => String(right.target).length - String(left.target).length) : [];
+            const mount = candidates[0];
+            if (!record(mount) || typeof mount.target !== 'string' || typeof mount.source !== 'string'
+                || mount.type !== 'volume' && mount.type !== 'bind') return refuse();
+            const ids = owner.containerIds();
+            if (!ids.length) return refuse();
+            const rows: unknown = JSON.parse((await owner.run(['inspect', '--type', 'container', ...ids])).stdout);
+            if (!Array.isArray(rows) || rows.length !== ids.length) return refuse();
+            const services = rows.map(row => {
+                if (!record(row) || !ids.includes(String(row.Id)) || !record(row.Config) || !record(row.Config.Labels)
+                    || row.Config.Labels['com.docker.compose.project'] !== input.render.projectName
+                    || !Array.isArray(row.Mounts) || !record(row.State)) return refuse();
+                return { service: row.Config.Labels['com.docker.compose.service'], state: row.State.Status, mounts: row.Mounts };
+            });
+            const selected = services.find(row => row.service === live.service);
+            const actual = selected?.mounts.find(value => record(value) && value.Destination === mount.target && value.Type === mount.type);
+            if (!record(actual) || typeof actual.Source !== 'string') return refuse();
+            const volume = mount.type === 'volume' && record(owner.model.volumes) ? owner.model.volumes[mount.source] : undefined;
+            if (mount.type === 'volume' && (!record(volume) || actual.Name !== volume.name)
+                || mount.type === 'bind' && actual.Source !== mount.source) return refuse();
+            const helperPath = posix.join(RESTIC_VOLUME_SOURCE_PATH_V1, posix.relative(mount.target, path));
+            const command = sqlite ? nativeSqliteCommand(sqlite.operation, helperPath) : undefined;
+            if (command?.writesLive && services.some(row => row.state !== 'exited' && row.state !== 'dead'
+                && row.mounts.some(value => record(value) && value.Type === actual.Type && value.Source === actual.Source && value.RW !== false))) return refuse();
+            mounts.push('--mount', ['type='+mount.type, `source=${mount.type === 'volume' ? String(actual.Name) : actual.Source}`,
+                `target=${RESTIC_VOLUME_SOURCE_PATH_V1}`, ...(command?.writesLive ? [] : ['readonly']),
+                ...(mount.type === 'volume' ? ['volume-nocopy'] : [])].map(csv).join(','));
+            argv = command?.argv ?? (file?.mode === 'exists' ? ['test', '-e', helperPath] : ['-e', helperPath]);
+        }
+        if (file && file.mode !== 'exists') {
+            if (!owner.targetVolume) return refuse();
+            const path = `${RESTIC_VOLUME_STAGE_PATH_V1}/${file.name}.sqlite`;
+            argv = file.mode === 'read' ? [path] : [`of=${path}`];
+        }
         if (selector) {
             const definition = record(owner.model.services) ? owner.model.services[selector.service] : undefined;
             const mount = record(definition) && Array.isArray(definition.volumes) ? definition.volumes.find(
@@ -123,14 +177,14 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             mounts.push('--mount', ['type=bind', `source=${path}`, `target=${file.containerPath}`, 'readonly'].map(csv).join(','));
         }
         if (request && !request.credentialFiles.some(file => file.containerPath === request.passwordFilePath)) return refuse();
-        await owner.identity.prove(runtimeImage.registryReference, runtimeImage);
+        await owner.identity.prove(reference, runtimeImage);
         const name = `happier-op-${createHash('sha256').update(JSON.stringify([
             owner.source.environmentInstanceId, input.context.operation.operationId, argv])).digest('hex')}`;
         const createArgs = ['create', '--interactive', '--pull', 'never', '--name', name,
             '--label', `happier.operation=${name}`, ...(hostNetwork ? ['--network', 'host'] : []),
-            ...(input.archive ? ['--read-only', '--network', 'none', '--entrypoint', '/bin/tar'] : []), ...mounts,
+            ...(!request ? ['--read-only', '--network', 'none', ...(!sqlite ? ['--entrypoint', input.archive ? '/bin/tar' : file?.mode === 'read' ? '/bin/cat' : file?.mode === 'write' ? '/bin/dd' : file?.mode === 'exists' ? '/bin/busybox' : undefined].filter((value): value is string => value !== undefined) : [])] : []), ...mounts,
             ...(request ? ['--env', `RESTIC_PASSWORD_FILE=${request.passwordFilePath}`,
-                ...request.environmentVariableNames.flatMap(value => ['--env', value])] : []), runtimeImage.registryReference, ...argv];
+                ...request.environmentVariableNames.flatMap(value => ['--env', value])] : []), reference, ...argv];
         const tool = await owner.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
             cwd: owner.source.rootPath, ...(signal ? { signal } : {}) });
         let createLaunch: HostAuthorizedPluginExecLaunch | undefined;
@@ -148,8 +202,17 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         };
         const construct = () => construction ??= (async () => {
             signal?.throwIfAborted();
-            createLaunch = await authorizePluginExecLaunchForHost(owner.exec, { executable: tool.executable, args: createArgs,
+            const authorized = await authorizePluginExecLaunchForHost(owner.exec, { executable: tool.executable, args: createArgs,
                 cwd: owner.source.rootPath, deploymentEnv: input.destinationAttachment }, { agentIsolation: null, signal });
+            if (!request && !authorized.secretRedactionLease) {
+                // This fixed helper receives no service or destination secrets.
+                // Keep the ordinary output pipeline and its finite lease lifetime.
+                const redaction = createProviderRedactionLease({ values: [] });
+                createLaunch = { ...authorized, secretRedactionLease: redaction,
+                    async release() {
+                        try { await authorized.release(); } finally { redaction.close(); }
+                    } };
+            } else createLaunch = authorized;
             await createLaunch.recheckInputs?.();
             signal?.throwIfAborted();
             constructorDispatched = true;
@@ -211,7 +274,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         return admitNativeServiceCommandForHost({ context: input.context, ...(signal ? { signal } : {}),
             // P45's builder places --json after its fixed --repo pair for
             // metadata; dump alone deliberately selects raw stdout instead.
-            ...(input.archive || request?.argv[2] !== '--json' ? { rawStdout: true } : {}),
+            ...(!sqlite && (!request || request.argv[2] !== '--json') ? { rawStdout: true } : {}),
             assertCurrent: owner.assertCurrent, stopNative, observeNativeSettlement,
             async launch() {
                 try {

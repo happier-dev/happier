@@ -114,9 +114,17 @@ export const DeploymentPreMigrationBackupV1Schema = lazyZodSchema(() => z.strict
   })) }),
 }));
 export type DeploymentPreMigrationBackupV1 = z.infer<typeof DeploymentPreMigrationBackupV1Schema>;
+/** A consistent SQLite API snapshot retains its declared service-owned path. */
+export const DeploymentSqliteBackupV1Schema = lazyZodSchema(() => z.strictObject({
+  source: DeploymentBackupManifestV1Schema, sourceFormat: z.literal('sqlite'),
+  target: z.strictObject({ service: text, adapter: z.literal('sqlite-v1'), path: text }),
+  configuration: DeploymentBackupConfigurationV1Schema,
+  repository: DeploymentPreMigrationBackupV1Schema.shape.repository,
+}));
+export type DeploymentSqliteBackupV1 = z.infer<typeof DeploymentSqliteBackupV1Schema>;
 /** A volume retains the same repository/configuration custody as a logical dump. */
 export const DeploymentBackupRestoreCaptureV1Schema = lazyZodSchema(() => z.union([
-  DeploymentPreMigrationBackupV1Schema,
+  DeploymentPreMigrationBackupV1Schema, DeploymentSqliteBackupV1Schema,
   z.strictObject({ source: DeploymentBackupManifestV1Schema, sourceFormat: z.literal('volume'),
     target: z.strictObject({ service: text, adapter: z.literal('volume-v1'), volume: text }),
     configuration: DeploymentBackupConfigurationV1Schema,

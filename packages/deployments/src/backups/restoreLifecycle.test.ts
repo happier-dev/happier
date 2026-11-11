@@ -21,7 +21,7 @@ function safetyBackup(producerExitCode = 0, onPayloadRead?: () => void): Deploym
         configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 's3' }, occurrenceId: 'storage',
             config: {}, credentialBindings: [], sources: [{ kind: 'dump', sourceId: 'main', service: 'db', consistency: 'logical' }],
             ownership: { environmentId: 'target', prefix: 'target' }, retention: { kind: 'keepEverything' } },
-        data: { engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } },
+        data: [{ engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } }],
         async execute(request) {
             if (request.argv.includes('config')) return complete(JSON.stringify({ id: repositoryId, version: 2 }));
             if (request.argv.includes('backup')) return { ...complete(JSON.stringify({ message_type: 'summary', snapshot_id: 'e'.repeat(64),
@@ -76,6 +76,7 @@ function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boole
         }
         if (request.kind === 'integrity') return { ...complete(), exitCode: options.integrityFails ? 1 : 0 };
         const sql = argv.at(-1) ?? '';
+        if (sql.startsWith('SELECT current_user =')) return complete('t');
         if (sql.startsWith('SELECT')) return options.unknownObservation && names.has('restore_old') ? { kind: 'outcome_unknown' }
             : complete(JSON.stringify([...names]));
         const match = /ALTER DATABASE "([^"]+)" RENAME TO "([^"]+)"/u.exec(sql);
@@ -108,10 +109,52 @@ async function confirm(native: ReturnType<typeof boundary>, receipt: DeploymentR
 }
 
 describe('exact PostgreSQL restore semantic owner', () => {
+    it('prepares an admitted SQL upload without repository credentials or effects', async () => {
+        const native = boundary();
+        const source = { kind: 'upload', transferId: 'completed-requester-upload', sizeBytes: 48,
+            sha256: '7'.repeat(64) } as const;
+        // The finite-transfer owner lends this host-private capture. Reflect
+        // crosses the currently unsupported runtime variant, rather than
+        // fabricating a repository manifest or weakening production types.
+        const receipt: unknown = await Reflect.apply(owners.prepareDeploymentRestoreV1, undefined, [{
+            operationId: 'upload-prepare', source, sourceFormat: 'postgresSql', destination,
+            signal: new AbortController().signal, execute: native.execute,
+        }]);
+        expect(receipt).toMatchObject({ kind: 'prepared', source, sourceFormat: 'postgresSql', destination });
+        expect(native.effects).toEqual([]);
+        expect(receipt).not.toHaveProperty('repository');
+    });
+
+    it('retains the previous-volume recovery action when native activation and rollback both fail', async () => {
+        const volumeSource: DeploymentBackupManifestV1 = { ...manifest, kind: 'volume', producerChecksumSha256: undefined,
+            snapshot: { ...manifest.snapshot, paths: ['/happier/source'],
+                tags: ['happier', 'env:source', 'src:main', 'kind:volume'] } };
+        const volumeDestination = { environmentId: 'target', revision: 2, service: 'web', adapter: 'volume-v1' as const,
+            volume: 'content', currentVolume: 'old-content', stagingVolume: 'new-content', hasMeaningfulData: false,
+            writerServices: ['web'], runningServices: ['web'] };
+        const native = boundary({ source: volumeSource });
+        const switches: string[] = [];
+        const execute: DeploymentRestorePrepareInputV1['execute'] = async request => {
+            if (request.kind === 'stageVolume') return complete();
+            if (request.kind === 'switchVolume') {
+                switches.push(request.physicalName);
+                throw Object.assign(new Error('Engine activation unavailable'), { code: 'restore_failed' });
+            }
+            return native.execute(request);
+        };
+        const capture = { source: volumeSource, sourceFormat: 'volume' as const, destination: volumeDestination, access,
+            signal: new AbortController().signal, execute };
+        const prepared = await owners.prepareDeploymentRestoreV1({ ...capture, operationId: 'volume-restore' });
+        const result = await owners.confirmDeploymentRestoreV1({ ...capture, prepare: prepared, runProtectedStage: effect => effect() });
+        expect(result).toMatchObject({ kind: 'recoveryRequired', verified: false, nextAction: 'restorePreviousVolume',
+            destination: { currentVolume: 'old-content', stagingVolume: 'new-content' }, code: 'restore_failed' });
+        expect(switches).toEqual(['new-content', 'old-content']);
+    });
+
     it.each([false, true])('copies a produced capture using only destination native effects (import failure: %s)', async streamFails => {
         const backup = safetyBackup();
         const produced = await owners.runDeploymentBackupV1({ ...backup,
-            restoreTarget: { environmentId: backup.environmentId, service: 'db', adapter: 'postgres-v1', database: 'app' } });
+            restoreTargets: [{ environmentId: backup.environmentId, service: 'db', adapter: 'postgres-v1', database: 'app' }] });
         const capture = produced.restoreCaptures?.[0];
         if (!capture) throw new Error('Expected the original backup producer capture');
         const copyDestination = { ...destination, environmentId: 'copy-target', service: 'copy-db', writerServices: ['preview-web'] };
@@ -142,7 +185,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
     it('restores an exact retained scheduled manifest through the existing safety and confirmation lifecycle', async () => {
         const backup = safetyBackup();
         const captured = await owners.runDeploymentBackupV1({ ...backup,
-            ...{ restoreTarget: { environmentId: 'source', service: 'db', adapter: 'postgres-v1' as const, database: 'app' } } });
+            ...{ restoreTargets: [{ environmentId: 'source', service: 'db', adapter: 'postgres-v1' as const, database: 'app' }] } });
         const captures = captured.restoreCaptures;
         expect(captures).toEqual([{ source: captured.manifests[0], sourceFormat: 'postgresCustom',
             target: { service: 'db', adapter: 'postgres-v1', database: 'app' }, configuration: backup.configuration,

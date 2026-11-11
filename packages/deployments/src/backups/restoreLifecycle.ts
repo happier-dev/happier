@@ -1,5 +1,5 @@
 import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1,
-    type DeploymentRestoreStepV1, type DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployment-protocol';
 export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployment-protocol';
 
 import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type DeploymentBackupRunInputV1,
@@ -10,24 +10,45 @@ import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from 
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
  * Staging/recovery names belong to this operation, not a caller-selected live database. */
-export type DeploymentRestoreDestinationV1 = Readonly<{
+export type DeploymentRestoreDatabaseDestinationV1 = Readonly<{
     environmentId: string; revision: number; service: string; adapter: 'postgres-v1';
     database: string; stagingDatabase: string; recoveryDatabase: string;
     databaseExists: boolean; hasMeaningfulData: boolean;
     /** Exact admitted writers to stop/resume; excludes deliberately stopped services. */
     writerServices: readonly string[];
 }>;
+export type DeploymentRestoreVolumeDestinationV1 = Readonly<{
+    environmentId: string; revision: number; service: string; adapter: 'volume-v1';
+    volume: string; currentVolume: string; stagingVolume: string; hasMeaningfulData: boolean;
+    writerServices: readonly string[]; runningServices: readonly string[];
+}>;
+export type DeploymentRestoreSqliteDestinationV1 = Readonly<{
+    environmentId: string; revision: number; service: string; adapter: 'sqlite-v1'; path: string;
+    stagingVolume: string; hasMeaningfulData: boolean; writerServices: readonly string[];
+}>;
+export type DeploymentRestoreDestinationV1 = DeploymentRestoreDatabaseDestinationV1 | DeploymentRestoreVolumeDestinationV1 | DeploymentRestoreSqliteDestinationV1;
 /** These requests describe native IO, not lifecycle callbacks. P30 owns process,
  * stream checksum/EOF, cancellation and settlement; P41 owns exact service control,
  * supported engine integrity checks and service/app health. No adapter is supplied
  * by default: registration must remain unavailable until these real producers exist. */
 export type DeploymentRestoreNativeRequestV1 =
     | Readonly<{ kind: 'restic'; request: ResticRequestV1 }>
-    | Readonly<{ kind: 'service'; mode: 'exec'; service: string; argv: readonly string[] }>
+    | Readonly<{ kind: 'service'; mode: 'exec'; service: string; argv: readonly string[]; stdin?: string;
+        environmentOverrides?: Readonly<Record<string, string>>; sensitiveValues?: readonly string[] }>
     | Readonly<{ kind: 'restoreStream'; producer: ResticRequestV1;
-        consumer: Readonly<{ mode: 'exec'; service: string; argv: readonly string[] }> }>
+        consumer: Readonly<{ mode: 'exec'; service: string; argv: readonly string[]; environmentOverrides?: Readonly<Record<string, string>> }> }>
+    | Readonly<{ kind: 'restoreUpload'; source: DeploymentRestoreUploadSourceV1;
+        consumer: Readonly<{ mode: 'exec'; service: string; argv: readonly string[]; environmentOverrides: Readonly<Record<string, string>> }> }>
     | Readonly<{ kind: 'writers'; operation: 'stop' | 'start'; services: readonly string[] }>
     | Readonly<{ kind: 'integrity'; service: string; database: string }>
+    | Readonly<{ kind: 'stageVolume'; destination: DeploymentRestoreVolumeDestinationV1; request: ResticRequestV1 }>
+    | Readonly<{ kind: 'volumeArchive'; mode: 'list'; source: DeploymentRestoreUploadSourceV1 }>
+    | Readonly<{ kind: 'volumeArchive'; mode: 'extract'; source: DeploymentRestoreUploadSourceV1; destination: DeploymentRestoreVolumeDestinationV1 }>
+    | Readonly<{ kind: 'switchVolume'; destination: DeploymentRestoreVolumeDestinationV1; physicalName: string }>
+    | Readonly<{ kind: 'sqliteStage'; destination: DeploymentRestoreSqliteDestinationV1;
+        source: DeploymentBackupManifestV1 | DeploymentRestoreUploadSourceV1; operationId: string }>
+    | Readonly<{ kind: 'sqlite'; operation: 'admitStage' | 'snapshotRecovery' | 'activate' | 'recover';
+        destination: DeploymentRestoreSqliteDestinationV1; operationId: string }>
     | Readonly<{ kind: 'health'; service: string }>;
 export type DeploymentRestoreNativeResultV1 = Readonly<{ kind: 'outcome_unknown' }>
     | (Omit<Extract<DeploymentBackupNativeResultV1, { kind: 'completed' }>, 'producer'> & Readonly<{
@@ -36,10 +57,10 @@ export type DeploymentRestoreNativeResultV1 = Readonly<{ kind: 'outcome_unknown'
     | Readonly<{ kind: 'health'; status: 'healthy' | 'unhealthy' | 'unknown' }>;
 type NativeExecute = (request: DeploymentRestoreNativeRequestV1) => Promise<DeploymentRestoreNativeResultV1>;
 type RestoreCapture = Readonly<{
-    source: DeploymentBackupManifestV1; destination: DeploymentRestoreDestinationV1;
+    source: DeploymentBackupManifestV1 | DeploymentRestoreUploadSourceV1; destination: DeploymentRestoreDestinationV1;
     /** Captured by the source/tool preflight; a dump manifest alone does not prove format. */
-    sourceFormat: 'postgresCustom';
-    access: ResticAccessV1; signal: AbortSignal; execute: NativeExecute;
+    sourceFormat: 'volume' | DeploymentRestoreUploadFormatV1;
+    access?: ResticAccessV1; signal: AbortSignal; execute: NativeExecute;
     /** The existing Action operation pushes these closed native step facts. */
     onStep?(step: DeploymentRestoreStepV1): void;
 }>;
@@ -48,8 +69,8 @@ export type DeploymentRestorePrepareInputV1 = RestoreCapture & Readonly<{
 }>;
 /** Stored in the existing prepare Action receipt. No prepared-token/state store. */
 export type DeploymentRestorePrepareReceiptV1 = Readonly<{
-    kind: 'prepared'; operationId: string; source: DeploymentBackupManifestV1;
-    sourceFormat: 'postgresCustom'; destination: DeploymentRestoreDestinationV1; safetyBackup?: DeploymentBackupRunResultV1;
+    kind: 'prepared'; operationId: string; source: RestoreCapture['source'];
+    sourceFormat: RestoreCapture['sourceFormat']; destination: DeploymentRestoreDestinationV1; safetyBackup?: DeploymentBackupRunResultV1;
     steps?: readonly DeploymentRestoreStepV1[];
 }>;
 export type DeploymentRestoreConfirmInputV1 = RestoreCapture & Readonly<{
@@ -61,12 +82,13 @@ export type DeploymentRestoreConfirmInputV1 = RestoreCapture & Readonly<{
 type RestoreFailureCode = 'backup_required' | 'backup_failed' | 'backup_integrity_failed' | 'restore_failed'
     | 'stale_input' | 'cancelled' | 'outcome_unknown' | 'unsupported_action';
 export type DeploymentRestoreResultV1 = Readonly<{
-    source: DeploymentBackupManifestV1; destination: DeploymentRestoreDestinationV1;
+    source: DeploymentBackupManifestV1 | DeploymentRestoreUploadSourceV1; destination: DeploymentRestoreDestinationV1;
     safetyBackup?: DeploymentBackupRunResultV1; code?: RestoreFailureCode; nativeFailure?: DeploymentBackupNativeFailureV1;
     steps?: readonly DeploymentRestoreStepV1[];
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
-        nextAction: 'none' | 'inspectStagingDatabase' | 'observeDatabaseNames' | 'restoreRecoveryDatabase' | 'checkServiceHealth' }>);
+        nextAction: 'none' | 'inspectStagingDatabase' | 'observeDatabaseNames' | 'restoreRecoveryDatabase' | 'checkServiceHealth'
+            | 'inspectStagingVolume' | 'restorePreviousVolume' }>);
 
 function refuse(code: RestoreFailureCode): never { throw Object.assign(new Error(code), { code }); }
 function codeOf(error: unknown): RestoreFailureCode {
@@ -105,20 +127,22 @@ function completed(result: DeploymentRestoreNativeResultV1) {
 }
 function identifier(value: string) { return `"${value.replaceAll('"', '""')}"`; }
 function literal(value: string) { return `'${value.replaceAll("'", "''")}'`; }
-function service(destination: DeploymentRestoreDestinationV1, argv: readonly string[]): DeploymentRestoreNativeRequestV1 {
+function service(destination: DeploymentRestoreDatabaseDestinationV1, argv: readonly string[]): DeploymentRestoreNativeRequestV1 {
     return { kind: 'service', service: destination.service, mode: 'exec', argv };
 }
-function sql(destination: DeploymentRestoreDestinationV1, statement: string) {
+function sql(destination: DeploymentRestoreDatabaseDestinationV1, statement: string) {
     return service(destination, ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '--dbname=postgres', '-At', '-c', statement]);
 }
-function rename(destination: DeploymentRestoreDestinationV1, from: string, to: string) {
+function rename(destination: DeploymentRestoreDatabaseDestinationV1, from: string, to: string) {
     return sql(destination, `ALTER DATABASE ${identifier(from)} RENAME TO ${identifier(to)}`);
 }
 function sameMembers(left: readonly string[], right: readonly string[]) {
     const leftSet = new Set(left), rightSet = new Set(right);
     return leftSet.size === rightSet.size && [...leftSet].every(member => rightSet.has(member));
 }
-function sameSource(left: DeploymentBackupManifestV1, right: DeploymentBackupManifestV1) {
+function sameSource(left: RestoreCapture['source'], right: RestoreCapture['source']) {
+    if (left.kind === 'upload' || right.kind === 'upload') return left.kind === 'upload' && right.kind === 'upload'
+        && left.transferId === right.transferId && left.sizeBytes === right.sizeBytes && left.sha256 === right.sha256;
     return left.environmentId === right.environmentId && left.sourceId === right.sourceId && left.kind === right.kind
         && left.configRevision === right.configRevision && left.repositoryId === right.repositoryId
         && left.snapshot.snapshotId === right.snapshot.snapshotId && left.snapshot.treeId === right.snapshot.treeId
@@ -129,6 +153,19 @@ function sameSource(left: DeploymentBackupManifestV1, right: DeploymentBackupMan
         && left.snapshot.paths.every((path, index) => path === right.snapshot.paths[index]);
 }
 function sameDestination(left: DeploymentRestoreDestinationV1, right: DeploymentRestoreDestinationV1) {
+    if (left.adapter === 'sqlite-v1' || right.adapter === 'sqlite-v1') {
+        return left.adapter === 'sqlite-v1' && right.adapter === 'sqlite-v1'
+            && left.environmentId === right.environmentId && left.revision === right.revision && left.service === right.service
+            && left.path === right.path && left.stagingVolume === right.stagingVolume
+            && left.hasMeaningfulData === right.hasMeaningfulData && sameMembers(left.writerServices, right.writerServices);
+    }
+    if (left.adapter === 'volume-v1' || right.adapter === 'volume-v1') {
+        return left.adapter === 'volume-v1' && right.adapter === 'volume-v1'
+            && left.environmentId === right.environmentId && left.revision === right.revision && left.service === right.service
+            && left.volume === right.volume && left.currentVolume === right.currentVolume && left.stagingVolume === right.stagingVolume
+            && left.hasMeaningfulData === right.hasMeaningfulData && sameMembers(left.writerServices, right.writerServices)
+            && sameMembers(left.runningServices, right.runningServices);
+    }
     return left.environmentId === right.environmentId && left.revision === right.revision && left.service === right.service
         && left.adapter === right.adapter && left.database === right.database && left.stagingDatabase === right.stagingDatabase
         && left.recoveryDatabase === right.recoveryDatabase && left.databaseExists === right.databaseExists
@@ -140,6 +177,8 @@ function sameDestination(left: DeploymentRestoreDestinationV1, right: Deployment
  * an external boundary and must agree with that owned receipt. */
 async function verifySource(input: RestoreCapture) {
     const source = input.source;
+    if (source.kind === 'upload') return undefined;
+    if (!input.access) return refuse('backup_required');
     await verifyDeploymentBackupV1({ environmentId: source.environmentId, configRevision: source.configRevision,
         manifest: source, access: input.access, signal: input.signal, level: 'manifestReadBack', execute: async request => {
             const result = await input.execute({ kind: 'restic', request });
@@ -156,12 +195,29 @@ export async function prepareDeploymentRestoreV1(input: DeploymentRestorePrepare
         cancelled(input.signal);
         // Unsupported formats/engines are explicit; custom PostgreSQL archives alone
         // have a staged semantic producer here. Upload admission remains transfer-owned.
-        if (input.destination.adapter !== 'postgres-v1' || input.source.kind !== 'dump' || input.sourceFormat !== 'postgresCustom') refuse('unsupported_action');
         const { destination } = input;
+        if (destination.adapter === 'sqlite-v1') {
+            if (input.sourceFormat !== 'sqlite' || input.source.kind !== 'upload' && input.source.kind !== 'dump') refuse('unsupported_action');
+            if (destination.hasMeaningfulData && (!input.safetyBackup || input.safetyBackup.environmentId !== destination.environmentId
+                || !input.safetyBackup.configuration.sources.some(source => source.kind === 'dump' && source.service === destination.service))) refuse('backup_required');
+        } else if (destination.adapter === 'volume-v1') {
+            if (input.source.kind === 'upload' ? input.sourceFormat !== 'volumeTar'
+                : input.source.kind !== 'volume' || input.sourceFormat !== 'volume') refuse('unsupported_action');
+            if (destination.currentVolume === destination.stagingVolume) refuse('stale_input');
+            if (destination.hasMeaningfulData && (!input.safetyBackup || input.safetyBackup.environmentId !== destination.environmentId
+                || !input.safetyBackup.configuration.sources.some(source => source.kind === 'volume'
+                    && source.service === destination.service && source.volume === destination.volume))) refuse('backup_required');
+        } else {
+        if (destination.adapter !== 'postgres-v1' || (input.source.kind === 'upload'
+            ? input.sourceFormat !== 'postgresCustom' && input.sourceFormat !== 'postgresSql'
+            : input.source.kind !== 'dump' || input.sourceFormat !== 'postgresCustom')) refuse('unsupported_action');
         if (new Set([destination.database, destination.stagingDatabase, destination.recoveryDatabase]).size !== 3) refuse('stale_input');
         if (destination.hasMeaningfulData && (!input.safetyBackup || input.safetyBackup.environmentId !== destination.environmentId
             || !input.safetyBackup.configuration.sources.some(source => source.kind === 'dump' && source.service === destination.service))) refuse('backup_required');
+        }
         await verifySource(input);
+        if (destination.adapter === 'sqlite-v1' && input.source.kind !== 'upload') await steps.run('integrity', async () =>
+            completed(await input.execute({ kind: 'sqliteStage', destination, source: input.source, operationId: input.operationId })));
         const safetyBackup = destination.hasMeaningfulData && input.safetyBackup
             ? await runDeploymentBackupV1({ ...input.safetyBackup, signal: input.signal }) : undefined;
         steps.record('safety', safetyBackup ? 'completed' : 'skipped');
@@ -200,6 +256,90 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         cancelled(input.signal);
         return input.execute(request);
     };
+    if (destination.adapter === 'sqlite-v1') {
+        completed(await execute({ kind: 'sqlite', operation: 'admitStage', destination, operationId: prepare.operationId }));
+        return input.runProtectedStage(async () => {
+            let writersStopped = false;
+            let recoveryReady = false;
+            let activationAttempted = false;
+            const control = async (operation: 'stop' | 'start') => {
+                if (!destination.writerServices.length) { steps.record(operation, 'skipped'); return; }
+                if (operation === 'stop') writersStopped = true;
+                await steps.run(operation, async () => completed(await execute({ kind: 'writers', operation,
+                    services: destination.writerServices })));
+                if (operation === 'start') writersStopped = false;
+            };
+            const health = async () => {
+                if (!destination.writerServices.includes(destination.service)) return;
+                const observed = await execute({ kind: 'health', service: destination.service });
+                if (observed.kind !== 'health' || observed.status === 'unknown') refuse('outcome_unknown');
+                if (observed.status !== 'healthy') refuse('restore_failed');
+            };
+            try {
+                await control('stop');
+                if (destination.hasMeaningfulData) {
+                    completed(await execute({ kind: 'sqlite', operation: 'snapshotRecovery', destination, operationId: prepare.operationId }));
+                    recoveryReady = true;
+                }
+                activationAttempted = true;
+                await steps.run('restore', async () => completed(await execute({ kind: 'sqlite', operation: 'activate', destination, operationId: prepare.operationId })));
+                await control('start');
+                await steps.run('health', health);
+                return result('restored', 'none');
+            } catch (error) {
+                steps.failRunning();
+                if (activationAttempted && recoveryReady && !input.signal.aborted) {
+                    try {
+                        // A lost resume acknowledgement may leave some writers live.
+                        await control('stop');
+                        completed(await execute({ kind: 'sqlite', operation: 'recover', destination, operationId: prepare.operationId }));
+                        await control('start');
+                        await health();
+                        return result('rolledBack', 'none', codeOf(error), error);
+                    } catch (recoveryError) {
+                        return result('recoveryRequired', 'inspectStagingDatabase', codeOf(recoveryError), recoveryError);
+                    }
+                }
+                if (writersStopped && !input.signal.aborted) {
+                    try { await control('start'); }
+                    catch (restartError) { return result('recoveryRequired', 'checkServiceHealth', codeOf(restartError), restartError); }
+                }
+                return result('recoveryRequired', 'inspectStagingDatabase', codeOf(error), error);
+            }
+        });
+    }
+
+    if (destination.adapter === 'volume-v1') {
+        let switchAttempted = false;
+        try {
+            await verifySource(input);
+            const source = input.source;
+            await steps.run('restore', async () => completed(await execute(source.kind === 'upload'
+                ? { kind: 'volumeArchive', mode: 'extract', source, destination }
+                : { kind: 'stageVolume', destination, request: buildResticRequestV1({ environmentId: source.environmentId,
+                    access: input.access ?? refuse('backup_required'), command: { kind: 'restoreVolume', snapshotId: source.snapshot.snapshotId } }) })));
+            return await input.runProtectedStage(async () => {
+                try {
+                    await steps.run('stop', async () => completed(await execute({ kind: 'writers', operation: 'stop', services: destination.writerServices })));
+                    switchAttempted = true;
+                    const health = await steps.run('start', () => execute({ kind: 'switchVolume', destination, physicalName: destination.stagingVolume }));
+                    if (health.kind !== 'health' || health.status !== 'healthy') refuse(health.kind === 'health' && health.status === 'unhealthy'
+                        ? 'restore_failed' : 'outcome_unknown');
+                    steps.record('health', 'completed');
+                    return result('restored', 'none');
+                } catch (error) {
+                    if (switchAttempted) {
+                        const recovered = await execute({ kind: 'switchVolume', destination, physicalName: destination.currentVolume });
+                        if (recovered.kind === 'health' && recovered.status === 'healthy') return result('rolledBack', 'checkServiceHealth', codeOf(error), error);
+                    } else completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }));
+                    return result('recoveryRequired', 'restorePreviousVolume', codeOf(error), error);
+                }
+            });
+        } catch (error) {
+            steps.failRunning();
+            return result('recoveryRequired', switchAttempted ? 'restorePreviousVolume' : 'inspectStagingVolume', codeOf(error), error);
+        }
+    }
     let writersStopped = false;
     const observeNames = async () => {
         const observed = completed(await execute(sql(destination, `SELECT COALESCE(json_agg(datname), '[]'::json) FROM pg_database WHERE datname IN (${[
@@ -258,13 +398,46 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             return result('outcome_unknown', 'observeDatabaseNames');
         }
         const path = await verifySource(input);
-        completed(await execute(service(destination, ['createdb', '--maintenance-db=postgres', '--template=template0', '--', destination.stagingDatabase])));
-        const restored = completed(await execute({ kind: 'restoreStream', producer: buildResticRequestV1({ environmentId: input.source.environmentId,
-            access: input.access, command: { kind: 'dump', snapshotId: input.source.snapshot.snapshotId, path } }),
-            consumer: { mode: 'exec', service: destination.service, argv: ['pg_restore', '--no-owner', '--no-acl', '--clean', '--if-exists',
-                '--exit-on-error', '--single-transaction', `--dbname=${destination.stagingDatabase}`] } }));
-        if (restored.producer?.exitCode !== 0 || restored.producer.checksumSha256 !== input.source.producerChecksumSha256
-            || restored.producer.bytes !== input.source.totalBytesProcessed) refuse('backup_integrity_failed');
+        // PostgreSQL, rather than a SQL keyword filter, is the import authority.
+        // Keep this nonprivileged owner after activation: promoting SECURITY
+        // DEFINER objects to the administration user would promote dump code too.
+        const role = destination.stagingDatabase;
+        const password = globalThis.crypto.randomUUID().replaceAll('-', '') + globalThis.crypto.randomUUID().replaceAll('-', '');
+        const environmentOverrides = { PGPASSWORD: password };
+        const roleCommand = async (statement: string) => completed(await execute({ kind: 'service', mode: 'exec',
+            service: destination.service, argv: ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '--dbname=postgres'],
+            stdin: statement, sensitiveValues: [password] }));
+        await roleCommand(`CREATE ROLE ${identifier(role)} LOGIN PASSWORD ${literal(password)} NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`);
+        try {
+            completed(await execute(service(destination, ['createdb', '--maintenance-db=postgres', '--template=template0',
+                `--owner=${role}`, '--', destination.stagingDatabase])));
+            const authority = completed(await execute({ kind: 'service', mode: 'exec', service: destination.service,
+                argv: ['psql', '-X', '-v', 'ON_ERROR_STOP=1', `--username=${role}`, `--dbname=${destination.stagingDatabase}`, '-At', '-c',
+                    `SELECT current_user = ${literal(role)} AND NOT rolsuper AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication AND NOT rolbypassrls AND NOT pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER') AND NOT pg_has_role(current_user, 'pg_read_server_files', 'MEMBER') AND NOT pg_has_role(current_user, 'pg_write_server_files', 'MEMBER') FROM pg_roles WHERE rolname = current_user`],
+                environmentOverrides, sensitiveValues: [password] }));
+            if (authority.stdout.trim() !== 't' || authority.stdoutTruncated) refuse('unsupported_action');
+            const consumer = { mode: 'exec' as const, service: destination.service, environmentOverrides,
+                argv: [input.sourceFormat === 'postgresSql' ? 'psql' : 'pg_restore', `--username=${role}`,
+                    ...(input.sourceFormat === 'postgresSql' ? ['-X', '-v', 'ON_ERROR_STOP=1', '--single-transaction']
+                        : ['--no-owner', '--no-acl', '--clean', '--if-exists', '--exit-on-error', '--single-transaction']),
+                    `--dbname=${destination.stagingDatabase}`] };
+            const restored = completed(await execute(input.source.kind === 'upload'
+                ? { kind: 'restoreUpload', source: input.source, consumer }
+                : { kind: 'restoreStream', producer: buildResticRequestV1({ environmentId: input.source.environmentId,
+                    access: input.access ?? refuse('backup_required'), command: { kind: 'dump', snapshotId: input.source.snapshot.snapshotId,
+                        path: path ?? refuse('backup_integrity_failed') } }), consumer }));
+            if (input.source.kind !== 'upload' && (restored.producer?.exitCode !== 0
+                || restored.producer.checksumSha256 !== input.source.producerChecksumSha256
+                || restored.producer.bytes !== input.source.totalBytesProcessed)) refuse('backup_integrity_failed');
+            // Existing administration/app identity can inherit the restored objects;
+            // functions retain the restricted owner, including on later re-backup.
+            await roleCommand(`ALTER ROLE ${identifier(role)} NOLOGIN PASSWORD NULL; GRANT ${identifier(role)} TO CURRENT_USER;`);
+        } catch (error) {
+            // Keep failed stage and its restricted owner for visible inspection.
+            // Retire the temporary login even when parsing/import failed.
+            if (!input.signal.aborted) await roleCommand(`ALTER ROLE ${identifier(role)} NOLOGIN PASSWORD NULL;`);
+            throw error;
+        }
         completed(await execute({ kind: 'integrity', service: destination.service, database: destination.stagingDatabase }));
         return await input.runProtectedStage(async () => {
             let activationAttempted = false;
