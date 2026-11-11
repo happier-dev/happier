@@ -155,14 +155,11 @@ describe('HappierSpinner on native (dot styles)', () => {
     expect(dots(root).map((dot) => flatten(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
   });
 
-  it('breathes the still H with a native-driven fade under reduced motion', () => {
+  it('holds the H still without an animation clock under reduced motion', () => {
     const root = render(<HappierSpinner size={18} reducedMotion />);
 
     expect(dots(root).map((dot) => flatten(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
-    expect(runningLoops()).toHaveLength(1);
-    expect(JSON.stringify(runningLoops()[0]!.animation)).toContain('"useNativeDriver":true');
-    const layer = root.root.find((node) => node.type === 'AnimatedView' && node.props.testID === 'happier-spinner-dots');
-    expect((flatten(layer.props.style).opacity as RecordedInterpolation).config.outputRange).toEqual([1, 0.45]);
+    expect(animated.loops).toHaveLength(0);
   });
 
   it('keeps the layout box but draws nothing when stopped and hidden', () => {

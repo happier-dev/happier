@@ -32,8 +32,8 @@ import {
  * with a still ring overlay on Android, whose platform widget hides when stopped.
  *
  * Paused spinners stay VISIBLE — dot styles hold the full chosen mark still and the ring stops turning —
- * because a missing spinner says the work ended. Reduced motion replaces the travelling light with a
- * gentle fade of the still chosen mark, and stops the ring.
+ * because a missing spinner says the work ended. Reduced motion holds the chosen mark still and
+ * stops the ring.
  *
  * Host facts — colour, reduced motion, style, accents — are injected (§3.10.2). Happier core
  * supplies them from Unistyles, its app-wide preference watch and its local setting; a plugin
@@ -77,7 +77,7 @@ export type HappierWebSpinnerPresentation = Readonly<{
   style: HappierWebSpinnerStyle;
 }>;
 
-/** How a dot spinner moves: the style plays, the full chosen mark is held still, or (reduced motion) it breathes. */
+/** Explicit renderer motion: travelling light, a still mark, or an opacity breath. Reduced motion selects still. */
 export type HappierDotSpinnerMotion = 'animate' | 'still' | 'breathe';
 
 export type HappierDotSpinnerModel = Readonly<{
@@ -260,7 +260,7 @@ export function resolveHappierSpinnerPresentation(
   if (hidden) return { kind: 'dots', accessibilityRole: 'progressbar', style, dots: null };
 
   const paused = !animating || !animationEnabled;
-  const motion: HappierDotSpinnerMotion = paused ? 'still' : reducedMotion ? 'breathe' : 'animate';
+  const motion: HappierDotSpinnerMotion = paused || reducedMotion ? 'still' : 'animate';
   // Aurora uses the theme accents only when the caller left the colour to the host: an explicit
   // colour usually means a tinted surface (a filled button) where accents would not read.
   const ink: DotSpinnerInk = DOT_SPINNER_STYLES[styleId].ink === 'aurora' && color == null && auroraAccents

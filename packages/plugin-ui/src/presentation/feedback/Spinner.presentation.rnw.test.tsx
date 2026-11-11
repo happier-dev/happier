@@ -92,14 +92,14 @@ describe('shared spinner presentation (dot styles)', () => {
     expect(native).toEqual({ kind: 'nativeRing', color: 'theme-secondary', animating: false, hidesWhenStopped: false });
   });
 
-  it('holds the still mark when paused, and breathes it under reduced motion', () => {
+  it('holds the still mark when paused, and under reduced motion', () => {
     const paused = resolveHappierSpinnerPresentation({ ...base, animationEnabled: false });
     const stoppedButShown = resolveHappierSpinnerPresentation({ ...base, animating: false, hidesWhenStopped: false });
     const reduced = resolveHappierSpinnerPresentation({ ...base, reducedMotion: true });
 
     expect(paused?.kind === 'dots' ? paused.dots?.motion : null).toBe('still');
     expect(stoppedButShown?.kind === 'dots' ? stoppedButShown.dots?.motion : null).toBe('still');
-    expect(reduced?.kind === 'dots' ? reduced.dots?.motion : null).toBe('breathe');
+    expect(reduced?.kind === 'dots' ? reduced.dots?.motion : null).toBe('still');
   });
 
   it('renders nothing on web but keeps the layout box on native when stopped and hidden', () => {
@@ -187,7 +187,7 @@ describe('HappierSpinner on web (dot styles)', () => {
     expect(mount.container.querySelector<HTMLElement>('[data-testid="public-spinner"]')?.style.animationName).toBe('happierActivitySpinnerSpin');
   });
 
-  it('retains the host-selected mark while reduced motion breathes it and an inactive surface holds it still', async () => {
+  it('retains the host-selected mark while reduced motion holds it still and an inactive surface holds it still', async () => {
     const initial = createSurfaceContext({ reducedMotion: true });
     const context = { ...initial, theme: { ...initial.theme, spinner: { style: 'hWave', speed: 'fast', pause: 'none' } } };
     const hostApi = createHostApiStub(context);
@@ -196,7 +196,7 @@ describe('HappierSpinner on web (dot styles)', () => {
     ><Spinner testID="public-spinner" /></PluginUiProviderInternal>;
     mount = await mountThroughReactNativeWebAsync(render(true));
     expect(frameSheetFor(strip()).match(/<circle /g)).toHaveLength(7);
-    expect(strip().style.animationName).toBe('happierActivitySpinnerBreath');
+    expect(strip().style.animationName).toBe('');
 
     await mount.render(render(false));
     expect(frameSheetFor(strip()).match(/<circle /g)).toHaveLength(7);
@@ -204,7 +204,7 @@ describe('HappierSpinner on web (dot styles)', () => {
     expect(mount.container.querySelector('[data-testid="public-spinner"]')).not.toBeNull();
 
     await mount.render(render(true));
-    expect(strip().style.animationName).toBe('happierActivitySpinnerBreath');
+    expect(strip().style.animationName).toBe('');
   });
 
   it.each(['classicRing', 'wave'] as const)('installs %s keyframes when the public host renders directly without an adapter', async (indicatorStyle) => {
@@ -328,10 +328,10 @@ describe('HappierSpinner on web (dot styles)', () => {
     expect(frameSheetFor(strip())).toContain('fill-opacity="0.85"');
   });
 
-  it('replaces the travelling light with a slow breath of the still H under reduced motion', async () => {
+  it('replaces the travelling light with the still H under reduced motion', async () => {
     mount = await mountThroughReactNativeWebAsync(<HappierSpinner size={12} color="red" reducedMotion />);
 
-    expect(strip().style.animationName).toBe('happierActivitySpinnerBreath');
+    expect(strip().style.animationName).toBe('');
     expect(frameSheetFor(strip())).toContain('fill-opacity="0.85"');
   });
 });
