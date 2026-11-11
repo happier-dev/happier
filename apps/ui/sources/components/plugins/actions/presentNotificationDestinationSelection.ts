@@ -33,11 +33,11 @@ export async function presentNotificationDestinationSelection(params: Readonly<{
         let settle: (value: NotificationDestinationSelectionV1 | string | null) => void = () => {};
         const selected = new Promise<NotificationDestinationSelectionV1 | string | null>(resolve => { settle = resolve; });
         const form = createActionInputForm({
-            presentation: { title: t('common.select'), description: null, inputHints: {
+            presentation: { title: t('common.choose'), description: null, inputHints: {
                 fields: channelId === undefined
-                    ? [{ path: 'channelId', title: t('common.select'), widget: 'select', required: true,
+                    ? [{ path: 'channelId', title: t('common.choose'), widget: 'select', required: true,
                         optionsSourceId: 'notifications.channels.available' }]
-                    : [{ path: 'channel', title: t('common.select'), widget: 'json', required: true,
+                    : [{ path: 'channel', title: t('common.choose'), widget: 'json', required: true,
                         inputType: NOTIFICATION_DESTINATION_INPUT_TYPE_V1 }],
                 submitLabel: t('common.done'),
             } },
