@@ -30,6 +30,7 @@ import type { SharingAuthoritySession } from '@/sync/domains/social/sessionShari
 import { t } from '@/text';
 import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import type { ExternalSessionSharingAvailability } from '@/components/sessions/external/sharing/useExternalSessionSharingAvailability';
 import { buildPublicShareApplicationUrl, resolvePublicShareApplicationBaseUrl } from '@/components/sessions/sharing/publicShareApplicationUrl';
@@ -341,12 +342,22 @@ export function SessionPublicLinkCard(props: Readonly<{
                 />
             ) : null}</>}
             copyFeedback={<CopiedPill visible={copyFeedback.isCopied('public-link')} testID="session-public-link-copy-feedback" />}
-            copyControl={<ToolbarButton
+            copyControl={<><ToolbarButton
                 testID="session-public-link-copy"
                 label={t('common.copy')}
                 icon={<Icon name="copy" size={14} color={theme.colors.text.secondary} />}
                 onPress={() => { void copy(); }}
-            />}
+            /><ToolbarButton
+                testID="session-public-link-open"
+                label={t('common.open')}
+                icon={<Icon name="arrow-square-out" size={14} color={theme.colors.text.secondary} />}
+                onPress={() => {
+                    if (shareUrl) void requestOpenExternalUrl(shareUrl, {
+                        serverId: props.configurationScope?.serverId,
+                        expectedAccountId: props.configurationScope?.accountId,
+                    });
+                }}
+            /></>}
             qr={showQr && shareUrl ? (
                 <React.Suspense fallback={<ActivitySpinner size="small" />}>
                     <LazyQRCode data={shareUrl} size={QR_SIZE_PX} />
