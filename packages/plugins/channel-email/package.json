@@ -11,7 +11,7 @@
     "./transports": { "happier-source": "./src/transports.ts", "types": "./dist/transports.d.ts", "default": "./dist/transports.js" },
     "./targeted-contributions": { "happier-source": "./src/targetedContributions.ts", "types": "./dist/targetedContributions.d.ts", "default": "./dist/targetedContributions.js" }
   },
-  "files": ["dist", "assets", ".happier-plugin", "package.json"],
+  "files": ["dist", "assets", ".happier-plugin", ".happier-plugin-build", "package.json"],
   "scripts": {
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "build:finite": "pnpm --silent run build",

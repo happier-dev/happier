@@ -13,7 +13,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.agent.qwen',
   version: '0.0.0',
   displayName: 'Qwen Code',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'qwen-native-history',

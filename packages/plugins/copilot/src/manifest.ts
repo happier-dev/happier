@@ -21,7 +21,7 @@ export const COPILOT_PLUGIN = definePlugin({
   id: 'happier.agent.copilot',
   version: '0.0.0',
   displayName: 'GitHub Copilot',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'copilot-process',

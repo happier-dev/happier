@@ -18,7 +18,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: GROK_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'Grok',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'grok-process',

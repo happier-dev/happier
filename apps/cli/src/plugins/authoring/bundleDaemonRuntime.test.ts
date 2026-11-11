@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { createRequire } from 'node:module';
@@ -646,7 +646,7 @@ describe('bundlePluginDaemonRuntime', () => {
       'export const manifest = {',
       "  schemaVersion: 2, id: 'acme.source-owner', version: '1.0.0',",
       "  displayName: 'Source owner', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
-      "  entrypoints: { daemon: './dist/source-owned.js' }, hostAccess: { required: [], optional: [] },",
+      "  entrypoints: { daemon: './.happier-plugin-build/daemon.js' }, hostAccess: { required: [], optional: [] },",
       '  contributes: {},',
       '};',
       'export function activate() {}',
@@ -655,12 +655,13 @@ describe('bundlePluginDaemonRuntime', () => {
 
     try {
       await expect(bundlePluginDaemonRuntimeImplementation(projectRoot)).resolves.toBeUndefined();
-      await expect(readFile(join(projectRoot, 'dist', 'source-owned.js'), 'utf8'))
+      await expect(readFile(join(projectRoot, '.happier-plugin-build', 'daemon.js'), 'utf8'))
         .resolves.toContain('activate');
       await expect(readFile(
         join(projectRoot, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH),
         'utf8',
-      )).resolves.toMatch(/dist\/source-owned\.js/u);
+      )).resolves.toMatch(/\.happier-plugin-build\/daemon\.js/u);
+      expect(await readdir(join(projectRoot, '.happier-plugin'))).toEqual(['plugin.json']);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

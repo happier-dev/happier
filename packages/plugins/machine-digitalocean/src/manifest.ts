@@ -67,7 +67,7 @@ export const PLUGIN = definePlugin({
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  description: 'Manage exact reviewed DigitalOcean resources through captured cloud credentials.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Manage exact reviewed DigitalOcean resources through captured cloud credentials.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate the exact reviewed DigitalOcean resource.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.digitalocean.com' }], methods: ['GET', 'POST', 'DELETE'] } },

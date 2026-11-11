@@ -22,7 +22,7 @@ export const DEVIN_PLUGIN = definePlugin({
   id: 'happier.agent.devin',
   version: '0.0.0',
   displayName: 'Devin',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'devin-oauth',

@@ -4,7 +4,7 @@ export const plugin = definePlugin({
   id: 'happier.deployment.templates',
   version: '0.0.0',
   displayName: 'Deployment templates',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
   hostAccess: { required: [], optional: [] },
   registrySources: {

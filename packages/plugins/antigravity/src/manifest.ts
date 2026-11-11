@@ -17,7 +17,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
   id: 'happier.agent.antigravity',
   version: '0.0.0',
   displayName: 'Antigravity',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'antigravity-oauth', capability: 'network', reason: 'Authorize and refresh the selected Google Antigravity account.',

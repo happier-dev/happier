@@ -45,7 +45,7 @@ export const PI_PLUGIN = definePlugin({
   id: 'happier.agent.pi',
   version: '0.0.0',
   displayName: 'Pi',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'pi-workspace',

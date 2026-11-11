@@ -163,7 +163,7 @@ export const CUA_PLUGIN = definePlugin({
       "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
       "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
     },
-    description: 'Exact Cua local and BYOC resources with private native bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    description: 'Exact Cua local and BYOC resources with private native bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate only the reviewed native Cua resource.',
         scope: { executables: [{ kind: 'managedDependency', id: dependencyId }], envKeys: ['HOME'] } },
         { id: 'cloud-account', capability: 'connectedAccounts', reason: 'Use only the captured native cloud setup.',

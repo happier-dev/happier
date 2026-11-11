@@ -16,6 +16,17 @@ function writeRuntimeFile(packageDir: string, relativePath: string, bytes: strin
 }
 
 describe('bundled plugin package correspondence', () => {
+  it('includes relocated executable bytes in default package correspondence', () => {
+    const root = createTempDirSync('happier-relocated-correspondence-');
+    try {
+      const sourceDir = resolve(root, 'source');
+      const packageDir = resolve(root, 'prepared');
+      writeRuntimeFile(sourceDir, '.happier-plugin-build/daemon.js', 'export const value = true;');
+      writeRuntimeFile(packageDir, '.happier-plugin-build/daemon.js', 'export const value = false;');
+      expect(compareBundledPluginPackageTrees({ packageName: 'fixture', sourceDir, packageDir }).mismatched)
+        .toEqual([expect.objectContaining({ relativePath: '.happier-plugin-build/daemon.js' })]);
+    } finally { removeTempDirSync(root); }
+  });
   it('rejects missing and truncated prepared runtime bytes with digest evidence', () => {
     const root = createTempDirSync('happier-plugin-package-correspondence-');
     const sourceDir = resolve(root, 'source');

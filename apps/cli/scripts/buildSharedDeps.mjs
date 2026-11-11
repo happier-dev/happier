@@ -2500,7 +2500,7 @@ function createBundledPluginPreparedPackageValidator({ repoRoot }) {
       // Live refresh admission is about the publisher-owned daemon runtime. The
       // compiler owns `dist`; a failed current compile must not invalidate an
       // otherwise coherent last-green daemon package.
-      runtimeRoots: ['.happier-plugin'],
+      runtimeRoots: ['.happier-plugin', '.happier-plugin-build'],
     });
   };
   return {

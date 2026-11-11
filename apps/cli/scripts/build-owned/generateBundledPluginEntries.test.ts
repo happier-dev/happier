@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
@@ -600,12 +600,12 @@ describe('bundled plugin installed runtime publication', () => {
 
       const expectedFiles = new Map([
         ['.happier-plugin/plugin.json', Buffer.from('{"id":"happier.agent.declarative"}\n')],
-        ['.happier-plugin/daemon.js', Buffer.from('current daemon\n')],
+        ['.happier-plugin-build/daemon.js', Buffer.from('current daemon\n')],
       ]);
       await expect(async () => await reconcileBundledPluginInstalledRuntime({
         packageRoot,
         pluginPackageId: 'declarative',
-        daemonRelativePath: '.happier-plugin/daemon.js',
+        daemonRelativePath: '.happier-plugin-build/daemon.js',
         expectedFiles,
         mode: 'check',
       })).rejects.toThrow(/generated runtime/u);
@@ -613,12 +613,15 @@ describe('bundled plugin installed runtime publication', () => {
       await reconcileBundledPluginInstalledRuntime({
         packageRoot,
         pluginPackageId: 'declarative',
-        daemonRelativePath: '.happier-plugin/daemon.js',
+        daemonRelativePath: '.happier-plugin-build/daemon.js',
         expectedFiles,
         mode: 'write',
       });
 
-      expect(readFileSync(join(runtimeRoot, 'daemon.js'), 'utf8')).toBe('current daemon\n');
+      expect(readFileSync(join(packageRoot, '.happier-plugin-build/daemon.js'), 'utf8')).toBe('current daemon\n');
+      expect(existsSync(join(runtimeRoot, 'daemon.js'))).toBe(false);
+      expect(readdirSync(runtimeRoot, { recursive: true }).filter(entry => !['author-notes.txt', 'plugin.json', '.happier-chunks', 'agent', 'agent/runtime'].includes(String(entry)))).toEqual([]);
+      expect(existsSync(join(packageRoot, '.happier-plugin-build/.happier-daemon-outputs.json'))).toBe(true);
       expect(existsSync(join(runtimeRoot, 'agent/runtime/factory.js'))).toBe(false);
       expect(existsSync(join(runtimeRoot, '.happier-chunks/retired.js'))).toBe(false);
       expect(readFileSync(join(runtimeRoot, 'plugin.json'), 'utf8'))
@@ -631,7 +634,7 @@ describe('bundled plugin installed runtime publication', () => {
       await expect(reconcileBundledPluginInstalledRuntime({
         packageRoot,
         pluginPackageId: 'declarative',
-        daemonRelativePath: '.happier-plugin/daemon.js',
+        daemonRelativePath: '.happier-plugin-build/daemon.js',
         expectedFiles,
         mode: 'check',
       })).resolves.toBeUndefined();

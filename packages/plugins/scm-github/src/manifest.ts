@@ -553,7 +553,7 @@ function createGithubPlugin(): GithubPlugin {
   displayName: 'GitHub SCM hosting provider',
   description: 'Detects GitHub remotes and provides GitHub repository operations.',
   brand: { iconResourceId: GITHUB_BRAND_RESOURCE_ID, monochrome: true },
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [], configuration: { automationEventSources: true } },
   workflows: { [GITHUB_PREVIEW_STATUS_WORKFLOW_ID_V1]: GITHUB_PREVIEW_STATUS_WORKFLOW_V1 },
   hostAccess: {

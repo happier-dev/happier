@@ -14,7 +14,7 @@ export const plugin = definePlugin({
   id: 'happier.deploy.neon',
   version: '0.0.0',
   displayName: 'Neon deployments',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
   hostAccess: { required: [
     { id: 'neon-api', capability: 'network', reason: 'Read the selected Neon resources and manage approved projects and preview branches.',

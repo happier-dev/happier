@@ -79,7 +79,7 @@ export const CRABBOX_PLUGIN = definePlugin({
     "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
-  }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  }, entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: processAccess, capability: 'process', reason: 'Operate the exact native retained lease from private non-repository staging.',
       scope: { executables: [{ kind: 'managedDependency', id: CRABBOX_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],

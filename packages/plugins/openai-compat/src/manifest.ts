@@ -37,7 +37,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   entrypoints: {
-    daemon: './.happier-plugin/daemon.js',
+    daemon: './.happier-plugin-build/daemon.js',
     development: './src/index.ts',
   },
   hostAccess: { required: [], optional: [] },

@@ -16,7 +16,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'CodeRabbit review engine',
   description: 'Runs CodeRabbit as a review-only execution engine.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'coderabbit-workspace',

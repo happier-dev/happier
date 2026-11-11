@@ -13,7 +13,7 @@ const sources = TriageSourcesContributionProtocolV1;
 export const JIRA_PLUGIN = definePlugin({
     id: JIRA_PLUGIN_ID, version: '0.0.0', displayName: 'Jira',
     description: 'Jira Cloud issues, native workflows and linked work in PRs, Issues & Tasks.',
-    entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     hostAccess: { required: [
         { id: JIRA_ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use the exact selected Jira Cloud account.',
             scope: { serviceRefs: [JIRA_ACCOUNT_PURPOSE], operations: ['select', 'use'], materializationKinds: ['httpHeaders'] } },

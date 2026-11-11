@@ -35,7 +35,7 @@ export const MACHINE_PROVISIONER = {
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Superserve Machines' satisfies PluginLocalizedStringV2,
   description: 'Create and manage Superserve sandboxes as ordinary Happier Machines.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage the selected Superserve sandbox.',
       scope: { targets: [API_ORIGIN, GUEST_ORIGIN].map(origin => ({ kind: 'fixedOrigin' as const, origin })), methods: ['GET', 'POST', 'DELETE'] } },

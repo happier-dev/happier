@@ -5132,15 +5132,27 @@ ruling, 2026-11-10). View-only access gains no posting authority. The Channels
 destination reader distinguishes presentation from routing: the server keeps
 foreign message local IDs private, so shared approval presentation follows
 readable sealed `externalSource` provenance and uses the imported author's public
-Account profile and admitted integration descriptor where available. It does not
-read the other Account's bindings or connection names. Own-Account presentation
-retains the exact binding/connection reader. Both page and inline approval cards
-consume the same destination result; neither projection grants send authority.
+Account profile and admitted integration descriptor where available. Own-Account
+messages use the same readable provenance; only historical messages without it
+retain the exact local binding/connection name reader. Shared presentation never
+reads another Account's bindings or connection names. Both page and inline
+approval cards consume the same destination result. Missing names show
+Unavailable while optional display reads are pending or fail; no projection
+grants send authority.
 Pending imported `discussion.post` approvals use the shared approval title owner
 in Inbox, Needs you, the review page and retained views. The title reads sealed
 conversation provenance before publication, with public integration package and
 Account names from their scoped presentation owners; it never reads Channel
 bindings or copies message bodies into the row. Authored titles remain authored.
+
+Channel Session inputs carry the immediate sender's readable name separately
+from an optional source `displayNameSnapshot` (Channel kind and conversation
+title). The shared Channels ingress producer reads the admitted provider
+descriptor and binding endpoint name for both ordinary input and a new Session's
+initial prompt. The host copies this descriptive snapshot into durable
+`pluginSession` provenance. Transcript bylines consume that snapshot and use a
+generic integration label when it is absent; raw plugin ids remain technical
+identity. These names neither select a destination nor grant approval authority.
 
 In unreleased 0.3 source, `actions.getCurrentExecutionRouting()` reads the
 invoking plugin's own current Home/Machine/plugin routing through that same
@@ -12077,6 +12089,15 @@ composition. Plugin authors use `PageHeader` and `BotFace` without adopting that
 screen's release, sharing and provenance model.
 
 ## Generated-output maintenance in development
+
+Bundled executable packages declare their generated daemon, runner leaves and chunks
+under `.happier-plugin-build/`, outside compiler-owned `dist/` and author source.
+The internal `.happier-daemon-outputs.json` ownership record lives there too and
+is excluded from portable plugin archives. The fixed public manifest remains
+`.happier-plugin/plugin.json`; the loader follows its declared entrypoints, including
+older packages whose runtime remains under `.happier-plugin/`. Hosted-web author
+source stays under `.happier-plugin/ui/hosted-web/`. Package `files` inventories
+include the generated runtime directory when shipping these executable leaves.
 
 The canonical bundled-plugin publisher isolates per-plugin source and artifact
 failures in development writes. Healthy packages publish their new manifests;

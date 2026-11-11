@@ -279,7 +279,7 @@ function createTriagePlugin(): TriagePlugin {
         picker: 'comparison-picker',
       },
     },
-    entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     hostAccess: {
       required: [{
         id: 'account-storage',

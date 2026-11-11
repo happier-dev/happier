@@ -38,7 +38,7 @@ export const plugin = definePlugin({
     ui: { renderers: [{ id: 'health-setup', kind: 'reactNative', artifact: 'health-setup',
         requiredHostMethods: ['settleEphemeralInput', 'executeAction', 'writeClipboard'] }],
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
-    entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
     actions: { ...monitorActions, ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
@@ -110,7 +110,13 @@ export const plugin = definePlugin({
         action: `health/${kind}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])]),
     events: { ...Object.fromEntries(monitorKinds.map(kind => [monitorDefinitions[kind].observedEventId, { declaration: {
         kind: 'event' as const, title: `${monitorDefinitions[kind].title} observation received`, payloadSchema: monitorObserved.jsonSchema,
-    } }])), ...deploymentEvents, ...managedSetupEvents, ...mcpUpdateEvents, ...machinePresenceEvents, ...Object.fromEntries(([
+    } }])), ...Object.fromEntries(monitorKinds.map(kind => [`watch-${monitorDefinitions[kind].observedEventId}`, {
+        declaration: { kind: 'subscription' as const, target: { kind: 'plugin' as const,
+            event: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: monitorDefinitions[kind].observedEventId } } },
+        // Subscription declarations require activation registration. Delivery
+        // work belongs to the observer's disposable subscribeWake lifetime.
+        handler() {},
+    }])), ...deploymentEvents, ...managedSetupEvents, ...mcpUpdateEvents, ...machinePresenceEvents, ...Object.fromEntries(([
         [HEALTH_STATUS_EVENT, 'healthStatus', 'Health status changed', 'A saved health check failed or recovered.'],
         [HEALTH_CHECK_FAILED_EVENT, 'healthCheckFailed', 'Health check failed', 'A saved health check entered a failed condition.'],
         [HEALTH_CHECK_RECOVERED_EVENT, 'healthCheckRecovered', 'Health check recovered', 'A failed saved health check returned to healthy.'],

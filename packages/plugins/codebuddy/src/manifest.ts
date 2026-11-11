@@ -15,7 +15,7 @@ const { id: settingsId, ...settingsDeclaration } = CODEBUDDY_AGENT_SETTINGS_CONT
 
 export const CODEBUDDY_PLUGIN = definePlugin({
   id: 'happier.agent.codebuddy', version: '0.0.0', displayName: 'CodeBuddy',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{
     id: 'codebuddy-process', capability: 'process', reason: 'Run the declared CodeBuddy CLI executable.',
     scope: { envKeys: ['CODEBUDDY_API_KEY', 'CODEBUDDY_AUTH_TOKEN', 'CODEBUDDY_BASE_URL', 'CODEBUDDY_CUSTOM_HEADERS',

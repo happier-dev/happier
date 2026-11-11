@@ -130,7 +130,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
   version: '0.0.0',
   displayName: 'Boat Machines',
   description: 'Create and manage Boat sandboxes as ordinary Happier Machines.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate the exact reviewed Boat sandbox.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://boat.dev' }], methods: BOAT_NATIVE_HTTP_METHODS } },

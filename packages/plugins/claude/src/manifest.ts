@@ -126,7 +126,7 @@ export const CLAUDE_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'Claude',
   description: 'Claude Code coding agent.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [
       {

@@ -43,7 +43,7 @@
   "files": [
     "assets",
     "dist",
-    ".happier-plugin",
+    ".happier-plugin", ".happier-plugin-build",
     "package.json"
   ],
   "scripts": {

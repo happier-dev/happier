@@ -65,11 +65,13 @@ __pycache__/
 # The runtime stays outside the compiler-owned `dist/` tree so the TypeScript compiler and
 # the bundled-plugin publisher never own the same output path. The published tree is the
 # daemon bundle, its `.happier-chunks/`, and one staged leaf per session-runner factory at
-# author-declared relative paths, so ignore the complete published tree.
-/packages/plugins/*/.happier-plugin/*
+# author-declared relative paths in the generator-owned sibling directory.
+/packages/plugins/*/.happier-plugin-build/
+/packages/plugins/*/.happier-plugin/plugin.json
 # Local daemon authoring receipts can also be emitted beside example and
 # third-party plugin manifests; the manifest remains source, the receipt does not.
 **/.happier-plugin/.happier-daemon-outputs.json
+**/.happier-plugin-build/.happier-daemon-outputs.json
 
 # apps/ui prebuild projection of exact packaged Plugin UI artifact bytes.
 # Platform-specific siblings are retired and intentionally not ignored.

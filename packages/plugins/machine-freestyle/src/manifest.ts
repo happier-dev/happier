@@ -34,7 +34,7 @@ export const MACHINE_PROVISIONER = {
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Freestyle Machines' satisfies PluginLocalizedStringV2,
   description: 'Create and manage Freestyle VMs as ordinary Happier Machines.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage the selected Freestyle VM.',
       scope: { targets: ORIGINS.map(origin => ({ kind: 'fixedOrigin' as const, origin })), methods: ['GET', 'POST', 'PUT', 'DELETE'] } },

@@ -100,7 +100,7 @@ export const PLUGIN = definePlugin({
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  description: 'Native Fly Machine control and private buffered bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Native Fly Machine control and private buffered bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate exact reviewed Fly resources.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.machines.dev' }, { kind: 'fixedOrigin', origin: 'https://api.fly.io' }], methods: ['GET', 'POST', 'DELETE'] } },

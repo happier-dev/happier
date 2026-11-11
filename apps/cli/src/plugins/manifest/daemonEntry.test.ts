@@ -1,8 +1,10 @@
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { loadPluginModule } from '../runtime/loadPluginModule';
 
 import { resolvePluginDaemonEntryPath } from './daemonEntry';
 import { normalizePluginManifestV2 } from './normalize';
@@ -32,6 +34,20 @@ function createManifestWithEntrypoints(entrypoints?: Readonly<{
 }
 
 describe('resolvePluginDaemonEntryPath', () => {
+    it.each(['.happier-plugin', '.happier-plugin-build'])('loads a manifest-declared %s package with its sibling chunk', async (runtimeDir) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-layout-load-'));
+        try {
+            await writeFileFixture(join(root, 'package.json'), '{"type":"module"}');
+            await writeFileFixture(join(root, runtimeDir, 'chunk.js'), 'export const value = "loaded";');
+            await writeFileFixture(join(root, runtimeDir, 'daemon.js'), 'export { value } from "./chunk.js";');
+            const resolved = await resolvePluginDaemonEntryPath({ pluginRootPath: root,
+                manifest: createManifestWithEntrypoints({ daemon: './' + runtimeDir + '/daemon.js' }) });
+            if (!resolved.ok || !resolved.daemonEntryPath) throw new Error('Manifest entry did not resolve');
+            const loaded = await loadPluginModule({ source: { kind: 'file_backed', entryPath: resolved.daemonEntryPath,
+                committedAuthorization: { pluginId: 'acme.sample', immutableGenerationId: root } } });
+            expect(loaded.value).toBe('loaded');
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it('fails closed when the daemon entry escapes the plugin root via path traversal', async () => {
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-root-'));
         const outsideFile = join(pluginRoot, '..', 'outside.mjs');

@@ -56,7 +56,7 @@ export const APP_CONTEXT_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'App context',
   description: 'Attach captured app context and transcript annotations to an Agent message.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [], optional: [] },
   resources: Object.fromEntries(annotationLocales.map(locale => [`i18n-${locale.toLowerCase()}`, {
     kind: 'asset' as const, path: `assets/i18n/${locale}.json`, contentType: 'application/json',

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 
-const DEFAULT_RUNTIME_ROOTS = Object.freeze(['dist', '.happier-plugin']);
+const DEFAULT_RUNTIME_ROOTS = Object.freeze(['dist', '.happier-plugin', '.happier-plugin-build']);
 
 function portableRelativePath(root, path) {
   return relative(root, path).split(sep).join('/');

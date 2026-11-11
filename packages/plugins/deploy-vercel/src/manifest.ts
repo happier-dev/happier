@@ -6,7 +6,7 @@ import { targetInputTypes, targetOptionsResources } from './platform/options.js'
 
 export const plugin = definePlugin({
   ...pluginIdentity,
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
   hostAccess: { required: [{ id: 'vercel-api', capability: 'network', reason: 'Inspect the selected Vercel project and manage its reviewed deployments.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.vercel.com' }], methods: ['GET', 'POST', 'PATCH', 'DELETE'] },

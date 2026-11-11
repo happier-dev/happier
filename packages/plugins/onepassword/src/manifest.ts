@@ -37,7 +37,7 @@ export const onePasswordSecretSource: PluginSecretSourceRuntimeV1 = {
 export const ONEPASSWORD_PLUGIN = definePlugin({
     id: 'happier.secret-source.onepassword', version: '0.0.0', displayName: '1Password',
     description: 'Link, read and store Saved Secret fields using 1Password CLI on this Machine.',
-    entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     hostAccess: { required: [{
         id: 'onepassword-read', capability: 'process', reason: 'List, read and store selected 1Password fields.',
         scope: { envKeys: ['OP_SERVICE_ACCOUNT_TOKEN'], executables: [{ kind: 'systemTool', id: 'op' }] },

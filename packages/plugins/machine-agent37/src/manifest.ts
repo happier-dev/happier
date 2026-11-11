@@ -35,7 +35,7 @@ export const MACHINE_PROVISIONER = {
 
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Agent37 Machines' satisfies PluginLocalizedStringV2, description: MACHINE_PROVISIONER.description,
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage Agent37 machines and install the portable guest runtime.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.agent37.com' }, { kind: 'fixedOrigin', origin: 'https://sandbox.agent37.app' }], methods: ['GET', 'POST', 'DELETE'] } },

@@ -40,7 +40,7 @@ function createSlackPlugin() {
   return definePlugin({
     id: SLACK_PLUGIN_ID, version: '0.0.0', displayName: 'Slack Channels',
     description: 'Connects Slack conversations to Happier Channels.',
-    entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'channel-state' }] } },
     hostAccess: { required: [
       { id: 'slack-web-api', capability: 'network', reason: 'Verify Slack identities and conversations and send messages through the Web API.',

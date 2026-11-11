@@ -67,7 +67,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  description: 'Native local Docker Sandboxes with retained names and private bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Native local Docker Sandboxes with retained names and private bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate the exact reviewed Docker Sandbox.',
     scope: { executables: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }] },
   }], optional: [] },

@@ -143,7 +143,7 @@ function createDiscordPlugin() {
   displayName: 'Discord Channels',
   description: 'Connects Discord conversations to Happier Channels.',
   activation: { events: [], configuration: { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'channel-state' }] } },
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   brand: { iconResourceId: DISCORD_BRAND_RESOURCE_ID },
   hostAccess: {
     required: [

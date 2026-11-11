@@ -81,7 +81,7 @@ function syncBundledWorkspaceReferencedFiles({ srcPackageDir, destPackageDir, pa
   const declaredFiles = hasInjectedFileSystemOps(fsOps)
     ? new Set() : new Set(resolveWorkspacePackageDeclaredFileEntries(srcPackageDir));
   if (!hasInjectedFileSystemOps(fsOps)) {
-    for (const path of ['README.md', '.happier-plugin', ...declaredFiles,
+    for (const path of ['README.md', '.happier-plugin', '.happier-plugin-build', ...declaredFiles,
       ...readBundledPluginPackageResourceRelativePaths(srcPackageDir)]) contentTargets.add(path);
   }
   for (const relPath of contentTargets) {
@@ -245,7 +245,7 @@ function snapshotBundlePath(path, cache, { dereferenceRootDir, active = new Set(
 }
 
 function bundleInputIdentity({ srcPackageDir, destPackageDir, repoRoot, cache, raw, resolveDeclaredFiles, pruneStale, seen, proof }) {
-  const targets = new Set(['dist', 'README.md', '.happier-plugin']);
+  const targets = new Set(['dist', 'README.md', '.happier-plugin', '.happier-plugin-build']);
   const referenced = new Set();
   for (const field of ['main', 'module', 'types', 'exports', 'imports']) {
     collectPackageJsonRelativeFileTargets(omitWorkspaceSourceCondition(raw[field]), referenced);

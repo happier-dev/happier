@@ -12,7 +12,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
   },
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [], optional: [] },
   providers: {
     openrouter: { declaration: OPENROUTER_PROVIDER_CONTRIBUTION, requestCostParser: parseOpenRouterRequestCost, usageParsers: {

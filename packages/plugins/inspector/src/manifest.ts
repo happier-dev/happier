@@ -120,7 +120,7 @@ export const INSPECTOR_PLUGIN = definePlugin({
   displayName: 'Plugin Inspector',
   description: 'First-party Plugin SDK inspector for installed plugin state and reload diagnostics.',
   brand: { iconResourceId: INSPECTOR_BRAND_RESOURCE_ID },
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [],
     optional: [],

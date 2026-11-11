@@ -17,7 +17,7 @@ export const plugin = definePlugin({
   id: pluginId,
   version: '0.0.0',
   displayName: 'Backup destinations',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
   hostAccess: { required: [], optional: [] },
   backupDestinations: {

@@ -139,6 +139,14 @@ evaluates that module once, validates the canonical projection, and writes
 `.happier-plugin/plugin.json` into the archive. Installed and marketplace
 discovery read that generated JSON without executing author code.
 
+In 0.3 development, bundled plugin packages keep generated daemon, runner and
+chunk files in `.happier-plugin-build/` and include that directory in their
+package `files` inventory. The manifest stays at `.happier-plugin/plugin.json`
+and declares the executable path; existing packages with other declared paths
+continue to load. Hosted-web author source stays in
+`.happier-plugin/ui/hosted-web/<artifact-id>/`. The internal daemon-output
+ownership record is build bookkeeping and is excluded from portable archives.
+
 `hdev plugins create my-plugin --id com.example.my-plugin` generates exactly
 this `src/index.ts`. It uses the code-defined authoring helper and exports the
 ordinary named `manifest` and `activate` ABI:

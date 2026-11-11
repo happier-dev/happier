@@ -11,7 +11,7 @@ import { DROID_CONNECTED_ACCOUNT_PURPOSES, DROID_CONNECTED_ACCOUNT_LAUNCH, prepa
 
 export const DROID_PLUGIN = definePlugin({
   id: 'happier.agent.droid', version: '0.0.0', displayName: 'Factory Droid',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{
     id: 'droid-process', capability: 'process', reason: 'Run the declared Factory Droid CLI executable.',
     scope: { envKeys: [...DROID_PROVIDER_OWNED_ENV_KEYS, DROID_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor.nativeHome.environmentKey], executables: [{ kind: 'systemTool', id: DROID_ACP_COMMAND.toolId }] },

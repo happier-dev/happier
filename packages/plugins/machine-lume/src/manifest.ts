@@ -95,7 +95,7 @@ export const LUME_PLUGIN = definePlugin({
     "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
-  }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  }, entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: processAccess, capability: 'process', reason: 'Install the public SSH key over OpenSSH and inspect the reviewed local Lume guest.',
       scope: { executables: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }, { kind: 'systemTool', id: 'ssh' }] } },
@@ -197,7 +197,7 @@ export const LUME_PLUGIN = definePlugin({
           const operation = lumeOperationForLaunch(input.launch, input.managedId);
           return operation.success ? { kind: 'pending' as const, nativeOperationRef: {
             contributionRef: { pluginId: LUME_PLUGIN_ID, localId: LUME_PROVISIONER_ID }, schemaVersion: 1, value: operation.data } }
-            : { kind: 'rejected' as const, code: 'invalid_request' as const }; }
+            : { kind: 'rejected' as const, code: 'invalid_request' as const }; }); }
       },
     },
     reconcile: { ...defaults, title: 'Recover exact Lume guest acquisition', dangerLevel: 'safe',

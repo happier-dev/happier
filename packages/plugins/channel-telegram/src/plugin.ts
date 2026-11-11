@@ -59,7 +59,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   version: '0.0.0',
   displayName: 'Telegram Channels',
   description: 'Connects Telegram bot conversations to Happier Channels.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   brand: { iconResourceId: TELEGRAM_BRAND_RESOURCE_ID },
   hostAccess: {
     required: [

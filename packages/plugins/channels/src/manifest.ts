@@ -444,7 +444,7 @@ function createChannelsPlugin(): ChannelsPlugin {
       [SESSION_PULL_REQUEST_NOTIFICATION_CATEGORY_ID]: { kind: 'activity', title: 'Pull request updates', eventIds: [] },
     },
     brand: { iconResourceId: 'brand-icon', monochrome: true },
-    entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { accountCollections: [
       { pluginId: CHANNELS_PLUGIN_ID, collectionId: CHANNEL_STATE_COLLECTION_ID },
       { pluginId: CHANNELS_PLUGIN_ID, collectionId: CHANNEL_DELIVERIES_COLLECTION_ID },

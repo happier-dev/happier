@@ -44,7 +44,7 @@ export const MACHINE_PROVISIONER = {
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Vercel Machines',
   description: label('description'),
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   resources: Object.fromEntries(locales.map(locale => ['i18n-' + locale.toLowerCase(),
     { kind: 'asset' as const, path: 'assets/i18n/' + locale + '.json', contentType: 'application/json' }])),
   ui: { translations: locales.map(locale => ({ locale, resourceId: 'i18n-' + locale.toLowerCase() })) },

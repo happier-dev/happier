@@ -14,7 +14,7 @@ export const plugin = definePlugin({
   id: 'happier.deploy.supabase',
   version: '0.0.0',
   displayName: 'Supabase deployments',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
   hostAccess: { required: [{ id: 'supabase-api', capability: 'network', reason: 'Read the selected Supabase resources and manage approved projects and preview branches.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.supabase.com' }], methods: ['GET', 'POST', 'DELETE'] } },

@@ -75,7 +75,7 @@ export const CODEX_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'Codex',
   description: 'OpenAI Codex coding agent.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'codex-workspace',

@@ -631,6 +631,11 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
     resolve(params.tempDir, '.happier-plugin'),
   );
 
+  copyIfExists(
+    resolve(params.srcDir, '.happier-plugin-build'),
+    resolve(params.tempDir, '.happier-plugin-build'),
+  );
+
   const declaredFiles = new Set(resolveWorkspacePackageDeclaredFileEntries(params.srcDir));
   const files = params.includeFiles ?? ['README.md'];
   for (const f of files) {

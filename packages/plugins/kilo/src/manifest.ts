@@ -22,7 +22,7 @@ export const KILO_PLUGIN = definePlugin({
   id: 'happier.agent.kilo',
   version: '0.0.0',
   displayName: 'Kilo',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'kilo-workspace',

@@ -233,6 +233,8 @@ test('bootstrap publication preserves conditional package imports without compil
     mkdirSync(resolve(sourceDir, 'src/private'), { recursive: true });
     mkdirSync(resolve(sourceDir, 'assets'), { recursive: true });
     writeFileSync(resolve(sourceDir, 'assets/message.txt'), 'bootstrap resource\n');
+    mkdirSync(resolve(sourceDir, '.happier-plugin-build'), { recursive: true });
+    writeFileSync(resolve(sourceDir, '.happier-plugin-build/daemon.js'), 'export const runtime = true;');
     mkdirSync(resolve(sourceDir, '.happier-plugin'), { recursive: true });
     writeFileSync(resolve(sourceDir, '.happier-plugin/plugin.json'), JSON.stringify({
       contributes: { resources: [{ path: 'assets/message.txt' }] },
@@ -275,6 +277,7 @@ test('bootstrap publication preserves conditional package imports without compil
       syncBuiltinESMExports();
     }
     assert.equal(bodiesCopied, 0, 'unchanged bootstrap sync must not stage package bodies');
+    assert.equal(readFileSync(resolve(destinationDir, '.happier-plugin-build/daemon.js'), 'utf8'), 'export const runtime = true;');
     assert.equal(readFileSync(resolve(destinationDir, 'assets/message.txt'), 'utf8'), 'bootstrap resource\n');
     writeFileSync(resolve(sourceDir, 'assets/message.txt'), 'changed bootstrap resource\n');
     bootstrap.syncBundledWorkspacePackages({ repoRoot, packages: ['sdk'], hostApps: ['cli'] });

@@ -9,7 +9,7 @@
     ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
   },
-  "files": ["assets", "dist", ".happier-plugin", "package.json"],
+  "files": ["assets", "dist", ".happier-plugin", ".happier-plugin-build", "package.json"],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",

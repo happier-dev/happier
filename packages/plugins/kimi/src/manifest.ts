@@ -25,7 +25,7 @@ const regionConfiguration = {
 export const KIMI_PLUGIN = definePlugin({
   id: 'happier.agent.kimi',
   version: '0.0.0',
-  displayName: 'Kimi', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  displayName: 'Kimi', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'kimi-native-history',

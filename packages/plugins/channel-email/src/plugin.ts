@@ -23,7 +23,7 @@ function providerAction(
 
 export const emailPlugin = definePlugin({
   id: EMAIL_CHANNEL_PLUGIN_ID, version: '0.0.0', displayName: 'Email Channels',
-  description: 'Connects authenticated mailbox conversations to Happier Channels.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Connects authenticated mailbox conversations to Happier Channels.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: IMAP_SMTP_CREDENTIAL_PURPOSE, capability: 'connectedAccounts',
       reason: 'Authenticate the selected mailbox for IMAP and SMTP operations.',

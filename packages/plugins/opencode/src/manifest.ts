@@ -50,7 +50,7 @@ const {
 export const OPENCODE_PLUGIN = definePlugin({
   id: 'happier.agent.opencode',
   version: '0.0.0',
-  displayName: 'OpenCode', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  displayName: 'OpenCode', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'opencode-workspace',

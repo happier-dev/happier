@@ -20,11 +20,19 @@ import { realpathNearestExistingAncestor } from '@/utils/path/physicalAncestorPa
 
 /**
  * The authoring bundler is the owner of this small transition record. It is
- * deliberately kept beside the canonical plugin manifest so a descriptor
+ * kept in the generated runtime directory so a descriptor
  * build can remove only executable files emitted by the preceding bundle.
  */
 export const PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH =
+  '.happier-plugin-build/.happier-daemon-outputs.json';
+
+// Read and retire ownership written before runtime outputs moved out of author source.
+const LEGACY_PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH =
   '.happier-plugin/.happier-daemon-outputs.json';
+const OUTPUT_MANIFEST_PATHS = [
+  PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH,
+  LEGACY_PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH,
+] as const;
 
 const PLUGIN_DAEMON_OUTPUT_MANIFEST_VERSION = 1;
 
@@ -85,10 +93,9 @@ function normalizeOutputRelativePath(value: unknown): string {
   const normalizedMarkerPath = process.platform === 'win32'
     ? normalized.toLowerCase()
     : normalized;
-  const markerPath = process.platform === 'win32'
-    ? PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH.toLowerCase()
-    : PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH;
-  if (normalizedMarkerPath === markerPath) {
+  if (OUTPUT_MANIFEST_PATHS.some(path => normalizedMarkerPath === (
+    process.platform === 'win32' ? path.toLowerCase() : path
+  ))) {
     throw new Error('Plugin daemon output manifest cannot claim its own path');
   }
   return normalized;
@@ -103,8 +110,8 @@ function normalizeOutputPaths(values: unknown): readonly string[] {
   return Object.freeze(outputs);
 }
 
-function manifestPath(projectRoot: string): string {
-  return join(projectRoot, ...PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH.split('/'));
+function manifestPath(projectRoot: string, relativePath: string = PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH): string {
+  return join(projectRoot, ...relativePath.split('/'));
 }
 
 function parseManifest(raw: string): PluginDaemonOutputManifest {
@@ -132,8 +139,14 @@ function parseManifest(raw: string): PluginDaemonOutputManifest {
 export async function readPluginDaemonOutputManifest(
   projectRootInput: string,
 ): Promise<PluginDaemonOutputManifest | null> {
+  const manifests = await Promise.all(OUTPUT_MANIFEST_PATHS.map(path => readOutputManifest(projectRootInput, path)));
+  const present = manifests.filter(manifest => manifest !== null);
+  return present.length ? { version: 1, outputs: normalizeOutputPaths(present.flatMap(manifest => manifest.outputs)) } : null;
+}
+
+async function readOutputManifest(projectRootInput: string, relativePath: string): Promise<PluginDaemonOutputManifest | null> {
   const projectRoot = resolve(projectRootInput);
-  const outputManifestPath = manifestPath(projectRoot);
+  const outputManifestPath = manifestPath(projectRoot, relativePath);
   await assertContainedNoFollowPath({
     projectRoot,
     targetPath: outputManifestPath,
@@ -179,16 +192,20 @@ export async function writePluginDaemonOutputManifest(params: Readonly<{
  * JavaScript under dist and cannot be inferred from a package files glob.
  */
 export async function cleanupPluginDaemonOutputManifest(projectRootInput: string): Promise<void> {
+  for (const path of OUTPUT_MANIFEST_PATHS) await cleanupOutputManifest(projectRootInput, path);
+}
+
+async function cleanupOutputManifest(projectRootInput: string, relativePath: string): Promise<void> {
   const projectRoot = resolve(projectRootInput);
   // No marker means no owned executable output to retire. Check that cheap
   // lexical path first so callers that have not created a project tree yet do
   // not turn the absence of ownership into a filesystem error.
-  if (!existsSync(manifestPath(projectRoot))) return;
+  if (!existsSync(manifestPath(projectRoot, relativePath))) return;
   const physicalProjectRoot = await realpath(projectRoot);
-  const manifest = await readPluginDaemonOutputManifest(projectRoot);
+  const manifest = await readOutputManifest(projectRoot, relativePath);
   if (!manifest) return;
 
-  const outputManifestPath = manifestPath(projectRoot);
+  const outputManifestPath = manifestPath(projectRoot, relativePath);
   await assertContainedNoFollowPath({
     projectRoot,
     targetPath: outputManifestPath,
@@ -231,6 +248,5 @@ export async function cleanupPluginDaemonOutputManifest(projectRootInput: string
 }
 
 export function isPluginDaemonOutputManifestPath(relativePath: string): boolean {
-  return relativePath.replaceAll('\\', '/')
-    === PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH;
+  return OUTPUT_MANIFEST_PATHS.some(path => path === relativePath.replaceAll('\\', '/'));
 }

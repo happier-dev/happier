@@ -59,7 +59,7 @@ export const MODAL_PLUGIN = definePlugin({
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  description: 'Finite Modal Sandboxes with private native bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Finite Modal Sandboxes with private native bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{ id: MODAL_ACCOUNT_PURPOSE, capability: 'connectedAccounts',
     reason: 'Use the exact reviewed Modal token and profile.',
     scope: { serviceRefs: [MODAL_ACCOUNT_ID], operations: ['select', 'use'], materializationKinds: ['environment'] },
@@ -111,7 +111,9 @@ export const MODAL_PLUGIN = definePlugin({
             if (input.managedId) return { kind: 'pending' as const, nativeOperationRef: {
               contributionRef: { pluginId: MODAL_PLUGIN_ID, localId: MODAL_PROVISIONER_ID }, schemaVersion: 1,
               value: { appReference: input.launch.appReference, managedId: input.managedId },
-            } } : { kind: 'unknown' as const, recovery: { reference: input.launch.appReference, reason } };
+            } };
+            return { kind: 'unknown' as const, recovery: { reference: input.launch.appReference, reason } };
+          });
         }
       } },
     reconcile: { ...defaults, title: 'Recover retained Modal Sandbox', dangerLevel: 'safe',

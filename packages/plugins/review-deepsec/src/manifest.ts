@@ -18,7 +18,7 @@ export const DEEPSEC_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'DeepSec review engine',
   description: 'Runs DeepSec as a review and security-review execution engine.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'deepsec-workspace',

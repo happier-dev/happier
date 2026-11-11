@@ -75,7 +75,7 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
 
 export const DEVCONTAINER_PLUGIN = definePlugin({
   id: DEVCONTAINER_PLUGIN_ID, version: '0.0.0', displayName: 'Docker container Machines' satisfies PluginLocalizedStringV2,
-  description: 'Ordinary managed children on their physical Docker controller.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Ordinary managed children on their physical Docker controller.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Realize and manage the reviewed Devcontainer on this controller.',
     scope: { executables: [{ kind: 'managedDependency', id: 'docker' }, { kind: 'managedDependency', id: 'podman' }, { kind: 'managedDependency', id: devcontainerDependencyId }] } }], optional: [] },
   managedDependencies: {

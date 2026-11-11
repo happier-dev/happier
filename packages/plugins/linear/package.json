@@ -15,7 +15,7 @@
     "./happier-plugin-ui/linear-detail-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/linear-sources-native": "./src/ui/settings.tsx"
   },
-  "files": ["dist", ".happier-plugin", "package.json", "assets"],
+  "files": ["dist", ".happier-plugin", ".happier-plugin-build", "package.json", "assets"],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",

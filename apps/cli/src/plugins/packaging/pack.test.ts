@@ -236,6 +236,39 @@ async function writeBundledFirstPartyDescriptorPackFixture(repoRoot: string): Pr
 }
 
 describe('packLocalPlugin', () => {
+  it('packs the generated runtime closure and authored hosted-web source without either ownership marker', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-relocated-pack-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'plugin.tgz');
+    try {
+      const manifest = createPluginManifestV2Fixture({ entrypoints: { daemon: './.happier-plugin-build/daemon.js' } });
+      const manifestPath = await writeDescriptorPackFixture(root, manifest);
+      await mkdir(join(root, '.happier-plugin-build'), { recursive: true });
+      await mkdir(join(root, '.happier-plugin/ui/hosted-web/main'), { recursive: true });
+      await writeFile(join(root, '.happier-plugin/ui/hosted-web/main/index.html'), '<main>Author source</main>');
+      await writeFile(join(root, '.happier-plugin-build/daemon.js'), 'export { value } from "./chunk.js";');
+      await writeFile(join(root, '.happier-plugin-build/chunk.js'), 'export const value = "packed";');
+      for (const dir of ['.happier-plugin', '.happier-plugin-build']) {
+        await writeFile(join(root, dir, '.happier-daemon-outputs.json'), '{"version":1,"outputs":[]}');
+      }
+      await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'happier-relocated-pack', version: '1.0.0',
+        type: 'module', keywords: ['happier-plugin'], happier: { manifest: '.happier-plugin/plugin.json' },
+        files: ['.happier-plugin', '.happier-plugin-build'] }));
+      const result = await packLocalPlugin({ locator: manifestPath, outPath: archivePath });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      const entries: string[] = [];
+      await tar.t({ file: archivePath, onentry(entry) { entries.push(entry.path); } });
+      expect(entries).toEqual(expect.arrayContaining(['package/.happier-plugin/plugin.json',
+        'package/.happier-plugin-build/daemon.js', 'package/.happier-plugin-build/chunk.js',
+        'package/.happier-plugin/ui/hosted-web/main/index.html']));
+      expect(entries.filter(path => path.endsWith('.happier-daemon-outputs.json'))).toEqual([]);
+      const extracted = join(parent, 'extracted');
+      await mkdir(extracted);
+      await tar.x({ file: archivePath, cwd: extracted });
+      const loaded = await import(pathToFileURL(join(extracted, 'package/.happier-plugin-build/daemon.js')).href);
+      expect(loaded.value).toBe('packed');
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
   it('stops an already canceled publication before creating an archive', async () => {
     await expect(packLocalPlugin({
       locator: '/unused/canceled-publication', publication: {}, signal: AbortSignal.abort(),
@@ -420,6 +453,7 @@ describe('packLocalPlugin', () => {
         'export const authorOwned = true;\n',
         'utf8',
       );
+      await mkdir(join(root, '.happier-plugin-build'), { recursive: true });
       await writeFile(
         join(root, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH),
         `${JSON.stringify({ version: 1, outputs: ['dist/source-owned.js'] })}\n`,

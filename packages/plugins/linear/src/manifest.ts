@@ -11,7 +11,7 @@ const sources = TriageSourcesContributionProtocolV1;
 export const LINEAR_PLUGIN = definePlugin({
   id: LINEAR_PLUGIN_ID, version: '0.0.0', displayName: 'Linear',
   description: 'Live Linear team issues in PRs, Issues & Tasks.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'linear-graphql', capability: 'network', reason: 'Read and edit Linear issues in the included teams.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: LINEAR_ORIGIN }], methods: ['POST'] } },

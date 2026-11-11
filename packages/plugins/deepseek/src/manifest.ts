@@ -8,7 +8,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   version: '0.0.0',
   displayName: 'DeepSeek',
   description: 'Use DeepSeek models through Anthropic- or OpenAI-compatible agents.',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },

@@ -2320,7 +2320,11 @@ export async function reconcileBundledPluginInstalledRuntime(params: Readonly<{
     for (const retiredUnmarkedOutputPath of retiredUnmarkedOutputPaths) {
       rmSync(retiredUnmarkedOutputPath, { force: true });
     }
-    for (const [relativePath, bytes] of params.expectedFiles) {
+    // Materialize executable leaves before publishing the manifest that names them.
+    const publicationFiles = [...params.expectedFiles].sort(([left], [right]) => (
+      Number(left === BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH) - Number(right === BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH)
+    ));
+    for (const [relativePath, bytes] of publicationFiles) {
       const installedPath = resolve(params.packageRoot, ...relativePath.split('/'));
       mkdirSync(dirname(installedPath), { recursive: true });
       writeFileSync(installedPath, bytes);

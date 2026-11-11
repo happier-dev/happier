@@ -24,7 +24,7 @@ export const GEMINI_PLUGIN = definePlugin({
   id: GEMINI_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'Gemini',
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: {
     required: [{
       id: 'gemini-native-history', capability: 'filesystem', reason: 'Read native Gemini conversation history.',
