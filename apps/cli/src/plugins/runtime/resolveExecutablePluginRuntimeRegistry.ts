@@ -23,7 +23,7 @@ import { projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessio
 import type { PluginUiReadStoredImageResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionPresentationMetadataView, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { sessionMediaToStructuredImageInput, verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -3221,20 +3221,40 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const accountTarget = typeof definition?.execution === 'object' && definition.execution !== null
             && 'target' in definition.execution && definition.execution.target === 'account';
         const requester = request.requesterAccount;
-        const accountAttempt = !params?.accountExecution && accountTarget && requester
+        // Local daemon/plugin ingress uses this runtime's Account. A received
+        // external invocation must retain its admitted requester instead.
+        const localAccountCredentials = !request.approvalContext?.externalActionExecutionAuthorization
+            && !request.approvalContext?.externalActionCredential
+            && !request.approvalContext?.rpcSessionAuthorization ? sessionCredentials : null;
+        const accountCredentials = requester?.credentials ?? localAccountCredentials;
+        const accountOperation = requester ?? (localAccountCredentials ? savedSecretOperationContext : undefined);
+        const accountServerId = request.approvalContext?.serverId ?? sessionCredentialsServerId;
+        const accountSessionCrypto = !params?.accountExecution && accountTarget && accountCredentials
+            ? resolveSessionEncryptionContextFromCredentials(accountCredentials) : null;
+        const accountAttempt = !params?.accountExecution && accountTarget && accountCredentials
             && !request.captureExecutionOrigin && !request.expectedExecutionOrigin && !request.expectedExecutionRouting
             ? await (await import('@/session/actions/executeAccountPluginAction')).executeAccountPluginAction({
                 host: {
-                    credentials: requester.credentials,
-                    serverHttpBaseUrl: requester.serverHttpBaseUrl,
-                    savedSecretOperationContext: requester,
-                    isCredentialCurrent: () => requester.isCurrent(request.signal),
+                    credentials: accountCredentials,
+                    serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? notificationServerHttpBaseUrl,
+                    serverId: accountServerId,
+                    ...(accountOperation ? { savedSecretOperationContext: accountOperation,
+                        isCredentialCurrent: () => accountOperation.isCurrent(request.signal) } : {}),
                     ...(params?.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
                 },
-                deps: {},
+                deps: (await import('@/session/actions/createCliActionDeps')).createCliActionDeps({
+                    token: accountCredentials.token,
+                    credentials: accountCredentials,
+                    sessionId: request.sessionId ?? '',
+                    ...(accountSessionCrypto ? { mode: 'e2ee' as const, ctx: accountSessionCrypto }
+                        : { mode: 'plain' as const, ctx: null }),
+                    serverId: accountServerId,
+                    serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? notificationServerHttpBaseUrl,
+                    ...(accountOperation ? { savedSecretOperationContext: accountOperation } : {}),
+                }),
                 actionId: formatQualifiedPluginActionId(request.action),
                 input: request.input,
-                context: { ...request.approvalContext, surface: 'plugin', authority: 'account_automation',
+                context: { ...request.approvalContext, serverId: accountServerId, surface: 'plugin', authority: 'account_automation',
                     expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
                     actionCaller: request.initiatingActionCaller,
                     ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}), signal: request.signal },

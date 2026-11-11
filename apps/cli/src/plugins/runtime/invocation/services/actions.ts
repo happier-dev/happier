@@ -61,6 +61,7 @@ export type PluginActionsServiceSeed = Readonly<{
     /** Durable source custody, projected only from host runtime ownership. */
     sourceCustody?: import('@happier-dev/protocol').PluginSourceCustodyV1;
     correlationId?: string;
+    requestId?: string;
     surface: PluginInvocationSurface;
     /** Host-stamped provenance from the invocation that created this service. */
     caller?: PluginInvocationCaller;
@@ -147,6 +148,7 @@ export function projectContributedActionExecuteResult(result: ActionExecuteResul
 }
 
 export type InvokeContributedAction = (params: Readonly<{
+    requestId?: string;
     expectedContributorOccurrenceId?: string;
     action: PluginContributionRef;
     /** `action.invoke` accepts omitted input; target validation retains that distinction. */
@@ -468,6 +470,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(caller.originSurface ? { originSurface: caller.originSurface } : {}),
             caller,
             initiatingActionCaller: actionCaller,
+            ...(params.seed.requestId === undefined ? {} : { requestId: params.seed.requestId }),
             ...(invocationContext ? { approvalContext: invocationContext } : {}),
             ...(params.seed.resolveAccountSourceMachine ? { resolveAccountSourceMachine: params.seed.resolveAccountSourceMachine } : {}),
             ...(captureExecutionOrigin ? { captureExecutionOrigin: true as const } : {}),
@@ -746,6 +749,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.externalActionExecutionAuthorization
                 ? { externalActionExecutionAuthorization: source.externalActionExecutionAuthorization } : {}),
             ...(source?.externalActionCredential ? { externalActionCredential: source.externalActionCredential } : {}),
+            ...(source?.rpcSessionAuthorization ? { rpcSessionAuthorization: source.rpcSessionAuthorization } : {}),
             ...(source?.externalActionTarget ? { externalActionTarget: source.externalActionTarget } : {}),
             ...(source?.signExternalActionApprovalInput
                 ? { signExternalActionApprovalInput: source.signExternalActionApprovalInput } : {}),
