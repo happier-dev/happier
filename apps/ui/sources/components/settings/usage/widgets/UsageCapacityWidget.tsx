@@ -226,9 +226,6 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const selections = useUsagePoolSelections(props.slice);
   const router = useRouter();
   const pooled = POOLED_SIZES.has(presentation?.size ?? '');
-  // Beside other widgets Limits answers one question, the account the next session uses, and its caption says so;
-  // the full view compares every plan's longest window.
-  useWidgetFrameBodyCaption(t(pooled ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   // Beside other widgets the next move is Plans: the full view is one press from the figure (lab d2views-OV).
   const openPlans = useUsageOpenView('plans');
   const plansLink = React.useMemo(() => pooled && !tile
@@ -260,18 +257,20 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       ),
     [projection.accounts, nameOf],
   );
-  // Beside other widgets the headline is the account the next session will use (owner 2026-11-11): the selector's
-  // current pick, else the only account, else the selector's first eligible one. Without any of these the tightest
-  // account stands in, said as the tightest. The full view (Plans) keeps the tightest-first comparison.
-  const next = pooled ? readNextLimitsAccount(selections, drawn) : null;
+  // The headline is the account the next session will use (owner 2026-11-11), at every size: the selector's current
+  // pick, else the only account, else the selector's first eligible one. Without any of these the tightest account
+  // stands in, said as the tightest. At full width every plan's cell still follows it for comparison.
+  const next = readNextLimitsAccount(selections, drawn);
+  // The caption says what the headline is, and only while it is that: a tightest stand-in says so in its own words.
+  useWidgetFrameBodyCaption(next !== null ? t('usage.board.plans.limitsCaption') : null);
   const nextWindow = next?.headline ?? null;
   const tightest = next === null ? projection.tightest
     : nextWindow !== null && nextWindow.remainingFraction !== null
       ? { account: next, window: nextWindow, provisional: projection.tightest?.provisional === true } : null;
   // The next account answered without a figure for its window: the headline says "not reported", never 0%.
-  const nextUnreported = next !== null && tightest === null && pooled;
+  const nextUnreported = next !== null && tightest === null;
   // Every other account in one line ("6 more · 2 used up"); their figures are Plans' to compare.
-  const othersLine = next === null ? null : (() => {
+  const othersLine = next === null || !pooled ? null : (() => {
     const others = projection.accounts.filter((account) => account.key !== next.key);
     if (others.length === 0) return null;
     const usedUp = others.filter((account) => account.headline?.remainingFraction != null && account.headline.remainingFraction <= 0).length;
@@ -315,7 +314,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   }
   const heroUnit = !tightestName ? ''
     // The headline names the next account even when it is the only one: beside other widgets no cell repeats it.
-    : next !== null ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
+    : next !== null && (pooled || !lone) ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
   // Equal cells while they fit; a narrow frame (a phone) wraps them two-up rather than shrinking them.
@@ -369,7 +368,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
                 : null,
               provisionalReading
                 ? t('usage.board.plans.capacityReading', { count: pendingAccounts })
-                : tightest.provisional || lone || next !== null ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
+                : tightest.provisional || lone || (pooled && next !== null) ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
               oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatPlanMoment(oldestReadMs, nowMs) }) : null,
             ]
               .filter(Boolean)
@@ -392,7 +391,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
           </Text>
         </View>
       ) : null}
-      {next !== null ? (
+      {pooled && next !== null ? (
         tightest !== null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
           <MeterBar height={8} tone={tightest.window.tone !== 'success' ? tightest.window.tone : 'neutral'}
             fillFraction={tightest.window.remainingFraction ?? 0} {...(next.stale ? { fillOpacity: 0.45 } : {})} />
@@ -429,13 +428,13 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       {othersLine !== null ? (
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.others`}>{othersLine}</Text>
       ) : null}
-      {unreadNames.length > 0 && next === null ? (
+      {unreadNames.length > 0 && !(pooled && next !== null) ? (
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.unread`}>
           {usageUnreadAccountsLabel(unreadNames)}
         </Text>
       ) : null}
       {/* Beside other widgets the meters are said once; the switching order lives with the full view (Plans). */}
-      {next !== null || (pooled && !tile) ? null : tile ? (
+      {pooled && (!tile || next !== null) ? null : tile ? (
         <UsagePoolSteps
           serverId={props.serverId}
           query={props.query}
