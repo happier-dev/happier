@@ -177,15 +177,17 @@ export function NewSessionComposerCard(input: Readonly<{
                     <NewSessionCreationReviewLine summary={props.creationReviewSummary} />
                     <PluginContextualResourceStoreProvider>
                         {props.composerDocument?.beforeComposer}
-                        {props.composerTopContent}
+                        {props.composerTopContent ? (
+                            <View ref={embeddedHost?.composerTopContentRef} collapsable={false}>{props.composerTopContent}</View>
+                        ) : null}
                         {props.permissionModeLock ? <Item
                             testID="new-session-managed-permission"
                             title={getPermissionModeLabelForAgentType(props.agentType ?? '', props.permissionMode ?? 'default')}
                             subtitle={<OrganizationPolicyManagedLine lock={props.permissionModeLock} />}
                             showChevron={false}
                         /> : null}
-                        {/* The atmosphere's band and hero follow the composer itself, so what a
-                            host stacks above it (a New bot title) stays on the page ground. */}
+                        {/* The atmosphere's band and hero follow the composer itself. A docked host seats its own
+                            band on what is stacked above it too (`composerTopContentRef`). */}
                         <View testID="new-session-composer-band" ref={atmosphereBoundary?.ref} onLayout={atmosphereBoundary?.onLayout}>
                         {workflowStart.composer ?? <AgentInput
                         statusRegions={props.composerDocument?.statusRegions}

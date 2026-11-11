@@ -66,6 +66,11 @@ export type NewSessionEmbeddedHost = Readonly<{
     emptyComposerStatus?: SessionInstrumentStripConnectionStatus | null;
     /** Receives the composer card's host view, so Docked seats its band on the card rather than its header. */
     composerPanelRef?: React.RefObject<View | null>;
+    /**
+     * Receives what the surface stacks above the card as part of the composer (a New bot's name and purpose), so
+     * Docked seats its band there instead and no page content shows through that text. Absent: none stacked.
+     */
+    composerTopContentRef?: React.RefObject<View | null>;
     /** Opens a Session named by the composer's started line (Docked also folds its card as it goes). */
     onOpenStartedSession?: (href: string) => void;
     /**

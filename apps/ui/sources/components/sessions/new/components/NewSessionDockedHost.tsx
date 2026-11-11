@@ -198,12 +198,16 @@ function DockedComposer() {
     // The card's offset under the dock's status row, where a phone band is seated. Any change above the card
     // (the status line appearing or wrapping) also resizes the dock, so its layout is when to re-read it.
     const panelRef = React.useRef<View | null>(null);
+    // What the draft stacks above its card (a New bot's name and purpose) is part of the docked composer: the band
+    // rises from there, so page rows never show through that text (owner 2026-11-11, New bot 02).
+    const topContentRef = React.useRef<View | null>(null);
     const [cardTop, setCardTop] = React.useState(0);
     const onDockLayout = React.useCallback((event: LayoutChangeEvent) => {
         reportCoveredBottom(event.nativeEvent.layout.height + coveredGap);
         const dockNode = composerRef.current;
-        if (!phone || !panelRef.current || !dockNode) return;
-        panelRef.current.measureLayout(dockNode, (_x, y) => setCardTop((previous) => Math.abs(previous - y) < 0.5 ? previous : y), () => {});
+        const seat = topContentRef.current ?? panelRef.current;
+        if (!phone || !seat || !dockNode) return;
+        seat.measureLayout(dockNode, (_x, y) => setCardTop((previous) => Math.abs(previous - y) < 0.5 ? previous : y), () => {});
     }, [coveredGap, phone, reportCoveredBottom]);
     const { close, collapse } = shell;
     const dismiss = React.useCallback(() => {
@@ -225,6 +229,7 @@ function DockedComposer() {
         ...shell.host,
         onOpenStartedSession: openCreated,
         composerPanelRef: panelRef,
+        composerTopContentRef: topContentRef,
         // The status row is the card's header, seated on the dock's frost: quiet icons, as on every width.
         // A phone keeps its labelled draft actions and has no fold (portrait Docked is never collapsed).
         // Unwrapped, so each icon is the row's own item and takes the row's one gap, like the draft actions.

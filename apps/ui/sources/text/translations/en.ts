@@ -24286,7 +24286,7 @@ export const en: TranslationStructure = {
         startBlank: "Start a blank bot", menuSubtitle: "Set up Happier and find what it can do",
     },
     name: { placeholder: "New bot", label: "Bot name", hint: "Leave the name empty to let it name itself." },
-    face: { ...botFaceNameTranslations.en, title: "Choose a face", change: "Change face", style: "Style", body: "Body", colour: "Colour", styles: { dither: "Dither", pixel: "Pixel", solid: "Solid", dots: "Dots", planet: "Planet" }, note: "Seeded from this Bot; only its face changes.", useDefault: "Use my default", surprise: "Surprise me", custom: "Custom", surpriseNote: "A new shape each time. Seeded from this Bot; only its face changes.", customNote: "Your Bot drew this shape. Ask it for another, or pick one here.", customEmptyNote: "Custom: ask this Bot for a shape, like “make yourself a cat”.", failed: "Couldn't save this face. Try again." },
+    face: { ...botFaceNameTranslations.en, title: "Choose a face", change: "Change face", style: "Style", body: "Body", colour: "Colour", styles: { dither: "Dither", pixel: "Pixel", solid: "Solid", dots: "Dots", planet: "Planet" }, note: "Seeded from this Bot; only its face changes.", useDefault: "Use my default", surprise: "Surprise me", shuffle: "Shuffle picture", custom: "Custom", surpriseNote: "A new shape each time. Seeded from this Bot; only its face changes.", customNote: "Your Bot drew this shape. Ask it for another, or pick one here.", customEmptyNote: "Custom: ask this Bot for a shape, like “make yourself a cat”.", failed: "Couldn't save this face. Try again." },
     create: {
         description: "Tell it what to look after. You can change its name and instructions any time.",
         placeholder: "What should this bot look after?",

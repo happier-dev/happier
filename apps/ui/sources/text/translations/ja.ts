@@ -20302,7 +20302,7 @@ settingsSession: {
             startBlank: "空のボットを始める", menuSubtitle: "Happierをセットアップして、できることを見つける",
         },
         name: { placeholder: "新しいボット", label: "ボット名", hint: "名前を空にすると、ボットが自分で名前を付けます。" },
-        face: { ...botFaceNameTranslations.ja, title: "顔を選ぶ", change: "顔を変更", style: "スタイル", body: "ボディ", colour: "カラー", styles: { dither: "ディザ", pixel: "ピクセル", solid: "ソリッド", dots: "ドット", planet: "惑星" }, note: "このボットから生成されます。変わるのは顔だけです。", useDefault: "デフォルトを使う", surprise: "おまかせ", custom: "カスタム", surpriseNote: "押すたびに新しい形。このボットから生成され、変わるのは顔だけです。", customNote: "この形はボットが描きました。別の形を頼むか、ここで選んでください。", customEmptyNote: "カスタム：「ネコになって」のように、このボットに形を頼んでください。", failed: "この顔を保存できませんでした。もう一度お試しください。" },
+        face: { ...botFaceNameTranslations.ja, title: "顔を選ぶ", change: "顔を変更", style: "スタイル", body: "ボディ", colour: "カラー", styles: { dither: "ディザ", pixel: "ピクセル", solid: "ソリッド", dots: "ドット", planet: "惑星" }, note: "このボットから生成されます。変わるのは顔だけです。", useDefault: "デフォルトを使う", surprise: "おまかせ", shuffle: "画像をシャッフル", custom: "カスタム", surpriseNote: "押すたびに新しい形。このボットから生成され、変わるのは顔だけです。", customNote: "この形はボットが描きました。別の形を頼むか、ここで選んでください。", customEmptyNote: "カスタム：「ネコになって」のように、このボットに形を頼んでください。", failed: "この顔を保存できませんでした。もう一度お試しください。" },
         create: {
             description: "何を担当するか伝えてください。名前と指示はいつでも変更できます。",
             placeholder: "このボットは何を担当しますか？",

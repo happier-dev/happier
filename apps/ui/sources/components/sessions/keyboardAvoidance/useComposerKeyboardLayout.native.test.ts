@@ -105,6 +105,26 @@ describe('useComposerKeyboardLayout native', () => {
         expect(hook.getCurrent().keyboardHeightLive.value).toBe(0);
     });
 
+    // Owner 2026-11-11 (New bot 01): Bots → New bot opens the docked draft and focuses it while the Bots sheet is
+    // still leaving the modal stack, so the keyboard settles under the modal's lift suppression. When the sheet is
+    // gone the composer stayed at rest behind the keyboard until the person lowered and raised it again.
+    it('lifts the composer over a keyboard that settled while a modal suppressed the lift, once the modal is gone', async () => {
+        nativeHookState.platformOS = 'ios';
+        const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
+        const options = { headerHeight: 100, layoutBottomInset: 80, safeAreaBottom: 34, keyboardLiftSuppressed: true };
+        const hook = await renderHook(() => useComposerKeyboardLayout({ ...options }));
+        const rest = hook.getCurrent().bottomInset.value;
+        act(() => hook.getCurrent().setComposerInputFocused?.(true));
+        act(() => nativeHookState.keyboardHandlers?.onEnd?.({ height: 300, progress: 1 }));
+        expect(hook.getCurrent().bottomInset.value).toBe(rest);
+
+        options.keyboardLiftSuppressed = false;
+        await hook.rerender();
+        expect(hook.getCurrent().bottomInset.value).toBe(220);
+        expect(hook.getCurrent().keyboardHeightLive.value).toBe(220);
+        expect(hook.getCurrent().availablePanelHeight.value).toBe(400);
+    });
+
     it('normalizes keyboard lift relative to the layout below the scaffold', async () => {
         const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
         const hook = await renderHook(() => useComposerKeyboardLayout({

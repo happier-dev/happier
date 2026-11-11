@@ -88,6 +88,11 @@ export type PageHeaderProps = Readonly<{
     /** A leading identity mark (entity logo, avatar). */
     leading?: React.ReactNode;
     /**
+     * An identity mark on the title's own line, before the title, where the purpose line runs flush left under both
+     * (a docked New bot's face). Like `leading`, an entity mark keeps the page title's size.
+     */
+    titleLeading?: React.ReactNode;
+    /**
      * Context controls and quiet actions (a machine chip, a `⋯` menu, Discard). They fold into the
      * navigation header's overflow on phones and stay in the page elsewhere; use `primaryAction`
      * for the action that remains directly visible.
@@ -226,11 +231,14 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
                 : renderPageHeaderText(input),
         [descriptionLines],
     );
-    const titleNode = props.titleControl != null ? props.titleControl : props.titleEditor
+    const ownTitleNode = props.titleControl != null ? props.titleControl : props.titleEditor
         // The editable title stops where the read-only one does, until the person edits it.
         ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
             restingLines={props.titleLines ?? PAGE_TITLE_MAX_LINES} />
         : props.title;
+    const titleNode = props.titleLeading != null
+        ? <View style={stylesheet.titleLeadingLine}>{props.titleLeading}<View style={stylesheet.titleLeadingTitle}>{ownTitleNode}</View></View>
+        : ownTitleNode;
     const descriptionNode = props.descriptionEditor
         ? <InlineTextField editor={props.descriptionEditor} multiline style={stylesheet.descriptionInput} />
         : props.description;
@@ -243,7 +251,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         ) : null}
         <HappierPageHeader
             title={titleNode}
-            largeTitle={largeTitle}
+            largeTitle={largeTitle && props.titleLeading == null}
             showTitle={showTitle}
             titleAccessory={props.titleAccessory}
             description={descriptionNode}
@@ -340,6 +348,16 @@ const META_ID_HOST: HappierPageHeaderMetaIdHost = {
 };
 
 const stylesheet = StyleSheet.create((theme) => ({
+    titleLeadingLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        minWidth: 0,
+    },
+    titleLeadingTitle: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
     title: {
         ...pageTitleTypography(),
         color: theme.colors.text.primary,

@@ -75,6 +75,20 @@ describe('NewBotDraftHeader (b-new, D30)', () => {
     expect(layout.getCurrent().bottomInset.value).toBe(0);
   });
 
+  // Owner 2026-11-11 (New bot 02): "Surprise me" read as unclear; the face itself carries a quiet shuffle glyph.
+  it('shuffles the face from a labelled glyph on the face, with no Surprise me button', async () => {
+    const nameStore = createComposerTextStore('');
+    const onFaceChange = vi.fn();
+    const screen = await renderScreen(
+      <NewBotDraftHeader botCreation={{ nameStore, onSessionNameChange: nameStore.setPrompt, face: { seed: 'draft-1' }, onFaceChange }} />,
+    );
+    expect(texts(screen.root)).not.toContain(t('bots.face.surprise'));
+    const shuffle = screen.root.find(node => node.props.accessibilityLabel === t('bots.face.shuffle') && typeof node.props.onPress === 'function');
+    await act(async () => { shuffle.props.onPress(); });
+    expect(onFaceChange).toHaveBeenCalledTimes(1);
+    expect(onFaceChange.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ seed: 'draft-1' }));
+  });
+
   it('keeps an empty name empty, shows the naming hint while naming, and writes typed names through the draft owner', async () => {
     const nameStore = createComposerTextStore('');
     const written: string[] = [];

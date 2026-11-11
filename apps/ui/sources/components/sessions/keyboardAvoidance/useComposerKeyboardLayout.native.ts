@@ -414,6 +414,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         };
     }, [applyFinalKeyboardHeightFromJS, dimensions.height]);
 
+    const wasKeyboardLiftSuppressedRef = React.useRef(keyboardLiftSuppressed);
     React.useEffect(() => {
         safeAreaBottomValue.value = safeAreaBottom;
         layoutBottomInsetValue.value = layoutBottomInset;
@@ -421,12 +422,20 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         headerHeightValue.value = headerHeight;
         viewportHeight.value = dimensions.height;
         isKeyboardLiftSuppressed.value = keyboardLiftSuppressed;
+        // A keyboard that settled while a modal held the lift (Bots → New bot focuses the draft as the Bots sheet
+        // leaves) sends no new frame when the modal goes: take its last settled height, recorded while suppressed.
+        const liftReleased = wasKeyboardLiftSuppressedRef.current && !keyboardLiftSuppressed;
+        wasKeyboardLiftSuppressedRef.current = keyboardLiftSuppressed;
+        const releasedKeyboardHeight = liftReleased ? Math.max(0, lastKeyboardEventHeightAbsoluteRef.current) : 0;
         if (keyboardLiftSuppressed) {
             isInteractiveDismissActive.value = false;
             keyboardHeightAbsolute.value = 0;
             keyboardHeightLive.value = 0;
             keyboardHeightForInset.value = 0;
             keyboardProgress.value = 0;
+        } else if (liftReleased) {
+            keyboardHeightAbsolute.value = releasedKeyboardHeight;
+            keyboardProgress.value = resolveKeyboardHeightWithinScaffold(releasedKeyboardHeight, layoutBottomInset) > 0 ? 1 : 0;
         }
         recomputeStaticLayout({
             availablePanelMaxHeight,
@@ -437,7 +446,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
             viewportHeight: dimensions.height,
             ...(keyboardLiftSuppressed
                 ? { isInteractiveDismissActive: false, keyboardHeightAbsolute: 0, keyboardHeightForInset: 0 }
-                : {}),
+                : liftReleased ? { keyboardHeightAbsolute: releasedKeyboardHeight } : {}),
         });
     }, [
         dimensions.height,
