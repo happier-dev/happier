@@ -1,7 +1,6 @@
 import { USAGE_ANALYTICS_COST_MODES } from '../usage/usageVocabularyV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryFiltersSchema, UsageAnalyticsBreakdownDimensionSchema, type UsageAnalyticsQueryRequest } from '../usage/usageAnalyticsContracts.js';
 import type { InputFieldHint, InputOption } from './inputFields.js';
@@ -101,7 +100,12 @@ export function getUsageQueryKey(value: unknown): string {
   const query = normalizeUsageQuery(value);
   let key = normalizedQueryKeys.get(query);
   if (key == null) {
-    key = createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(query));
+    // Admission leaves scalar fields/string sets and one period object. Keep
+    // canonical property order without cloning/revalidating this immutable input.
+    // The mapped type makes a newly nested query clause require updating this path.
+    const keyInput: { [K in keyof UsageQuery]: K extends 'period' ? UsageQuery[K]
+      : string | number | boolean | readonly string[] | null | undefined } = query;
+    key = JSON.stringify(keyInput, [...Object.keys(keyInput), ...Object.keys(keyInput.period)].sort());
     normalizedQueryKeys.set(query, key);
   }
   return key;
@@ -126,7 +130,7 @@ export function getUsageQueryBatchKey(value: unknown): string {
   const batch = normalizeUsageQueryBatchInput(value);
   let key = normalizedBatchKeys.get(batch);
   if (key == null) {
-    key = createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(batch));
+    key = '{"queries":[' + batch.queries.map(getUsageQueryKey).join(',') + ']}';
     normalizedBatchKeys.set(batch, key);
   }
   return key;

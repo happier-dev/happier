@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { UsageSessionEvidenceRequestSchema } from '../usage/usageSessionEvidence.js';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, UsageQuerySchema, USAGE_QUERY_INPUT_FIELDS, readUsagePeriodOptions } from './usageQuery.js';
@@ -8,6 +8,8 @@ import { resolveEffectiveInputFields } from './inputFieldRuntime.js';
 import { projectInputOptionsDependencies } from './inputOptionsDependencies.js';
 import * as usageQuery from './usageQuery.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 it('keeps host projection demand out of accounting and Session evidence transports', () => {
   const base = normalizeUsageQuery({ includeSessionEvidence: true });
@@ -23,6 +25,40 @@ it('keeps host projection demand out of accounting and Session evidence transpor
 });
 
 describe('shared UsageQuery', () => {
+  it('serializes admitted query identities once and composes batch keys without reflective JSON walks', () => {
+    const queries = [
+      normalizeUsageQuery({ period: { endMs: 200, startMs: 0 }, session: Array.from({ length: 3800 }, (_, index) => `session-${index}`) }),
+      normalizeUsageQuery({ period: { relative: '7days' }, agents: ['codex', 'claude'], includeWorkEvidence: false }),
+      normalizeUsageQuery({ period: {}, metric: 'cost', projects: ['project-\"quoted\"', 'project-雪'] }),
+    ];
+    const expected = queries.map(query => createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(query)));
+    // Call-through instrumentation counts allocations made by reflective JSON admission;
+    // the schema-normalized inputs are real, immutable owner values.
+    const descriptors = vi.spyOn(Object, 'getOwnPropertyDescriptors');
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      const keys = queries.map(getUsageQueryKey);
+      for (let publication = 0; publication < 20; publication++) {
+        for (let index = 0; index < queries.length; index++) if (getUsageQueryKey(queries[index]) !== keys[index]) throw new Error('Query identity changed');
+      }
+      const queryWork = { descriptors: descriptors.mock.calls.length, serializations: stringify.mock.calls.length };
+      expect(keys).toEqual(expected);
+      expect(queryWork).toEqual({ descriptors: 0, serializations: queries.length });
+
+      const batch = normalizeUsageQueryBatchInput({ queries });
+      const batchExpected = createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(batch));
+      descriptors.mockClear();
+      stringify.mockClear();
+      const batchKeys = Array.from({ length: 20 }, () => getUsageQueryBatchKey(batch));
+      const batchWork = { descriptors: descriptors.mock.calls.length, serializations: stringify.mock.calls.length };
+      expect(batchKeys.every(key => key === batchExpected)).toBe(true);
+      expect(batchWork).toEqual({ descriptors: 0, serializations: 0 });
+    } finally {
+      descriptors.mockRestore();
+      stringify.mockRestore();
+    }
+  });
+
   it('asks for every key a selected Project\'s usage may carry when given its scope (owner 11-08)', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, projects: ['payments'] });
     const scope = (projectKey: string) => projectKey === 'payments' ? ['payments', 'nldw6'] : [projectKey];
