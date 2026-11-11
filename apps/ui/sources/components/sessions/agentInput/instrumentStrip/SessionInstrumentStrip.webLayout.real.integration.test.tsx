@@ -144,6 +144,34 @@ describe('the composer status line on a phone (owner 2026-11-10)', () => {
   });
 });
 
+describe('the status line band (owner 2026-11-11)', () => {
+  it('centres its line in the band, so the free space is not all piled up between it and the composer', async () => {
+    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="frame" style={{ width: 800 }}>
+          <SessionInstrumentStrip
+            connectionStatus={{ text: 'Inactive (resumable)', color: '#888', dotColor: '#888' }}
+          />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 800, height: 300 },
+      texts: ['Inactive (resumable)'],
+      settle: (replay) => act(replay),
+    });
+    const frame = layout.rect('frame');
+    const line = layout.rect('agent-input-connection-line');
+    const above = line.top - frame.top;
+    const below = frame.bottom - line.bottom;
+    expect(Math.abs(above - below)).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('the status line right edge (owner 2026-11-11)', () => {
   it('ends the last visible instrument on the composer content edge when a plugin region renders nothing', async () => {
     // A plugin region with nothing to say (a Session with no pull request) must take no slot or gap.

@@ -208,7 +208,7 @@ describe('Next focus through the mounted RN-web transcript', () => {
             bindingReady = useServerCredentialAccountScopeBindings([serverId]).get(serverId)?.isCurrent() === true;
             landing = usePendingNavigationLanding({ serverId, sessionId: currentId });
             return <><PendingNavigationPill address={{ serverId, sessionId: currentId }} presentation="composer" />
-                {loaded ? <ChatList session={sessions[currentId]!} sessionSurfaceKey={`next:${currentId}`} externalControlFooter={null} /> : null}</>;
+                {loaded ? <ChatList session={sessions[currentId]!} sessionSurfaceKey={`next:${currentId}`} /> : null}</>;
         }
         // The registration belongs to the app shell, outside the keyed Session
         // viewer scope that is replaced when a different destination opens.

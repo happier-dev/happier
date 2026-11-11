@@ -14,6 +14,7 @@ import type { Theme } from '@/theme';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { resolveComposerCardContentInsetX } from '@/components/sessions/agentInput/composerContentInset';
 
 export type SessionBannerTone = 'warning' | 'neutral';
 
@@ -53,6 +54,12 @@ export type WarningActionBannerProps = Readonly<{
      * through its copy. In-flow banners keep the flat tinted surface.
      */
     floating?: boolean;
+    /**
+     * `card` (default): the tinted, bordered banner. `none`: an informational line with no fill, border or padding
+     * box, its icon on the composer's content edge and its copy at the transcript notice's distance from the icon
+     * (the external Agent's "Runs in Codex on …", owner 2026-11-11).
+     */
+    chrome?: 'card' | 'none';
     testID: string;
 }>;
 
@@ -107,6 +114,7 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
     const actionHitReach = { left: theme.space.s4 / 2, right: theme.space.s4 / 2 } as const;
     const presentationTheme = usePluginUiTheme(theme);
     const { width } = useWindowDimensions();
+    const plain = props.chrome === 'none';
     const [measuredWidth, setMeasuredWidth] = React.useState<number | null>(null);
     const availableWidth = typeof measuredWidth === 'number' && measuredWidth > 0 ? measuredWidth : width;
     const handleLayout = React.useCallback((
@@ -209,17 +217,25 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
             description={props.body}
             tone={tone === 'warning' ? 'warning' : 'neutral'}
             theme={presentationTheme}
-            backgroundColor={toneTokens.background}
+            backgroundColor={plain ? 'transparent' : toneTokens.background}
             // A floating banner's whole hairline is the rim's, drawn over it.
-            borderColor={props.floating ? 'transparent' : toneTokens.border}
+            borderColor={props.floating || plain ? 'transparent' : toneTokens.border}
             icon={iconName ? <Icon name={iconName} size={16} color={toneTokens.icon} /> : undefined}
             style={[
-                {
-                    paddingHorizontal: BANNER_PADDING_HORIZONTAL,
-                    paddingVertical: BANNER_PADDING_VERTICAL,
-                    // The composer stack's radius: the banner and the panel below it round alike.
-                    borderRadius: bannerRadius,
-                },
+                plain
+                    ? {
+                        paddingHorizontal: resolveComposerCardContentInsetX(theme, width),
+                        paddingVertical: theme.space.s4,
+                        // The banner's 22-wide icon column centres a 16 icon (3 aside); with this gap the copy stands
+                        // as far from the glyph as a transcript notice's (18 in 20, then s10).
+                        gap: theme.space.s8,
+                    }
+                    : {
+                        paddingHorizontal: BANNER_PADDING_HORIZONTAL,
+                        paddingVertical: BANNER_PADDING_VERTICAL,
+                        // The composer stack's radius: the banner and the panel below it round alike.
+                        borderRadius: bannerRadius,
+                    },
                 props.style,
             ]}
             titleContent={props.title ? (

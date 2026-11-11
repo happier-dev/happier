@@ -7,12 +7,7 @@ function areChatListSessionRelevantPropsEqual(left: Session, right: Session): bo
 }
 
 function areChatListNonSessionPropsEqual(left: ChatListProps, right: ChatListProps): boolean {
-    return left.bottomNotice === right.bottomNotice
-        && left.controlledByUserOverride === right.controlledByUserOverride
-        && left.controlSwitchTo === right.controlSwitchTo
-        && left.onRequestSwitchToRemote === right.onRequestSwitchToRemote
-        && left.externalControlFooter === right.externalControlFooter
-        && left.approvalRequests === right.approvalRequests
+    return left.approvalRequests === right.approvalRequests
         && left.jumpToSeq === right.jumpToSeq
         && left.jumpToMessageId === right.jumpToMessageId
         && left.followBottomIntentKey === right.followBottomIntentKey

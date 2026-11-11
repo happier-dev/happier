@@ -1345,7 +1345,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('says the visible transcript is the last known one when a refresh fails over retained rows', async () => {
-    await renderSessionViewAndSettle();
+    const screen = await renderSessionViewAndSettle();
 
     const shellStorageStore = shellStorageStoreState.current;
     if (!shellStorageStore) throw new Error('Expected SessionView test storage to be mounted');
@@ -1369,6 +1369,13 @@ describe('SessionView (direct sessions)', () => {
       body: 'externalSessions.transcriptLoadFailed',
       actionLabel: 'common.retry',
     });
+    // It is a Session notice in the composer's banner stack, not a band across the top of the transcript (owner 2026-11-11).
+    const placed = screen.findAllByType('WarningActionBanner')
+      .filter((node) => node.props.testID === 'session.externalTranscript.loadIssue');
+    expect(placed).toHaveLength(1);
+    let ancestor = placed[0]!.parent;
+    while (ancestor && ancestor.props?.testID !== 'session-composer-cards') ancestor = ancestor.parent;
+    expect(ancestor?.props?.testID).toBe('session-composer-cards');
   });
 
   it('renders a retryable typed transcript-load issue instead of an authoritative empty state', async () => {

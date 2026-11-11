@@ -5,6 +5,7 @@ import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/Compose
 import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
 import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import type { SessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
+import { useSessionChatFooterState } from '@/sync/domains/state/storage';
 
 export type ChatFooterExternalAgentPresentation = Readonly<{
     state: ExternalSessionRuntimePresentation['externalAgent']['state'];
@@ -233,13 +234,15 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             }]
             : undefined;
 
+        const externalAttention = externalControl.externalAgentPresentation.needsAttention && !operationInFlight;
         return (
             <ComposerAuxiliaryFrame>
                 <WarningActionBanner
                     testID="session-chatFooter-externalControl"
-                    tone={externalControl.externalAgentPresentation.needsAttention && !operationInFlight
-                        ? 'warning'
-                        : 'neutral'}
+                    tone={externalAttention ? 'warning' : 'neutral'}
+                    // Where the external Agent runs is information, not a problem: a plain line on the composer's
+                    // content edge. Only a state that needs the reader keeps the tinted card (owner 2026-11-11).
+                    chrome={externalAttention ? 'card' : 'none'}
                     iconName="info"
                     body={body}
                     actionTestID={primary?.testID}
@@ -272,3 +275,34 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         </View>
     );
 });
+
+/**
+ * The Session's control and notice banner (local control, an external Agent's runner, a bottom notice), from the
+ * Session's footer state. It stands in the composer's banner seat with the Session's other notices (owner
+ * 2026-11-11), never in the transcript.
+ */
+export const SessionChatFooter = React.memo((props: {
+    sessionId: string;
+    bottomNotice?: Readonly<{ title: string; body: string }> | null;
+    controlledByUserOverride?: boolean;
+    controlSwitchTo?: 'remote' | null;
+    onRequestSwitchToRemote?: () => void;
+    externalControl?: ChatFooterExternalControlState;
+}) => {
+    const footerState = useSessionChatFooterState(props.sessionId);
+    if (!footerState) {
+        return null;
+    }
+    return (
+        <ChatFooter
+            controlledByUser={props.controlledByUserOverride ?? footerState.controlledByUser}
+            localControl={footerState.localControl}
+            permissionsInUiWhileLocal={footerState.permissionsInUiWhileLocal}
+            notice={props.bottomNotice ?? null}
+            controlSwitchTo={props.controlSwitchTo ?? null}
+            onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+            externalControl={props.externalControl ?? null}
+        />
+    );
+});
+

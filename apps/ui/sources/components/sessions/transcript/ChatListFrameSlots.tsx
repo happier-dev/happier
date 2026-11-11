@@ -1,13 +1,10 @@
 import * as React from 'react';
 import { Animated, View } from 'react-native';
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance';
-import { ChatFooter, type ChatFooterExternalControlState } from './ChatFooter';
-import type { ChatListBottomNotice } from '@/components/sessions/transcript/chatListTypes';
 import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 import { useTranscriptFindClearance } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useSessionChatFooterState } from '@/sync/domains/state/storage';
 import { TranscriptSessionActivityLine } from './TranscriptSessionActivityLine';
 import { SessionReportsChip } from './SessionReportsChip';
 import { ProjectSetupSessionReturn } from '@/components/projects/projectSetup/ProjectSetupReturn';
@@ -43,40 +40,10 @@ export const ListHeader = React.memo(() => {
     );
 });
 
-export const ListFooter = React.memo((props: {
-    sessionId: string;
-    bottomNotice?: ChatListBottomNotice | null;
-    controlledByUserOverride?: boolean;
-    controlSwitchTo?: 'remote' | null;
-    onRequestSwitchToRemote?: () => void;
-    externalControl?: ChatFooterExternalControlState;
-}) => {
-    const footerState = useSessionChatFooterState(props.sessionId);
-    if (!footerState) {
-        return null;
-    }
-    return (
-        <ChatFooter
-            controlledByUser={props.controlledByUserOverride ?? footerState.controlledByUser}
-            localControl={footerState.localControl}
-            permissionsInUiWhileLocal={footerState.permissionsInUiWhileLocal}
-            notice={props.bottomNotice ?? null}
-            controlSwitchTo={props.controlSwitchTo ?? null}
-            onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            externalControl={props.externalControl ?? null}
-        />
-    )
-});
-
 export const ChatListFooterWithKeyboardInset = React.memo((props: {
     sessionId: string;
     serverId?: string | null;
     showToolCalls?: boolean;
-    bottomNotice?: ChatListBottomNotice | null;
-    controlledByUserOverride?: boolean;
-    controlSwitchTo?: 'remote' | null;
-    onRequestSwitchToRemote?: () => void;
-    externalControl?: ChatFooterExternalControlState;
     onComposerInsetHeightChange?: (height: number) => void;
 }) => {
     return (
@@ -90,14 +57,6 @@ export const ChatListFooterWithKeyboardInset = React.memo((props: {
             <ProjectSetupSessionReviews sessionId={props.sessionId} serverId={props.serverId} />
             {/* A Session started from Project setup ends with its way back (lab `s-setup` DONE). */}
             <ProjectSetupSessionReturn sessionId={props.sessionId} serverId={props.serverId} />
-            <ListFooter
-                sessionId={props.sessionId}
-                bottomNotice={props.bottomNotice}
-                controlledByUserOverride={props.controlledByUserOverride}
-                controlSwitchTo={props.controlSwitchTo ?? null}
-                onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-                externalControl={props.externalControl ?? null}
-            />
             <ComposerKeyboardScrollInset
                 testID="transcript-composer-keyboard-inset"
                 onHeightChange={props.onComposerInsetHeightChange}

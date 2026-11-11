@@ -235,7 +235,7 @@ import {
     resolveAgentInputPanelBackedEdgeStyle,
     resolveAgentInputPanelLayoutStyle,
 } from './components/agentInputChromeStyles';
-import { COMPOSER_PHONE_CARD_CONTENT_INSET } from './composerContentInset';
+import { resolveComposerCardContentInsetX } from './composerContentInset';
 import { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } from './definitions/agentInputChipRowReach';
 import { AgentInputReadOnlyChipRow } from './components/AgentInputReadOnlyChipRow';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -4364,7 +4364,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     onGitPress={props.onFileViewerPress}
                     // A compact composer has no Session to report on: an empty strip reserves no row above it.
                     collapseWhenEmpty={documentPanel || compactControls}
-                    contentInsetX={isMobileLayoutWidth(screenWidth) ? COMPOSER_PHONE_CARD_CONTENT_INSET : undefined}
+                    contentInsetX={resolveComposerCardContentInsetX(theme, screenWidth)}
                 />
 
                 {/* Box 2: Action Area (Input + Send) */}

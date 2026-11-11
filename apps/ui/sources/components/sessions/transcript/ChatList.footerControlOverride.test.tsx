@@ -34,6 +34,7 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 
 await loadSyncSingletonForTests();
 const { ChatList } = await import('./ChatList');
+const { SessionChatFooter } = await import('./ChatFooter');
 
 beforeEach(() => {
     if (typeof globalThis.requestAnimationFrame !== 'function') {
@@ -49,18 +50,13 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe('ChatList footer control override', () => {
+describe('Session control banner (composer seat, owner 2026-11-11)', () => {
     it('uses the explicit Boolean override when no current local-control fact exists', async () => {
         const session = createSessionFixture({ metadata: null, active: false });
         storage.setState({ sessions: { [session.id]: session } });
         const source = createTestSessionTranscriptSource({ sessionId: session.id });
         const element = (controlledByUserOverride: boolean) => (
-            <ChatList
-                session={session}
-                sessionSurfaceKey={JSON.stringify(['test-server', session.id])}
-                controlledByUserOverride={controlledByUserOverride}
-                externalControlFooter={null}
-            />
+            <SessionChatFooter sessionId={session.id} controlledByUserOverride={controlledByUserOverride} externalControl={null} />
         );
         const screen = await renderWithSessionTranscriptSource(element(true), source);
 
@@ -81,16 +77,26 @@ describe('ChatList footer control override', () => {
         });
         storage.setState({ sessions: { [session.id]: session } });
         const screen = await renderWithSessionTranscriptSource(
-            <ChatList
-                session={session}
-                sessionSurfaceKey={JSON.stringify(['test-server', session.id])}
-                controlledByUserOverride={false}
-                externalControlFooter={null}
-            />,
+            <SessionChatFooter sessionId={session.id} controlledByUserOverride={false} externalControl={null} />,
             createTestSessionTranscriptSource({ sessionId: session.id, agentState: session.agentState }),
         );
 
         expect(screen.findByTestId('session-chatFooter-localControl')).not.toBeNull();
         expect(screen.findByTestId('session-chatFooter-switchToRemote')).toBeNull();
+    });
+
+    it('no longer stands in the transcript: the list carries no Session control banner', async () => {
+        const session = createSessionFixture({
+            metadata: null,
+            active: true,
+            agentState: { controlledByUser: true },
+        });
+        storage.setState({ sessions: { [session.id]: session } });
+        const screen = await renderWithSessionTranscriptSource(
+            <ChatList session={session} sessionSurfaceKey={JSON.stringify(['test-server', session.id])} />,
+            createTestSessionTranscriptSource({ sessionId: session.id, agentState: session.agentState }),
+        );
+
+        expect(screen.findByTestId('session-chatFooter-localControl')).toBeNull();
     });
 });

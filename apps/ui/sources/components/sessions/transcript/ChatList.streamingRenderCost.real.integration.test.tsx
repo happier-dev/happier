@@ -164,7 +164,7 @@ describe('streaming transcript render cost', () => {
         document.body.appendChild(container);
         root = createRoot(container);
         const request = { id: 'waiting-permission', tool: 'Bash', arguments: { command: 'git status' }, createdAt: Date.now() };
-        const transcript = <ChatList session={session} sessionSurfaceKey="streamui-surface" externalControlFooter={null}
+        const transcript = <ChatList session={session} sessionSurfaceKey="streamui-surface"
             onEditPendingMessage={() => {}} />;
         const scene = (permissionArrived: boolean, cardRequest = request) => (
             <React.Profiler id="streamui" onRender={() => counts.onCommit(container!)}>

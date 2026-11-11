@@ -850,15 +850,10 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
 export type TranscriptItemsEdgeSlotsDeps = Readonly<{
     serverId?: string | null;
     showToolCalls?: boolean;
-    bottomNotice: ChatListInternalProps['bottomNotice'];
     composerInsetHeight: number;
-    controlSwitchTo: ChatListInternalProps['controlSwitchTo'];
-    controlledByUserOverride: ChatListInternalProps['controlledByUserOverride'];
-    externalControlFooter: ChatListInternalProps['externalControlFooter'];
     handleComposerInsetHeightChange: (height: number) => void;
     isLoadingOlder: boolean;
     mainTranscriptListShellFrame: Parameters<typeof resolveTranscriptListShellEdgeSlots>[0]['frame'];
-    onRequestSwitchToRemote: ChatListInternalProps['onRequestSwitchToRemote'];
     olderPaginationIsLoadingOlder: boolean;
     olderPaginationLoadFailed: boolean;
     olderPaginationCanContinue: boolean;
@@ -875,15 +870,10 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
     const {
         serverId,
         showToolCalls,
-        bottomNotice,
         composerInsetHeight,
-        controlSwitchTo,
-        controlledByUserOverride,
-        externalControlFooter,
         handleComposerInsetHeightChange,
         isLoadingOlder,
         mainTranscriptListShellFrame,
-        onRequestSwitchToRemote,
         olderPaginationIsLoadingOlder,
         olderPaginationLoadFailed,
         olderPaginationCanContinue,
@@ -903,22 +893,12 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
             serverId={serverId}
             showToolCalls={showToolCalls}
             sessionId={sessionId}
-            bottomNotice={bottomNotice}
-            controlledByUserOverride={controlledByUserOverride}
-            controlSwitchTo={controlSwitchTo ?? null}
-            onRequestSwitchToRemote={onRequestSwitchToRemote}
-            externalControl={externalControlFooter}
             onComposerInsetHeightChange={handleComposerInsetHeightChange}
         />
     ), [
         serverId,
         showToolCalls,
-        bottomNotice,
-        controlSwitchTo,
-        controlledByUserOverride,
-        externalControlFooter,
         handleComposerInsetHeightChange,
-        onRequestSwitchToRemote,
         sessionId,
     ]);
     const edgeSlots = React.useMemo(() => resolveTranscriptListShellEdgeSlots({

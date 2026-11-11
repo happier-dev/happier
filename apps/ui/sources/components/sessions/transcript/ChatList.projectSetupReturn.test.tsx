@@ -131,7 +131,6 @@ async function renderOriginSession(sessionOrigin: PluginUiNewSessionSeedOriginV1
     <ChatList
       session={session}
       sessionSurfaceKey={JSON.stringify([scope.serverId, session.id])}
-      externalControlFooter={null}
     />,
     source,
   );
@@ -184,7 +183,6 @@ describe('ChatList Project setup return', () => {
       <ChatList
         session={session}
         sessionSurfaceKey={JSON.stringify(['server-1', session.id])}
-        externalControlFooter={null}
       />,
       source,
     );

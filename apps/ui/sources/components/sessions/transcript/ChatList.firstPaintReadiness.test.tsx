@@ -61,7 +61,7 @@ it('keeps a warm renderer readiness fact published before the transcript mount e
     geometry.scroller = scroller;
     await withChatListHarnessWebScrollerDom(scroller, async () => {
         const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId={session.id} serverId={serverId}>
-            <ChatList session={session} sessionSurfaceKey="warm-source-surface" externalControlFooter={null}
+            <ChatList session={session} sessionSurfaceKey="warm-source-surface"
                 onEditPendingMessage={() => {}} />
         </AppSessionTranscriptSourceProvider>);
         try {

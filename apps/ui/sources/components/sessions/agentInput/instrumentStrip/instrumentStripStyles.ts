@@ -37,6 +37,9 @@ export const instrumentStripStyles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         justifyContent: 'flex-end',
         alignItems: 'center',
+        // A wrapping row stacks its line at the top of the 28 band; centre it, so the band's free space sits evenly
+        // above and below instead of all between the status and the composer (owner 2026-11-11).
+        alignContent: 'center',
         rowGap: theme.space.s6,
         // The line starts on the card's content edge (0.2): its dot sits over the field's first
         // letter and the chips' first glyph, and the right cluster ends where the card's content does.

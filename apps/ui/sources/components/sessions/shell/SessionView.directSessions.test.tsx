@@ -549,6 +549,19 @@ vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
     return null;
   },
 }));
+// The Session's control banner stands in the composer seat (owner 2026-11-11); its props are the control contract.
+const sessionChatFooterPropsSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/components/sessions/transcript/ChatFooter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/transcript/ChatFooter')>();
+  const React = await import('react');
+  return {
+    ...actual,
+    SessionChatFooter: (props: React.ComponentProps<typeof actual.SessionChatFooter>) => {
+      sessionChatFooterPropsSpy(props);
+      return React.createElement(actual.SessionChatFooter, props);
+    },
+  };
+});
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
   ChatList: (props: any) => {
     chatListPropsSpy(props);
@@ -2226,6 +2239,7 @@ describe('SessionView (direct sessions)', () => {
     const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
     await prepareSessionDraftPersistenceStorage();
     chatListPropsSpy.mockReset();
+    sessionChatFooterPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
     voiceSurfacePropsSpy.mockReset();
     renderRealAgentInputPermissionSurfaceState.current = false;
@@ -4540,8 +4554,8 @@ describe('SessionView (direct sessions)', () => {
   it('keeps direct takeover footer status conservative and exposes one explicit takeover preflight', async () => {
     await renderSessionView();
 
-    const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(latestChatListProps?.externalControlFooter).toEqual({
+    const latestChatListProps = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0];
+    expect(latestChatListProps?.externalControl).toEqual({
       externalAgentPresentation: {
         state: 'unknown',
         labelKey: 'status.externalStatusUnknown',
@@ -4589,8 +4603,8 @@ describe('SessionView (direct sessions)', () => {
 
     await renderSessionView();
 
-    const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(latestChatListProps?.externalControlFooter?.materialize).toEqual({
+    const latestChatListProps = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0];
+    expect(latestChatListProps?.externalControl?.materialize).toEqual({
       requestEnabled: true,
       inFlight: false,
       onRequest: expect.any(Function),
@@ -8714,9 +8728,9 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionView();
 
     expect(chatListPropsSpy).toHaveBeenCalled();
-    const lastChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(lastChatListProps?.externalControlFooter ?? null).toBeNull();
-    expect(lastChatListProps?.onRequestSwitchToRemote).toBeUndefined();
+    const lastFooterProps = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0];
+    expect(lastFooterProps?.externalControl ?? null).toBeNull();
+    expect(lastFooterProps?.onRequestSwitchToRemote).toBeUndefined();
     expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
 
     await act(async () => {

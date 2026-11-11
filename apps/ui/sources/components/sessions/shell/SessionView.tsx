@@ -82,6 +82,7 @@ import { AtmosphereSurfaceFrame } from "@/components/atmosphere/AtmosphereSurfac
 import { useWorkspaceFileOriginReturn } from "@/components/workspaces/files/useWorkspaceFileOriginReturn";
 import { Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { SessionComposerNoticesContext } from "@/components/sessions/composer/SessionComposerColumn";
+import { SessionChatFooter } from "@/components/sessions/transcript/ChatFooter";
 import { dismissKeyboard } from '@/components/ui/keyboardAvoidance/dismissKeyboard';
 import { layout } from "@/components/ui/layout/layout";
 import { useChromeSafeAreaInsets } from "@/components/ui/layout/useChromeSafeAreaInsets";
@@ -447,11 +448,6 @@ type SessionTranscriptContentProps = Readonly<{
     isForkedSessionV1: boolean;
     isLocallyAttached: boolean;
     pendingMessagesCount: number;
-    bottomNotice: ChatListProps['bottomNotice'];
-    controlledByUserOverride: ChatListProps['controlledByUserOverride'];
-    controlSwitchTo: ChatListProps['controlSwitchTo'];
-    onRequestSwitchToRemote: ChatListProps['onRequestSwitchToRemote'];
-    externalControlFooter: ChatListProps['externalControlFooter'];
     approvalRequests: ChatListProps['approvalRequests'];
     jumpToSeq: ChatListProps['jumpToSeq'];
     jumpToMessageId: ChatListProps['jumpToMessageId'];
@@ -469,11 +465,6 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
     isForkedSessionV1,
     isLocallyAttached,
     pendingMessagesCount,
-    bottomNotice,
-    controlledByUserOverride,
-    controlSwitchTo,
-    onRequestSwitchToRemote,
-    externalControlFooter,
     approvalRequests,
     jumpToSeq,
     jumpToMessageId,
@@ -510,14 +501,10 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
         pendingMessagesCount,
     });
     const transcriptLoadIssue = storage((state) => state.sessionTranscriptLoadIssues[sessionId] ?? null);
-    const hasRetainedTranscript = committedMessagesCount > 0;
-    const hasPresentableRows = hasRetainedTranscript || pendingMessagesCount > 0;
-    const shouldRenderChatTimelineImmediately = shouldRenderChatTimeline
-        && (
-            isLoaded === true
-            || hasPresentableRows
-            || (shouldForceRenderTranscriptFooter && transcriptLoadIssue === null)
-        );
+    const { shouldRenderChatTimelineImmediately, retainedTranscriptVisible } = resolveTranscriptTimelinePresence({
+        committedMessagesCount, pendingMessagesCount, isLoaded, shouldRenderChatTimeline, shouldForceRenderTranscriptFooter,
+        hasTranscriptLoadIssue: transcriptLoadIssue !== null,
+    });
     const shouldShowDeferredTranscriptPlaceholder =
         shouldRenderChatTimeline && !shouldRenderChatTimelineImmediately && transcriptLoadIssue === null;
 
@@ -562,8 +549,10 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
 
     return (
         <>
-            {shouldRenderChatTimeline ? (
-                <ExternalTranscriptLoadIssueBanner sessionId={sessionId} serverId={session.serverId ?? null} machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} retainedTranscriptVisible={hasRetainedTranscript && shouldRenderChatTimelineImmediately} />
+            {/* Over retained rows the load issue is a composer-seat notice (SessionRetainedTranscriptLoadIssue); here it
+                is only the surface's own state, when there is no timeline to read. */}
+            {shouldRenderChatTimeline && !retainedTranscriptVisible ? (
+                <ExternalTranscriptLoadIssueBanner sessionId={sessionId} serverId={session.serverId ?? null} machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} />
             ) : null}
             {/* Who is using the Session's shared window, at the top of the transcript on every device (lab computer HC). */}
             {shouldRenderChatTimeline ? <SessionComputerPresenceLine sessionId={sessionId} serverId={session.serverId ?? null} /> : null}
@@ -573,11 +562,6 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
                 <ChatList
                     session={session}
                     sessionSurfaceKey={sessionSurfaceKey}
-                    bottomNotice={bottomNotice}
-                    controlledByUserOverride={controlledByUserOverride}
-                    controlSwitchTo={controlSwitchTo}
-                    onRequestSwitchToRemote={onRequestSwitchToRemote}
-                    externalControlFooter={externalControlFooter}
                     jumpToSeq={jumpToSeq}
                     jumpToMessageId={jumpToMessageId}
                     followBottomIntentKey={followBottomIntentKey}
@@ -592,6 +576,58 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
                 <PaneLoadingFallback />
             ) : null}
         </>
+    );
+});
+
+/** Whether the timeline paints now, and whether it shows retained rows a load issue stands over. */
+function resolveTranscriptTimelinePresence(input: Readonly<{
+    committedMessagesCount: number;
+    pendingMessagesCount: number;
+    isLoaded: boolean | undefined;
+    shouldRenderChatTimeline: boolean;
+    shouldForceRenderTranscriptFooter: boolean;
+    hasTranscriptLoadIssue: boolean;
+}>): Readonly<{ shouldRenderChatTimelineImmediately: boolean; retainedTranscriptVisible: boolean }> {
+    const hasRetainedTranscript = input.committedMessagesCount > 0;
+    const hasPresentableRows = hasRetainedTranscript || input.pendingMessagesCount > 0;
+    const shouldRenderChatTimelineImmediately = input.shouldRenderChatTimeline
+        && (
+            input.isLoaded === true
+            || hasPresentableRows
+            || (input.shouldForceRenderTranscriptFooter && !input.hasTranscriptLoadIssue)
+        );
+    return { shouldRenderChatTimelineImmediately, retainedTranscriptVisible: hasRetainedTranscript && shouldRenderChatTimelineImmediately };
+}
+
+/**
+ * A transcript refresh that failed over retained rows is a Session notice: it stands in the composer's banner seat
+ * with the Session's other notices (owner 2026-11-11), not across the top of the transcript.
+ */
+type SessionRetainedTranscriptLoadIssueProps = Readonly<{
+    sessionId: string;
+    session: Session;
+    isEncryptedSessionLocked: boolean;
+    isForkedSessionV1: boolean;
+    isLocallyAttached: boolean;
+    pendingMessagesCount: number;
+}>;
+
+const SessionRetainedTranscriptLoadIssue = React.memo(function SessionRetainedTranscriptLoadIssue(props: SessionRetainedTranscriptLoadIssueProps) {
+    // Only an issue mounts the transcript render-state read: the seat stays still on ordinary sequence updates.
+    const hasTranscriptLoadIssue = storage((state) => state.sessionTranscriptLoadIssues[props.sessionId] != null);
+    return hasTranscriptLoadIssue ? <SessionRetainedTranscriptLoadIssueBanner {...props} /> : null;
+});
+
+const SessionRetainedTranscriptLoadIssueBanner = React.memo(function SessionRetainedTranscriptLoadIssueBanner(props: SessionRetainedTranscriptLoadIssueProps) {
+    const { committedMessagesCount, isLoaded, shouldForceRenderTranscriptFooter, shouldRenderChatTimeline } = useSessionTranscriptRenderState(props);
+    const { retainedTranscriptVisible } = resolveTranscriptTimelinePresence({
+        committedMessagesCount, pendingMessagesCount: props.pendingMessagesCount, isLoaded, shouldRenderChatTimeline,
+        shouldForceRenderTranscriptFooter, hasTranscriptLoadIssue: true,
+    });
+    if (!retainedTranscriptVisible) return null;
+    return (
+        <ExternalTranscriptLoadIssueBanner sessionId={props.sessionId} serverId={props.session.serverId ?? null}
+            machineId={readSessionOwnerMetadataView(props.session)?.machineId ?? null} retainedTranscriptVisible />
     );
 });
 
@@ -659,18 +695,7 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
 
     if (!issue || !presented) return null;
 
-    return (
-        <View
-            style={retainedTranscriptVisible
-                ? { marginTop: 8, marginHorizontal: 8 }
-                : {
-                    flex: 1,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingHorizontal: 24,
-                }}
-        >
-            <View style={{ width: '100%', maxWidth: retainedTranscriptVisible ? undefined : 560 }}>
+    const banner = (
                 <WarningActionBanner
                     testID="session.externalTranscript.loadIssue"
                     title={presented?.title}
@@ -682,7 +707,11 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
                     actionBusy={retrying}
                     disabled={retrying}
                 />
-            </View>
+    );
+    if (retainedTranscriptVisible) return <ComposerAuxiliaryFrame>{banner}</ComposerAuxiliaryFrame>;
+    return (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+            <View style={{ width: '100%', maxWidth: 560 }}>{banner}</View>
         </View>
     );
 });
@@ -2471,9 +2500,26 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
       const authRecoveryNotice = authSurfaceState && !(inactiveUi.shouldShowInput && !isEncryptedSessionLocked)
           ? <ComposerAuxiliaryFrame><SessionAuthRecoveryBanner /></ComposerAuxiliaryFrame>
           : null;
-      const sessionNotices = authRecoveryNotice || requesterRecoveryBanner || startFailureBanner
-          ? <>{authRecoveryNotice}{requesterRecoveryBanner}{startFailureBanner}</>
-          : null;
+      // Every Session notice stands here, in the composer's banner seat (owner 2026-11-11): the transcript-load
+      // issue over retained rows, the control/external-Agent banner, access, auth and a failed start.
+      const sessionNotices = (
+          <>
+              <SessionRetainedTranscriptLoadIssue sessionId={sessionId} session={session}
+                  isEncryptedSessionLocked={isEncryptedSessionLocked} isForkedSessionV1={isForkedSessionV1}
+                  isLocallyAttached={isLocallyAttached} pendingMessagesCount={pendingMessages.length} />
+              <SessionChatFooter
+                  sessionId={sessionId}
+                  // With a composer on screen its status line states this cause once; the notice
+                  // speaks only where no composer does (a Session that cannot take input).
+                  bottomNotice={shouldShowInput ? null : bottomNotice}
+                  controlledByUserOverride={isLocallyAttached}
+                  controlSwitchTo={controlSwitchTo}
+                  onRequestSwitchToRemote={isHiddenSystemSessionSession || !canReleaseLocalControl ? undefined : handleRequestSwitchToRemote}
+                  externalControl={externalControlFooter}
+              />
+              {authRecoveryNotice}{requesterRecoveryBanner}{startFailureBanner}
+          </>
+      );
       const content = (
           <>
               <SessionTranscriptContent
@@ -2484,13 +2530,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                   isForkedSessionV1={isForkedSessionV1}
                   isLocallyAttached={isLocallyAttached}
                   pendingMessagesCount={pendingMessages.length}
-                  // With a composer on screen its status line states this cause once; the notice
-                  // speaks only where no composer does (a Session that cannot take input).
-                  bottomNotice={shouldShowInput ? null : bottomNotice}
-                  controlledByUserOverride={isLocallyAttached}
-                  controlSwitchTo={controlSwitchTo}
-                  onRequestSwitchToRemote={isHiddenSystemSessionSession || !canReleaseLocalControl ? undefined : handleRequestSwitchToRemote}
-                  externalControlFooter={externalControlFooter}
                   jumpToSeq={jumpToSeq}
                   jumpToMessageId={jumpToMessageId}
                   followBottomIntentKey={followBottomIntentSeq}

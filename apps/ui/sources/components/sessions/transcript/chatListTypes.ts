@@ -5,7 +5,6 @@ import type { SessionViewportAnchorSnapshot } from '@/sync/sync';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
-import type { ChatFooterExternalControlState } from './ChatFooter';
 import type { PendingMessageEditHandler } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
 import type { TranscriptNavigationEntry } from '@/components/sessions/transcript/navigation/transcriptNavigationTypes';
 import type { TranscriptJumpResult } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
@@ -70,11 +69,6 @@ export type ChatListProps = Readonly<{
     session: Session;
     /** Exact Session-surface lifecycle identity supplied by a qualified route/host. */
     sessionSurfaceKey: string;
-    bottomNotice?: ChatListBottomNotice | null;
-    controlledByUserOverride?: boolean;
-    controlSwitchTo?: 'remote' | null;
-    onRequestSwitchToRemote?: () => void;
-    externalControlFooter?: ChatFooterExternalControlState;
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     jumpToSeq?: number | null;
     jumpToMessageId?: string | null;
@@ -111,11 +105,6 @@ export type ChatListInternalProps = Readonly<{
     rollbackRanges: readonly SessionRollbackRangeV1[];
     rollbackActionsByMessageId: Readonly<Record<string, TranscriptRollbackAction>>;
     isLoaded: boolean;
-    bottomNotice?: ChatListBottomNotice | null;
-    controlledByUserOverride?: boolean;
-    controlSwitchTo?: 'remote' | null;
-    onRequestSwitchToRemote?: () => void;
-    externalControlFooter?: ChatFooterExternalControlState;
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     interaction: TranscriptInteraction;
     jumpToSeq?: number | null;

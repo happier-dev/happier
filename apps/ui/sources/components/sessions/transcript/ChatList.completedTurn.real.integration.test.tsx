@@ -125,7 +125,7 @@ function RetainedDraftTranscript(props: Readonly<{ session: Session; serverId: s
                     focused={!draftActive} visible={!draftActive} navigation={router}>
                     <AppSessionTranscriptSourceProvider sessionId={props.session.id} serverId={props.session.serverId}>
                         <React.Profiler id="fix53-transcript" onRender={() => { props.commits.current += 1; }}>
-                            <ChatList session={props.session} sessionSurfaceKey="df33-surface" externalControlFooter={null}
+                            <ChatList session={props.session} sessionSurfaceKey="df33-surface"
                                 onEditPendingMessage={() => {}} />
                         </React.Profiler>
                     </AppSessionTranscriptSourceProvider>

@@ -165,6 +165,19 @@ vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
 vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
   SessionPaneHeader: () => null,
 }));
+// The Session's control banner stands in the composer seat (owner 2026-11-11); its props are the control contract.
+const sessionChatFooterPropsSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/components/sessions/transcript/ChatFooter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/transcript/ChatFooter')>();
+  const React = await import('react');
+  return {
+    ...actual,
+    SessionChatFooter: (props: React.ComponentProps<typeof actual.SessionChatFooter>) => {
+      sessionChatFooterPropsSpy(props);
+      return React.createElement(actual.SessionChatFooter, props);
+    },
+  };
+});
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
   ChatList: (props: any) => {
     chatListPropsSpy(props);
@@ -335,12 +348,13 @@ describe('SessionView (control switch timeout)', () => {
   }
 
   function getChatListProps() {
-    const calls = chatListPropsSpy.mock.calls;
-    const chatListProps = calls[calls.length - 1]?.[0];
-    if (!chatListProps) {
-      throw new Error('Expected ChatList props to be captured');
+    // The control-switch contract is the Session control banner's (composer seat), no longer the transcript's.
+    const calls = sessionChatFooterPropsSpy.mock.calls;
+    const footerProps = calls[calls.length - 1]?.[0];
+    if (!footerProps) {
+      throw new Error('Expected SessionChatFooter props to be captured');
     }
-    return chatListProps;
+    return footerProps;
   }
 
   function getAgentInputProps() {
@@ -445,6 +459,10 @@ describe('SessionView (control switch timeout)', () => {
       });
     });
   }
+
+  beforeEach(() => {
+    sessionChatFooterPropsSpy.mockReset();
+  });
 
   beforeEach(async () => {
     (globalThis as { __DEV__?: boolean }).__DEV__ = false;
