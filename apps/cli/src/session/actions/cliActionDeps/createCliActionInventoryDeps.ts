@@ -601,7 +601,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     serversList: async (args) => {
       const { listServerProfiles } = await import("@/server/serverProfiles");
-      const profiles = await listServerProfiles().catch(() => []);
+      const profiles = await listServerProfiles();
       const items = profiles
         .map((profile) => ({
           id: profile.id,
