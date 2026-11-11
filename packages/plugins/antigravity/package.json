@@ -45,6 +45,7 @@
   "dependencies": {
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
+    "@happier-dev/plugins-gemini": "0.0.0",
   },
   "devDependencies": {
     "typescript": "^5.9.2",

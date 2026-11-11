@@ -284,7 +284,7 @@ describe('public Vercel provisioner composition', () => {
         const fresh = seedInputByFieldHints(PluginActionContributionV2Schema.parse(action), {});
         expect(fresh).not.toHaveProperty('vcpus');
         const explicit = { ...fresh, vcpus: 2 };
-        for (const [input, duration] of [[explicit, maximum], [{ ...explicit, timeoutMs: 60_000 }, 60_000]] as const {
+        for (const [input, duration] of [[explicit, maximum], [{ ...explicit, timeoutMs: 60_000 }, 60_000]] as const) {
           const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', input, { surface: 'plugin' }));
           const projected = projectMachineProvisionerSelectionV1({ options,
             selection: { ...selection, duration: String(duration) }, launchSchema: VercelLaunchSchema.jsonSchema });
