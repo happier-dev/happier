@@ -70,7 +70,7 @@ import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
+import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionServerRequestHeaders } from './externalActionExecutionAuthorization';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
@@ -689,6 +689,51 @@ async function privateAccountDaemon(serverApiUrl: string, events: string[]) {
   if (!address || typeof address === 'string') throw new Error('Private daemon fixture did not listen');
   return { url: `http://127.0.0.1:${address.port}`, readReceived: () => received };
 }
+
+it('spends the same contributed requester custody through CLI and native HTTP ports', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'contributed-http-custody-' }, async () => {
+    const endpoint = 'https://contributed-http-custody.test';
+    const serverId = configuration.activeServerId;
+    const installation = await readOrCreateInstallationIdentity();
+    const privateKey = new Uint8Array(Buffer.from(installation.privateKey, 'base64url'));
+    const app = fastify();
+    const features = registerAccountHomeHttp(app, { accountId: 'bob', serverId: homeIdentityId });
+    vi.stubGlobal('fetch', async () => Response.json(features));
+    const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+    const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-health-preview', binding: {
+      accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
+      accountEncryptionMode: 'plain', serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+      installationId: installation.installationId, actionId: 'action.invoke', requestId: 'health-preview',
+      requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'alice-machine' },
+    } });
+    const channel = await createRequesterCurrentnessSocketHarness();
+    let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+    try {
+      requester = await runWithServerHttpBaseUrl(endpoint, () => admitRequesterAccountActionContext({ authorization: root, credentials,
+        serverId, serverIdentityId: homeIdentityId, serverHttpBaseUrl: endpoint, isCurrent: async () => true }));
+      if (!requester) throw new Error('Expected original requester custody');
+      const projectionInput = { serverId, serverIdentityId: homeIdentityId, serverHttpBaseUrl: endpoint,
+        target: root.binding.target, installationId: root.binding.installationId, privateKey,
+        rootAdmitted: true as const };
+      const projected = await projectExternalActionRequesterHttpAuthorization({ ...projectionInput,
+        authorization: requester.authorization });
+      if (!projected?.requesterHttpProjection) throw new Error('Expected native HTTP port');
+      const request = { effectActionId: 'deployments.environments.get', method: 'GET',
+        path: `/v1/deployments/environments/environment?serverId=${homeIdentityId}` };
+      const cli = resolveExternalActionServerRequestHeaders({ ...request,
+        context: { surface: 'plugin', authority: 'account_automation', externalActionTarget: root.binding.target,
+          externalActionExecutionAuthorization: projected }, daemonToken: 'different-installed-account',
+        serverIdentityId: homeIdentityId, installationId: root.binding.installationId, privateKey });
+      expect(cli).toMatchObject({ ok: true, headers: { Authorization: `Bearer ${credentials.token}` } });
+      const native = await projected.requesterHttpProjection.createRequestHeaders(request);
+      expect(native).toEqual({ Authorization: `Bearer ${credentials.token}`,
+        [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
+      const wireOnly = await projectExternalActionRequesterHttpAuthorization({ ...projectionInput, authorization: root });
+      expect(await wireOnly?.requesterHttpProjection?.createRequestHeaders(request)).toBeNull();
+    } finally { await requester?.dispose(); await channel.close(); restore(); await app.close(); }
+  });
+});
 
 describe('ordinary CLI requester Account custody on the existing Action carrier', () => {
   it.each(['plain', 'e2ee'] as const)('forwards exact Account power admission without selecting a native recovery controller (%s)', async mode => {

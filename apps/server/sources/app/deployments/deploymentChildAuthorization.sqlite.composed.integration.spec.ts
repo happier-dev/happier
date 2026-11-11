@@ -22,6 +22,8 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { configuration, reloadConfiguration } from '../../../../cli/src/configuration';
 import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
 import { registerAccountSettingsRoutes } from '@/app/api/routes/account/registerAccountSettingsRoutes';
+import { changesRoutes } from '@/app/api/routes/changes/changesRoutes';
+import { registerAutomationV3Routes } from '@/app/api/routes/automations/registerAutomationV3Routes';
 import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -52,7 +54,7 @@ import { ArtifactBodyEnvelopeV1Schema } from '@happier-dev/protocol/artifacts/ar
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRpcRequestV1,
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, signExternalActionMachineRpcRequestV1,
     signExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1, encodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -2600,6 +2602,8 @@ describe('deployment children retain their controller Action authority', () => {
         await withAuthenticatedTestApp(app => {
             registerAccountProfileRoute(app);
             registerAccountSettingsRoutes(app);
+            changesRoutes(app);
+            registerAutomationV3Routes(app);
             featuresRoutes(app);
             registerAccountEncryptionRoutes(app);
             artifactsRoutes(app);
@@ -2612,63 +2616,66 @@ describe('deployment children retain their controller Action authority', () => {
             const origin = await app.listen({ host: '127.0.0.1', port: 0 });
             await withConfiguredDaemonTestHome({ prefix: 'health-sdk-signed-home-',
                 env: { HAPPIER_SERVER_URL: origin, HAPPIER_ACTIVE_SERVER_ID: serverId } }, async () => {
-            const channel = await createRequesterCurrentnessSocketHarness();
-            let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
-            try {
-                requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
-                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
-                if (!requester) throw new Error(`Expected admitted requester: ${JSON.stringify(exchanges)}`);
-                const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
-                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
-                    installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
-                if (!authorization) throw new Error('Expected requester HTTP projection');
-                // The native host and actual Home routes reproduce the SDK health/setup
-                // reader's Environment get followed by its read-only update preview.
-                const native = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: origin,
-                    machineId: f.controller.id,
-                    runtime: { async acquire() { throw new Error('Preview must not acquire native deployment'); } } });
-                const context = { surface: 'plugin' as const, authority: 'account_automation' as const,
-                    externalActionExecutionAuthorization: authorization, externalActionTarget: target };
-                const read = await native.deploymentAction!('deployments.environments.get',
-                    { serverId, environmentId: f.environment.id }, context);
-                expect(read, JSON.stringify(exchanges)).toMatchObject({ ok: true, environment: { id: f.environment.id } });
-                const preview = await native.deploymentAction!('deployments.environments.update',
-                    { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
-                        contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
-                        contentBodyVersion: f.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts' }, context);
-                expect(preview, JSON.stringify({ exchanges, preview })).toMatchObject({ ok: true,
-                    environmentId: f.environment.id, revision: f.environmentRevision });
-                const nativeExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
-                const sdkAuthorization = Object.defineProperties({ ...authorization }, Object.getOwnPropertyDescriptors(authorization));
-                Object.defineProperty(sdkAuthorization, 'requesterAccountExecutor', { value: nativeExecutor, enumerable: false });
-                const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
-                    pluginIds: ['happier.machine.services'], resolveCurrentMachineId: () => f.controller.id,
-                    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId: f.controller.id }),
-                    externalActionHomeBinding: { serverId, serverIdentityId: serverId,
-                        externalActionMachineInstallationId: f.controller.installationId,
-                        externalActionMachineRequestPrivateKey: f.controller.keys.secretKey },
-                    scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
-                        getAccountSettings: () => null, allowEnvironmentOverride: false }) },
-                } });
+                const channel = await createRequesterCurrentnessSocketHarness();
+                let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
                 try {
-                    const sdk = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-                        invokeContributedAction: createDaemonExternalActionContributedInvoker({
-                            acquireRuntimeRegistryLease: () => runtime.controller.acquireRuntimeRegistry(),
-                        }) });
-                    const result = await sdk.execute('action.invoke', input, { surface: 'api', authority: 'present_user',
-                        serverId, serverIdentityId: serverId, runtimeAccountId: f.account.id,
-                        actionRequestId: envelope.requestId, actionCaller: { kind: 'host' },
-                        externalActionExecutionAuthorization: sdkAuthorization, externalActionTarget: target });
-                    expect(result, JSON.stringify({ result, exchanges })).toMatchObject({ ok: true, result: {
-                        mode: 'preview', sourceConfig: { subject: input.input.subject },
-                        destinationSelectionContext: { serverId, machineId: f.controller.id },
+                    requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                    if (!requester) throw new Error(`Expected admitted requester: ${JSON.stringify(exchanges)}`);
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                        installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                    if (!authorization) throw new Error('Expected requester HTTP projection');
+                    // The native host and actual Home routes reproduce the SDK health/setup
+                    // reader's Environment get followed by its read-only update preview.
+                    const native = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: origin,
+                        machineId: f.controller.id,
+                        runtime: { async acquire() { throw new Error('Preview must not acquire native deployment'); } } });
+                    const context = { surface: 'plugin' as const, authority: 'account_automation' as const,
+                        externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+                    const read = await native.deploymentAction!('deployments.environments.get',
+                        { serverId, environmentId: f.environment.id }, context);
+                    expect(read, JSON.stringify(exchanges)).toMatchObject({ ok: true, environment: { id: f.environment.id } });
+                    const preview = await native.deploymentAction!('deployments.environments.update',
+                        { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+                            contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
+                            contentBodyVersion: f.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts' }, context);
+                    expect(preview, JSON.stringify({ exchanges, preview })).toMatchObject({ ok: true,
+                        environmentId: f.environment.id, revision: f.environmentRevision });
+                    const nativeExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
+                    const sdkAuthorization = Object.defineProperties({ ...authorization }, Object.getOwnPropertyDescriptors(authorization));
+                    Object.defineProperty(sdkAuthorization, 'requesterAccountExecutor', { value: nativeExecutor, enumerable: false });
+                    const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+                        pluginIds: ['happier.machine.services'], resolveCurrentMachineId: () => f.controller.id,
+                        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId: f.controller.id }),
+                        externalActionHomeBinding: { serverId, serverIdentityId: serverId,
+                            externalActionMachineInstallationId: f.controller.installationId,
+                            externalActionMachineRequestPrivateKey: f.controller.keys.secretKey },
+                        scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
+                            getAccountSettings: () => null, allowEnvironmentOverride: false }) },
                     } });
-                } finally { await runtime.dispose(); }
-                expect(await native.deploymentAction!('deployments.environments.get',
-                    { serverId, environmentId: foreign.environment.id }, context)).toMatchObject({ ok: false });
-                expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).revision)
-                    .toBe(f.environmentRevision);
-            } finally { await requester?.dispose(); await channel.close(); }
+                    try {
+                        expect(runtime.registry.contributes.actionsById.has('happier.machine.services/health/setup')).toBe(true);
+                        const sdk = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+                            invokeContributedAction: createDaemonExternalActionContributedInvoker({
+                                acquireRuntimeRegistryLease: () => runtime.controller.acquireRuntimeRegistry(),
+                            }) });
+                        const result = await sdk.execute('action.invoke', input, { surface: 'api', authority: 'present_user',
+                            serverId, serverIdentityId: serverId, runtimeAccountId: f.account.id,
+                            actionRequestId: envelope.requestId, actionCaller: { kind: 'host' },
+                            signExternalActionApprovalInput: request => signExternalActionApprovalInputV1({ ...request,
+                                authorizationToken: authorization.token, privateKey: f.controller.keys.secretKey }),
+                            externalActionExecutionAuthorization: sdkAuthorization, externalActionTarget: target });
+                        expect(result, JSON.stringify({ result, exchanges })).toMatchObject({ ok: true, result: {
+                            mode: 'preview', sourceConfig: { subject: input.input.subject },
+                            destinationSelectionContext: { serverId, machineId: f.controller.id },
+                        } });
+                    } finally { await runtime.dispose(); }
+                    expect(await native.deploymentAction!('deployments.environments.get',
+                        { serverId, environmentId: foreign.environment.id }, context)).toMatchObject({ ok: false });
+                    expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).revision)
+                        .toBe(f.environmentRevision);
+                } finally { await requester?.dispose(); await channel.close(); }
             });
         }, { authentication: 'real' });
     });

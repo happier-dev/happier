@@ -13,6 +13,7 @@ import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
 import { createCliSessionActionTransport } from '@/session/transport/cliActionTransport';
@@ -107,7 +108,9 @@ import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnv
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
 import { createCliConnectedServiceAction } from './connectedServiceActionDeps';
@@ -1102,12 +1105,42 @@ export function createCliActionDeps(params: CliActionDepsParams,
         }
       }
       if (params.deploymentAction) return params.deploymentAction(actionId, input, context, hostChild);
+      if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
+        const authored = DeploymentEnvironmentCreateIntentInputV1Schema.safeParse(input);
+        if (authored.success && authored.data.preview) {
+          const execution = await dispatchOriginalDeploymentRoot(actionId, input, context, async () => {
+            const selected = await resolveDeploymentPreviewExecutionMachineIdV1(authored.data, {
+              listEnvironments: query => deploymentStorage('deployments.environments.list', query, context),
+              async readTemplateController() {
+                const loaded = await deploymentStorage('deployments.environments.get', {
+                  serverId: authored.data.serverId, environmentId: authored.data.preview!.templateEnvironmentId }, context);
+                if ('errorCode' in loaded) return loaded;
+                const result = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
+                return result.ok ? { ok: true, machineId: result.environment.controllerMachineId }
+                  : executionRunActionFailure(result.error);
+              },
+            });
+            if (!selected.ok) return selected;
+            const target = resolveExternalActionMachineTarget({ actionId, rawInput: input,
+              target: context.externalActionTarget, ownerMachineId: selected.machineId });
+            return target.kind === 'rejected' ? target.execution : selected;
+          });
+          if (!execution.ok) return execution;
+          const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+          if (approval.success && approval.data.actionId === actionId) return approval.data;
+          const output = DeploymentActionOutputSchemasV1[actionId].safeParse(execution.result);
+          return output.success ? output.data : executionRunActionFailure('invalid_action_output');
+        }
+      }
       const authorization = context.externalActionExecutionAuthorization;
-      if (isDeploymentObservationReadActionIdV1(actionId) && authorization && isDeploymentTargetLinkActionIdV1(authorization.binding.actionId)
-        && authorization.requesterAccountExecutor) {
-        // Link's Machine ingress supplies this native executor. Its explicit
-        // deploymentAction above ends delegation; Session RPC cannot admit a
-        // Link machine root into its Session-scoped requester executor.
+      const contributedMachineChild = context.actionCaller?.kind === 'plugin'
+        && authorization?.binding.actionId === ACTION_INVOKE_ACTION_ID_V1
+        && authorization.binding.target.kind === 'machine';
+      if (authorization?.requesterAccountExecutor && (contributedMachineChild
+        || isDeploymentObservationReadActionIdV1(actionId) && isDeploymentTargetLinkActionIdV1(authorization.binding.actionId))) {
+        // Machine ingress supplies the private native executor. Its explicit
+        // deploymentAction above ends delegation; retain the signed caller and
+        // custody instead of re-entering controller placement from the SDK.
         const execution = await authorization.requesterAccountExecutor.execute(actionId, input, context);
         return execution.ok ? DeploymentActionOutputSchemasV1[actionId].parse(execution.result) : execution;
       }

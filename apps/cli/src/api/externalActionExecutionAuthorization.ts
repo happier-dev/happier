@@ -17,7 +17,8 @@ import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happi
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
-import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1,
+  isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
@@ -689,7 +690,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || actionId === 'deployments.targets.link' && input !== null && typeof input === 'object' && !('contentArtifactId' in input)
     || isDeploymentReceiptObservationActionIdV1(actionId)
     || isDeploymentReadActionIdV1(actionId)
-    || isDeploymentBackupActionIdV1(actionId) || isProjectReadinessActionIdV1(actionId)
+    || isDeploymentBackupActionIdV1(actionId) || isDeploymentDomainChildActionIdV1(actionId) || isProjectReadinessActionIdV1(actionId)
     || actionId === 'deployments.templates.instantiate' || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || actionId === 'deployments.environments.create' && projectDeploymentPreparationAdmissionV1(actionId, input) !== undefined
@@ -1343,6 +1344,25 @@ export function createExternalActionAuthorizedRequestHeaders(input: Readonly<{
   };
 }
 
+/** Contributed handlers spend their admitted Account custody, never the daemon's Account. */
+function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  effectActionId: string;
+  authority: ActionExecutorContext['authority'];
+}>): Readonly<{ ok: true; headers: Readonly<Record<string, string>> }> | ExternalActionHeaderRefusal | null {
+  const binding = input.authorization.binding;
+  if (binding.actionId !== ACTION_INVOKE_ACTION_ID_V1 || input.effectActionId === binding.actionId
+    || !('authentication' in binding)) return null;
+  // The outer Action proof is not a credential for arbitrary child HTTP purposes.
+  const requester = readRequesterAccountActionContext(input.authorization);
+  if (!requester || binding.accountId !== readAccountIdFromToken(requester.credentials.token)
+    || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) {
+    return refuseExternalActionHeaders('requester_account_custody_mismatch', binding.requestId);
+  }
+  return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
+    ...(input.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
+}
+
 /** Attach HTTP-only requester ports to the incumbent, Home-proved carrier. */
 export async function projectExternalActionRequesterHttpAuthorization(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -1486,6 +1506,9 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
       }
       if (input.forwardedMove && isSessionStopChildRootV1(authorization.binding.actionId)
         && request.effectActionId !== 'session.stop') return null;
+      const contributed = resolveContributedActionRequesterHttpHeaders({ authorization,
+        effectActionId: request.effectActionId, authority: 'account_automation' });
+      if (contributed) return contributed.ok && await isCurrent(request.signal) ? contributed.headers : null;
       // Topology is private Account data, not authority conferred by a Project
       // execution root. Spend only its exact, still-current requester read port.
       if (projectRowReadCustody && request.effectActionId === authorization.binding.actionId
@@ -1847,17 +1870,9 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   if (!input.context?.externalActionTarget) return refuse('target_missing');
   if (authorization.binding.serverIdentityId !== input.serverIdentityId) return refuse('dependency_home_identity_mismatch');
   const binding = authorization.binding;
-  if (binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && input.effectActionId !== binding.actionId
-    && 'authentication' in binding) {
-    // The contributed handler spends the Account custody already disclosed for
-    // this invocation. Its outer Action proof is not a credential for arbitrary
-    // child HTTP purposes, and the installed daemon's Account is not the caller.
-    const requester = readRequesterAccountActionContext(authorization);
-    if (!requester || binding.accountId !== readAccountIdFromToken(requester.credentials.token)
-      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return refuse('requester_account_custody_mismatch');
-    return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
-      ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
-  }
+  const contributed = resolveContributedActionRequesterHttpHeaders({ authorization,
+    effectActionId: input.effectActionId, authority: input.context.authority });
+  if (contributed) return contributed;
   if (binding.actionId === 'approval.request.create' && binding.actionId !== input.effectActionId
     && 'authentication' in binding) {
     // The proposal proof remains approval provenance, not an effect credential.

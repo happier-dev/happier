@@ -369,7 +369,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(prepared?.authorization.binding.actionId).toBe('template.updates.apply');
   });
 
-  it.each(['template.updates.apply', 'action.invoke'] as const)('keeps a restricted %s PAT root signed without private Account custody', actionId => {
+  it.each(['template.updates.apply', 'action.invoke'] as const)('keeps a restricted %s PAT root signed without private Account custody', async actionId => {
     const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] } };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
       ...authorization.binding, actionId, grant,
@@ -388,6 +388,14 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: expect.any(String) });
     expect(signed.headers).not.toHaveProperty('Authorization');
     expect(signed).not.toHaveProperty('machineRpcAuthorization');
+    const projected = await executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
+      authorization: root, serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
+      target, installationId: 'alice-installation', privateKey: keys.secretKey, rootAdmitted: true,
+    });
+    const native = await projected?.requesterHttpProjection?.createRequestHeaders(request);
+    expect(native).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+      [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: expect.any(String) });
+    expect(native).not.toHaveProperty('Authorization');
     expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, target,
       installationId: root.binding.installationId, requestId: root.binding.requestId,
       effectActionId: request.effectActionId, method: request.method, path: request.path,
