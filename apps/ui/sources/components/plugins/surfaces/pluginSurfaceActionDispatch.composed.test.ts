@@ -6000,6 +6000,117 @@ describe('plugin-surface action branch selection', () => {
         } finally { await activation.composition.unload(); show.mockRestore(); hide.mockRestore(); }
     });
 
+    it.each(['catalog', 'reference', 'denied', 'stale', 'wrong-row', 'machine-missing'] as const)('admits Account client message menu context and retains reference-only refusal through the shared presenter (%s)', async entry => {
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const previousScope = getStorage().getState().profileScope;
+        const previousSnapshot = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        getStorage().setState({ profileScope: { serverId: 'server-client-action', accountId: 'test-account' } });
+        publishAppliedActiveServerSnapshot({ serverId: 'server-client-action', serverUrl: 'https://client-action.example', generation: 0 });
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        onTestFinished(() => {
+            retireActiveServerAccountScopeLifetime();
+            getStorage().setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
+        });
+        if (!accountLifetime) throw new Error('Missing real captured Account lifetime');
+        let handlerEntered = false;
+        let receivedMessage: unknown;
+        const reference = { v: 1, sessionId: 'message-session', messageId: 'assistant-message', observedRevision: 'revision-1' } as const;
+        const { createSessionFixture, createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+        const { SessionMessageV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionMessagesPageV1');
+        const session = createSessionFixture({ id: reference.sessionId, encryptionMode: 'plain' });
+        const row = SessionMessageV1Schema.parse({ id: reference.messageId, seq: 1, localId: null, createdAt: 1,
+            messageRole: 'agent', messageActionReference: reference,
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Selected answer' } } } });
+        network.setHttpResponder(createSessionReadBatchFetchBoundary(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/messages/action-reference/resolve') && entry === 'denied') return Response.json({ error: 'forbidden' }, { status: 403 });
+            if (path.endsWith('/messages/action-reference/resolve')) return Response.json({ status: 'available', message: {
+                sessionId: reference.sessionId, messageId: reference.messageId, observedRevision: reference.observedRevision, seq: 1, messageRole: 'agent',
+            } });
+            if (path === '/v2/sessions/message-session') return Response.json(createPlainSessionByIdResponseFixture(session));
+            if (path === '/v1/sessions/message-session/messages') return Response.json({ messages: [{ ...row, ...(entry === 'wrong-row' ? { id: 'another-message' } : {}),
+                messageActionReference: { ...reference, ...(entry === 'stale' ? { observedRevision: 'revision-2' } : {}) } }], hasMore: false });
+            return createEmptyAccountBootstrapHttpResponse(path, init);
+        }));
+        const activation = createClientActionActivation({ accountLifetime, accountPlacement: true,
+            accountActionDeclaration: {
+                id: 'refresh-index', title: 'Create task', scopes: ['message'], surfaces: ['ui'],
+                placementBindings: ['message.menu'], dangerLevel: 'safe',
+                execution: { target: 'client', client: {
+                    artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
+                }, platforms: [CLIENT_ACTION_TARGET.platform] },
+            },
+            handler: async (_input, context) => { handlerEntered = true; receivedMessage = context.messageAction; return {}; },
+        });
+        const { Modal } = await import('@/modal');
+        const { t } = await import('@/text');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const { createPluginContributedActionController } = await import('../actions/pluginContributedActionController');
+            const { openPluginContributedAction, openPluginContributedActionReference } = await import('../actions/openPluginContributedAction');
+            const plugin = {
+                pluginId: CALLER_PLUGIN_ID, title: 'Message tools', description: null, version: '1.2.3',
+                enabled: true, generation: CLIENT_ACTION_GENERATION, generationLabel: String(CLIENT_ACTION_GENERATION),
+                immutableGenerationId: activation.action.occurrenceId, status: null, provenance: null, diagnostics: [],
+                actions: [{ id: activation.action.id, occurrenceId: activation.action.occurrenceId,
+                    title: 'Create task', description: null, icon: null, scopes: ['message'], surfaces: ['ui'],
+                    placementBindings: ['message.menu'], slash: null, priority: null, dangerLevel: 'safe', confirmation: null,
+                    available: true }], resources: [], editableSettingsGroups: [],
+            } satisfies import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters').PluginProjectionEntry;
+            const controller = createPluginContributedActionController({ resolveCurrent: () => ({
+                pluginProjectionById: { [CALLER_PLUGIN_ID]: plugin },
+                resolveContributedAction: resolveExactClientAction(entry === 'machine-missing'
+                    ? PluginProjectedActionV2Schema.parse({ ...activation.action, execution: { target: 'daemon' } }) : activation.action),
+                host: { machineId: entry === 'machine-missing' ? undefined : CLIENT_ACTION_HOST_ORIGIN.machineId, serverId: accountLifetime.scope.serverId, accountLifetime,
+                    sessionId: 'message-session', messageActionReference: {
+                        v: 1, sessionId: 'message-session', messageId: 'assistant-message', observedRevision: 'revision-1',
+                    },
+                },
+            }) });
+            if (entry === 'machine-missing') {
+                expect(controller.list({ placement: 'message.menu', scope: 'message' })).toEqual([]);
+                expect(handlerEntered).toBe(false);
+                return;
+            }
+            if (entry !== 'reference') {
+                const action = controller.list({ placement: 'message.menu', scope: 'message' })[0];
+                if (!action) throw new Error('Missing registered catalog Action');
+                const opened = await openPluginContributedAction({ controller, action });
+                expect(opened).toMatchObject({ kind: 'direct', outcome: {
+                    ...(entry === 'catalog' ? { ok: true, result: {} }
+                        : { ok: false, code: 'unavailable', reason: 'plugin_message_action_unavailable' }),
+                } });
+            } else {
+                await openPluginContributedActionReference({ controller,
+                    action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: {},
+                });
+            }
+            if (entry === 'catalog') {
+                expect(handlerEntered).toBe(true);
+                expect(receivedMessage).toMatchObject({ sessionId: reference.sessionId, messageId: reference.messageId,
+                    observedRevision: reference.observedRevision, visibleText: 'Selected answer' });
+                expect(alert).not.toHaveBeenCalled();
+                expect(network.httpRequests.filter(request => new URL(request.url).pathname === '/v1/sessions/message-session/messages')).toHaveLength(1);
+                expect(daemonRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
+                return;
+            }
+            expect(handlerEntered).toBe(false);
+            expect(alert.mock.calls.at(-1)?.slice(0, 2)).toEqual([t('common.error'), t('pluginRuntime.actionFailed')]);
+            const details = alert.mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+            expect(details, 'Typed client refusals must retain their diagnostic in Technical details').toBeDefined();
+            details?.onPress?.();
+            expect(alert.mock.calls.at(-1)?.[0]).toBe(t('approvals.technicalDetails'));
+            expect(JSON.parse(alert.mock.calls.at(-1)?.[1] ?? 'null')).toEqual({
+                code: 'unavailable', reason: 'plugin_message_action_unavailable',
+            });
+        } finally { await activation.composition.unload(); alert.mockRestore(); }
+    });
+
     it('reads an unmounted client Action target projection from its registered authority', async () => {
         const accountLifetime = clientAccountLifetime();
         const targetedContributions = {
@@ -9212,7 +9323,7 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
         controller.abort();
         try {
             await expect(adapter.api.executeAction('refresh-index', {}, { signal: controller.signal, onIssued }))
-                .rejects.toMatchObject({ code: 'aborted' });
+                .rejects.toMatchObject({ code: 'unavailable', diagnostics: [{ code: 'aborted', severity: 'error' }] });
             expect(onIssued).not.toHaveBeenCalled();
             expect(adapter.requests).toEqual([]);
         } finally { adapter.dispose(); }
