@@ -58,7 +58,7 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle');
     if (voice.availability === 'unavailable') return null;
     const reading = resolveVoicePresenceReadAloud(voice, readAloud);
-    if (reading) {
+    if (reading && !voice.live) {
         return (
             <VoiceTopBarAnatomy testID={`${testID}-read-aloud`}
                 mark={<View style={stylesheet.readAloudMark}><VoiceReadAloudGlyph size="pill" /></View>}
@@ -134,7 +134,9 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
                 style={({ pressed }) => [styles.label, pressed ? styles.labelPressed : null]}
             >
                 <View style={styles.labelRow}>
-                    <VoiceStatusLine voice={voice} size="pill" />
+                    {props.readAloud?.phase !== 'idle'
+                        ? <VoiceReadAloudStatus phase={props.readAloud.phase} size="pill" testID={`${props.testID}-read-aloud-status`} />
+                        : <VoiceStatusLine voice={voice} size="pill" />}
                     {/* The admitted target stays named through its clean ended moment; global has none. */}
                     {voice.targetSessionAddress ? (
                         <VoiceTargetIdentity address={voice.targetSessionAddress} size="pill" testID={`${props.testID}-target`} />

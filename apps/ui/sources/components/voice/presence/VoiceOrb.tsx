@@ -53,8 +53,8 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
     const [focused, setFocused] = React.useState(false);
     const { translateX, hostWidth } = props;
     const readAloud = resolveVoicePresenceReadAloud(voice, props.readAloud);
-    const readingOnly = readAloud !== null;
-    const showOptions = voice.live || Boolean(voice.ended) || readingOnly;
+    const readingOnly = readAloud !== null && !voice.live;
+    const showOptions = voice.live || Boolean(voice.ended) || readAloud !== null;
     const width = resolveVoiceOrbContainerWidth(Platform.OS, showOptions);
     const captionInset = (width - VOICE_ORB_BODY_SIZE) / 2 + VOICE_ORB_BODY_SIZE + VOICE_ORB_OPTIONS_GAP;
     // Each side releases the other edge explicitly: on web the first side's offsets become the
@@ -116,7 +116,7 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                         <GlassPanel radius={13} shadowLevel={2} innerShadow={false} style={styles.caption}>
                             {/* A failure leads with its status ("Couldn't connect"): the target's name
                                 alone would leave the Orb looking fine. */}
-                            {readingOnly ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : voice.targetSessionAddress && voice.tone !== 'error' ? (
+                            {readAloud !== null ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : voice.targetSessionAddress && voice.tone !== 'error' ? (
                                 // The same admitted name remains after End, with the ended status in place of a live clock.
                                 <View style={voice.live ? styles.targetCaption : styles.endedTargetCaption}>
                                     <View style={styles.targetName}>

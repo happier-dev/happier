@@ -55,7 +55,7 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
         if (suppress()) return;
         onOpenSection();
     }, [onOpenSection, suppress]);
-    if (reading) {
+    if (reading && !voice.live) {
         return (
             <View ref={props.anchorRef} collapsable={false} style={{ width: props.width, height }}>
                 <VoiceIslandAnatomy
@@ -98,7 +98,9 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
                     onPress={onBody}
                     style={styles.body}
                 >
-                    <VoiceStatusLine voice={voice} size="island" />
+                    {reading
+                        ? <VoiceReadAloudStatus phase={reading.phase} size="island" testID={`${testID}-read-aloud-status`} />
+                        : <VoiceStatusLine voice={voice} size="island" />}
                     <VoiceCompactTranscript voice={voice} />
                 </Pressable>}
                 transport={<CompanionNoDragRegion {...VOICE_PRESENCE_NO_DRAG_PROPS}>

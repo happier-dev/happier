@@ -1,4 +1,4 @@
-import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import type { InputTypeReferenceV1 } from '../inputs/inputTypes.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
@@ -117,7 +117,18 @@ export function readApprovalSavedSecretReference(
     return { kind: 'savedSecret', id: value.trim() };
   }
   if (key === 'savedSecretId') return { kind: 'savedSecret', id: value.trim() };
-  if (key !== 'secretId' || !actionId.startsWith('secrets.')) return undefined;
+  if (key !== 'secretId') return undefined;
+  // Nested operation inputs (notably settings.invoke Voice bindings) carry the canonical shared
+  // reference without an input hint. Recognize that value-free namespace here so structured
+  // approval entries name the Saved Secret without teaching the generic presenter the operation.
+  try {
+    if (parseSavedSecretRefV1(value.trim()).kind === 'shared_resource') {
+      return { kind: 'savedSecret', id: value.trim() };
+    }
+  } catch {
+    return undefined;
+  }
+  if (!actionId.startsWith('secrets.')) return undefined;
   try {
     return {
       kind: 'savedSecret',

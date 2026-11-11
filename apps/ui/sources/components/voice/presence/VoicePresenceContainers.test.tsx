@@ -581,6 +581,25 @@ describe('VoiceOrb', () => {
 });
 
 describe('the ended conversation', () => {
+    it('shows live read-aloud as Reading while preserving the call End and Stop controls', async () => {
+        const voice = projection('listening');
+        const stop = vi.fn();
+        screen = await renderScreen(<>
+            <VoiceTopBarPresence voice={voice} readAloud={{ phase: 'speaking', stop }} />
+            <VoiceIsland voice={voice} readAloud={{ phase: 'speaking', stop }} phone width={358}
+                anchorRef={React.createRef()} sectionOpen={false} onOpenSection={() => {}} shouldSuppressPress={() => false} />
+        </>);
+        expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.speaking'));
+        expect(screen.findByTestId('voice-top-bar-read-aloud')).toBeNull();
+        expect(screen.findByTestId('voice-island-read-aloud')).toBeNull();
+        screen.pressByTestId('voice-top-bar-transport-read-aloud-stop');
+        expect(stop).toHaveBeenCalledTimes(1);
+        screen.pressByTestId('voice-top-bar-transport-end');
+        expect(voice.onToggle).toHaveBeenCalledTimes(1);
+        screen.pressByTestId('voice-island-transport-end');
+        expect(voice.onToggle).toHaveBeenCalledTimes(2);
+    });
+
     it('keeps a running call controllable alongside its separate read-aloud Stop', async () => {
         const voice = projection('listening');
         const stop = vi.fn();

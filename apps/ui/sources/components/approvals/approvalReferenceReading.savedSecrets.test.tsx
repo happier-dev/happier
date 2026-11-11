@@ -54,6 +54,17 @@ describe('Saved Secret names in binding approvals', () => {
                 expect(hook.getCurrent()).toMatchObject(expected);
                 expect(await readApprovalReferenceForConfirmation(entry.reference, account)).toMatchObject(expected);
             }
+            const voiceFields = describeApprovalActionFields({ actionId: 'settings.invoke', actionArgs: {
+                anchor: 'voiceConversations.provider.acme.voice/realtime.credential',
+                input: { kind: 'voice_saved_secret', credentialSlotId: 'api_key', operation: 'bind',
+                    expectedSettingsVersion: 3, expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: refs[0] },
+            } });
+            const voiceReference = voiceFields.rows.flatMap(row => row.kind === 'value'
+                ? row.entries?.map(entry => entry.reference).filter((reference): reference is NonNullable<typeof reference> => reference?.kind === 'savedSecret') ?? []
+                : []).at(0);
+            expect(voiceReference).toEqual({ kind: 'savedSecret', id: refs[0] });
+            const voiceReading = await renderHook(() => useApprovalReferenceReading(voiceReference!, refs[0], home));
+            expect(voiceReading.getCurrent()).toMatchObject({ text: names[0], named: true });
         } finally { account.dispose(); }
     });
 });

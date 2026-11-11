@@ -22,6 +22,27 @@ import { SharedSavedSecretRefV1Schema } from '../machines/managed/providerFactsV
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('approval field presentation', () => {
+  it('names a nested Voice Saved Secret binding by its retained reference', () => {
+    const actionArgs = {
+      anchor: 'voiceConversations.provider.acme.voice/realtime.credential',
+      input: {
+        kind: 'voice_saved_secret', credentialSlotId: 'api_key', operation: 'bind',
+        expectedSettingsVersion: 3, expectedSecretId: null, expectedSecretUpdatedAt: null,
+        secretId: 'happier:shared-secret:v1:voice-key',
+      },
+    };
+    const presentation = describeApprovalActionFields({ actionId: 'settings.invoke', actionArgs });
+    expect(presentation.rows).toContainEqual(expect.objectContaining({
+      path: 'input',
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          label: 'Secret id',
+          reference: { kind: 'savedSecret', id: 'happier:shared-secret:v1:voice-key' },
+        }),
+      ]),
+    }));
+  });
+
   it.each(['open', 'executed'] as const)('withholds private replay authority from %s built-in and target Ask observations', status => {
     const actionId = 'machines.managed.delete';
     const target = { kind: 'machine' as const, machineId: 'controller' };
