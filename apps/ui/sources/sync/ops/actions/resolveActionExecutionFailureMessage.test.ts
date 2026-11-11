@@ -39,7 +39,7 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Fallback', options)).toBe('Not saved');
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Fallback', options)).toBe('Not saved');
         if (code !== 'approval_required') {
-            expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Fallback')).toBe(t('errors.actionCanceled'));
+            expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Fallback')).toBe(t('voiceSurface.actionCanceled'));
         }
         expect(resolveActionExecutionErrorMessage(new PluginError({ code: 'outcome_unknown' }), 'Fallback', options))
             .toBe(t('entityDragDrop.preview.unknownDetail'));

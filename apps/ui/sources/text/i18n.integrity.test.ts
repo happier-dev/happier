@@ -2215,9 +2215,6 @@ const ROUTED_LITERAL_TRANSLATION_KEYS = new Set([
     "apps/ui/sources/components/store/StoreAppPreparation.tsx:common.working",
     // Workflow test owner — TH routes the stale cancellation assertion.
     "apps/ui/sources/components/workflows/run/workflowRunDetailPresentation.test.ts:errors.actionCanceled",
-    // MACH-MEMBER-PROJECTION — TH routes cancellation presenter and test.
-    "apps/ui/sources/sync/ops/actions/resolveActionExecutionFailureMessage.test.ts:errors.actionCanceled",
-    "apps/ui/sources/sync/ops/actions/resolveActionExecutionFailureMessage.ts:errors.actionCanceled",
     // Plugin owners — explicit English fallback keys; TH routes locale coverage.
     "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionEmpty",
     "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionIncomplete",

@@ -142,7 +142,7 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'pool_no_available_machine') return t('machinePresets.poolNoMachine');
     if (code === 'approval_required') return options?.notAppliedMessage ?? t('notifications.activity.permissionFallbackBody');
     if (code === 'approval_canceled' || code === 'plugin_action_current_intent_rejected') {
-        return options?.notAppliedMessage ?? t('errors.actionCanceled');
+        return options?.notAppliedMessage ?? t('voiceSurface.actionCanceled');
     }
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
     // Sent, with no answer back: it may or may not have landed.
