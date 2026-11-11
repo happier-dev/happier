@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolvePreferredBackendTargetFromProjection } from './resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
@@ -17,9 +17,9 @@ const ANTIGRAVITY_TARGET = { kind: 'agent' as const, identity: BUNDLED_AGENT_CON
 const configuredTarget = (definitionId: string) => ({ kind: 'agent' as const,
     identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId });
 
-describe('resolvePreferredBackendTargetFromProjection', () => {
+describe('resolvePreferredBackendTarget', () => {
     it('does not choose a bare Custom ACP container from a legacy Agent default', () => {
-        expect(resolvePreferredBackendTargetFromProjection({ lastUsedAgent: 'custom-acp',
+        expect(resolvePreferredBackendTarget({ lastUsedAgent: 'custom-acp',
             enabledAgentIds: ['custom-acp', 'codex'],
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
         })).toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex });
@@ -35,7 +35,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             'backend:custom-acp',
             'agent:custom-acp',
         ]) {
-            expect(resolvePreferredBackendTargetFromProjection({
+            expect(resolvePreferredBackendTarget({
                 lastUsedAgent: 'custom-acp',
                 lastUsedBackendTarget,
                 enabledAgentIds: ['custom-acp', 'codex'],
@@ -53,20 +53,20 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             daemonMergedProjectionInputs: { ...emptyProjectionInputs, discoveredBackendIds: [], mergedBackendProjectionById: {},
                 mergedProviderProjectionById: {}, pluginProjectionById: {}, pluginProjectionV2: null, registryDiagnostics: [] },
         };
-        expect(resolvePreferredBackendTargetFromProjection({ ...inputs,
+        expect(resolvePreferredBackendTarget({ ...inputs,
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
         })).toEqual(target);
-        expect(resolvePreferredBackendTargetFromProjection({ ...inputs, lastUsedBackendTarget: null,
+        expect(resolvePreferredBackendTarget({ ...inputs, lastUsedBackendTarget: null,
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
         })).toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex });
-        expect(resolvePreferredBackendTargetFromProjection({ ...inputs,
+        expect(resolvePreferredBackendTarget({ ...inputs,
             acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [] } },
         })).toEqual(target);
     });
     it('keeps a configured preference from ready destination row facts without a Settings catalog', () => {
         const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
             launch: { kind: 'command' as const, command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review' },
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
@@ -78,16 +78,16 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         { name: 'loading', snapshot: { status: 'loading' } as const },
         { name: 'unavailable', snapshot: { status: 'unavailable', reason: 'account-mode-mismatch' } as const },
     ])('keeps bundled selection and explicit configured intent when the destination catalog is $name', ({ snapshot }) => {
-        expect(resolvePreferredBackendTargetFromProjection({ lastUsedAgent: 'codex',
+        expect(resolvePreferredBackendTarget({ lastUsedAgent: 'codex',
             acpCatalogSnapshot: snapshot,
         })).toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex });
-        expect(resolvePreferredBackendTargetFromProjection({ lastUsedAgent: 'codex',
+        expect(resolvePreferredBackendTarget({ lastUsedAgent: 'codex',
             lastUsedBackendTarget: configuredTarget('retained-review'), acpCatalogSnapshot: snapshot,
         })).toEqual(configuredTarget('retained-review'));
     });
 
     it('routes an Antigravity provider default selection to the canonical provider backend', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'antigravity',
             lastUsedBackendTarget: null,
             defaultBuiltInAgentId: 'claude',
@@ -136,7 +136,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('normalizes an old persisted Antigravity concrete target to the canonical provider backend', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'antigravity-terminal' },
             defaultBuiltInAgentId: 'claude',
@@ -185,7 +185,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('keeps a private configured definition separate from an Antigravity runtime alias', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: {
                 kind: 'backend',
@@ -258,7 +258,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('keeps a daemon-projected plugin backend as the preferred target when it has no built-in runtime carrier', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
             defaultBuiltInAgentId: 'claude',
@@ -297,7 +297,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         // The current daemon V2 projection emits no parallel backend registry,
         // so `agentsById` is the only canonical evidence that this machine
         // offers the Agent. A target it names must stay selectable.
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'acme.review' },
             defaultBuiltInAgentId: 'claude',
@@ -325,7 +325,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('preserves a configured definition without an obsolete daemon backend registry entry', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'ghost-bot', configuredBackendId: 'ghost-bot' },
             defaultBuiltInAgentId: 'claude',
@@ -354,7 +354,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('does not let a projected plugin settings backend hijack the built-in fallback for legacy customAcp', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'customAcp',
             lastUsedBackendTarget: null,
             defaultBuiltInAgentId: 'claude',
@@ -389,7 +389,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('keeps a private definition separate from an unrelated plugin Agent runtime alias', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: {
                 kind: 'backend',
@@ -450,7 +450,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
     });
 
     it('preserves a configured custom backend target when daemon projection inputs are absent', () => {
-        expect(resolvePreferredBackendTargetFromProjection({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: {
                 kind: 'backend',

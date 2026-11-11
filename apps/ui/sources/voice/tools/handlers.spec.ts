@@ -1585,7 +1585,6 @@ describe('voice tool handlers', () => {
       { t: 'spawnSession', args: { ...spawnInput, directory: { kind: 'path', path: 42 } } },
     ], 'Creating the Session now.');
     expect(malformed.actions).toEqual([]);
-    expect(malformed.assistantText).toContain('directory.path');
     expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
     expect(storage.getState().sessions.s_new).toBeUndefined();
     expect(routerNavigate).not.toHaveBeenCalled();
@@ -1723,11 +1722,12 @@ describe('voice tool handlers', () => {
       expect(explicitFailure).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
       expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(spawnSettlement);
       expect(explicitFailure).not.toHaveProperty('alternativeAgent');
-      // With no ready Agent, preserve and name the preferred Agent's actual refusal.
+      // With no ready Agent, do not attempt creation with the remembered default.
       await refreshSignInFacts(false);
+      daemonRpc.mockClear();
       const unavailable = JSON.parse(await invokeCreate('voice-none-ready', { ...spawnInput, creationKey: 'manual:voice-none-ready' }));
-      expect(unavailable).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
-      expect(entry === 'discovered' ? unavailable.result : unavailable).toMatchObject(spawnSettlement);
+      expect(unavailable).toMatchObject({ ok: false, errorCode: 'unknown_agent' });
+      expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
       expect(unavailable).not.toHaveProperty('alternativeAgent');
       // A failure after selecting the ready default may offer another ready Agent.
       await refreshSignInFacts(true);

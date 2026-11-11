@@ -30,6 +30,20 @@ describe('createElevenLabsEventMapper', () => {
     expect(mapper.map({ role: 'user', source: 'user', message: 'hello' })).toBeNull();
   });
 
+  it('omits empty user utterances and silence placeholders before publishing transcript items', () => {
+    const mapper = createElevenLabsEventMapper();
+    mapper.beginConversation();
+
+    // RUN1111-R2 persisted user "..." rows (seq309/310) as real speech.
+    for (const message of ['', '  ', '...', '  ...  ']) {
+      expect(mapper.map({ event_id: 136, role: 'user', source: 'user', message })).toBeNull();
+    }
+    expect(mapper.map({ event_id: 136, role: 'user', source: 'user', message: 'Wait... what?' }))
+      .toMatchObject({ type: 'voice.transcript.final', sequence: 1, revision: 1, role: 'user', text: 'Wait... what?' });
+    expect(mapper.map({ event_id: 137, role: 'agent', source: 'ai', message: '...' }))
+      .toMatchObject({ type: 'voice.transcript.final', sequence: 2, role: 'assistant', text: '...' });
+  });
+
   it("maps ElevenLabs' own correction event as a typed correction and drops exact duplicates", () => {
     const mapper = createElevenLabsEventMapper();
     mapper.beginConversation();

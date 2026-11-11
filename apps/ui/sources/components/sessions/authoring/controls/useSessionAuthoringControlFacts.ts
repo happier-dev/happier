@@ -7,7 +7,7 @@ import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTarget
 import { stripBackendTargetSourceKind } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
-import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
@@ -21,6 +21,8 @@ import { useAiLaunchProfilesWithReadState } from '@/sync/store/useAiLaunchProfil
 import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { useSetting, useServerScopedMachine } from '@/sync/domains/state/storage';
 import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
+import { useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgents';
+import { findMachineAgentInventoryItemForTargetV1, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { getPreferredLanguage } from '@/text';
@@ -95,6 +97,9 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
                 : { discoveredBackendIds: projectionInputs.discoveredBackendIds }),
         }), [acpCatalog, backendEnabledByTargetKey, projectionInputs]);
     const settings = useAgentUiSettings({ agentIds: backendEntries.map(entry => entry.agentId), machineId, domain: 'transcriptStorage' });
+    // Readiness already produced for this Machine (installed, signed in or a
+    // connected default): observed only, so an unopened control never probes.
+    const machineAgents = useObservedMachineAgents({ serverId, machineId }).agents;
     const agentTargets = React.useMemo<readonly SessionAuthoringAgentTargetOption[]>(() => {
         const options: SessionAuthoringAgentTargetOption[] = [];
         for (const entry of backendEntries) {
@@ -130,8 +135,14 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
                     ...(option.description === undefined ? {} : { subtitle: option.description }),
                 }];
             }) ?? [];
+            const machineAgent = findMachineAgentInventoryItemForTargetV1(machineAgents, target);
+            // Retained facts of a Machine not answering now decide nothing.
+            const readiness = machineAgent && !machineAgent.stale
+                ? resolveMachineAgentExecutionStateV1({ inventoryState: machineAgent.state }) : undefined;
             options.push({
                 pickerEntry: entry,
+                ...(readiness === undefined ? {} : { readiness }),
+                ...(machineAgent ? { machineAgent } : {}),
                 id: entry.backendTargetKey,
                 label: entry.title,
                 ...(entry.subtitle === null ? {} : { subtitle: entry.subtitle }),
@@ -166,7 +177,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             });
         }
         return options;
-    }, [backendEntries, directTranscriptsEnabled, localizePluginText, machineId, projectionInputs, settings]);
+    }, [backendEntries, directTranscriptsEnabled, localizePluginText, machineAgents, machineId, projectionInputs, settings]);
 
     /**
      * Which Agent New Session would preselect here, resolved by that same owner
@@ -178,13 +189,15 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
      */
     const contextualDefaultAgentTarget = React.useMemo<AgentExecutionTargetV1 | null>(() => {
         if (projectionInputs === null || agentTargets.length === 0 || !acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
-        const preferred = resolvePreferredBackendTargetFromProjection({
+        const preferred = resolvePreferredBackendTarget({
             lastUsedAgent,
             lastUsedBackendTarget,
+            machineAgents,
             acpCatalogSnapshot: acpCatalog.catalog,
             backendEnabledByTargetKey,
             daemonMergedProjectionInputs: projectionInputs,
         });
+        if (!preferred) return null;
         const preferredKey = resolveBackendTargetKeyV2(preferred);
         return agentTargets.find((option) => option.id === preferredKey)?.target ?? null;
     }, [
@@ -193,6 +206,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
         backendEnabledByTargetKey,
         lastUsedAgent,
         lastUsedBackendTarget,
+        machineAgents,
         projectionInputs,
     ]);
 

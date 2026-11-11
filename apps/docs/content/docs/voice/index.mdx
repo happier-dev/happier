@@ -61,6 +61,10 @@ in the request UI. A generic tool call or a saved approval waiver does not grant
 that delegation to other automated callers. A timeout stops observing
 accepted work without stopping it, and a returned answer requests no acknowledgment.
 
+While a coding Session waits for a permission decision, Voice can still answer
+unrelated questions and read Inbox for a briefing. New coding work for that
+Session waits until its request is settled.
+
 Names must resolve unambiguously before sending. Group selection and its reviewed
 approval targets belong to the shared Actions front door, not a separate Voice
 recipient list. Delivery mute suppresses a sender's future effects for its receiver;
@@ -200,7 +204,8 @@ does not guarantee that only one microphone is active at every instant.
 > **Update Happier Voice agent** for the selected Agent ID. The update reconciles
 > client tools, requires authenticated conversation access, enables the prompt,
 > language and text-only overrides Happier uses, and records a configuration
-> version. An older version or missing permissions is rejected before a
+> version. The current configuration includes the canonical Inbox briefing tool.
+> An older version or missing permissions is rejected before a
 > conversation credential is minted.
 
 A few settings apply whichever conversation mode you chose:

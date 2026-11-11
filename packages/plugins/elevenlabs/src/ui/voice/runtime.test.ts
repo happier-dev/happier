@@ -651,7 +651,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
           headers: { 'content-type': 'application/json' },
           body: new TextEncoder().encode(JSON.stringify(request.operationId === 'agent' ? {
             agent_id: 'agent-1',
-            tags: ['happier_voice_config_v1'],
+            tags: ['happier_voice_config_v2'],
             conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
             platform_settings: {
               auth: { enable_auth: true },

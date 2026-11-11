@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as React from 'react';
+import { buildLocalVoiceAgentSystemPrompt, buildVoiceRealtimeAttemptPolicy } from '@happier-dev/agents/voice';
 
 import {
   getActionSpec,
@@ -196,6 +197,44 @@ describe('bundled Conversation runtime host tool projection', () => {
       expect(names.filter((name) => name !== 'action_execute').sort()).toEqual(enabled.filter((spec) =>
         isVoicePromptHotPathSpec(spec) || spec.id === 'action.spec.search' || spec.id === 'action.spec.get',
       ).map((spec) => spec.bindings?.voiceClientToolName).sort());
+    } finally {
+      lease.revoke();
+    }
+  });
+
+  it('publishes the canonical Inbox read and its briefing guidance to standalone realtime attempts', () => {
+    const lease = createBundledConversationRuntimeHostLease();
+    try {
+      const tools = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' });
+      const inbox = tools.find(tool => tool.name === 'inbox_get');
+      expect(inbox).toBeDefined();
+      expect(inbox?.parameters.required ?? []).toEqual([]);
+      const policy = buildVoiceRealtimeAttemptPolicy({
+        actionSpecs: listVoiceToolActionSpecs(),
+        availableToolNames: tools.map(tool => tool.name),
+        welcome: { enabled: false, mode: 'immediate' },
+      });
+      expect(policy.instructions).toMatch(/^- inbox_get: /m);
+      expect(policy.instructions).toContain('For a briefing or a broad question about what needs attention, use inbox_get');
+      expect(policy.instructions).toContain('approval_request_list covers Account approval requests only');
+    } finally {
+      lease.revoke();
+    }
+  });
+
+  it('keeps canonical Inbox reads available while a coding Session waits for a request decision in either Voice mode', () => {
+    const lease = createBundledConversationRuntimeHostLease();
+    try {
+      const tools = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' });
+      const policy = buildVoiceRealtimeAttemptPolicy({
+        actionSpecs: listVoiceToolActionSpecs(),
+        availableToolNames: tools.map(tool => tool.name),
+        welcome: { enabled: false, mode: 'immediate' },
+      });
+      for (const prompt of [policy.instructions, buildLocalVoiceAgentSystemPrompt()]) {
+        expect(prompt).toContain('do not send new coding work to that Session');
+        expect(prompt).toContain('Continue answering unrelated questions and read-only Inbox requests');
+      }
     } finally {
       lease.revoke();
     }

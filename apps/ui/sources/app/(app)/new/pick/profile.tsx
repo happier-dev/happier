@@ -35,7 +35,7 @@ import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigat
 import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
@@ -101,7 +101,7 @@ export default React.memo(function ProfilePickerScreen() {
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromProjection({
+        return resolvePreferredBackendTarget({
             lastUsedAgent: remembered.lastUsedAgent,
             lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,

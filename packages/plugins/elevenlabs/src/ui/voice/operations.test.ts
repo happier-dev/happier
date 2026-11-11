@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { createElevenLabsAutoprovision } from './autoprovision.js';
+import { createElevenLabsSessionPreparationService } from './runtime/sessionPreparation.js';
 
 import {
   ELEVENLABS_AGENT_CLIENT_EVENTS,
@@ -110,11 +112,84 @@ function provisionAccountRequest<T extends Readonly<{ operationId: string; param
 }
 
 describe('ElevenLabs public account operations', () => {
+  it('requires updating a pre-Inbox agent and registers the canonical Inbox tool before the next conversation', async () => {
+    const agentId = 'agent_inbox';
+    let agent: Record<string, unknown> = {
+      agent_id: agentId, tags: ['happier_voice_config_v1'],
+      conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS },
+        agent: { prompt: { prompt: 'Previous prompt', tool_ids: ['tool_previous'] } } },
+      platform_settings: { auth: { enable_auth: true }, overrides: { conversation_config_override: {
+        agent: { first_message: true, language: true, prompt: { prompt: true } },
+        conversation: { text_only: true }, tts: { voice_id: true },
+      } } },
+    };
+    const registeredTools: Record<string, unknown>[] = [];
+    const remoteTools = new Map<string, Record<string, unknown>>([
+      ['tool_previous', EXACT_SEND_MESSAGE_TOOL_CONFIG],
+    ]);
+    const requests: string[] = [];
+    const accountOperations = { request: vi.fn(async (input: Readonly<{
+      operationId: string; parameters: Readonly<Record<string, unknown>>;
+    }>) => {
+      requests.push(input.operationId);
+      let body: unknown = {};
+      if (input.operationId === 'agent') body = agent;
+      if (input.operationId === 'voices') body = ACCOUNT_VOICE_CATALOG;
+      if (input.operationId === 'tools') body = { tools: [...remoteTools].map(([id, tool_config]) => ({ id, tool_config })) };
+      if (input.operationId === 'create-tool') {
+        const parameters = input.parameters as Readonly<{ body: { tool_config: Record<string, unknown> } }>;
+        registeredTools.push(parameters.body.tool_config);
+        remoteTools.set('tool_inbox', parameters.body.tool_config);
+        body = { id: 'tool_inbox' };
+      }
+      if (input.operationId === 'delete-tool') remoteTools.delete(String(input.parameters.toolId));
+      if (input.operationId === 'update-agent') {
+        const parameters = input.parameters as Readonly<{ body: Record<string, unknown> }>;
+        agent = { ...parameters.body, agent_id: agentId };
+      }
+      if (input.operationId === 'conversation-token') body = { token: 'ephemeral-inbox-token' };
+      return { status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_inbox', headers: {},
+        body: new TextEncoder().encode(JSON.stringify(body)) };
+    }) };
+    const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+    const providerConfig = ElevenLabsVoiceProviderSettingsSchema.parse({
+      ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS, billingMode: 'byo', agentId,
+    });
+    const service = createElevenLabsSessionPreparationService({ providerId,
+      projectVoiceSettings: () => ({ providerId, providerConfig, assistantLanguage: null,
+        welcome: { enabled: false, mode: 'immediate' } }),
+      alert: () => { throw new Error('Unexpected preparation alert'); },
+    });
+    const signal = new AbortController().signal;
+    const prepare = () => service.prepare({ controlSessionId: 'voice-inbox', requestedTargetSessionId: null,
+      settings: {}, credentials: { phase: 'prepare', mediated: accountOperations, raw: null },
+      hostedConversation: null, signal, platform: 'web', textOnly: false });
+    await expect(prepare()).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'realtime_agent_update_required' } });
+    expect(requests).toEqual(['agent']);
+
+    const inbox = getActionSpec('inbox.get');
+    await createElevenLabsAutoprovision({
+      client: { provision: (request, provisionSignal) => provisionElevenLabsWithAccountOperations({
+        accountOperations, request, signal: provisionSignal,
+      }) },
+      defaultVoiceId: 'voice_1',
+      tools: [{ name: inbox.bindings!.voiceClientToolName!, description: inbox.description || inbox.title,
+        parameters: zodSchemaToJsonSchemaObject(inbox.inputSchema),
+        execute: async () => { throw new Error('Provisioning must not execute the Inbox tool'); } }],
+    }).updateAgent({ agentId, tts: createProvisionTtsSettings() }, signal);
+    expect(registeredTools).toEqual([expect.objectContaining({ name: 'inbox_get', type: 'client',
+      parameters: expect.objectContaining({ required: ['arguments_json'] }) })]);
+    expect(agent).toMatchObject({ tags: ['happier_voice_config_v2'],
+      conversation_config: { agent: { prompt: { tool_ids: ['tool_inbox'], prompt: expect.stringContaining('inbox_get') } } } });
+    expect([...remoteTools.keys()]).toEqual(['tool_inbox']);
+    await expect(prepare()).resolves.toMatchObject({ kind: 'prepared' });
+  });
+
   it.each([undefined, false, true])('requires actual voice override permission despite the current tag (%s)', async (voicePermission) => {
     const request = vi.fn(async () => ({
       status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {},
       body: new TextEncoder().encode(JSON.stringify({
-        agent_id: 'agent_1', tags: ['happier_voice_config_v1'],
+        agent_id: 'agent_1', tags: ['happier_voice_config_v2'],
         conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
         platform_settings: {
           auth: { enable_auth: true }, overrides: { conversation_config_override: {
@@ -130,7 +205,7 @@ describe('ElevenLabs public account operations', () => {
   });
 
   it.each(['create', 'update'] as const)('verifies %s voice permission before reporting provisioning success', async (kind) => {
-    let remoteAgent: Record<string, unknown> = { agent_id: 'agent_1', tags: ['happier_voice_config_v1'] };
+    let remoteAgent: Record<string, unknown> = { agent_id: 'agent_1', tags: ['happier_voice_config_v2'] };
     const request = provisionAccountRequest(async (input: Readonly<{ operationId: string; parameters: unknown }>) => {
       const parameters = input.parameters as Readonly<{ body?: Record<string, unknown> }>;
       let body: unknown = {};
@@ -163,7 +238,7 @@ describe('ElevenLabs public account operations', () => {
       }
       const body = input.operationId === 'voices' ? ACCOUNT_VOICE_CATALOG
         : input.operationId === 'tools' ? { tools: [] }
-        : { agent_id: 'agent_1', tags: ['happier_voice_config_v1'] };
+        : { agent_id: 'agent_1', tags: ['happier_voice_config_v2'] };
       return { status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
     });
     await expect(provisionElevenLabsWithAccountOperations({
@@ -445,7 +520,7 @@ describe('ElevenLabs public account operations', () => {
     expect(calls[3]?.parameters).toMatchObject({
       body: {
         name: 'Happier Voice',
-        tags: ['happier_voice_config_v1'],
+        tags: ['happier_voice_config_v2'],
         platform_settings: {
           auth: { enable_auth: true },
           overrides: {
@@ -634,7 +709,7 @@ describe('ElevenLabs public account operations', () => {
       let body: unknown = {};
       if (input.operationId === 'voices') body = ACCOUNT_VOICE_CATALOG;
       if (input.operationId === 'agent') body = {
-        agent_id: 'agent_selected', tags: ['happier_voice_config_v1'],
+        agent_id: 'agent_selected', tags: ['happier_voice_config_v2'],
         conversation_config: { agent: { prompt: { tool_ids: ['tool_old', 'tool_retired'] } } },
       };
       if (input.operationId === 'tools') body = {
@@ -743,7 +818,7 @@ describe('ElevenLabs public account operations', () => {
       tts: { stability: 0.4, similarity_boost: 0.8, speed: 1.1 },
     });
     expect(updateAgentParameters.body).toMatchObject({
-      tags: ['operator_tag', 'happier_voice_config_v1'],
+      tags: ['operator_tag', 'happier_voice_config_v2'],
       platform_settings: {
         auth: { enable_auth: true },
         overrides: {

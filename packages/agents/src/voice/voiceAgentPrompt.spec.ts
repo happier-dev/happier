@@ -402,7 +402,7 @@ describe('voiceAgentPrompt', () => {
     expect(clientToolPrompt).not.toContain('answerUserActionRequest');
   });
 
-  it('tells voice agents to pause tool use while a permission or user-action request is pending', () => {
+  it('keeps unrelated questions and Inbox reads available while a coding Session waits for a request decision', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
       sessionId: 's1',
     });
@@ -411,8 +411,10 @@ describe('voiceAgentPrompt', () => {
       sessionIdPlaceholder: '{{sessionId}}',
     });
 
-    expect(localPrompt).toContain('use only tools needed to present or answer that request; do not send new coding work');
-    expect(clientToolPrompt).toContain('use only tools needed to present or answer that request; do not send new coding work');
+    for (const prompt of [localPrompt, clientToolPrompt]) {
+      expect(prompt).toContain('do not send new coding work to that Session');
+      expect(prompt).toContain('Continue answering unrelated questions and read-only Inbox requests');
+    }
   });
 
   it('tells voice agents to answer active coding-session questions or option prompts before sending more work', () => {

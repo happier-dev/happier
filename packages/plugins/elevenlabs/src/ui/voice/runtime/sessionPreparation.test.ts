@@ -68,7 +68,7 @@ function agentResponse(agentId = 'agent-1') {
     status: 200, finalUrl: `https://api.elevenlabs.io/v1/convai/agents/${agentId}`,
     headers: { 'content-type': 'application/json' },
     body: new TextEncoder().encode(JSON.stringify({
-      agent_id: agentId, tags: ['happier_voice_config_v1'],
+      agent_id: agentId, tags: ['happier_voice_config_v2'],
       conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
       platform_settings: {
         auth: { enable_auth: true },
@@ -97,15 +97,15 @@ describe('createElevenLabsSessionPreparationService', () => {
 
   it.each([
     { agent_id: 'agent-1', tags: [] },
-    { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: { auth: { enable_auth: false } } },
+    { agent_id: 'agent-1', tags: ['happier_voice_config_v2'], platform_settings: { auth: { enable_auth: false } } },
     // A prior Happier agent can be secure but unable to override its greeting.
-    { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: {
+    { agent_id: 'agent-1', tags: ['happier_voice_config_v2'], platform_settings: {
       auth: { enable_auth: true }, overrides: { conversation_config_override: {
         agent: { language: true, prompt: { prompt: true } }, conversation: { text_only: true },
       } },
     } },
     // The previous configuration tag did not grant per-conversation voice selection.
-    { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: {
+    { agent_id: 'agent-1', tags: ['happier_voice_config_v2'], platform_settings: {
       auth: { enable_auth: true }, overrides: { conversation_config_override: {
         agent: { first_message: true, language: true, prompt: { prompt: true } },
         conversation: { text_only: true },

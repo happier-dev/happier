@@ -8,7 +8,7 @@ import { isBundledAgentId } from '@/agents/registry/registryCore';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
-import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
@@ -56,7 +56,7 @@ export function resolveSpawnBackendTargetFromState(
 ): BackendTargetRefV2 {
   const settings = state?.settings ?? {};
   const remembered = readLastUsedBackendSelection(state?.settingsScope ?? null);
-  const preferredTarget = resolvePreferredBackendTargetFromProjection({
+  const preferredTarget = resolvePreferredBackendTarget({
     lastUsedAgent: remembered.lastUsedAgent,
     lastUsedBackendTarget: remembered.lastUsedBackendTarget,
     defaultBuiltInAgentId: DEFAULT_AGENT_ID as AgentId,

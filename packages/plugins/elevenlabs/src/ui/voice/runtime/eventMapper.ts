@@ -47,6 +47,7 @@ function readMessageObservation(
   const role = readRole(record);
   const text = readTrimmedText(record.message);
   const providerEventId = readProviderEventId(record);
+  if (role === 'user' && text === '...') return null;
   return role && text && providerEventId ? { role, text, providerEventId } : null;
 }
 

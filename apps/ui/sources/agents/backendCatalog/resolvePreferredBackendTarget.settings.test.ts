@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
-import { resolvePreferredBackendTargetFromSettings } from './resolvePreferredBackendTargetFromSettings';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 const CLAUDE_TARGET = { kind: 'agent' as const, identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude };
 const CODEX_TARGET = { kind: 'agent' as const, identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex };
+const GROK_TARGET = { kind: 'agent' as const, identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.grok };
 const REVIEW_BOT_TARGET = { kind: 'agent' as const, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'review-bot' };
 const REVIEW_BOT_ACP_BACKEND = {
     id: 'review-bot',
@@ -49,9 +49,9 @@ function configuredAcpBackend(id: string) {
     } as const;
 }
 
-describe('resolvePreferredBackendTargetFromSettings', () => {
+describe('resolvePreferredBackendTarget', () => {
     it('prefers a parseable lastUsedBackendTarget from settings', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
@@ -59,7 +59,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('does not revive a stored built-in customAcp target as a canonical backend target', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'customAcp',
             lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
@@ -67,21 +67,21 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('falls back to a built-in target from lastUsedAgent when no backend target is stored', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'claude',
         })).toEqual(CLAUDE_TARGET);
     });
 
     it('does not treat legacy customAcp as a selectable built-in target when no backend target is stored', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'customAcp',
         })).toEqual(CLAUDE_TARGET);
     });
 
     it('falls back to the default built-in agent when settings contain no valid preference', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'not-a-real-agent',
             lastUsedBackendTarget: { kind: 'bad-target' },
@@ -89,7 +89,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('preserves the stored configured definition for repair when it is no longer available', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' },
             backendEnabledByTargetKey: {},
@@ -98,7 +98,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('keeps a stored configured backend target when ACP catalog availability exists without merged projection', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             backendEnabledByTargetKey: {},
@@ -107,7 +107,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('preserves configured preference intent without claiming availability in an empty catalog', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'customAcp',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             backendEnabledByTargetKey: {},
@@ -116,7 +116,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('does not treat an externally qualified Agent id as a settings-only built-in default', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'acme.review.agent',
             defaultBuiltInAgentId: 'codex',
             enabledAgentIds: ['acme.review.agent', 'codex'],
@@ -126,7 +126,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('does not turn a legacy customAcp carrier into a preference for a configured definition', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'customAcp',
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
             daemonMergedProjectionInputs: {
@@ -145,7 +145,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('preserves an explicit configured preference when the machine projection has no executable row', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             backendEnabledByTargetKey: {},
@@ -159,7 +159,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
     });
 
     it('does not use the legacy customAcp carrier as permission to select a discovered plugin backend from merged projection truth by default', () => {
-        expect(resolvePreferredBackendTargetFromSettings({
+        expect(resolvePreferredBackendTarget({
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'customAcp',
             enabledAgentIds: ['claude', 'acme.review.backend'],
@@ -190,23 +190,28 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
 });
 
 describe('resolvePreferredBackendTarget', () => {
-    it('prefers held ready Agents for an automatic default while preserving an explicit choice and a no-ready refusal target', () => {
+    it.each(['held', 'catalog'] as const)('requires ready automatic defaults while preserving explicit choices (%s targets)', (source) => {
         const params = {
-            availableBackendTargets: [CLAUDE_TARGET, CODEX_TARGET],
-            lastUsedAgent: 'claude',
+            ...(source === 'held' ? { availableBackendTargets: [GROK_TARGET, CODEX_TARGET] }
+                : { enabledAgentIds: ['grok', 'codex'] }),
+            lastUsedAgent: 'grok',
+            lastUsedBackendTarget: GROK_TARGET,
             machineAgents: [
-                { agentId: 'claude', state: 'needsSignIn' as const, stale: false },
+                { agentId: 'grok', state: 'needsSignIn' as const, stale: false },
                 { agentId: 'codex', state: 'ready' as const, stale: false },
             ],
         };
         expect(resolvePreferredBackendTarget(params)).toEqual(CODEX_TARGET);
-        expect(resolvePreferredBackendTarget({ ...params, candidateBackendTargets: [CLAUDE_TARGET] })).toEqual(CLAUDE_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params, candidateBackendTargets: [GROK_TARGET] })).toEqual(GROK_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params, candidateBackendTargets: [GROK_TARGET], machineAgents: [] })).toEqual(GROK_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params, machineAgents: [] })).toBeNull();
         expect(resolvePreferredBackendTarget({ ...params,
             machineAgents: params.machineAgents.map(agent => ({ ...agent, state: 'needsSignIn' as const })),
-        })).toEqual(CLAUDE_TARGET);
+        })).toBeNull();
         expect(resolvePreferredBackendTarget({ ...params,
             machineAgents: params.machineAgents.map(agent => ({ ...agent, stale: true })),
-        })).toEqual(CLAUDE_TARGET);
+        })).toBeNull();
+        expect(resolvePreferredBackendTarget({ ...params, machineAgents: undefined })).toEqual(GROK_TARGET);
     });
 
     it('can automatically select a ready qualified external Agent without collapsing its identity', () => {
@@ -220,7 +225,7 @@ describe('resolvePreferredBackendTarget', () => {
         const params = { lastUsedAgent: 'claude', availableBackendTargets: [CLAUDE_TARGET, REVIEW_BOT_TARGET] };
         expect(resolvePreferredBackendTarget({ ...params,
             machineAgents: [{ agentId: 'custom-acp', definitionId: 'another-bot', state: 'ready', stale: false }],
-        })).toEqual(CLAUDE_TARGET);
+        })).toBeNull();
         expect(resolvePreferredBackendTarget({ ...params,
             machineAgents: [{ agentId: 'custom-acp', definitionId: 'review-bot', state: 'ready', stale: false }],
         })).toEqual(REVIEW_BOT_TARGET);

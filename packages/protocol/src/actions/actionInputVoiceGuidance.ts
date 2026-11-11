@@ -1,5 +1,6 @@
 import type { ActionInputFieldHint, ActionSpec } from './actionSpecs.js';
 import type { ActionInputPredicate } from './actionInputPredicates.js';
+import { APPROVAL_REQUEST_LIST_ACTION_ID_V1, INBOX_GET_ACTION_ID_V1 } from './actionIds.js';
 
 type VoiceGuidanceNote = Readonly<{
   text: string;
@@ -173,8 +174,15 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     text: 'For Happier preferences, use settings_list to discover the displayed setting and its exact anchor, then settings_get to read it. Use settings_set for a writable value or settings_invoke for a declared operation. Perform these through Happier tools rather than forwarding the request to a coding session',
     requiresActionIds: ['settings.list', 'settings.get', 'settings.set', 'settings.invoke'],
   }],
+  'inbox.get': [{
+    text: 'For a briefing or a broad question about what needs attention, use inbox_get to read the canonical Account Inbox. Summarize its returned work and coverage',
+    requiresActionIds: [INBOX_GET_ACTION_ID_V1],
+  }, {
+    text: 'approval_request_list covers Account approval requests only, not the whole Inbox',
+    requiresActionIds: [INBOX_GET_ACTION_ID_V1, APPROVAL_REQUEST_LIST_ACTION_ID_V1],
+  }],
   'approval.request.list': [{
-    text: 'For Inbox approval requests, use approval_request_list with status open, then approval_request_get with the returned artifactId. Account requests are separate from native Session permission requests and need not appear in coding-session updates',
+    text: 'For Account approval requests, use approval_request_list with status open, then approval_request_get with the returned artifactId. Account requests are separate from native Session permission requests and need not appear in coding-session updates',
     requiresActionIds: ['approval.request.list', 'approval.request.get'],
   }],
   'approval.request.decide': [{

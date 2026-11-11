@@ -168,7 +168,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     ...(hasTool('answerUserActionRequest')
       ? ['- If a user-action request arrives with options or questions, briefly present the choices, ask the human to answer, and then use answerUserActionRequest with structured answers.']
       : ['- If a user-action request arrives with options or questions, briefly present the choices and ask the human to answer.']),
-    '- While a permission or user-action request is pending, use only tools needed to present or answer that request; do not send new coding work. Wait for canonical session state to settle it.',
+    '- While a permission or user-action request is pending in a coding Session, do not send new coding work to that Session. Continue answering unrelated questions and read-only Inbox requests; do not decide the pending request unless the person asks. Wait for canonical session state to settle it.',
   ].join('\n');
 }
 

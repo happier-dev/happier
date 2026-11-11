@@ -1,7 +1,7 @@
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
@@ -13,9 +13,9 @@ import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 /** Passive selection uses the same remembered/catalog facts that Start admits. */
 export function projectVoiceDefaultAgentSelection(
-    params: Parameters<typeof resolvePreferredBackendTargetFromProjection>[0],
+    params: Omit<Parameters<typeof resolvePreferredBackendTarget>[0], 'machineAgents'> & { machineAgents?: undefined },
 ): Readonly<{ backendTarget: BackendTargetRefV2; agentTarget: AgentExecutionTargetV1 | null }> {
-    const preferred = resolvePreferredBackendTargetFromProjection(params);
+    const preferred = resolvePreferredBackendTarget(params);
     const backendTarget = resolveOperationalBackendTargetForAgentSelection({
         backendTarget: preferred,
         mergedProviderProjectionById: params.daemonMergedProjectionInputs?.mergedProviderProjectionById,

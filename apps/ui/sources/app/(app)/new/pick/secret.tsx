@@ -9,7 +9,7 @@ import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalo
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
@@ -60,7 +60,7 @@ export default React.memo(function SecretPickerScreen() {
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromProjection({
+        return resolvePreferredBackendTarget({
             lastUsedAgent: remembered.lastUsedAgent,
             lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,

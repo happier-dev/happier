@@ -8,6 +8,8 @@ import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const APPROVAL_REQUEST_LIST_ACTION_ID_V1 = 'approval.request.list' as const;
+export { INBOX_GET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 
 export const SESSION_RUNTIME_REFRESH_ACTION_ID_V1 = 'session.runtime.refresh' as const;
 export const SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 = 'session.connected_services_auth.set' as const;
@@ -806,7 +808,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'devices.simulator.sideband.request',
   ],
   approvals: [
-    'approval.request.list',
+    APPROVAL_REQUEST_LIST_ACTION_ID_V1,
     'approval.request.get',
     'approval.request.create',
     'approval.request.decide',

@@ -278,6 +278,15 @@ describe('agent catalog voice tools', () => {
     await expect(listAgentBackendsForVoiceTool({ includeDisabled: true })).rejects.toMatchObject({ code: 'acp_catalog_unavailable' });
   });
 
+  it('does not publish a remembered Agent as an automatic Machine default without ready inventory', async () => {
+    const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+    const target = { kind: 'agent', identity: { pluginId: 'happier.agent.grok', localId: 'grok' } } as const;
+    rememberLastUsedBackendSelection(state.settingsScope, { lastUsedBackendTarget: target, lastUsedAgent: 'grok' });
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    const result = await listAgentBackendsForVoiceTool({ machineId: 'm1', serverId: catalogHomeId });
+    expect(result).not.toHaveProperty('defaultTargetKey');
+  });
+
   it('projects the Account-scoped New Session default as an exact inventory key', async () => {
     const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
     const target = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;

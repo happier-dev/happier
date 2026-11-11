@@ -14,7 +14,7 @@ import {
   ElevenLabsProvisionResponseSchema,
 } from '../../protocol/voice/index.js';
 
-const ELEVENLABS_AGENT_CONFIG_TAG = 'happier_voice_config_v1';
+const ELEVENLABS_AGENT_CONFIG_TAG = 'happier_voice_config_v2';
 const ELEVENLABS_AGENT_CONFIG_TAG_PREFIX = 'happier_voice_config_v';
 export const ELEVENLABS_AGENT_CLIENT_EVENTS = [
   'audio', 'interruption', 'agent_response', 'agent_response_correction',
@@ -538,7 +538,7 @@ async function runElevenLabsProvision(
     if (!hasCurrentElevenLabsAgentConfiguration(updatedAgent)) {
       throw providerError('provider_response_invalid', 'read_agent');
     }
-    if (existingTags.includes(ELEVENLABS_AGENT_CONFIG_TAG)) {
+    if (existingTags.includes(ELEVENLABS_AGENT_CONFIG_TAG) || existingTags.includes('happier_voice_config_v1')) {
       const retainedToolIds = readElevenLabsSelectedAgentToolIds(updatedAgent);
       let cleanupFailure: unknown;
       for (const id of selectedAgentToolIds) {
