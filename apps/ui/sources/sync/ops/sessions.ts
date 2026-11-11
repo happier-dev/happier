@@ -26,6 +26,8 @@ import { sessionRpcWithServerScope, sessionRpcWithServerAccountScope } from '@/s
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import type {
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
@@ -980,9 +982,25 @@ export async function sessionDeleteWithServerScope(
         });
         if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
         if (response.ok || response.status === 404) {
-            await response.json().catch(() => null);
+            const body: unknown = await response.json().catch(() => null);
             if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
-            sync.retireLocalSession(sessionId, serverId);
+            // Released DELETE /v1/sessions/:id uses this authenticated absence result;
+            // an unrelated route/proxy 404 does not establish that the session is gone.
+            if (!response.ok && (
+                body === null || typeof body !== 'object'
+                || !('error' in body) || body.error !== 'Session not found or not owned by user'
+            )) {
+                return { success: false, message: 'Failed to delete session' };
+            }
+            const currentCredentials = await TokenStorage.getCredentialsForServerUrl(context.targetServerUrl, {
+                serverId: context.targetServerId,
+            });
+            if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
+            // The write is settled, but its old Account must not retire a replacement
+            // Account's projection. Validate the target Home even when it is no longer active.
+            if (currentCredentials && resolveAuthCredentialsScopeKey(currentCredentials) === context.credentialScopeKey) {
+                sync.retireLocalSession(sessionId, serverId);
+            }
             return { success: true };
         }
         const error = await response.text().catch(() => '');

@@ -85,8 +85,10 @@ existing list scan.
 The development UI retires a stale local Session through its existing deletion
 cleanup when an exact read returns authoritative `not_found`. Authentication,
 unrecognized 404s, legacy compatibility-list misses and transient read failures
-retain local state. Explicit Delete
-treats a successful DELETE or its authenticated 404 as idempotent local retirement.
+retain local state. Explicit Delete treats a successful DELETE or the recognized
+authenticated `Session not found or not owned by user` 404 response as idempotent
+local retirement. A settled Delete only retires the issuing Account's projection;
+a replacement Account on the same Home retains its local state.
 In 0.2, Stop-and-delete still requires inactivity before deleting an existing
 Session; a failed Stop can finish without DELETE only when the canonical exact
 read proves the Session is already absent.
