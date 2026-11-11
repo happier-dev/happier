@@ -54,6 +54,8 @@ function groupScopeKey(input: Readonly<{ serviceId: ConnectedAccountServiceKey; 
 }
 
 export async function reconcileConnectedServiceDirectCredentialRevisions(params: Readonly<{
+  /** When supplied, omission is authoritative only for services covered by this projection. */
+  projectsService?: (serviceId: ConnectedAccountServiceKey) => boolean;
   credentialRevisions: ReadonlyArray<Readonly<{
     serviceId: ConnectedAccountServiceKey;
     profileId: string;
@@ -86,6 +88,7 @@ export async function reconcileConnectedServiceDirectCredentialRevisions(params:
   for (const target of params.listRuntimeTargets()) {
     for (const selection of parseConnectedServiceBindingSelections(target.connectedServicesBindingsRaw)) {
       if (selection.kind !== 'profile') continue;
+      if (params.projectsService?.(selection.serviceId) === false) continue;
       const credentialPresence = params.resolveCredentialPresence?.(selection.serviceId, selection.profileId)
         ?? (
           revisions.has(`${selection.serviceId}\0${selection.profileId}`)
@@ -115,6 +118,7 @@ export async function reconcileConnectedServiceDirectCredentialRevisions(params:
 
 export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget(params: Readonly<{
   target: ConnectedServiceGenerationRuntimeTarget;
+  projectsService?: (serviceId: ConnectedAccountServiceKey) => boolean;
   providerAdoptedTargets?: readonly ConnectedServiceProviderAdoptedGenerationTarget[];
   consumer: ConnectedServiceAuthGroupGenerationConsumer;
   listCurrentGroups: (serviceId: ConnectedAccountServiceKey) => Promise<readonly ConnectedServiceProjectedAuthGroup[]>;
@@ -136,6 +140,7 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
   }>>();
   for (const selection of parseConnectedServiceBindingSelections(params.target.connectedServicesBindingsRaw)) {
     if (selection.kind !== 'group') continue;
+    if (params.projectsService?.(selection.serviceId) === false) continue;
     scopes.set(groupScopeKey(selection), {
       serviceId: selection.serviceId,
       groupId: selection.groupId,
@@ -145,6 +150,7 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
   for (const binding of params.target.activeBindings) {
     const groupId = readNonEmptyString(binding.groupId);
     if (!groupId) continue;
+    if (params.projectsService?.(binding.serviceId) === false) continue;
     scopes.set(groupScopeKey({ serviceId: binding.serviceId, groupId }), {
       serviceId: binding.serviceId,
       groupId,

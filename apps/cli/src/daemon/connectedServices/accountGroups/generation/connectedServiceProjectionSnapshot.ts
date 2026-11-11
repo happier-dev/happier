@@ -1,5 +1,9 @@
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
-import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  readBuiltInLegacyConnectedServiceIdForQualifiedService,
+} from '@happier-dev/protocol/connect/connected-service-bindings';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -9,6 +13,7 @@ import type { ConnectedServiceProjectedAuthGroup } from './reconcileConnectedSer
 
 export type ConnectedServiceProjectionSnapshot = Readonly<{
   /** Legacy V2 compatibility projection for scalar runtime bindings. */
+  projectsService: (serviceId: ConnectedAccountServiceKey) => boolean;
   groups: readonly ConnectedServiceProjectedAuthGroup[];
   credentialRevisions: ReadonlyArray<Readonly<{
     serviceId: ConnectedAccountServiceKey;
@@ -117,6 +122,10 @@ export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
       : [];
   });
   return {
+    projectsService: (serviceId) => {
+      const service = parseQualifiedPluginContributionKey(serviceId);
+      return service !== null && readBuiltInLegacyConnectedServiceIdForQualifiedService(service) !== null;
+    },
     groups,
     credentialRevisions: profile.connectedServiceCredentialRevisionsV1.flatMap((entry) => {
       const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(entry.serviceId);

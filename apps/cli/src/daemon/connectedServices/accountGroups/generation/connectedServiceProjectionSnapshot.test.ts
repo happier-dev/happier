@@ -6,9 +6,7 @@ import {
 } from './connectedServiceProjectionSnapshot';
 
 describe('parseConnectedServiceProjectionSnapshot', () => {
-  it('projects nothing for a service that has no legacy connected-service id', () => {
-    // Novel qualified services have no legacy V2 projection. Their daemon consumers read
-    // V4 truth directly instead of manufacturing a scalar identity here.
+  it('reports absent credentials for an omitted legacy service', () => {
     const snapshot = parseConnectedServiceProjectionSnapshot({
       connectedServicesV2: [],
       connectedServiceCredentialRevisionsV1: [],
