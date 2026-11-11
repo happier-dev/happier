@@ -10,7 +10,7 @@ import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 /** The host reads the public preset; it never enumerates the pool's private Machines. */
 export async function prepareOriginalAccountManagedPresetAcquire(params: Readonly<{
     input: ManagedAcquireInputV1; requestId: string; credentials: StoredCredentials;
-    serverHttpBaseUrl: string; signal?: AbortSignal; poolOnly?: boolean;
+    serverHttpBaseUrl: string; signal?: AbortSignal;
 }>) {
     if (params.input.selection.kind !== 'preset') return null;
     const homeUrl = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl);
@@ -22,7 +22,6 @@ export async function prepareOriginalAccountManagedPresetAcquire(params: Readonl
     if (!projected.success) return { kind: 'refused' as const, code: 'managed_response_invalid' };
     if (projected.data.kind === 'refused') return projected.data;
     if (response.status < 200 || response.status >= 300) return { kind: 'refused' as const, code: 'admission_unavailable' };
-    if (params.poolOnly && !projected.data.preset.controllerPoolId) return null;
     return bindManagedPresetAcquireOriginV1({ input: params.input, preset: projected.data.preset, requestKey: params.requestId,
         resolvePool: async input => (await axios.post<unknown>(
             `${homeUrl}${machinePoolActionEndpointPathV1('machines.pools.resolve')}`, input, config)).data });

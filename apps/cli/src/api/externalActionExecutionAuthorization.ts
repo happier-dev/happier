@@ -719,8 +719,8 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || MANAGED_CONTROL_ACTION_IDS_V1.some(id => id === actionId);
 }
 
-/** Controllerless pool presets bind before CLI/MCP placement, without a local daemon or Machine grant. */
-export async function prepareOriginalAccountPoolPresetAcquire(
+/** Unbound presets select their saved controller before CLI/MCP placement, without a local daemon or Machine grant. */
+export async function prepareOriginalAccountPresetAcquire(
   params: Omit<OriginalAccountActionInput, 'target' | 'managedPresetOrigin'>,
 ): Promise<(() => Promise<ActionExecuteResult>) | null> {
   const parsed = params.actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.safeParse(params.input) : null;
@@ -728,7 +728,7 @@ export async function prepareOriginalAccountPoolPresetAcquire(
     || resolveManagedAcquireReviewV1(parsed.data).controller) return null;
   if (parsed.data.selection.homeId !== params.serverIdentityId)
     return async () => ({ ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' });
-  const bound = await prepareOriginalAccountManagedPresetAcquire({ ...params, input: parsed.data, poolOnly: true });
+  const bound = await prepareOriginalAccountManagedPresetAcquire({ ...params, input: parsed.data });
   if (!bound) return null;
   if (bound.kind === 'refused') return async () => ({ ok: false, errorCode: bound.code, error: bound.code });
   const controller = resolveManagedAcquireReviewV1(bound.input).controller;

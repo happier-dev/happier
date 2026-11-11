@@ -29,7 +29,7 @@ import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV
 
 const launch = { provider: { pluginId: "happier.machine.lima", localId: "lima" }, schemaVersion: 1, name: "Launch guest", choices: { image: "linux" } };
 
-async function seedCurrentProvisioner(accountId: string, homeId: string, credentialPurpose?: string | readonly string[], includePrerequisite = false) {
+async function seedCurrentProvisioner(accountId: string, homeId: string, credentialPurpose?: string | readonly string[], includePrerequisite = false, resourceKind = 'vm') {
     const credentialPurposes = typeof credentialPurpose === 'string' ? [credentialPurpose] : credentialPurpose ?? [];
     const controller = { machineId: `${accountId}-controller`, installationId: `${accountId}-installation` };
     await db.machine.create({ data: { id: controller.machineId, accountId, metadata: "{}", installationId: controller.installationId, pluginMaterializationRevision: BigInt(1) } });
@@ -48,7 +48,7 @@ async function seedCurrentProvisioner(accountId: string, homeId: string, credent
         engines: { happier: "^1.0.0" }, runtime: { apiVersion: 1 },
         ...(credentialPurposes.length ? { hostAccess: { required: credentialPurposes.map(id => ({ id, capability: "connectedAccounts", reason: "Acquire native resource",
             scope: { serviceRefs: ["native-account"], operations: ["use"] } })), optional: [] } } : {}), contributes: {
-            machineProvisioners: [{ id: launch.provider.localId, title: "Guest", icon: "machine", resourceKind: "vm", schemaVersion: 1,
+            machineProvisioners: [{ id: launch.provider.localId, title: "Guest", icon: "machine", resourceKind, schemaVersion: 1,
                 launchSchema: launchSchema.jsonSchema, resourceSchema: native.jsonSchema,
                 platforms: ["linux"], prerequisites: includePrerequisite ? [{ kind: 'systemTool', id: 'shell' }] : [], billing: { location: "local", stoppedBilling: "not-billed" }, retention: { supportedIntents: ["start", "stop", "delete"] },
                 actions: { check: "check", acquire: "acquire", bootstrap: "bootstrap", inspect: "inspect", power: "power", destroy: "destroy" } }],
@@ -589,6 +589,21 @@ describe("Machine preset relational owner", () => {
             choices: { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } };
         const input = { id: 'preset-crabbox-direct', homeId, owner: { kind: 'account', accountId }, name: 'Local container', launch: localLaunch, controller };
         expect((await requestPreset(accountId, 'create', input)).json()).toMatchObject({ kind: 'saved', preset: { launch: localLaunch } });
+        const memberId = 'crabbox-team-member';
+        await db.account.create({ data: { id: memberId, publicKey: null, encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Crabbox team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId, role: 'admin' }, { teamId: team.id, accountId: memberId, role: 'member' },
+        ] });
+        await db.machine.update({ where: { id: controller.machineId }, data: { active: true,
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey) } });
+        const teamPreset = { ...input, id: 'crabbox-team-preset', owner: { kind: 'team', teamId: team.id }, teamAcquireDelegated: true };
+        expect((await requestPreset(accountId, 'create', teamPreset)).json()).toMatchObject({ kind: 'saved' });
+        const memberRead = (await requestPreset(memberId, 'get', { homeId, id: teamPreset.id })).json();
+        expect(memberRead).toMatchObject({ kind: 'found', preset: { delegatedAcquire: { kind: 'ready',
+            reviewedFacts: { optionStatus: 'current' } } } });
+        const memberList = (await requestPreset(memberId, 'list', { homeId })).json();
+        expect(memberList.presets).toContainEqual(memberRead.preset);
         const acquired = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'crabbox-direct-reviewed',
             input: { requestId: 'crabbox-direct-create', continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller,
                 launch: localLaunch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } } });
@@ -953,22 +968,23 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(owner, 'get', { homeId, id })).json().preset.launch.credentials).toHaveLength(1);
     });
 
-    it.each(['owner', 'manager', 'delegated'] as const)('binds effect review to controller authority for the %s acquiring a Team preset', async authority => {
+    it.each(['vm', 'devcontainer'].flatMap(resourceKind => ['owner', 'manager', 'delegated'].map(authority => ({ resourceKind, authority }))))(
+        'binds effect review to controller authority for the $authority acquiring a $resourceKind Team preset', async ({ resourceKind, authority }) => {
         const homeId = await getOrCreateServerIdentityId();
-        const owner = `preset-effect-owner-${authority}`;
-        const member = `preset-effect-member-${authority}`;
+        const owner = `preset-effect-owner-${resourceKind}-${authority}`;
+        const member = `preset-effect-member-${resourceKind}-${authority}`;
         await db.account.createMany({ data: [owner, member].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
         const team = await db.team.create({ data: { name: 'Effect review authority' } });
         await db.teamMembership.createMany({ data: [
             { teamId: team.id, accountId: owner, role: 'admin' },
             { teamId: team.id, accountId: member, role: 'member' },
         ] });
-        const controller = await seedCurrentProvisioner(owner, homeId);
+        const controller = await seedCurrentProvisioner(owner, homeId, undefined, false, resourceKind);
         if (authority === 'manager') {
             await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: member,
                 accessLevel: 'admin', createdByAccountId: owner } });
         }
-        const definition = { id: `preset-effect-${authority}`, homeId, name: 'Reviewed effects',
+        const definition = { id: `preset-effect-${resourceKind}-${authority}`, homeId, name: 'Reviewed effects',
             owner: { kind: 'team', teamId: team.id }, controller, launch, teamAcquireDelegated: true };
         expect((await requestPreset(owner, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
         const requesterAccountId = authority === 'owner' ? owner : member;
@@ -984,14 +1000,14 @@ describe("Machine preset relational owner", () => {
             retentionCapabilities: selected.declaration.retention, preset: { ...definition, revision: 0 },
         }), reviewedEffectDigest };
         const result = admitManagedAcquire({ custodianAccountId: owner, requesterAccountId,
-            requestEnvelopeDigest: `effect-review-${authority}`, input: {
-                requestId: `effect-review-${authority}`, continuationPresent: false, input: {
+            requestEnvelopeDigest: `effect-review-${resourceKind}-${authority}`, input: {
+                requestId: `effect-review-${resourceKind}-${authority}`, continuationPresent: false, input: {
                     enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
                     selection: { kind: 'preset', homeId, id: definition.id, revision: 0 }, controller,
                     retention: reviewedFacts.retention, wakeOnAcceptedMessage: reviewedFacts.wakeOnAcceptedMessage, reviewedFacts,
                 },
             } });
-        if (authority === 'delegated') {
+        if (authority === 'delegated' && resourceKind === 'devcontainer') {
             await expect(result).rejects.toMatchObject({ code: 'invalid_request' });
             expect(await db.managedMachine.count({ where: { presetId: definition.id } })).toBe(0);
         } else {

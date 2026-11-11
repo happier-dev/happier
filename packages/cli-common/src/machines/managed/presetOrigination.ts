@@ -42,6 +42,10 @@ export async function bindManagedPresetAcquireOriginV1(params: Readonly<{
         return { kind: 'bound', controllerAccess: bound.controllerAccess,
             input: ManagedAcquireInputV1Schema.parse({ ...input, controller: bound.controller, reviewedFacts: bound.reviewedFacts }) };
     }
-    if (!sameStrictJsonValue(preset.controller, input.controller)) return refused('controller_retired');
-    return { kind: 'bound', input, ...(delegated?.kind === 'ready' ? { controllerAccess: delegated.controller } : {}) };
+    if (input.controller && !sameStrictJsonValue(preset.controller, input.controller)) return refused('controller_retired');
+    return { kind: 'bound',
+        input: ManagedAcquireInputV1Schema.parse({ ...input,
+            ...(preset.controller ? { controller: preset.controller } : {}),
+            ...(input.reviewedFacts === undefined && delegated?.kind === 'ready' ? { reviewedFacts: delegated.reviewedFacts } : {}) }),
+        ...(delegated?.kind === 'ready' ? { controllerAccess: delegated.controller } : {}) };
 }

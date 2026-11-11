@@ -12,8 +12,8 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
-import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
@@ -109,7 +109,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, prepareOriginalAccountPoolPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
 import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -1589,6 +1589,32 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (!invocation || !serverIdentityId) return actionFailure('admission_unavailable');
           const serverHttpBaseUrl = resolveActionServerApiUrl();
           let target = originalTarget;
+          if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
+            const authored = DeploymentEnvironmentCreateIntentInputV1Schema.safeParse(input);
+            if (authored.success && authored.data.preview) {
+              const { deploymentAction } = createCliDeploymentActionDeps({ serverHttpBaseUrl,
+                admitAccount: async serverId => await isServerProfileHomeIdentity(approvalServerId, serverId)
+                  ? null : actionFailure('server_scope_mismatch'),
+                resolveRequestHeaders: () => ({ ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+                  Authorization: `Bearer ${credentials.token}` }),
+                dispatchReceipt: async () => actionFailure('deployment_executor_unavailable') });
+              const selected = await resolveDeploymentPreviewExecutionMachineIdV1(authored.data, {
+                listEnvironments: query => deploymentAction!('deployments.environments.list', query, context),
+                async readTemplateController() {
+                  const loaded = await deploymentAction!('deployments.environments.get', { serverId: authored.data.serverId,
+                    environmentId: authored.data.preview!.templateEnvironmentId }, context);
+                  if ('errorCode' in loaded) return loaded;
+                  const result = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
+                  return result.ok ? { ok: true, machineId: result.environment.controllerMachineId } : actionFailure(result.error);
+                },
+              });
+              if (!selected.ok) return selected;
+              const resolved = resolveExternalActionMachineTarget({ actionId, rawInput: input,
+                target: context.externalActionTarget, ownerMachineId: selected.machineId });
+              if (resolved.kind === 'rejected') return resolved.execution;
+              target = { kind: 'machine', machineId: selected.machineId };
+            }
+          }
           const readRepositoryWorkspaceMachine = async (workspace: Parameters<typeof resolveAccountWorkspaceMachine>[0]['workspace']) => {
             const resolved = await resolveAccountWorkspaceMachine({ credentials, workspace, serverId: approvalServerId,
               serverIdentityId, serverApiUrl: serverHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
@@ -1762,7 +1788,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           authority: context.authority ?? 'account_automation' });
         if (!invocation) return { context,
           invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
-        const selected = await prepareOriginalAccountPoolPresetAcquire({ actionId, input: admittedInput,
+        const selected = await prepareOriginalAccountPresetAcquire({ actionId, input: admittedInput,
           requestId: context.actionRequestId ?? randomUUID(), credentials,
           serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId ?? params.serverIdentityId,
           invocation, authority: invocation.authority, ...(context.signal ? { signal: context.signal } : {}) });

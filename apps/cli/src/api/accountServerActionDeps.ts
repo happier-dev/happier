@@ -30,7 +30,7 @@ import { bindMachineAccessActionHttpRequestV1 } from '@happier-dev/protocol/acti
 import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineAccessPrepareKeysInputV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
-import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -69,12 +69,12 @@ import {
   type ExternalActionMachineRequestSigningKey,
 } from '@/api/externalActionExecutionAuthorization';
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
-import { getUsageQueryKey, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryKey, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { readUsageAccountingSnapshots } from './usageAccountingReads';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
@@ -570,32 +570,20 @@ export function createAccountServerActionDeps(input: Readonly<{
             context?.signal?.throwIfAborted();
           }
         }
-        const snapshots = await Promise.all(accountingReads.map(async ({ query, period }): Promise<UsageAccountingSourceSnapshot | ActionExecuteFailure> => {
-          const body = projectNativeJsonValueForTransport(usageQueryToAnalyticsRequest({ ...query, period }, accountingNowMs, projectScopeKeys));
-          const path = '/v2/usage/query';
-          const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'POST', path, body });
-          if (!authorization.ok) return externalAuthorizationUnavailable();
-          if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
-          const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method: 'POST', path, body,
-            signal: context.signal, sideEffectClass: 'read' });
-          if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-          if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
-          if (!dispatched.ok) return { query, period, status: 'error', errorCode: dispatched.errorCode };
-          if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
-          const errorBody = dispatched.response.data;
-          if (dispatched.response.status === 404 && errorBody !== null && typeof errorBody === 'object' && 'error' in errorBody
-            && (errorBody.error === 'not_found' || errorBody.error === 'Session not found')) {
-            return { query, period, status: 'error', errorCode: 'denied' };
-          }
-          if ([404, 405, 501].includes(dispatched.response.status)) return { query, period, status: 'unsupported', errorCode: 'unsupported' };
-          if (dispatched.response.status >= 400) {
-            const typedErrorCode = readUnexpectedActionErrorDiagnosticV1({ response: dispatched.response }).errorCode;
-            return { query, period, status: 'error', errorCode: typedErrorCode ?? 'usage_query_failed' };
-          }
-          const parsed = UsageAnalyticsQueryResponseSchema.safeParse(dispatched.response.data);
-          return parsed.success ? { query, period, status: 'available', value: parsed.data, asOfMs: resolveUsageAccountingAsOfMs(parsed.data) }
-            : { query, period, status: 'error', errorCode: 'usage_query_result_invalid' };
-        }));
+        const snapshots = await readUsageAccountingSnapshots({ reads: accountingReads, nowMs: accountingNowMs, projectScopeKeys,
+          post: async (path, body) => {
+            const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'POST', path, body });
+            if (!authorization.ok) return externalAuthorizationUnavailable();
+            if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+            const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method: 'POST', path, body,
+              signal: context.signal, sideEffectClass: 'read' });
+            if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+            if (!dispatched.ok) return { sourceErrorCode: dispatched.errorCode };
+            if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+            return { response: dispatched.response };
+          },
+        });
         if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
         const refusal = snapshots.find((snapshot): snapshot is ActionExecuteFailure => 'ok' in snapshot);
@@ -906,9 +894,12 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (resolveActionExecutionPlacementForInput(spec, actionInput) !== 'account') {
         return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
       }
-      const body = ManagedMachineActionInputSchemasV1[actionId].parse(actionInput);
-      if (!('homeId' in body)) throw new TypeError('Account-placed managed Actions require an explicit Home');
-      const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });
+      const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(actionInput);
+      if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const body = parsed.data;
+      const homeId = 'selection' in body ? resolveManagedAcquireReviewV1(body).homeId : 'homeId' in body ? body.homeId : undefined;
+      if (!homeId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const unavailable = await qualifiedHomeActionFailure({ actionId, homeId, context: actionContext, signal });
       if (unavailable) return unavailable;
       if (actionId === 'machines.provisioners.list') {
         if (actionContext.externalActionCredential || actionContext.externalActionExecutionAuthorization) return externalAuthorizationUnavailable();
@@ -949,7 +940,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       const path = managedMachineActionEndpointPathV1(actionId);
       const homeBody = actionId === 'machines.managed.inspect' && 'managedId' in body
-        ? { homeId: body.homeId, managedId: body.managedId } : body;
+        ? { homeId, managedId: body.managedId } : body;
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body: homeBody });
       if (!requestHeaders.ok) return externalAuthorizationUnavailable();
       const dispatch = await dispatchAccountServerActionHttpRequest({

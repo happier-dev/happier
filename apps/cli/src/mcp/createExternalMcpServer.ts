@@ -26,7 +26,7 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
 import { isControllerDeploymentMutationAction } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutorFromCredentials, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { dispatchOriginalAccountAction, prepareOriginalAccountPoolPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
@@ -228,7 +228,7 @@ export function createExternalMcpServer(params: Readonly<{
               const invocation = readExternalActionRequesterInvocation({ ...context,
                 surface: 'mcp', authority: context?.authority ?? 'account_automation' });
               if (!invocation) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-              const selected = await prepareOriginalAccountPoolPresetAcquire({ actionId, input,
+              const selected = await prepareOriginalAccountPresetAcquire({ actionId, input,
                 requestId: context?.actionRequestId ?? randomUUID(), credentials: params.credentials,
                 serverHttpBaseUrl, ...(serverIdentityId ? { serverIdentityId } : {}),
                 invocation, authority: invocation.authority, ...(context?.signal ? { signal: context.signal } : {}) });
