@@ -70,6 +70,7 @@ const eagerSessionImplementations = new Set();
 // inferring delivery from source imports (or from a retained export).
 const entryLeakPatterns = {
     hugeIconsBarrel: /\/@hugeicons\/core-free-icons\/(?:dist\/[^/]+\/)?index\.js$/,
+    hugeIconRegistry: /\/components\/ui\/icons\/iconRegistryHuge\.generated\.ts$/,
     pluginTranslationAggregate: /\/text\/bundledPluginTranslations\.generated\.ts$/,
     nonEnglishHostLocales: /\/text\/translations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-HantOverrides)\.ts$/,
     nonEnglishPluginLocales: /\/text\/bundledPluginTranslations\/(?!en\.)[^/]+\.generated\.ts$/,
