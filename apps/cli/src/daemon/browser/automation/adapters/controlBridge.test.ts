@@ -1326,16 +1326,15 @@ describe('control adapter automation transport bridge', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('drags between locator centres through trusted mouse events', async () => {
+  it('drags between locator centres through the page drag-event owner', async () => {
     const { surface, calls } = fakeContextCapture((method, params) => method === 'Runtime.evaluate' ? cdpEvaluateValue(String(params?.expression).includes('#target') ? { x: 100, y: 200 } : { x: 10, y: 20 }) : {});
     const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface });
     const result = await transport.dispatchInputCommand?.({ ...view, actionKind: 'drag', navigationGeneration: 1, payload: { from: '#source', to: '#target' } });
     expect(result).toMatchObject({ ok: true });
-    expect(calls.filter(c => c.method === 'Input.dispatchMouseEvent').map(c => c.params)).toEqual([
-      { type: 'mouseMoved', x: 10, y: 20 },
-      { type: 'mousePressed', x: 10, y: 20, button: 'left', buttons: 1, clickCount: 1 },
-      { type: 'mouseMoved', x: 100, y: 200, button: 'left', buttons: 1 },
-      { type: 'mouseReleased', x: 100, y: 200, button: 'left', buttons: 0, clickCount: 1 },
+    expect(calls.filter(c => c.method === 'Input.dispatchDragEvent').map(c => c.params)).toEqual([
+      { type: 'dragEnter', x: 100, y: 200, data: { items: [], dragOperationsMask: 1 } },
+      { type: 'dragOver', x: 100, y: 200, data: { items: [], dragOperationsMask: 1 } },
+      { type: 'drop', x: 100, y: 200, data: { items: [], dragOperationsMask: 1 } },
     ]);
   });
   it.each(['click', 'press', 'drag'] as const)('drains canceled %s and releases held input before the route acknowledges', async (actionKind) => {

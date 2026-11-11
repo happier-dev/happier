@@ -853,10 +853,12 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           const from = fromCoordinates ?? (source ? await targetPoint(source) : null);
           const to = toCoordinates ?? (target ? await targetPoint(target) : null);
           if (!from || !to) return { ok: false, errorCode: 'selector_not_found' };
-          await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...from });
-          await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...from, button: 'left', buttons: 1, clickCount: 1 });
-          await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...to, button: 'left', buttons: 1 });
-          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...to, button: 'left', buttons: 0, clickCount: 1 });
+          // Locator drag is a page drag-and-drop operation. Raw pointer events do not create the
+          // HTML5 DataTransfer that drop targets consume, so deliver the CDP drag lifecycle directly.
+          const data = { items: [], dragOperationsMask: 1 };
+          await send('Input.dispatchDragEvent', { type: 'dragEnter', ...to, data });
+          await send('Input.dispatchDragEvent', { type: 'dragOver', ...to, data });
+          await send('Input.dispatchDragEvent', { type: 'drop', ...to, data });
           return { ok: true };
         }
         case 'press': {
