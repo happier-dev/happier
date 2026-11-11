@@ -81,6 +81,12 @@ vi.mock('react-native-unistyles', async () => {
     });
 });
 
+async function readyIcon() {
+    const { preloadHugeIconRegistry } = await import('./resolveHugeIconGlyph');
+    await preloadHugeIconRegistry();
+    return import('./Icon');
+}
+
 describe('Icon accessibility props', () => {
     beforeEach(async () => {
         vi.resetModules();
@@ -88,14 +94,38 @@ describe('Icon accessibility props', () => {
         renderedSvgState.props = null;
         const { setIconFamily } = await import('./iconFamily');
         setIconFamily('hugeicons');
+        await import('./Icon');
     });
 
     afterEach(() => {
         document.body.replaceChildren();
     });
 
-    it('hides one decorative web SVG without forwarding native-only accessibility props', async () => {
+    it('keeps the existing accessible fallback during cold demand and publishes the selected glyph when ready', async () => {
         const { Icon } = await import('./Icon');
+        const { preloadHugeIconRegistry } = await import('./resolveHugeIconGlyph');
+        const { useIconSvgCssUrlReader } = await import('./iconSvgMarkup');
+        const MaskProbe = () => {
+            const read = useIconSvgCssUrlReader();
+            return <span data-mask={read('file') ?? ''} />;
+        };
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            act(() => root.render(<><Icon name="laptop" accessibilityLabel="Laptop" /><MaskProbe /></>));
+            expect(container.querySelector('svg[aria-label="Laptop"]')?.getAttribute('viewBox')).toBe('0 0 256 256');
+            expect(container.querySelector('[data-mask]')?.getAttribute('data-mask')).toBe('');
+            await act(async () => { await preloadHugeIconRegistry(); });
+            expect(container.querySelector('svg[aria-label="Laptop"]')?.getAttribute('viewBox')).toBe('0 0 24 24');
+            expect(decodeURIComponent(container.querySelector('[data-mask]')?.getAttribute('data-mask') ?? '')).toContain('viewBox="0 0 24 24"');
+        } finally {
+            await act(async () => root.unmount());
+        }
+    });
+
+    it('hides one decorative web SVG without forwarding native-only accessibility props', async () => {
+        const { Icon } = await readyIcon();
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
@@ -126,7 +156,7 @@ describe('Icon accessibility props', () => {
         async (family) => {
             const { setIconFamily } = await import('./iconFamily');
             setIconFamily(family);
-            const { Icon } = await import('./Icon');
+            const { Icon } = await readyIcon();
             const container = document.createElement('div');
             document.body.appendChild(container);
             const root = createRoot(container);
@@ -159,7 +189,7 @@ describe('Icon accessibility props', () => {
 
     it('keeps native accessibility hiding props on a decorative icon', async () => {
         platformState.os = 'ios';
-        const { Icon } = await import('./Icon');
+        const { Icon } = await readyIcon();
 
         let renderer: TestRenderer.ReactTestRenderer | null = null;
         await actRenderer(async () => {
@@ -180,7 +210,7 @@ describe('Icon accessibility props', () => {
 
     it('keeps native informative icon accessibility props', async () => {
         platformState.os = 'ios';
-        const { Icon } = await import('./Icon');
+        const { Icon } = await readyIcon();
 
         let renderer: TestRenderer.ReactTestRenderer | null = null;
         await actRenderer(async () => {
@@ -204,7 +234,7 @@ describe('Icon accessibility props', () => {
 
     it.each(['hugeicons', 'phosphor'] as const)('draws every supported icon on native with the %s family', async (family) => {
         platformState.os = 'ios';
-        const { Icon } = await import('./Icon');
+        const { Icon } = await readyIcon();
         const { ICON_REGISTRY } = await import('./iconRegistry.generated');
         const { setIconFamily } = await import('./iconFamily');
         setIconFamily(family);

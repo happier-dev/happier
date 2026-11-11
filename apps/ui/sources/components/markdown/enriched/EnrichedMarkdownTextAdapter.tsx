@@ -2,7 +2,7 @@ import * as React from 'react';
 import { INLINE_REFERENCE_HREF_PREFIX_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { readIconSvgCssUrl } from '@/components/ui/icons/iconSvgMarkup';
+import { useIconSvgCssUrlReader } from '@/components/ui/icons/iconSvgMarkup';
 import { resolveReferenceChipIconName } from '@/components/ui/referenceChip/referenceChipIcon';
 import { referenceChipLinkRule, type ReferenceChipInks } from '@/components/ui/referenceChip/referenceChipStyles';
 import { nativeReferenceChipColor, nativeReferenceChipGlyph } from '@/components/ui/referenceChip/nativeReferenceChip';
@@ -143,6 +143,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
  * shared reference chip (`referenceChipStyles`), led by its glyph or picture.
  */
 function useWebInlineReferenceStyle(scope: string, references: ReadonlyMap<string, MarkdownInlineReference>, ink: string, inks: ReferenceChipInks): void {
+    const readIconSvgCssUrl = useIconSvgCssUrlReader(Platform.OS === 'web' && references.size > 0);
     const css = React.useMemo(() => [...(Platform.OS === 'web' ? references.entries() : [])].map(([href, reference]) => {
         const selector = `[data-happier-md-refs="${scope}"] a[href="${href.replace(/["\\]/g, (char) => `\\${char}`)}"]`;
         if (!reference.severity) {
@@ -165,7 +166,7 @@ function useWebInlineReferenceStyle(scope: string, references: ReadonlyMap<strin
             ? `${rule}\n${selector}::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 4px;`
                 + ` margin-right: 5px; vertical-align: 1px; background-color: ${reference.foreground}; }`
             : rule;
-    }).join('\n'), [ink, inks, references, scope]);
+    }).join('\n'), [ink, inks, references, scope, readIconSvgCssUrl]);
     React.useLayoutEffect(() => {
         if (Platform.OS !== 'web' || typeof document === 'undefined' || !css) return undefined;
         const style = document.createElement('style');

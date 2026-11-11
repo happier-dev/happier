@@ -1,7 +1,8 @@
 import * as React from 'react';
 
-import { getIconFamily, getIconStrokeWidth } from './iconFamily';
-import { resolveHugeIconGlyph, type IconName } from './Icon';
+import { getIconFamily, getIconStrokeWidth, useIconFamily, useIconStrokeWidth } from './iconFamily';
+import type { IconName } from './Icon';
+import { resolveHugeIconGlyph, useHugeIconRegistry } from './resolveHugeIconGlyph';
 import { ICON_REGISTRY } from './iconRegistry.generated';
 
 type SvgElementProps = Readonly<
@@ -113,4 +114,15 @@ export function readIconSvgCssUrl(name: IconName): string | null {
     );
   }
   return DATA_URI_CACHE.get(key) ?? null;
+}
+
+/** Republish CSS masks when the selected drawing becomes available or changes. */
+export function useIconSvgCssUrlReader(enabled = true) {
+  const family = useIconFamily();
+  const stroke = useIconStrokeWidth();
+  const registry = useHugeIconRegistry(enabled && family === 'hugeicons');
+  return React.useCallback((name: IconName) => {
+    if (family === 'hugeicons' && !registry) return null;
+    return readIconSvgCssUrl(name);
+  }, [family, stroke, registry]);
 }

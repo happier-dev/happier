@@ -6,7 +6,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 
 import { ICON_REGISTRY, type IconName } from './iconRegistry.generated';
-import { resolveHugeIconGlyph } from './resolveHugeIconGlyph';
+import { resolveHugeIconGlyph, useHugeIconRegistry } from './resolveHugeIconGlyph';
 export { resolveHugeIconGlyph } from './resolveHugeIconGlyph';
 import { useIconFamily, useIconStrokeWidth } from './iconFamily';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
@@ -133,6 +133,7 @@ function hugeStrokeUnitsForSize(units: number, size: number): number {
 export const Icon = React.memo((props: IconProps) => {
     const { theme } = useUnistyles();
     const family = useIconFamily();
+    useHugeIconRegistry(family === 'hugeicons');
     const strokeWidth = useIconStrokeWidth();
     // Faint glyphs take the containing material's stronger step on glass with a picture behind it.
     const color = useGlassBackedInk()(props.color ?? theme.colors.text.secondary);

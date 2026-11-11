@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { readIconSvgCssUrl } from '@/components/ui/icons/iconSvgMarkup';
+import { useIconSvgCssUrlReader } from '@/components/ui/icons/iconSvgMarkup';
 import { resolveReferenceChipIconName } from '@/components/ui/referenceChip/referenceChipIcon';
 import type { ComposerEditorReference } from './composerEditorTypes';
 
@@ -21,6 +21,7 @@ export const ComposerChipView = React.memo(function ComposerChipView({
   onOpen,
 }: ComposerChipViewProps) {
   const icon = reference.thumbnail ? null : resolveReferenceChipIconName({ ref: reference.ref });
+  const readIconSvgCssUrl = useIconSvgCssUrlReader(icon !== null);
   const glyph = icon ? readIconSvgCssUrl(icon) : null;
   return (
     <span

@@ -7,6 +7,8 @@ vi.unmock('./iconRegistryHuge.generated');
 const { readIconSvgMarkup, readIconSvgCssUrl } =
   await import('./iconSvgMarkup');
 const { setIconFamily, getIconFamily } = await import('./iconFamily');
+const { preloadHugeIconRegistry } = await import('./resolveHugeIconGlyph');
+await preloadHugeIconRegistry();
 
 const CHIP_GLYPHS = [
   'file',

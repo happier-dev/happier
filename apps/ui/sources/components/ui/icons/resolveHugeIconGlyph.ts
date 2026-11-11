@@ -1,5 +1,39 @@
 import type { IconName, IconWeight } from './Icon';
-import { HUGE_ICON_REGISTRY, type HugeIconName } from './iconRegistryHuge.generated';
+import * as React from 'react';
+import type { HugeIconName } from './iconRegistryHuge.generated';
+
+type HugeIconRegistry = typeof import('./iconRegistryHuge.generated').HUGE_ICON_REGISTRY;
+let registry: HugeIconRegistry | undefined;
+let pending: Promise<HugeIconRegistry> | undefined;
+const listeners = new Set<() => void>();
+
+export function preloadHugeIconRegistry(): Promise<HugeIconRegistry> {
+    if (registry) return Promise.resolve(registry);
+    return pending ??= import('./iconRegistryHuge.generated').then(({ HUGE_ICON_REGISTRY }) => {
+        registry = HUGE_ICON_REGISTRY;
+        for (const listener of listeners) listener();
+        return registry;
+    }).catch((error: unknown) => {
+        pending = undefined;
+        console.warn('[Icon] Unable to load HugeIcons registry', error);
+        throw error;
+    });
+}
+
+const readRegistry = () => registry;
+const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+};
+
+/** Icon and CSS-mask consumers share the same demand, readiness and retry owner. */
+export function useHugeIconRegistry(enabled: boolean) {
+    const loaded = React.useSyncExternalStore(subscribe, readRegistry, readRegistry);
+    React.useEffect(() => {
+        if (enabled && !loaded) void preloadHugeIconRegistry().catch(() => { /* The loader reports the failure. */ });
+    }, [enabled, loaded]);
+    return loaded;
+}
 
 /**
  * Concepts pinned to Phosphor regardless of the selected family.
@@ -25,5 +59,5 @@ const PHOSPHOR_PINNED = new Set<IconName>([
  */
 export function resolveHugeIconGlyph(name: IconName, weight: IconWeight | undefined, family: string) {
     if (family !== 'hugeicons' || weight === 'fill' || PHOSPHOR_PINNED.has(name)) return undefined;
-    return HUGE_ICON_REGISTRY[name as HugeIconName];
+    return registry?.[name as HugeIconName];
 }
