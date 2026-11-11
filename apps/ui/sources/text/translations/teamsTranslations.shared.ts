@@ -161,6 +161,7 @@ export const english = {
         errors: {
             loadFailed: "This information couldn’t be loaded. Try again.",
             generic: 'That did not go through. Nothing was changed.',
+            policySaveFailed: 'This Team setting could not be saved. Review the current values and try again.',
             outcomeUnknown: 'The Home may have completed this change. Refresh the Team before trying again.',
             forbidden: 'You do not have permission for this change.',
             authenticationRequired: "Sign in with the method this Team requires, then try again.",

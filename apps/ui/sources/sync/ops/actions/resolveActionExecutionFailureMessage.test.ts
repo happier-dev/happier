@@ -200,6 +200,14 @@ describe('Action failure presentation', () => {
         }
     });
 
+    it.each([
+        ['preset_limit_reached', 'machinePresets.limitWaits'],
+        ['pool_no_available_machine', 'machinePresets.poolNoMachine'],
+    ] as const)('presents machine allocation refusal %s through both Action adapters', (code, key) => {
+        expect(resolveActionExecutionErrorMessage({ code }, 'Start failed')).toBe(t(key));
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Start failed')).toBe(t(key));
+    });
+
     it('retains ordinary Action failure and successful-result behavior', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'other_failure', error: 'Details' }, 'Fallback'))
             .toBe('Details');

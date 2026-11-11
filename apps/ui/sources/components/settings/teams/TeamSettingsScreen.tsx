@@ -402,7 +402,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
         }
         operationInFlightRef.current = false;
         setBusy(false);
-        if (outcome.kind === 'failed') setError(teamMutationFailureLabel(outcome.failure));
+        if (outcome.kind === 'failed') setError(teamMutationFailureLabel(outcome.failure, 'policy'));
     }, [context]);
 
     // A segmented control reports its current option too; only a different choice is a change.

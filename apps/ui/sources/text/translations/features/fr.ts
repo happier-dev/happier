@@ -13232,6 +13232,7 @@ const french: TeamsTranslationRoot = {
         errors: {
             loadFailed: "Ces informations n’ont pas pu être chargées. Réessaie.",
             generic: 'L’opération n’a pas abouti. Rien n’a été modifié.',
+            policySaveFailed: 'Ce réglage de l’équipe n’a pas pu être enregistré. Vérifie les valeurs actuelles et réessaie.',
             outcomeUnknown: 'Le Home a peut-être effectué cette modification. Actualise l’équipe avant de réessayer.',
             authenticationRequired: "Connecte-toi avec la méthode requise par cette équipe, puis réessaie.",
             forbidden: 'Tu n’as pas l’autorisation pour cette modification.',

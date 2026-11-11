@@ -13185,6 +13185,7 @@ const portuguese: TeamsTranslationRoot = {
         errors: {
             loadFailed: "Não foi possível carregar esta informação. Tente novamente.",
             generic: 'Não foi possível concluir. Nada foi alterado.',
+            policySaveFailed: 'Não foi possível guardar esta definição da equipa. Reveja os valores atuais e tente novamente.',
             outcomeUnknown: 'O Home pode ter concluído esta alteração. Atualize a equipa antes de tentar novamente.',
             authenticationRequired: "Inicie sessão com o método exigido por esta equipa e tente de novo.",
             forbidden: 'Não tem permissão para esta alteração.',

@@ -55,7 +55,7 @@ export function teamReadFailureAction(
     };
 }
 
-export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy'): string {
+export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
     if (failure.code === 'team_authentication_required') return context === 'authentication_policy'
         ? t('teams.authentication.policy.authenticationRequired')
         : t('teams.errors.authenticationRequired');
@@ -65,6 +65,7 @@ export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, con
     // Admission and every new ownership require an active Account (L01/01 :337);
     // the pickers cannot know it, so the Home's typed refusal says it.
     if (failure.code === 'account_ineligible') return t('teams.members.accountInactive');
+    if (context === 'policy' && failure.code === 'invalid_team_input') return t('teams.errors.policySaveFailed');
     switch (failure.kind) {
         case 'outcome_unknown':
             return t('teams.errors.outcomeUnknown');
@@ -82,4 +83,19 @@ export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, con
         default:
             return t('teams.errors.generic');
     }
+}
+
+/** Create-specific invalid input causes are decided here, so screens do not interpret Home codes. */
+export function teamCreateFailureLabel(
+    failure: HomeDomainFailure<string>,
+    submittedOwner: boolean,
+): string {
+    if (isTeamCreateOwnerRefusal(failure)) {
+        return submittedOwner ? t('teams.create.initialOwnerIneligible') : t('teams.create.initialOwnerRequired');
+    }
+    return teamMutationFailureLabel(failure);
+}
+
+export function isTeamCreateOwnerRefusal(failure: HomeDomainFailure<string>): boolean {
+    return failure.kind === 'invalid' && failure.code === 'invalid_team_input';
 }

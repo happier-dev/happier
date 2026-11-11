@@ -13165,6 +13165,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
         errors: {
             loadFailed: "无法加载此信息。请重试。",
             generic: '操作未完成，没有任何内容被更改。',
+            policySaveFailed: '无法保存此团队设置。请检查当前值后重试。',
             outcomeUnknown: 'Home 可能已经完成此更改。请先刷新团队，再重试。',
             authenticationRequired: "请使用此团队要求的方式登录，然后重试。",
             forbidden: '你没有进行此更改的权限。',

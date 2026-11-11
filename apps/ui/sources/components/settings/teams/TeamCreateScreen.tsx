@@ -50,6 +50,7 @@ import { teamDetailPath, teamsDirectoryPath } from './teamsRoutes';
 import { TeamLogoPicker } from './TeamLogoPicker';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { isTeamCreateOwnerRefusal, teamCreateFailureLabel } from './teamMutationPresentation';
 
 
 type CommittedTeam = Readonly<{
@@ -472,19 +473,19 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             // Name and description passed the Home's own validators above, so a Home that
             // still calls the input invalid is refusing the first owner: none was named
             // under managed creation, or the named Account can no longer hold the Team.
-            const ownerRefused = outcome.failure.kind === 'invalid' && outcome.failure.code === 'invalid_team_input';
+            const ownerRefused = isTeamCreateOwnerRefusal(outcome.failure);
             if (ownerRefused && !submittedOwner) eligibility.refresh();
-            setError(outcome.failure.kind === 'forbidden'
-                ? t('teams.errors.forbidden')
-                : ownerRefused
-                    ? (submittedOwner ? t('teams.create.initialOwnerIneligible') : t('teams.create.initialOwnerRequired'))
-                : outcome.failure.kind === 'invalid'
-                    ? t('teams.errors.invalidName')
-                    : outcome.failure.kind === 'outcome_unknown'
-                        ? t('teams.create.outcomeUnknown')
-                        : outcome.failure.kind === 'unreachable'
-                            ? t('teams.errors.offline')
-                        : t('teams.errors.generic'));
+            setError(ownerRefused
+                ? teamCreateFailureLabel(outcome.failure, submittedOwner)
+                : outcome.failure.kind === 'forbidden'
+                    ? t('teams.errors.forbidden')
+                    : outcome.failure.kind === 'invalid'
+                        ? t('teams.errors.invalidName')
+                        : outcome.failure.kind === 'outcome_unknown'
+                            ? t('teams.create.outcomeUnknown')
+                            : outcome.failure.kind === 'unreachable'
+                                ? t('teams.errors.offline')
+                            : t('teams.errors.generic'));
         } catch (cause) {
             // An explicit UI-approval requirement defers the creation instead of
             // reaching the Home. Registering this exact request is what lets the
