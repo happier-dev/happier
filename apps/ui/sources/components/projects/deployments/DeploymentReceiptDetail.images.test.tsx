@@ -7,6 +7,7 @@ import {
   createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { t } from '@/text';
 import {
   act,
   renderScreen,
@@ -146,6 +147,56 @@ describe('Receipt → Images', () => {
 });
 
 describe('Receipt → failed', () => {
+  it.each([
+    { phase: 'restore', health: 'unverified', consequence: 'failed' },
+    { phase: 'activate', health: 'unhealthy', consequence: 'failed' },
+    { phase: 'activate', health: 'unverified', consequence: 'unverified' },
+    { phase: 'activate', health: 'healthy', consequence: 'healthy' },
+  ] as const)('shows the projected restoration consequence for $phase / $health', async ({ phase, health, consequence }) => {
+    const base = createDeploymentReceiptDetailV1();
+    const revision = { kind: 'repository' as const, sha: 'b'.repeat(40) };
+    const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content,
+      failure: { code: 'deployment_failed_unclassified', phase },
+      machineResults: base.content.machines.map(machineId => ({ machineId, installationId: 'installation-a',
+        steps: [], activation: 'failed', restoration: 'succeeded', health })),
+      ownServer: { approvedInputBasis: {
+        v: 1, environmentId: base.deployment.environmentId, environmentRevision: 1,
+        targetLinkId: base.deployment.targetLinkId, targetLinkRevision: 1, sourceIntent: base.content.sourceIntent,
+        manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1',
+        services: ['app'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }], bindings: [], images: [],
+      }, rollbackTarget: { deploymentId: 'incumbent', revision } },
+    });
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }), content });
+    const detail = createDeploymentEnvironmentDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const screen = await renderScreen(
+      <AccountNoticeInvestigationBoundary>
+        <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+          deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+          accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}} rollback={null}
+          cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }}
+          onOpenReceipt={() => {}} />
+      </AccountNoticeInvestigationBoundary>,
+    );
+    try {
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.outcome.failed'), node => node !== null);
+      });
+      const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.failed'
+        && node.props.description !== undefined)[0]!;
+      const description = String(banner.props.description);
+      if (consequence === 'failed') expect(description).toContain(t('projects.deployments.failureRestoreFailed', { sha: 'bbbbbbb' }));
+      else if (consequence === 'unverified') expect(description).toContain(t('projects.deployments.stateUnverified'));
+      else expect(description).toContain(t('projects.deployments.failureRestored', { sha: 'bbbbbbb' }));
+      if (consequence !== 'healthy') expect(description).not.toContain(t('projects.deployments.failureRestored', { sha: 'bbbbbbb' }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it.each(['deployment_image_unavailable', 'build_platform_unsupported'])('offers the canonical remedy for the recorded cause (%s)', async code => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code, phase: 'build' as const };

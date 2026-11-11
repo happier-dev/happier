@@ -64,6 +64,9 @@ export type DeploymentReceiptStepLogFactV1 = Readonly<{
 }>;
 export type DeploymentReceiptFactsV1 = Readonly<{
     failure: DeploymentReceiptFailureV1 | null;
+    /** Historical restoration evidence, including whether health was verified. */
+    restoration: Readonly<{ kind: 'not_attempted' | 'failed' | 'outcome_unknown' }>
+        | Readonly<{ kind: 'succeeded'; health: 'healthy' | 'unverified' }>;
     commitSubject: string | null;
     source: DeploymentReviewRevisionV1 | null;
     /** undefined = not captured; null = admitted first deploy without an incumbent. Display only. */
@@ -127,6 +130,7 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
         ...(retainedHistory ? selectDeploymentReceiptRetainedHistoryV1(retainedHistory)
             : { previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null }),
         failure: content.failure ?? null,
+        restoration: projectRestoration(content),
         commitSubject: content.commitSubject ?? null,
         source, rollbackTarget: content.ownServer?.rollbackTarget,
         logs, stageLogs, steps: [
@@ -140,4 +144,17 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
         health: { source: 'receipt', members: content.machineResults },
         downtime: projectDeploymentDowntimeClassV1(rollout, content.ownServer?.rollbackTarget != null) ?? null,
     };
+}
+
+function projectRestoration(content: DeploymentReceiptDetailV1['content']): DeploymentReceiptFactsV1['restoration'] {
+    const restored = content.machineResults.filter(member => member.restoration !== undefined);
+    if (content.failure?.phase === 'restore' || restored.some(member => member.restoration === 'failed'
+        || member.restoration === 'unreachable' || member.health === 'unhealthy')) return { kind: 'failed' };
+    if (!restored.length) return { kind: 'not_attempted' };
+    const restoredMachines = new Set(restored.map(member => member.machineId));
+    if (restored.some(member => member.restoration !== 'succeeded' || member.health === 'unknown')
+        || content.machines.some(machineId => !restoredMachines.has(machineId))) {
+        return { kind: 'outcome_unknown' };
+    }
+    return { kind: 'succeeded', health: restored.some(member => member.health === 'unverified') ? 'unverified' : 'healthy' };
 }

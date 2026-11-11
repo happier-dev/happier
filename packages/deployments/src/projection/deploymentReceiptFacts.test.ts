@@ -4,6 +4,26 @@ import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-p
 import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, selectDeploymentReceiptRetainedHistoryV1 } from './deploymentReceiptFacts';
 
 describe('receipt facts', () => {
+    it.each([
+        { phase: 'restore', restoration: 'succeeded', health: 'unverified', expected: { kind: 'failed' } },
+        { phase: 'activate', restoration: 'succeeded', health: 'unhealthy', expected: { kind: 'failed' } },
+        { phase: 'activate', restoration: 'failed', health: 'unknown', expected: { kind: 'failed' } },
+        { phase: 'activate', restoration: 'outcome_unknown', health: 'unknown', expected: { kind: 'outcome_unknown' } },
+        { phase: 'activate', restoration: 'succeeded', health: 'unknown', expected: { kind: 'outcome_unknown' } },
+        { phase: 'activate', restoration: 'succeeded', health: 'unverified', expected: { kind: 'succeeded', health: 'unverified' } },
+        { phase: 'activate', restoration: 'succeeded', health: 'healthy', expected: { kind: 'succeeded', health: 'healthy' } },
+    ] as const)('projects one restoration consequence from phase=$phase, restoration=$restoration and health=$health', ({ phase, restoration, health, expected }) => {
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.content.failure = { code: 'deployment_failed', phase };
+        receipt.content.machineResults = receipt.content.machines.map(machineId => ({ machineId, installationId: 'installation-a',
+            steps: [], activation: 'failed', restoration, health }));
+        expect(projectDeploymentReceiptFactsV1(receipt).restoration).toEqual(expected);
+        receipt.content.machineResults = [...receipt.content.machineResults,
+            { machineId: 'second-machine', installationId: 'installation-b', steps: [], activation: 'failed', health: 'unknown' }];
+        receipt.content.machines = [...receipt.content.machines, 'second-machine'];
+        if (expected.kind === 'succeeded') expect(projectDeploymentReceiptFactsV1(receipt).restoration).toEqual({ kind: 'outcome_unknown' });
+    });
+
     it('offers the existing log viewer a platform receipt reference without native stage files', () => {
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.ownServer = undefined;

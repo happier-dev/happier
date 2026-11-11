@@ -251,8 +251,7 @@ export const DeploymentReceiptDetail = React.memo(
     const firstMachine = machineName(content.machines[0] ?? '');
     // A failed deploy's way back is the incumbent it recorded; the rollback Action decides admission at the press.
     const target = facts.rollbackTarget;
-    const restored = content.machineResults.length > 0
-      && content.machineResults.every((result) => result.restoration === 'succeeded');
+    const restored = facts.restoration.kind === 'succeeded';
     const migrationRan = content.steps.some(step => step.id === 'own-server-migration' && step.state !== 'skipped');
     const migrationPolicy = content.ownServer?.approvedInputBasis.ownServer?.migrationFailurePolicy;
     const backupId = content.ownServer?.preMigrationBackup?.source.snapshot.snapshotId;
@@ -447,7 +446,7 @@ export const DeploymentReceiptDetail = React.memo(
                 iconName="x-circle"
                 title={deploymentFailureTitle(facts.failure, deployment.operation)}
                 // What is serving now (the receipt's own facts), then the canonical remedy for its recorded cause.
-                description={[failureConsequence(facts, content.machineResults, firstMachine), recovery?.remedy ?? null]
+                description={[failureConsequence(facts, firstMachine), recovery?.remedy ?? null]
                   .filter(Boolean).join(' ') || undefined}
                 action={rollbackTarget ? {
                   label: backupTarget ? t(migrationPolicy === 'ask' ? 'projects.deployments.chooseRecovery' : 'projects.deployments.restoreBackupAndCode')
@@ -727,16 +726,16 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
  */
 function failureConsequence(
   facts: DeploymentReceiptFactsV1,
-  results: readonly DeploymentMachineResultV1[],
   machine: string,
 ): string | null {
   const sha = facts.rollbackTarget ? deploymentRevisionLabel(facts.rollbackTarget.revision) : null;
-  const restorations = results.flatMap((result) => (result.restoration ? [result.restoration] : []));
-  if (restorations.some((restoration) => restoration === 'failed' || restoration === 'unreachable')) {
+  if (facts.restoration.kind === 'failed') {
     return sha ? t('projects.deployments.failureRestoreFailed', { sha }) : t('projects.deployments.restoreFailed');
   }
-  if (restorations.includes('outcome_unknown')) return t('projects.deployments.failureRestoreUnknown');
-  if (restorations.length > 0) {
+  if (facts.restoration.kind === 'outcome_unknown') return t('projects.deployments.failureRestoreUnknown');
+  if (facts.restoration.kind === 'succeeded') {
+    if (facts.restoration.health === 'unverified') return [t('projects.deployments.restoredPrevious'), sha,
+      t('projects.deployments.stateUnverified')].filter(Boolean).join(' · ');
     return sha ? t('projects.deployments.failureRestored', { sha }) : t('projects.deployments.restoredPrevious');
   }
   const phase = facts.failure?.phase;
