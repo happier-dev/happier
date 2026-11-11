@@ -53,6 +53,85 @@ describe('authenticated Home profile identity reuse', () => {
     });
   });
 
+  it.each(['https', 'iroh'] as const)('refuses two-step cross-profile %s endpoint poisoning without disclosing the owner token', async endpointKind => {
+    await withTempDir('happier-profile-endpoint-poison-', async homeDir => {
+      env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
+      reloadConfiguration();
+      const ownerUrl = 'https://owner.example.test';
+      const selectedUrl = 'https://different-home.example.test';
+      const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_fixture', canonicalServerUrl: ownerUrl,
+        revision: 1, endpoints: [{ kind: 'https' as const, url: ownerUrl }] };
+      await setServerProfileEndpointsById({ id: 'owner', serverUrl: ownerUrl, webappUrl: ownerUrl });
+      await setServerProfileEndpointsById({ id: 'selected', serverUrl: selectedUrl, webappUrl: selectedUrl });
+      await adoptServerProfileHomeConnectionDescriptor({ descriptor, expectedProfileId: 'owner', observation: 'exact' });
+      await writeCredentialsTokenOnlyForServerId('owner', { token: 'fake-owner-token' });
+      await writeCredentialsTokenOnlyForServerId('selected', { token: 'fake-selected-token' });
+      const before = await readSettings();
+      const leakedDestinations: string[] = [];
+      let step = 0;
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        const isSelected = url.startsWith(`${selectedUrl}/`);
+        if (isSelected && new Headers(init?.headers).get('Authorization') === 'Bearer fake-owner-token') {
+          leakedDestinations.push(url);
+        }
+        const poisonedEndpoint = endpointKind === 'https'
+          ? { kind: 'https' as const, url: selectedUrl }
+          : { kind: 'iroh' as const, endpointId: 'b'.repeat(64), relayUrls: ['https://hostile-relay.example.test/'] };
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_fixture' } },
+          homeConnectionDescriptor: isSelected ? { ...descriptor, revision: step + 2,
+            canonicalServerUrl: step === 0 ? ownerUrl : selectedUrl,
+            endpoints: step === 0 ? [...descriptor.endpoints, poisonedEndpoint] : [poisonedEndpoint] } : descriptor });
+      }));
+      const firstRefusal = await observeServerProfileHomeConnection({ profileId: 'selected', serverUrl: selectedUrl,
+        token: 'fake-selected-token' }).then(() => null, (error: unknown) => error);
+      const afterFirst = await readSettings();
+      step = 1;
+      const secondRefusal = await observeServerProfileHomeConnection({ profileId: 'selected', serverUrl: selectedUrl,
+        token: 'fake-selected-token' }).then(() => null, (error: unknown) => error);
+      const owner = await getServerProfile('owner');
+      const credential = await readStoredCredentialsForServerId(owner.id);
+      await observeServerProfileHomeConnection({ profileId: owner.id,
+        serverUrl: owner.localServerUrl ?? owner.serverUrl, token: credential!.token });
+      expect(firstRefusal).toMatchObject({ code: 'identity_mismatch' });
+      expect(secondRefusal).toMatchObject({ code: 'identity_mismatch' });
+      expect(afterFirst).toEqual(before);
+      expect(await readSettings()).toEqual(before);
+      expect(leakedDestinations).toEqual([]);
+      expect(owner.homeConnectionDescriptor).toEqual(descriptor);
+      expect(owner.serverUrl).toBe(ownerUrl);
+    });
+  });
+
+  it.each(['omitted', 'known-replacement'] as const)('preserves owner endpoints during %s cross-profile reuse and accepts owner updates', async scenario => {
+    await withTempDir('happier-profile-preserve-routes-', async homeDir => {
+      env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
+      reloadConfiguration();
+      const ownerUrl = 'https://owner.example.test';
+      const knownUrl = 'https://known-route.example.test';
+      const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_fixture', canonicalServerUrl: ownerUrl,
+        revision: 1, endpoints: [{ kind: 'https' as const, url: ownerUrl },
+          { kind: 'iroh' as const, endpointId: 'b'.repeat(64), relayUrls: ['https://relay.example.test/'] }] };
+      await setServerProfileEndpointsById({ id: 'owner', serverUrl: ownerUrl, localServerUrl: knownUrl, webappUrl: ownerUrl });
+      await setServerProfileEndpointsById({ id: 'selected', serverUrl: knownUrl, webappUrl: knownUrl });
+      await adoptServerProfileHomeConnectionDescriptor({ descriptor, expectedProfileId: 'owner', observation: 'exact' });
+      const incoming = { ...descriptor, revision: 2,
+        endpoints: [{ kind: 'https' as const, url: scenario === 'omitted' ? ownerUrl : knownUrl }] };
+      const reused = await adoptServerProfileHomeConnectionDescriptor({ descriptor: incoming,
+        expectedProfileId: 'selected', observation: 'exact' });
+      expect(reused.profile.homeConnectionDescriptor).toEqual({ ...descriptor, revision: 2 });
+      const repeated = await adoptServerProfileHomeConnectionDescriptor({ descriptor: incoming,
+        expectedProfileId: 'selected', observation: 'exact' });
+      expect(repeated.outcome).toBe('unchanged');
+      const ownerUpdate = { ...incoming, revision: 3 };
+      const updated = await adoptServerProfileHomeConnectionDescriptor({ descriptor: ownerUpdate,
+        expectedProfileId: 'owner', observation: 'exact' });
+      expect(updated.profile.homeConnectionDescriptor).toEqual(ownerUpdate);
+    });
+  });
+
   it.each(['localServerUrl', 'descriptor'] as const)('allows reuse at a known %s URL', async knownRoute => {
     await withTempDir('happier-profile-known-route-', async homeDir => {
       env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined,

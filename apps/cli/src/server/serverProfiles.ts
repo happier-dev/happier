@@ -590,18 +590,24 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     }
 
     const identityMatchId = identityMatches[0]?.[0] ?? null;
-    // A server asserts its Home identity. Cross-profile reuse also needs an
-    // already-known canonical URL; identity alone cannot redirect saved credentials.
+    let descriptor = incoming;
+    // Cross-profile observations may reuse saved routes, but only the owner's
+    // own observation may change its endpoints.
     if (expectedProfileId && identityMatchId && expectedProfileId !== identityMatchId) {
-      const owner = coerceProfile(servers[identityMatchId])!;
-      const knownUrls = [owner.serverUrl, owner.localServerUrl, owner.homeConnectionDescriptor?.canonicalServerUrl,
-        ...owner.homeConnectionDescriptor!.endpoints.flatMap(endpoint => endpoint.kind === 'https' ? [endpoint.url] : [])];
-      if (opts.observation !== 'exact'
-        || !knownUrls.some(url => url && urlsReferToSameServer(url, incoming.canonicalServerUrl))) {
+      const owner = identityMatches[0]![1];
+      const saved = owner.homeConnectionDescriptor!;
+      const knownUrls = [owner.serverUrl, owner.localServerUrl, saved.canonicalServerUrl,
+        ...saved.endpoints.flatMap(endpoint => endpoint.kind === 'https' ? [endpoint.url] : [])];
+      const isKnownUrl = (url: string) => knownUrls.some(known => known && urlsReferToSameServer(known, url));
+      if (opts.observation !== 'exact' || !isKnownUrl(incoming.canonicalServerUrl)
+        || !incoming.endpoints.every(endpoint => endpoint.kind === 'https'
+          ? isKnownUrl(endpoint.url)
+          : saved.endpoints.some(known => isDeepStrictEqual(known, endpoint)))) {
         throw new ServerProfileIdentityMismatchError(
           `Observed Home identity belongs to profile ${identityMatchId}, not ${expectedProfileId}`,
         );
       }
+      descriptor = { ...incoming, endpoints: saved.endpoints };
     }
     const expectedRaw = expectedProfileId ? servers[expectedProfileId] : null;
     const expected = expectedRaw ? coerceProfile(expectedRaw) : null;
@@ -635,7 +641,6 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     }
     const previous = existing?.homeConnectionDescriptor;
     const previousAuthority = existing?.homeConnectionDescriptorAuthority ?? (previous ? 'exact' : undefined);
-    const descriptor = incoming;
     if (opts.observation === 'advisory' && previousAuthority === 'exact') {
       outcome = 'stale';
       adoptedProfile = requireProfileProjection(rawExisting, resolvedId);
