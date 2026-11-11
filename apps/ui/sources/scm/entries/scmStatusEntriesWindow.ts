@@ -220,6 +220,47 @@ export class ScmStatusEntriesWindow {
         });
     }
 
+    /**
+     * Continue a truncated normal-mode window through the paged entries route: the RPC pages
+     * top-level rows with an exclusive `afterPath` cursor (same route the directory expansions
+     * use), so a snapshot whose entry budget cut the list short can still reach the rest.
+     */
+    async loadMoreTopLevel(): Promise<void> {
+        if (this.state.mode !== 'window' || this.state.status !== 'ready' || !this.state.truncated) return;
+        if (this.state.entries.length === 0) return;
+        const target = resolveRequestTarget(this.sessionId);
+        if (!target) return;
+        const afterPath = this.state.entries[this.state.entries.length - 1]?.path;
+        if (!afterPath) return;
+
+        this.publish({ ...this.state, status: 'loading' });
+        const seq = ++this.requestSeq;
+        try {
+            const response = await fetchEntriesPage(target.machineId, target.resolvedPath, { afterPath });
+            if (seq !== this.requestSeq) return;
+            if (isEntriesRpcUnsupported(response)) {
+                await this.enterSnapshotFallback();
+                return;
+            }
+            if (response.success !== true) {
+                this.publish({ ...this.state, status: 'ready', error: response.error ?? 'Failed to load entries' });
+                return;
+            }
+            const knownPaths = new Set(this.state.entries.map((entry) => entry.path));
+            const appended = response.entries.filter((entry) => !knownPaths.has(entry.path));
+            this.publish({
+                ...this.state,
+                status: 'ready',
+                error: undefined,
+                entries: [...this.state.entries, ...appended],
+                truncated: response.hasMore,
+            });
+        } catch (error) {
+            if (seq !== this.requestSeq) return;
+            this.publish({ ...this.state, status: 'ready', error: error instanceof Error ? error.message : 'Failed to load entries' });
+        }
+    }
+
     async expandDirectory(directoryPath: string): Promise<void> {
         const normalized = directoryPath;
         if (this.state.expansions.has(normalized)) return;
@@ -232,18 +273,24 @@ export class ScmStatusEntriesWindow {
             loading: true,
             hasMore: false,
         });
+        // Identity of the placeholder this request owns. A collapse (or a newer expand for the
+        // same directory) replaces the map entry; a reply that no longer targets the live
+        // expansion object must be dropped, or it resurrects a collapsed directory.
+        const requestExpansion = this.state.expansions.get(normalized);
+        const isLiveRequest = () => this.state.expansions.get(normalized) === requestExpansion;
 
         const seq = this.requestSeq;
         try {
             const response = await fetchEntriesPage(target.machineId, target.resolvedPath, {
                 expandPath: normalized,
             });
-            if (seq !== this.requestSeq) return;
+            if (seq !== this.requestSeq || !isLiveRequest()) return;
             if (isEntriesRpcUnsupported(response)) {
                 await this.enterSnapshotFallback();
                 return;
             }
             if (response.success !== true) {
+                if (!isLiveRequest()) return;
                 this.publishExpansion(normalized, {
                     directoryPath: normalized,
                     entries: [],
@@ -253,6 +300,7 @@ export class ScmStatusEntriesWindow {
                 });
                 return;
             }
+            if (!isLiveRequest()) return;
             this.expansionCursors.set(normalized, response.nextCursor ?? '');
             this.publishExpansion(normalized, {
                 directoryPath: normalized,
@@ -261,7 +309,7 @@ export class ScmStatusEntriesWindow {
                 hasMore: response.hasMore,
             });
         } catch (error) {
-            if (seq !== this.requestSeq) return;
+            if (seq !== this.requestSeq || !isLiveRequest()) return;
             this.publishExpansion(normalized, {
                 directoryPath: normalized,
                 entries: [],
@@ -290,6 +338,10 @@ export class ScmStatusEntriesWindow {
         if (!target) return;
 
         this.publishExpansion(normalized, { ...expansion, loading: true });
+        // Same liveness contract as expandDirectory: drop replies that no longer target the
+        // live expansion object (collapsed or replaced while the page request was in flight).
+        const requestExpansion = this.state.expansions.get(normalized);
+        const isLiveRequest = () => this.state.expansions.get(normalized) === requestExpansion;
 
         const seq = this.requestSeq;
         try {
@@ -297,12 +349,13 @@ export class ScmStatusEntriesWindow {
                 expandPath: normalized,
                 afterPath: cursor,
             });
-            if (seq !== this.requestSeq) return;
+            if (seq !== this.requestSeq || !isLiveRequest()) return;
             if (isEntriesRpcUnsupported(response)) {
                 await this.enterSnapshotFallback();
                 return;
             }
             if (response.success !== true) {
+                if (!isLiveRequest()) return;
                 this.publishExpansion(normalized, {
                     ...expansion,
                     loading: false,
@@ -310,6 +363,7 @@ export class ScmStatusEntriesWindow {
                 });
                 return;
             }
+            if (!isLiveRequest()) return;
             this.expansionCursors.set(normalized, response.nextCursor ?? '');
             const knownPaths = new Set(expansion.entries.map((entry) => entry.path));
             const appended = response.entries.filter((entry) => !knownPaths.has(entry.path));
@@ -320,7 +374,7 @@ export class ScmStatusEntriesWindow {
                 hasMore: response.hasMore,
             });
         } catch (error) {
-            if (seq !== this.requestSeq) return;
+            if (seq !== this.requestSeq || !isLiveRequest()) return;
             this.publishExpansion(normalized, {
                 ...expansion,
                 loading: false,

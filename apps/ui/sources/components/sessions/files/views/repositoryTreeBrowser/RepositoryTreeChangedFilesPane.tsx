@@ -187,6 +187,7 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
                     onExpandDirectory={changed.entriesWindow?.expandDirectory}
                     onCollapseDirectory={changed.entriesWindow?.collapseDirectory}
                     onLoadMoreExpanded={changed.entriesWindow?.loadMoreExpanded}
+                    onLoadMoreTopLevel={changed.entriesWindow?.loadMoreTopLevel}
                 />
             ) : (
                 <ChangedFilesList

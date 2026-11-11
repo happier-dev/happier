@@ -58,6 +58,7 @@ export type UseChangedFilesDataResult = {
         expandDirectory: (directoryPath: string) => void;
         collapseDirectory: (directoryPath: string) => void;
         loadMoreExpanded: (directoryPath: string) => void;
+        loadMoreTopLevel: () => void;
     };
 };
 
@@ -267,6 +268,7 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
             expandDirectory: entriesWindow.expandDirectory,
             collapseDirectory: entriesWindow.collapseDirectory,
             loadMoreExpanded: entriesWindow.loadMoreExpanded,
+            loadMoreTopLevel: entriesWindow.loadMoreTopLevel,
         },
     };
 }

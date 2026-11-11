@@ -193,6 +193,15 @@ function keyHintTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineH
     };
 }
 
+function monoMetaTypography(weight: 'regular' | 'semiBold' = 'regular'): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineHeight' | 'fontVariant'> {
+    return {
+        fontFamily: getMonoFont(weight),
+        fontSize: 12,
+        lineHeight: 16,
+        ...tabularTypography(),
+    };
+}
+
 function timestampTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineHeight' | 'fontVariant'> {
     return {
         ...defaultTypography('regular'),
@@ -210,6 +219,10 @@ export const Typography = {
     mono: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
         fontFamily: getMonoFont(weight),
     }),
+
+    // Small monospace meta labels — counts, badges, hashes (the sizing owner for mono text
+    // that labels a row; sizes live here, not at call sites)
+    monoMeta: monoMetaTypography,
 
     // Tabular numbers (fontVariant: ['tabular-nums']) for jitter-free dynamic counts/times
     tabular: tabularTypography,

@@ -93,6 +93,53 @@ beforeEach(() => {
 });
 
 describe('ScmStatusEntriesWindow', () => {
+    it('continues a truncated top-level window through the paged entries route', async () => {
+        fetchSnapshotForSessionMock.mockResolvedValueOnce(makeCollapsedSnapshot({
+            entriesPresentation: 'truncated',
+            entries: [
+                makeEntry('D/', { isDirectory: true, untrackedFileCount: 30000 }),
+                makeEntry('a-first.ts'),
+            ],
+        }));
+        machineScmStatusEntriesMock.mockResolvedValueOnce(makeEntriesPage(['z-last.ts'], false));
+
+        const window = new ScmStatusEntriesWindow({ sessionId: 's1' });
+        await window.refresh();
+        expect(window.getState().truncated).toBe(true);
+        expect(window.getState().entries.map((entry) => entry.path)).toEqual(['D/', 'a-first.ts']);
+
+        await window.loadMoreTopLevel();
+
+        expect(machineScmStatusEntriesMock).toHaveBeenCalledWith('machine-a', {
+            cwd: '/repo',
+            afterPath: 'a-first.ts',
+        });
+        expect(window.getState().truncated).toBe(false);
+        expect(window.getState().entries.map((entry) => entry.path)).toEqual(['D/', 'a-first.ts', 'z-last.ts']);
+    });
+
+    it('drops an in-flight expansion reply that lands after the directory was collapsed', async () => {
+        fetchSnapshotForSessionMock.mockResolvedValue(makeCollapsedSnapshot());
+        let resolveExpand!: (value: ScmStatusEntriesResponse) => void;
+        machineScmStatusEntriesMock.mockReturnValueOnce(new Promise((resolve) => {
+            resolveExpand = resolve;
+        }));
+
+        const window = new ScmStatusEntriesWindow({ sessionId: 's1' });
+        await window.refresh();
+        const expandPromise = window.expandDirectory('D/');
+        expect(window.getState().expansions.get('D/')?.loading).toBe(true);
+
+        window.collapseDirectory('D/');
+        expect(window.getState().expansions.has('D/')).toBe(false);
+
+        resolveExpand(makeEntriesPage(['D/late.ts'], false) as ScmStatusEntriesResponse);
+        await expandPromise;
+
+        // The late reply must not resurrect the collapsed expansion.
+        expect(window.getState().expansions.has('D/')).toBe(false);
+    });
+
     it('loads collapsed rows on refresh via one entries-carrying normal-mode snapshot fetch', async () => {
         fetchSnapshotForSessionMock.mockResolvedValueOnce(makeCollapsedSnapshot());
 

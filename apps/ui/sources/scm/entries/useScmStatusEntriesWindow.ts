@@ -14,6 +14,7 @@ export type UseScmStatusEntriesWindowResult = Readonly<{
     expandDirectory: (directoryPath: string) => void;
     collapseDirectory: (directoryPath: string) => void;
     loadMoreExpanded: (directoryPath: string) => void;
+    loadMoreTopLevel: () => void;
 }>;
 
 /**
@@ -81,6 +82,9 @@ export function useScmStatusEntriesWindow(input: {
     const loadMoreExpanded = React.useCallback((directoryPath: string) => {
         void window.loadMoreExpanded(directoryPath);
     }, [window]);
+    const loadMoreTopLevel = React.useCallback(() => {
+        void window.loadMoreTopLevel();
+    }, [window]);
 
-    return { state, expandDirectory, collapseDirectory, loadMoreExpanded };
+    return { state, expandDirectory, collapseDirectory, loadMoreExpanded, loadMoreTopLevel };
 }

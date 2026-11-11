@@ -28,6 +28,7 @@ export type ChangedFilesTreeListProps = Readonly<{
     onExpandDirectory?: (directoryPath: string) => void;
     onCollapseDirectory?: (directoryPath: string) => void;
     onLoadMoreExpanded?: (directoryPath: string) => void;
+    onLoadMoreTopLevel?: () => void;
     onLayout?: ScrollViewProps['onLayout'];
     onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
     onScroll?: ScrollViewProps['onScroll'];
@@ -66,7 +67,8 @@ type CollapsedDirectoryInfo = Readonly<{
 type FlattenedNode =
     | (ChangedFilesOutlineNode & { kind: 'dir'; depth: number; collapsedDirectory?: CollapsedDirectoryInfo })
     | (ChangedFilesOutlineNode & { kind: 'file'; depth: number })
-    | { kind: 'loadMore'; directoryPath: string; depth: number };
+    | { kind: 'loadMore'; directoryPath: string; depth: number }
+    | { kind: 'loadMoreTopLevel'; depth: number };
 
 function mergeCollapsedDirectoryEntries(
     nodes: ChangedFilesOutlineNode[],
@@ -107,7 +109,7 @@ function flattenTree(
     nodes: ChangedFilesOutlineNode[],
     depth: number,
     expanded: ReadonlySet<string>,
-    expansions: ReadonlyMap<string, { entries: readonly any[]; hasMore: boolean }> | null
+    expansions: ReadonlyMap<string, { entries: readonly ScmWorkingEntry[]; hasMore: boolean }> | null
 ): FlattenedNode[] {
     const out: FlattenedNode[] = [];
     for (const node of nodes) {
@@ -188,13 +190,6 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
     const badgeIndex = useScmTreeBadgeIndex(props.snapshot);
 
     const filteredQuery = props.searchQuery.trim().toLowerCase();
-    const filteredNodes = React.useMemo(() => {
-        if (!filteredQuery) return null;
-        const matches = changedFiles
-            .filter((f) => f.fullPath.toLowerCase().includes(filteredQuery))
-            .sort((a, b) => a.fullPath.localeCompare(b.fullPath, undefined, { sensitivity: 'base' }));
-        return matches;
-    }, [changedFiles, filteredQuery]);
 
     const expansions = props.entriesWindow?.expansions ?? null;
 
@@ -213,24 +208,31 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
     }, [props.onCollapseDirectory, props.onExpandDirectory]);
 
     const nodesToRender: FlattenedNode[] = React.useMemo(() => {
-        if (filteredNodes) {
-            return filteredNodes.map((file) => ({
-                kind: 'file' as const,
-                name: file.fileName,
-                fullPath: file.fullPath,
-                file,
-                depth: 0,
-            }));
+        const flattened = flattenTree(tree, 0, expandedDirs, expansions);
+        if (!filteredQuery) {
+            // A truncated entries window still has more top-level rows on the machine: surface
+            // the continuation affordance at the end of the list.
+            if (props.entriesWindow?.mode === 'window' && props.entriesWindow.truncated) {
+                flattened.push({ kind: 'loadMoreTopLevel', depth: 0 });
+            }
+            return flattened;
         }
-        return flattenTree(tree, 0, expandedDirs, expansions);
-    }, [expandedDirs, expansions, filteredNodes, tree]);
+        // Search spans the full row set — collapsed directory rows and loaded expansion
+        // children included — so a directory or a file inside it is findable by name.
+        // Synthetic load-more rows carry no path and never match.
+        return flattened
+            .filter((node) => ('fullPath' in node ? node.fullPath.toLowerCase().includes(filteredQuery) : false))
+            .sort((a, b) => (('fullPath' in a ? a.fullPath : '')).localeCompare(('fullPath' in b ? b.fullPath : ''), undefined, { sensitivity: 'base' }));
+    }, [expandedDirs, expansions, filteredQuery, props.entriesWindow, tree]);
 
     return (
         <FlatList
             data={nodesToRender}
             keyExtractor={(node) => (node.kind === 'loadMore'
                 ? `loadMore:${node.directoryPath}`
-                : `${node.kind}:${node.fullPath}`)}
+                : node.kind === 'loadMoreTopLevel'
+                    ? 'loadMore:__top__'
+                    : `${node.kind}:${node.fullPath}`)}
             style={{ flex: 1, minHeight: 0 }}
             contentContainerStyle={{ paddingBottom: 20 }}
             renderItem={({ item: node, index }) => {
@@ -246,17 +248,17 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                         : null;
                     const rightElement = countLabel ? (
                         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                            <Text style={{ fontSize: 12, color: props.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
+                            <Text style={{ color: props.theme.colors.state.neutral.foreground, ...Typography.monoMeta('semiBold') }}>
                                 {countLabel}
                             </Text>
                         </View>
                     ) : badge ? (
                         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                            <Text style={{ fontSize: 12, color: props.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
+                            <Text style={{ color: props.theme.colors.state.neutral.foreground, ...Typography.monoMeta('semiBold') }}>
                                 {`${badge.kindLetter}${badge.changedCount}`}
                             </Text>
                             {badge.isComplete !== false && badge.added > 0 ? (
-                                <Text style={{ fontSize: 12, color: props.theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
+                                <Text style={{ color: props.theme.colors.state.success.foreground, ...Typography.monoMeta('semiBold') }}>
                                     {`+${badge.added}`}
                                 </Text>
                             ) : null}
@@ -283,6 +285,22 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                             rightElement={rightElement}
                             showChevron={false}
                             onPress={() => toggleDir(node.fullPath, collapsed)}
+                            showDivider={showDivider}
+                            style={{
+                                paddingLeft,
+                                paddingRight: 8,
+                            }}
+                        />
+                    );
+                }
+
+                if (node.kind === 'loadMoreTopLevel') {
+                    return (
+                        <Item
+                            title={t('files.changedFilesLoadMore')}
+                            density="tight"
+                            showChevron={false}
+                            onPress={() => props.onLoadMoreTopLevel?.()}
                             showDivider={showDivider}
                             style={{
                                 paddingLeft,

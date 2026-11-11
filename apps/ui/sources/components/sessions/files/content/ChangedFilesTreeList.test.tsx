@@ -118,26 +118,61 @@ function makeWindowState(partial: Partial<ScmStatusEntriesWindowState>): ScmStat
 
 async function renderTreeList(props: {
     snapshot: ScmWorkingSnapshot;
+    searchQuery?: string;
     entriesWindow?: ScmStatusEntriesWindowState | null;
     onExpandDirectory?: (path: string) => void;
     onCollapseDirectory?: (path: string) => void;
     onLoadMoreExpanded?: (path: string) => void;
+    onLoadMoreTopLevel?: () => void;
     onOpenFile?: (path: string) => void;
 }) {
     const { ChangedFilesTreeList } = await import('./ChangedFilesTreeList');
     return await renderScreen(<ChangedFilesTreeList
         theme={createThemeFixture() as any}
         snapshot={props.snapshot}
-        searchQuery=""
+        searchQuery={props.searchQuery ?? ""}
         onOpenFile={props.onOpenFile ?? vi.fn()}
         entriesWindow={props.entriesWindow ?? null}
         onExpandDirectory={props.onExpandDirectory}
         onCollapseDirectory={props.onCollapseDirectory}
         onLoadMoreExpanded={props.onLoadMoreExpanded}
+        onLoadMoreTopLevel={props.onLoadMoreTopLevel}
     />);
 }
 
 describe('ChangedFilesTreeList with the bounded entries window', () => {
+    it('finds collapsed directory rows and loaded expansion children by search query', async () => {
+        itemPropsByTestID.length = 0;
+        const snapshot = makeSnapshot([
+            makeSnapshotEntry('guides/', { isDirectory: true, untrackedFileCount: 2 }),
+            makeSnapshotEntry('standalone.ts'),
+        ]);
+        const expansions = new Map([
+            ['guides/', {
+                directoryPath: 'guides/',
+                entries: [makeSnapshotEntry('guides/nested-guide.ts')],
+                loading: false,
+                hasMore: false,
+            } as const],
+        ]);
+        const entriesWindow = makeWindowState({
+            entries: [
+                makeSnapshotEntry('guides/', { isDirectory: true, untrackedFileCount: 2 }),
+                makeSnapshotEntry('standalone.ts'),
+            ],
+            expansions,
+        });
+
+        // The directory row itself is findable even while collapsed...
+        await renderTreeList({ snapshot, entriesWindow, searchQuery: 'guides' });
+        expect(itemPropsByTestID.some((props) => props.title === 'guides/')).toBe(true);
+        itemPropsByTestID.length = 0;
+
+        // ...and loaded expansion children are findable by the file name.
+        const screen = await renderTreeList({ snapshot, entriesWindow, searchQuery: 'nested-guide' });
+        expect(screen.getTextContent()).toContain('nested-guide.ts');
+    });
+
     it('renders a collapsed directory row as "D/" with its untracked file count and expands instead of opening', async () => {
         itemPropsByTestID.length = 0;
         const onOpenFile = vi.fn();
@@ -155,6 +190,23 @@ describe('ChangedFilesTreeList with the bounded entries window', () => {
         dirRows[0].onPress?.();
         expect(onExpandDirectory).toHaveBeenCalledWith('D/');
         expect(onOpenFile).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a top-level load-more row when the entries window is truncated', async () => {
+        itemPropsByTestID.length = 0;
+        const onLoadMoreTopLevel = vi.fn();
+        const snapshot = makeSnapshot([makeSnapshotEntry('a.ts')]);
+        const entriesWindow = makeWindowState({
+            entries: [makeSnapshotEntry('a.ts')],
+            truncated: true,
+        });
+
+        await renderTreeList({ snapshot, entriesWindow, onLoadMoreTopLevel });
+
+        const loadMoreRow = itemPropsByTestID.find((props) => props.onPress === undefined ? false : props.title === 'files.changedFilesLoadMore()');
+        expect(loadMoreRow).toBeDefined();
+        loadMoreRow!.onPress?.();
+        expect(onLoadMoreTopLevel).toHaveBeenCalledTimes(1);
     });
 
     it('renders expanded directory children as real file rows with their per-file actions', async () => {
