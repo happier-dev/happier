@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, createMachineFixture, flushHookEffects, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { act, createMachineFixture, flushHookEffects, renderScreen, standardCleanup, teamGroupFixture, teamSummaryFixture, teamCapabilitiesFixture, waitForTestEvent } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -32,7 +32,8 @@ const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles
 const { PageHeader } = await import('@/components/ui/layout/PageHeader');
 const { Item } = await import('@/components/ui/lists/Item');
 const { createDeploymentActions } = await import('./deploymentActions');
-const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } = await import('./deploymentPlatformTargetPlugin.testFixture');
+const { DeploymentPlatformInspectState } = await import('./DeploymentPlatformInspectState');
+const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, answerDeploymentTargetInspectForHome } = await import('./deploymentPlatformTargetPlugin.testFixture');
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
 const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
 const { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
@@ -44,6 +45,190 @@ const repository = ProjectSourceRepositorySelectorV1Schema.parse({
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft Machine Home', () => {
+  it.each(['team', 'account-shared'] as const)('edits draft deployers through the shared choices and retains them in the creating Action (%s)', async (sourceKind) => {
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+    const { TeamCredentialAudiencePicker } = await import('@/components/settings/teams/credentials/TeamCredentialAudiencePicker');
+    const { DeploymentPermissionsPanel } = await import('./DeploymentPermissionsPanel');
+    const serverId = await homes.addHome({ name: 'Deployers', serverUrl: `https://draft-deployers-${sourceKind}.test`, accountId: 'alice', teamsEnabled: true,
+      serverIdentityId: `srv_${(sourceKind === 'team' ? 'd' : 'e').repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const base = createDeploymentEnvironmentDetailV1();
+    // The opened header is also the read path for an agent-authored chosen audience.
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment,
+      owner: sourceKind === 'team' ? { kind: 'team', teamId: 'team-a' } : { kind: 'account', accountId: 'alice' }, protection: 'production', deployerMode: 'chosen',
+      deployerPrincipals: [{ principalKind: 'account', principalId: 'account-ana' },
+        { principalKind: 'teamGroup', principalId: 'group-ops' }],
+    } });
+    const authored: unknown[] = [];
+    const createdInputs: ReturnType<typeof DeploymentEnvironmentCreateInputV1Schema.parse>[] = [];
+    let savedId: string | null = null;
+    try {
+      homes.answer(serverId, 'POST /v1/user/profiles', { body: { users: [
+        ['alice', 'Alice'], ['account-ana', 'Ana'], ['account-bo', 'Bo'], ['account-cam', 'Cam'], ['account-dee', 'Dee'],
+      ].map(([id, name]) => ({ id, name, firstName: name, lastName: null, username: id, avatar: null, bio: null, status: 'none', publicKey: null })) } });
+      const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+      const { TeamRefInputV1Schema } = await import('@happier-dev/protocol/teams');
+      const teams = [
+        teamSummaryFixture({ id: 'team-a', name: 'Platform', capabilities: teamCapabilitiesFixture({}) }),
+        teamSummaryFixture({ id: 'team-b', name: 'Release', capabilities: teamCapabilitiesFixture({}) }),
+      ];
+      const teamRead = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-a' });
+      // Both Teams share one HTTP endpoint; its body selects the acknowledged Team.
+      homes.answer(serverId, `${teamRead.method} ${teamRead.path}`, { select: input => {
+        const { teamId } = TeamRefInputV1Schema.parse(input);
+        const team = teams.find(row => row.id === teamId);
+        return team ? { body: team } : { status: 404, body: { error: 'team_not_found' } };
+      } });
+      const groupRead = bindHomeDomainActionHttpRequestV1('teams.groups.get', { v: 1, teamId: 'team-c', groupId: 'group-shared' });
+      homes.answer(serverId, `${groupRead.method} ${groupRead.path}`, { body: teamGroupFixture({ id: 'group-shared', teamId: 'team-c', name: 'Shared operations' }) });
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: detail.environment.owner, audience: sourceKind === 'team' ? [] : [
+          { principal: { kind: 'team', teamId: 'team-a' }, level: 'view' },
+          { principal: { kind: 'team', teamId: 'team-b' }, level: 'view' },
+          { principal: { kind: 'account', accountId: 'account-cam' }, level: 'view' },
+          { principal: { kind: 'group', teamId: 'team-c', groupId: 'group-shared' }, level: 'view' },
+        ],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+            authored.push(intent);
+            return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+              serverId, projectSourceId: 'source-app', requestKey: intent.requestKey, protection: intent.protection,
+              purpose: intent.purpose, deployerMode: intent.deployerMode, deployerPrincipals: intent.deployerPrincipals,
+              controllerMachineId: 'runtime', contentArtifactId: 'created-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+            }, review: { creationDefaults: { values: { controllerMachineId: 'runtime', buildMachineId: 'runtime', retainPreviousDeployments: 1 },
+              sources: { controllerMachineId: 'builtin', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
+              creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
+          }
+          createdInputs.push(DeploymentEnvironmentCreateInputV1Schema.parse(input));
+          return { ok: true, environmentId: 'created-environment', revision: 1 };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')} copyFrom={detail}
+        onApprovalRequested={() => {}} onSaved={id => { savedId = id; }} onDiscard={() => {}} />);
+      const prefix = 'project-deployments.environment.permissions';
+      const deployers = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${prefix}.deployers`);
+      expect(deployers()).toBeDefined();
+      await waitForTestEvent(screen.subscribe, () => screen.findAllByType(TeamCredentialAudiencePicker)[0], node => node !== undefined);
+      expect(deployers()?.props.value).toBe('chosen');
+      expect(screen.findByTestId(`${prefix}.chosen.account.account-ana`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${prefix}.chosen.account.account-ana.remove`);
+      await act(async () => screen.findAllByType(TeamCredentialAudiencePicker)[0]!.props.onChoose({
+        kind: 'member', id: 'membership-bo', accountId: 'account-bo', name: 'Bo',
+      }));
+      await act(async () => screen.findAllByType(TeamCredentialAudiencePicker)[0]!.props.onChoose({
+        kind: 'group', id: 'group-release', name: 'Release',
+      }));
+      const expectedPrincipals = [
+        { principalKind: 'teamGroup', principalId: 'group-ops' }, { principalKind: 'account', principalId: 'account-bo' },
+        { principalKind: 'teamGroup', principalId: 'group-release' },
+      ];
+      if (sourceKind === 'account-shared') {
+        expect(screen.findAllByType(TeamCredentialAudiencePicker).map(node => node.props.address.teamId)).toEqual(['team-a', 'team-b']);
+        const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+        const { getTeamSnapshot } = await import('@/sync/store/teams/teamsSnapshots');
+        const credential = await resolveServerCredentialAccountScope(account.accountLifetime.scope.serverId);
+        await waitForHomeGovernance(async () => {
+          await act(async () => {});
+          const snapshots = ['team-a', 'team-b'].map(teamId => {
+            const snapshot = getTeamSnapshot(account.accountLifetime.scope, { serverId: account.accountLifetime.scope.serverId, teamId });
+            return { teamId, status: snapshot?.status, error: snapshot?.error, name: snapshot?.data?.name };
+          });
+          const diagnostic = { credential: credential.kind === 'bound' ? { kind: credential.kind, scope: credential.scope } : { kind: credential.kind },
+            snapshots, requests: homes.requests.map(({ method, path }) => ({ method, path })) };
+          expect(screen.findAllByType(TeamCredentialAudiencePicker).map(node => node.props.label), JSON.stringify(diagnostic))
+            .toEqual([expect.stringContaining('Platform'), expect.stringContaining('Release')]);
+        });
+        const choiceTitle = (id: string) => screen.findAllByType(Item).find(node => node.props.testID === id)?.props.title;
+        await waitForHomeGovernance(async () => {
+          await act(async () => {});
+          expect(choiceTitle(`${prefix}.chosen.add.account.account-cam`)).toBe('Cam');
+        });
+        await waitForHomeGovernance(async () => {
+          await act(async () => {});
+          expect(choiceTitle(`${prefix}.chosen.add.teamGroup.group-shared`)).toBe('Shared operations');
+        });
+        await screen.pressByTestIdAsync(`${prefix}.chosen.add.account.account-cam`);
+        await screen.pressByTestIdAsync(`${prefix}.chosen.add.teamGroup.group-shared`);
+        await act(async () => screen.findAllByType(TeamCredentialAudiencePicker)[1]!.props.onChoose({
+          kind: 'member', id: 'membership-dee', accountId: 'account-dee', name: 'Dee',
+        }));
+        expectedPrincipals.push({ principalKind: 'account', principalId: 'account-cam' },
+          { principalKind: 'teamGroup', principalId: 'group-shared' }, { principalKind: 'account', principalId: 'account-dee' });
+      }
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(homes.subscribe, () => authored.length, value => value === 1);
+      expect(authored[0]).toMatchObject({ deployerMode: 'chosen', protection: 'production', deployerPrincipals: expectedPrincipals });
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
+      await act(async () => deployers()!.props.onChange('members'));
+      await screen.pressByTestIdAsync('project-deployments.draft.production');
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(homes.subscribe, () => authored.length, value => value === 2);
+      expect(authored[1]).toMatchObject({ deployerMode: 'members', protection: 'nonProduction' });
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
+      await act(async () => deployers()!.props.onChange('chosen'));
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(homes.subscribe, () => authored.length, value => value === 3);
+      expect(authored[2]).toMatchObject({ deployerMode: 'chosen', protection: 'nonProduction', deployerPrincipals: expectedPrincipals });
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(screen.subscribe, () => savedId, value => value === 'created-environment');
+      expect(createdInputs).toMatchObject([{ deployerMode: 'chosen', protection: 'nonProduction', deployerPrincipals: expectedPrincipals }]);
+      await screen.unmount();
+      const created = createdInputs[0];
+      if (!created) throw new Error('missing_created_environment');
+      const createdHeader = { ...detail.environment, id: 'created-environment', serverId, projectSourceId: 'source-app',
+        deployerMode: created.deployerMode, deployerPrincipals: created.deployerPrincipals, protection: created.protection,
+        contentArtifactId: created.contentArtifactId, contentHeaderVersion: created.contentHeaderVersion, contentBodyVersion: created.contentBodyVersion };
+      const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentDetailV1Schema } = await import('@happier-dev/deployment-protocol/v1');
+      await account.createArtifactDocument({ artifactId: createdHeader.contentArtifactId,
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }, body: JSON.stringify(detail.content) });
+      // The real reader parses the server's persisted header and opens its Artifact before the panel consumes it.
+      homes.answer(serverId, 'GET /v1/deployments/environments/created-environment', { body: {
+        ok: true, environment: createdHeader, targetLinks: [],
+      } });
+      const read = await createDeploymentReadTransport(account.accountLifetime).readEnvironment(
+        { ...account.accountLifetime.scope, projectSourceId: 'source-app' }, 'created-environment', { signal: new AbortController().signal });
+      expect(read.ok).toBe(true);
+      if (!read.ok) throw new Error(read.failure.code);
+      // The mounted Environment panel reads the Account's settings scope from the app store.
+      storage.setState({ settingsScope: account.accountLifetime.scope });
+      const panel = await renderScreen(<DeploymentPermissionsPanel detail={{ ...DeploymentEnvironmentDetailV1Schema.parse(read.value), runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] }}
+        lifetime={account.accountLifetime} machineName={id => id} onOpenController={() => {}} editing={{ actions: createDeploymentActions(account.accountLifetime, 'source-app'),
+          serverId, review: { pendingId: null, request: () => {}, open: () => {} }, onChanged: () => {} }} />);
+      expect(panel.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${prefix}.deployers`)?.props.value).toBe('chosen');
+      expect(panel.findByTestId(`${prefix}.chosen.account.account-bo`)).not.toBeNull();
+      expect(panel.findByTestId(`${prefix}.chosen.teamGroup.group-release`)).not.toBeNull();
+      if (sourceKind === 'account-shared') {
+        expect(panel.findAllByType(TeamCredentialAudiencePicker).map(node => node.props.address.teamId)).toEqual(['team-a', 'team-b']);
+        expect(panel.findByTestId(`${prefix}.chosen.account.account-cam`)).not.toBeNull();
+        expect(panel.findByTestId(`${prefix}.chosen.teamGroup.group-shared`)).not.toBeNull();
+        expect(panel.findByTestId(`${prefix}.chosen.account.account-dee`)).not.toBeNull();
+        const savedTitle = (id: string) => panel.findAllByType(Item).find(node => node.props.testID === id)?.props.title;
+        await waitForHomeGovernance(async () => {
+          await act(async () => {});
+          expect(savedTitle(`${prefix}.chosen.account.account-dee`)).toBe('Dee');
+        });
+        await waitForHomeGovernance(async () => {
+          await act(async () => {});
+          expect(savedTitle(`${prefix}.chosen.teamGroup.group-shared`)).toBe('Shared operations');
+        });
+      }
+      await panel.unmount();
+      const fresh = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} actions={null} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      expect(fresh.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${prefix}.deployers`)?.props.value).toBe('managers');
+      await fresh.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
   it('duplicates with explicit binding choices through the creating Action and renders its refusal remedy', async () => {
     const { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1,
       createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
@@ -522,19 +707,23 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
-  it('creates a platform Environment from the repository alone, with its Machine as controller, then asks to add the platform', async () => {
+  it.each([false, true])('configures and inspects a platform before Save, then preserves the reviewed choice (link refusal: %s)', async linkRefused => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-platform.test', accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
     let authored: Record<string, unknown> | undefined;
     let committed: Record<string, unknown> | undefined;
+    let linkedArtifact: string | undefined;
     const saved: Array<[string, unknown]> = [];
     const pluginId = 'com.example.draft-platforms';
-    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId);
+    const awaitImportSchemas = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const inspections: unknown[] = [];
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, async (_target, input) => { inspections.push(input); });
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
       activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
       accountLifetime: account.accountLifetime, publishProjection: true });
+    const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'alice', machineId: 'runtime', plugin: authoredPlugin });
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
@@ -556,6 +745,23 @@ describe('Environment draft Machine Home', () => {
           committed = DeploymentEnvironmentCreateInputV1Schema.parse(input) as Record<string, unknown>;
           return { ok: true, environmentId: 'platform-environment', revision: 1 };
         } });
+      const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+      homes.answer(serverId, 'GET /v1/deployments/environments/platform-environment', { body: { ok: true,
+        environment: createDeploymentEnvironmentHeaderV1({ id: 'platform-environment', projectSourceId: 'source-app',
+          serverId: `srv_${'f'.repeat(32)}`, controllerMachineId: 'runtime' }), targetLinks: [] } });
+      homes.answer(serverId, 'POST /v1/deployments/targets/list', {
+        body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
+          const { DeploymentActionInputSchemasV1 } = awaitImportSchemas;
+          const link = DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input);
+          if (!('contentArtifactId' in link)) throw new Error('Expected the canonical protected link content');
+          linkedArtifact = link.contentArtifactId;
+          expect(link).toMatchObject({ environmentId: 'platform-environment', expectedRevision: 1,
+            source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } } });
+          return linkRefused ? { ok: false, error: 'deployment_conflict' }
+            : { ok: true, environmentId: 'platform-environment', revision: 2, targetLinkId: 'platform-link', targetLinkRevision: 1 };
+        } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
@@ -569,25 +775,75 @@ describe('Environment draft Machine Home', () => {
       expect(screen.findHostByTestId('project-deployments.draft.target:machine')).not.toBeNull();
       expect(screen.findHostByTestId(`project-deployments.draft.target:${pluginId}/alpha`)).not.toBeNull();
       await screen.pressByTestIdAsync(`project-deployments.draft.target:${pluginId}/beta`);
+      // Owner feedback 2026-11-10: the real choices and preparation are inline before any creation.
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+      expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1);
+      expect(authored).toBeUndefined();
+      await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
+        account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } }));
+      const patch = async (value: Record<string, unknown>) => act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
+      await patch({ beta: 'beta-west' });
+      await patch({ providerAccountId: 'cloud' });
+      await patch({ providerEnvironment: { kind: 'production' } });
+      await screen.pressByTestIdAsync('project-deployments.platform.check');
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(inspections, JSON.stringify({ outcome: screen.findAllByType(DeploymentPlatformInspectState).map(node => node.props.outcome), screen: screen.getTextContent(), requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toHaveLength(1);
+      });
+      expect(inspections[0]).not.toHaveProperty('environmentId');
+      expect(inspections[0]).not.toHaveProperty('expectedRevision');
+      expect(authored).toBeUndefined();
       // The platform builds the site itself: nothing here asks for a Compose file.
       expect(screen.findHostByTestId('project-deployments.draft.compose')).toBeNull();
-      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, disabled => disabled === false);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(header().props.primaryAction.disabled, screen.getTextContent()).toBe(false); });
       await act(async () => header().props.primaryAction.onPress());
-      await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(authored, screen.getTextContent()).toBeDefined(); });
       expect(authored).toMatchObject({ mode: 'preview', definition: { from: 'repository', ref: 'main' }, controllerMachineId: 'runtime' });
       expect(authored?.definition).not.toHaveProperty('compose');
       expect(authored).not.toHaveProperty('firstTargetLink');
       expect(authored).not.toHaveProperty('buildMachineId');
-      await waitForTestEvent(screen.subscribe,
-        () => screen.findHostByTestId('project-deployments.draft.defaults'), node => node !== null);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findHostByTestId('project-deployments.draft.defaults'), screen.getTextContent()).not.toBeNull(); });
       await act(async () => header().props.primaryAction.onPress());
-      await waitForTestEvent(homes.subscribe, () => committed, value => value !== undefined);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(committed, screen.getTextContent()).toBeDefined(); });
       expect(committed).not.toHaveProperty('firstTargetLink');
-      await waitForTestEvent(screen.subscribe, () => saved.length, count => count > 0);
-      // Create carries the chosen platform into its link sheet, so the person never picks it twice.
-      expect(saved).toEqual([['platform-environment', { platformTargetKey: `${pluginId}/beta` }]]);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(linkedArtifact, screen.getTextContent()).toBeDefined(); });
+      await act(async () => {});
+      expect(linkedArtifact).toBeTruthy();
+      const linkedContent = await account.readArtifactContent(linkedArtifact!);
+      expect(linkedContent.header).toMatchObject({ kind: 'deployment-target-link.v1' });
+      expect(JSON.parse(linkedContent.body)).toEqual({
+          credentialPrincipal: { kind: 'account', accountId: 'alice',
+            purpose: { consumer: { pluginId, localId: 'inspect-beta' }, purpose: 'beta.manage' },
+            target: { kind: 'account', account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } } },
+          providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'beta-west', providerEnvironment: 'production' },
+          providerEnvironment: { kind: 'production' },
+      });
+      // Save never re-runs inspection or substitutes the association: the retained provider result is the content.
+      expect(inspections).toHaveLength(1);
+      if (!linkRefused) {
+        // The agent front door accepts the person's draft, and returns the provider content the UI saved.
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const agentResult = await createFrontDoorActionExecute()('action.invoke', {
+          action: { pluginId, localId: 'inspect-beta' }, input: inspections[0],
+        }, { surface: 'cli', serverId, expectedAccountId: 'alice' });
+        expect(agentResult).toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
+      }
+      if (linkRefused) {
+        expect(saved).toEqual([]);
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);
+        await act(async () => header().props.primaryAction.onPress());
+        expect(saved).toEqual([['platform-environment', { tab: 'settings' }]]);
+      } else {
+        expect(saved).toEqual([['platform-environment', undefined]]);
+      }
       await screen.unmount();
-    } finally { standardCleanup(); await installed.dispose(); account.dispose(); storage.setState(previous); }
+    } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
   });
 
   it('offers the way to a platform when no plugin declares one, and says nothing of platforms to a viewer who cannot link', async () => {

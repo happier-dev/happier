@@ -27,6 +27,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -180,6 +181,7 @@ const ProjectDeploymentsPage = React.memo(
     const router = useRouter();
     const { fontScale } = useWindowDimensions();
     const phone = useDeviceType() === 'phone';
+    const pageStateSize = usePageSurfaceStateSize();
     const railWidth = useCollectionRailWidth('project-deployments');
     // The open Environment, its receipt, tab and Settings section live in the URL, so a link opens them.
     // Only the new-Environment editor is local: it is never a destination of its own.
@@ -346,6 +348,7 @@ const ProjectDeploymentsPage = React.memo(
         <ItemList testID="project-deployments.error">
           <SurfaceStateCard
             kind="error"
+            size={pageStateSize}
             title={t('projects.deployments.loadErrorTitle')}
             reason={t('projects.deployments.loadErrorBody')}
             diagnosticCode={collection.snapshot.failure?.code ?? null}
