@@ -78,6 +78,19 @@ const AGENTS: readonly ConnectedServicesIndexAgentUse[] = [
 ];
 
 describe('buildConnectedServicesIndexModel · who uses what', () => {
+    it('preserves released legacy credential kinds for the same compatibility owner', () => {
+        const model = buildConnectedServicesIndexModel({
+            transport: 'legacy', entries: [{ ...entry(CODEX, 'Source'), legacyServiceId: 'openai-codex' }],
+            qualifiedAccounts: [], qualifiedGroups: [],
+            legacyServices: [{ serviceId: 'openai-codex', profiles: [{ profileId: 'subscription', kind: 'oauth', status: 'connected' }] }],
+            defaultAccountByServiceKey: {}, resolveLabel: () => 'Source', resolveFallbackEntry: () => null,
+            presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading',
+            agentUses: [{ title: 'Key only', services: [{ ...CODEX, credentialKinds: ['token'] }], defaults: [] },
+                { title: 'Subscription', services: [{ ...CODEX, credentialKinds: ['oauth'] }], defaults: [] }],
+        });
+        expect(model.sheets[0].usedBy).toEqual(['Subscription']);
+    });
+
     it('names only consumers compatible with each saved account kind, including mixed services', () => {
         const service = { pluginId: 'external.source', localId: 'models' };
         const declarations: readonly ConnectedServicesIndexAgentUse[] = [

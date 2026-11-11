@@ -1,5 +1,5 @@
 import { applyProjectedCredentialKindRestrictions } from '@happier-dev/agents';
-import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import { ConnectedServiceCredentialKindSchema, type ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -40,6 +40,7 @@ export type ConnectedServicesIndexAccount =
     }>
     | Readonly<{
         kind: 'legacy';
+        credentialKind?: ConnectedServiceCredentialKind;
         accountId: string;
         status: unknown;
         legacyServiceId: ConnectedServiceId;
@@ -219,15 +220,19 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
                 }));
         } else if (input.transport === 'legacy' && legacyServiceId) {
             const legacy = input.legacyServices.find((candidate) => candidate.serviceId === legacyServiceId);
-            accounts = (legacy?.profiles ?? []).map((profile) => ({
-                kind: 'legacy' as const,
-                accountId: profile.profileId,
-                status: profile.status,
-                legacyServiceId,
-                identityLabel: profile.providerEmail ?? profile.providerAccountId ?? null,
-                identityLabelKind: profile.providerEmail != null ? 'email' as const
-                    : profile.providerAccountId != null ? 'accountId' as const : null,
-            }));
+            accounts = (legacy?.profiles ?? []).map((profile) => {
+                const credentialKind = ConnectedServiceCredentialKindSchema.safeParse(profile.kind);
+                return {
+                    ...(credentialKind.success ? { credentialKind: credentialKind.data } : {}),
+                    kind: 'legacy' as const,
+                    accountId: profile.profileId,
+                    status: profile.status,
+                    legacyServiceId,
+                    identityLabel: profile.providerEmail ?? profile.providerAccountId ?? null,
+                    identityLabelKind: profile.providerEmail != null ? 'email' as const
+                        : profile.providerAccountId != null ? 'accountId' as const : null,
+                };
+            });
         }
         const serviceGroups = input.transport === 'advertised-v4'
             ? input.qualifiedGroups.filter((group) => sameService(group.ref.service, service))
@@ -297,7 +302,7 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
             connectedAccounts: agent.services.map(candidate => ({ service: candidate, credentialKinds: candidate.credentialKinds })),
             optionsByServiceId: { [serviceKey]: accounts.map(account => ({
                 profileId: account.accountId, status: 'connected',
-                kind: account.kind === 'qualified' ? account.profile.kind : null,
+                kind: account.kind === 'qualified' ? account.profile.kind : account.credentialKind ?? null,
             })) },
         })[serviceKey].filter(option => option.status !== 'unsupported_kind').map(option => option.profileId))]));
         const compatibleAgents = accounts.length === 0 ? declaredAgents
