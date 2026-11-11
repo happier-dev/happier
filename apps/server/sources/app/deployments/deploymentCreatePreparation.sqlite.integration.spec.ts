@@ -1089,6 +1089,53 @@ describe('reviewed create preparation authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('reads a newly created Project Source for a catalog preparation with a new Project', async () => {
+        const f = await fixture();
+        const newProject = { name: 'New publish project', requestKey: crypto.randomUUID(),
+            owner: { kind: 'account' as const, accountId: f.actor.id } };
+        const input = { serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
+            newProject, templateRef: { sourceId: 'apps', itemId: 'web', version: '1',
+                ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } } };
+        const admission = projectDeploymentPreparationAdmissionV1('deployments.publish.prepare', input);
+        if (!admission || admission.operation !== 'catalog') throw new Error('Expected catalog admission');
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ ...f.binding,
+            actionId: 'deployments.publish.prepare', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentPreparationAdmission: admission }, { input });
+        const content = await f.artifact(f.actor.id);
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, f.actor.id, {
+            serverId, newProject, requestKey: newProject.requestKey, controllerMachineId: f.machine.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', ...content }));
+        if (!created.ok) throw new Error(created.error);
+        await withAuthenticatedTestApp(projectSourceRoutes, async app => {
+            const path = `/v1/projects/sources/${encodeURIComponent(created.projectSourceId)}?serverId=${encodeURIComponent(serverId)}`;
+            const effectActionId = 'projects.sources.read';
+            const response = await app.inject({ method: 'GET', url: path, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId, target: f.binding.target,
+                    installationId: f.machine.installationId!, requestId: f.binding.requestId,
+                    method: 'GET', path, privateKey: f.key.secretKey }),
+            } });
+            expect(response.statusCode, response.body).toBe(200);
+            await db.projectSource.update({ where: { id: created.projectSourceId }, data: { owner: { kind: 'account', accountId: f.owner.id }, audience: [] } });
+            expect((await app.inject({ method: 'GET', url: path,
+                headers: { ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId, target: f.binding.target,
+                        installationId: f.machine.installationId!, requestId: f.binding.requestId,
+                        method: 'GET', path,
+                        privateKey: f.key.secretKey }),
+                } })).statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
     it.each([false, true])('reads and publishes only the allocated template with a separate controller: %s', async separateController => {
         const f = await fixture();
         const controllerKey = separateController ? nacl.sign.keyPair() : f.key;

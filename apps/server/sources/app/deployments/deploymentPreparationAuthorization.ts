@@ -1127,11 +1127,19 @@ export async function readDeploymentPreparationSourceHttpPurposeInTx(tx: Tx,
         }
     } else if (admission?.operation === 'catalog') {
         if (binding.actionId !== DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || admission.machineId !== binding.machineId
-            || admission.installationId !== binding.installationId || !admission.source) return false;
-        const custody = await readProjectSourceCustodyInTx(tx, admission.source.id);
-        if (!custody || custody.source.revision !== admission.source.revision
-            || custody.owner.kind === 'account' && custody.owner.accountId !== binding.accountId) return false;
-        source = custody.source;
+            || admission.installationId !== binding.installationId) return false;
+        if (admission.source) {
+            const custody = await readProjectSourceCustodyInTx(tx, admission.source.id);
+            if (!custody || custody.source.revision !== admission.source.revision
+                || custody.owner.kind === 'account' && custody.owner.accountId !== binding.accountId) return false;
+            source = custody.source;
+        } else if (admission.newProject) {
+            const environmentId = await readCreatedDeploymentEnvironmentIdInTx(tx, binding.accountId, admission.newProject.requestKey);
+            const environment = environmentId ? await tx.deploymentEnvironment.findUnique({ where: { id: environmentId }, select: { projectSourceId: true } }) : null;
+            const custody = environment ? await readProjectSourceCustodyInTx(tx, environment.projectSourceId) : null;
+            if (!custody || custody.owner.kind === 'account' && custody.owner.accountId !== binding.accountId) return false;
+            source = custody.source;
+        } else return false;
     }
     return source && proof.path === `/v1/projects/sources/${encodeURIComponent(source.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { serverId: binding.serverIdentityId, id: source.id }))
