@@ -111,7 +111,7 @@ async function createScopedInactiveFixture(): Promise<ScopedInactiveFixture & Re
           readAccountSettingsSnapshot: () => snapshot,
           readAccountLaunchProfiles: async () => ({ ...readProfilesFromAccountSettings(snapshot.settings), artifactsById: new Map() }),
           connectedServiceRefreshCoordinator: null, connectedAccountsOwner: account.owner,
-          activatePurposeBindings: account.owner.activatePurposeBindings, activateSessionPurposeBindings: account.owner.activateSessionPurposeBindings,
+          activatePurposeBindings: account.owner.activatePurposeBindings,
           qualifiedConnectedAccountApi: { listAccounts: request => listQualifiedConnectedAccountsV4({ token: account.credentials.token, ...request }),
             async readGroup() { throw new Error('No group selected'); } },
           processEnv: { ...process.env, CODEX_HOME: hostHome },

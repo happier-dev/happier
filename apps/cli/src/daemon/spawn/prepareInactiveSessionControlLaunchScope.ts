@@ -17,8 +17,7 @@ import { readAccountLaunchProfiles, readProfileSettingsFromAccountSnapshot } fro
 import { LaunchSecretReferenceOverlayError, createLaunchSecretReferenceOverlayProviderErrorV1,
   resolveLaunchProfileSavedSecretEnvironment } from '../agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 import { readConnectedServiceChildSelectionsFromEnv } from '../connectedServices/connectedServiceChildEnvironment';
-import { scopeConnectedAccountSessionPurposeBindingLease } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import type { ConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { scopeConnectedAccountPurposeBindingLease } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { activateConnectedAccountRequestAuthForSpawn } from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import type { ConnectedAccountRequestAuthSubjectRegistry } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
@@ -46,7 +45,6 @@ export type InactiveSessionControlLaunchAdmission = Pick<ConnectedAdmission,
     readAccountSettingsSnapshot: NonNullable<ProviderAdmission['readAccountSettingsSnapshot']>;
     readAccountLaunchProfiles?: () => ReturnType<typeof readAccountLaunchProfiles>;
     requesterSessionBootstrap?: import('../sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap;
-    activateSessionPurposeBindings?: ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
     connectedAccountRequestAuthRegistry?: Pick<ConnectedAccountRequestAuthSubjectRegistry, 'activate' | 'retire'>;
     connectedAccountRequestAuthHttpPort?: number;
   }>;
@@ -136,21 +134,17 @@ export async function prepareInactiveSessionControlLaunchScope(
       onExit: async () => { await auth?.cleanupOnExit?.(); } });
     resources.register(() => auth?.materializationPurposeLease?.dispose());
     const purposes = connected.qualifiedPurposeBindingSnapshot;
-    let exactPurposeBindingSubjectId = auth?.materializationPurposeLease?.subjectId;
+    const exactPurposeBindingSubjectId = auth?.materializationPurposeLease?.subjectId;
     if (purposes?.purposes.length) {
-      if (!admission.activateSessionPurposeBindings) unavailable();
-      const lease = admission.activateSessionPurposeBindings({ sessionId: adapterParams.sessionId,
-        purposes: purposes.purposes, bindings: purposes.bindings,
-        ...(purposes.directMaterialOrigins ? { directMaterialOrigins: purposes.directMaterialOrigins } : {}) });
-      resources.register(() => lease.dispose());
-      exactPurposeBindingSubjectId = lease.subjectId;
+      const lease = auth?.materializationPurposeLease;
+      if (!lease) unavailable();
       if (purposes.requestAuthUses?.length) {
         const root = auth?.requestAuthMaterializedRoot;
         const port = admission.connectedAccountRequestAuthHttpPort;
         if (!root || !port || !admission.connectedAccountRequestAuthRegistry) unavailable();
         await activateConnectedAccountRequestAuthForSpawn({ materializationId: connected.materializationKey,
           materializedRootDir: root, httpPort: port, registry: admission.connectedAccountRequestAuthRegistry,
-          launchResourceScope: resources, subject: scopeConnectedAccountSessionPurposeBindingLease({
+          launchResourceScope: resources, subject: scopeConnectedAccountPurposeBindingLease({
             lease, subjectId: lease.subjectId, parentSessionId: adapterParams.sessionId, uses: purposes.requestAuthUses,
             ...(isLegacyServiceKeyedCompatibilityCatalogAgent(catalogEntry) ? { legacyServiceKeyedCompatibility: true } : {}),
             registerRedaction: redaction.add,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { prepareDaemonAgentIsolationIdentity, type PreparedDaemonAgentIsolationIdentity, type PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
@@ -315,7 +316,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                             return input.activatePurposeBindings!({
                                 subject: {
                                     kind: 'operation',
-                                    operationId: materializationKey,
+                                    operationId: randomUUID(),
                                     consumer,
                                     // The Session this launch materializes for:
                                     // its direct Team material opens only

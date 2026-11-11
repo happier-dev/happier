@@ -1817,7 +1817,6 @@ export async function startDaemonSessionControlRuntime(
         connectedAccountsOwner: context?.connectedAccountsOwner,
         qualifiedConnectedAccountApi: context?.qualifiedConnectedAccountApi ?? qualifiedConnectedAccountApi,
         activatePurposeBindings: context?.activatePurposeBindings ?? params.activatePurposeBindings,
-        activateSessionPurposeBindings: context?.activateSessionPurposeBindings ?? params.activateSessionPurposeBindings,
         connectedServiceRefreshCoordinator: context ? context.connectedServiceRefreshCoordinator : params.getConnectedServiceRefreshCoordinator(),
         providerAccountUsageStore: context?.providerAccountUsageStore ?? providerAccountUsageStore,
         createConnectedServiceLaunchAuthGroupCoordinator: selection => createSessionQualifiedAuthGroupSwitchCoordinator({
