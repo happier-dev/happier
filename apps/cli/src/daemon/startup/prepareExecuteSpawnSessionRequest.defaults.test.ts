@@ -78,12 +78,12 @@ function installHome(purposeTarget: 'account' | 'group' | 'empty' | 'unavailable
   return { serviceKey: `${service.pluginId}/${service.localId}`, get };
 }
 
-function prepare(connectedServices?: unknown, operationContext?: SavedSecretOperationContextV1) {
+function prepare(connectedServices?: unknown, operationContext?: SavedSecretOperationContextV1, accountSettings?: Record<string, unknown>) {
   // Exercise the exact daemon ingress schema, including released V1 native bindings.
   const options = SpawnDaemonSessionRequestSchema.parse({ directory: configuration.happyHomeDir, agentTarget,
     ...(connectedServices === undefined ? {} : { connectedServices }) });
   return runWithServerHttpBaseUrl(serverHttpBaseUrl, () => prepareExecuteSpawnSessionRequest({
-    request: { options, credentials, ...(operationContext ? { operationContext } : {}) }, validateEnvVarRecordStrict,
+    request: { options, credentials, ...(operationContext ? { operationContext } : {}), ...(accountSettings ? { accountSettings } : {}) }, validateEnvVarRecordStrict,
   }));
 }
 
@@ -100,6 +100,16 @@ function execute(options: SpawnSessionOptions) {
 }
 
 describe('fresh daemon spawn Account purpose defaults', () => {
+  it('carries the Account default model into fresh native admission when no model was selected', async () => {
+    installHome('unavailable');
+    const modelSelection = { v: 1 as const, updatedAt: 7,
+      ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-luna' } };
+    const result = await prepare({ v: 2, bindingsByServiceId: {} }, undefined, {
+      providerDefaultModelSelectionsByAgentTargetKeyV1: { [modelSelection.ref.agentTargetKey]: modelSelection },
+    });
+    expect(result).toMatchObject({ modelSelection });
+  });
+
   it.each(['account', 'group'] as const)('admits the saved %s when a Voice/Action spawn omits its choice', async target => {
     const { serviceKey } = installHome(target);
     const result = await prepare();

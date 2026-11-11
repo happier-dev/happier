@@ -411,7 +411,8 @@ export async function executeSpawnSessionRequest(
                 // must not turn an existing Session into a model transition.
                 modelSelection:
                     prepared.persistedProviderResumeState.selection
-                    ?? options.modelSelection,
+                    ?? options.modelSelection
+                    ?? prepared.modelSelection,
                 // The caller overlay was validated by preparation and the
                 // profile overlay came from the strict Protocol schema.
                 environmentVariablesValidation: {

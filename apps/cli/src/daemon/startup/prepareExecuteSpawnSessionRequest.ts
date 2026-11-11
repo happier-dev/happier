@@ -33,6 +33,7 @@ import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirecto
 import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemoryCeiling';
 import { resolveSessionRuntimeSnapshot } from '../sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import {
     ConnectedServicesDefaultUnavailableError,
     createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
@@ -336,6 +337,12 @@ export async function prepareExecuteSpawnSessionRequest(
             acceptedTeamCredentialBinding: attachSnapshot?.acceptedTeamCredentialBinding,
         }).spawnOptions
         : options;
+    const accountDefaultModelSelection = !normalizedExistingSessionId && !effectiveResume && runtimeOptions.modelSelection === undefined
+        ? readAgentDefaultModelSelectionV1(
+            params.request.accountSettings?.providerDefaultModelSelectionsByAgentTargetKeyV1,
+            effectiveBackendTargetV2,
+        ) ?? undefined
+        : undefined;
     // Omitted fresh-launch intent consumes the same Account default owner as
     // CLI/Workflow creators. An explicit native/empty object is still a choice;
     // resumed Sessions retain their admitted identity rather than today's default.
@@ -380,7 +387,7 @@ export async function prepareExecuteSpawnSessionRequest(
         permissionModeUpdatedAt: runtimeOptions.permissionModeUpdatedAt,
         agentModeId: runtimeOptions.agentModeId,
         agentModeUpdatedAt: runtimeOptions.agentModeUpdatedAt,
-        modelSelection: runtimeOptions.modelSelection,
+        modelSelection: runtimeOptions.modelSelection ?? accountDefaultModelSelection,
         normalizedExistingSessionId,
         effectiveResume,
         effectiveBackendTargetV2,
