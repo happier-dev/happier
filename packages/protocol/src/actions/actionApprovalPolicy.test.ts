@@ -876,7 +876,6 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'teams.members.reactivate',
     'teams.members.management.set',
     'teams.groups.archive',
-    'teams.groups.members.remove',
     'teams.invitations.create',
     'teams.invitations.reissue',
     'teams.invitations.accept',
@@ -1061,6 +1060,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'teams.members.remove',
     'teams.members.leave',
     'teams.invitations.revoke',
+    'teams.groups.members.remove',
     'teams.credentials.delete',
     'teams.credentials.externalKeys.revoke',
     'teams.credentials.externalKeys.revokeAll',
@@ -1073,7 +1073,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'home.accounts.signOutEverywhere',
     'home.public_profiles.handle_reclaim',
   ] as const)(
-    'keeps irreversible %s confirmation user-changeable on every exposed surface',
+    'keeps destructive %s confirmation user-changeable on every exposed surface',
     (actionId) => {
       const spec = getActionSpec(actionId);
       for (const surface of ['ui', 'agent', 'mcp', 'cli'] as const) {

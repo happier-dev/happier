@@ -14,7 +14,6 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const groupRouterPush = vi.hoisted(() => vi.fn());
-const modalConfirm = vi.hoisted(() => ({ spy: null as null | { mock: { calls: unknown[][] } } }));
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
@@ -69,9 +68,7 @@ installSettingsViewCommonModuleMocks({
         // Every destructive Group action is confirmed; these cases are about
         // what happens after the manager says yes — and, for the removal
         // dialog, about what they were actually asked.
-        const mock = createModalModuleMock({ confirmResult: true });
-        modalConfirm.spy = mock.spies.confirm;
-        return mock.module;
+        return createModalModuleMock({ confirmResult: true }).module;
     },
 });
 
@@ -80,6 +77,9 @@ installHomeGovernanceBoundaries(harness);
 vi.doUnmock('@/sync/domains/state/storage');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+// Load the real screen graph during collection, after installing boundaries.
+// Cold transformation must finish before a test owns a mounted React act scope.
+const { TeamGroupDetailScreen } = await import('./TeamGroupDetailScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const GROUP_GET_PATH = '/v1/teams/groups/get';
@@ -99,7 +99,6 @@ const MANAGED_GROUP_CAPABILITIES = {
 };
 
 async function renderGroupDetail(serverId: string) {
-    const { TeamGroupDetailScreen } = await import('./TeamGroupDetailScreen');
     return renderScreen(
         <TeamGroupDetailScreen serverId={serverId} teamId="team-1" groupId="group-1" />,
     );
@@ -551,7 +550,7 @@ describe('TeamGroupDetailScreen', () => {
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });
 
-    it('removes a native Group contribution through the shared direct Action policy', async () => {
+    it('confirms a native Group removal and preserves membership when canceled', async () => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
         // The confirmed operation is `teams.groups.members.remove` for one
@@ -574,12 +573,17 @@ describe('TeamGroupDetailScreen', () => {
 
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        await screen.pressByTestIdAsync('team-group-member:account-ada');
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(harness.requestsFor(GROUP_MEMBER_REMOVE_PATH)).toHaveLength(0);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member:account-ada');
         await screen.pressByTestIdAsync('team-group-member:account-ada');
 
         await vi.waitFor(() => {
             expect(harness.requestsFor(GROUP_MEMBER_REMOVE_PATH)).toHaveLength(1);
         });
-        expect(modalConfirm.spy).not.toHaveBeenCalled();
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
     });
 
     it('keeps an unfinished Group description while a remote rename lands, and reconciles deliberately', async () => {
@@ -869,7 +873,7 @@ describe('TeamGroupDetailScreen', () => {
         expect(ids).not.toContain('team-group-add-member');
     });
 
-    it('withholds a second Group restore while its own approval is still unresolved', async () => {
+    it('withholds a second Group restore while its shared UI confirmation is unresolved', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, TEAM_GET_PATH, {
             body: teamSummaryFixture({
@@ -886,12 +890,12 @@ describe('TeamGroupDetailScreen', () => {
         harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, {
             body: { items: [teamGroupMemberFixture()], nextCursor: null },
         });
-        // The real persisted policy the shared Action front door reads, so the
-        // routing under test is the shipped one: `teams.groups.restore` is
-        // declared deferred/result-required, which is what turns an explicit
-        // requirement into a durable approval Artifact instead of an immediate
-        // Home mutation. The harness owns both the write and its removal.
+        // A present user's saved Ask preference uses the shared local dialog,
+        // not a durable approval Artifact (docs/actions.md, UI confirmation).
         await harness.requireUiApproval(serverId, 'teams.groups.restore');
+        harness.answer(serverId, GROUP_RESTORE_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
+        });
 
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-restore');
@@ -900,21 +904,20 @@ describe('TeamGroupDetailScreen', () => {
         // the archived-parent rule withdrawing a valid feature.
         expect(screen.findByTestId('team-group-restore')?.props.disabled).not.toBe(true);
 
-        await screen.pressByTestIdAsync('team-group-restore');
-
-        await vi.waitFor(() => {
-            expect({
-                approvalRequests: harness.requestsFor(ARTIFACT_CREATE_PATH).length,
-                restoreRequests: harness.requestsFor(GROUP_RESTORE_PATH).length,
-            }).toEqual({ approvalRequests: 1, restoreRequests: 0 });
-        });
-        // The Home is never asked to restore before the approval is decided.
+        const { Modal } = await import('@/modal');
+        let confirmRestore!: (confirmed: boolean) => void;
+        vi.mocked(Modal.confirm).mockClear().mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+            confirmRestore = resolve;
+        }));
+        act(() => screen.pressByTestId('team-group-restore'));
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
         expect(harness.requestsFor(GROUP_RESTORE_PATH)).toHaveLength(0);
-        await waitForTestId(screen, 'team-approval');
-
-        // The shell already holds this Group's unresolved approval, so offering
-        // the control again would let one restore be requested twice.
         expect(screen.findByTestId('team-group-restore')?.props.disabled).toBe(true);
+        act(() => screen.pressByTestId('team-group-restore'));
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        await act(async () => confirmRestore(true));
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_RESTORE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });
 });
 
