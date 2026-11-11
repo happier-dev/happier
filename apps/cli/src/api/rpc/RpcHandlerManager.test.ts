@@ -23,6 +23,7 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRout
   WorkspaceSyncSeedRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -143,6 +144,9 @@ it.each<{
     accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'worker', installationId: 'worker-installation',
     actionId: 'projects.script.run', requestId: 'run', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     target: envelope.target,
+    // Home binds the admitted Sync source into every Project preparation root (62e7ae8da3f).
+    workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId('run'), sourceWorkspaceRefId: 'source-ref',
+      source: admission },
   } });
   const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: 'sync-run',
     accountServerId: 'home', sourceMachineId: 'source', sourceRootPath: '/source', originalActionEnvelope: envelope,
@@ -245,7 +249,10 @@ it.each<{ member: boolean; receivingRole?: 'manage' | 'use' }>([
     accountId: actorAccountId, principalId: actorAccountId, credentialId: 'pat', grant: API_TOKEN_FULL_GRANT_V1,
     custodianAccountId: 'target-owner', serverIdentityId: homeId, machineId: input.machineId,
     installationId: 'chosen-installation', actionId: 'projects.open', requestId: envelope.requestId,
-    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target } });
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+    // Home binds the admitted Sync source into every Project Sync Open root (62e7ae8da3f).
+    workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+      sourceWorkspaceRefId: 'logical-source', source: admission } } });
   const constraints = { models: API_TOKEN_FULL_GRANT_V1.models, permissionModes: API_TOKEN_FULL_GRANT_V1.permissionModes };
   const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: 'workspace-operation',
     accountServerId: homeId, sourceMachineId: admission.machineId, sourceRootPath: '/source/workspace', originalActionEnvelope: envelope,
@@ -2065,9 +2072,12 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
       params: rawEnvelope,
     } as Parameters<typeof rpc.handleRequest>[0]);
     expect(missingOrigin).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    // Typed admission refusals carry no-effect evidence and their admission phase (3d0ffa407d4).
     expect(await openRpcResponse(encryptionKey, missingOrigin as string)).toEqual({
       error: RPC_ERROR_MESSAGES.FORBIDDEN,
       errorCode: RPC_ERROR_CODES.FORBIDDEN,
+      effectAttempted: false,
+      failureCause: expect.objectContaining({ phase: 'rpc.admission.reserved_server_origin', errorCode: RPC_ERROR_CODES.FORBIDDEN }),
     });
     expect(handler).toHaveBeenCalledTimes(1);
   });
@@ -2134,6 +2144,8 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
       expect(await openRpcResponse(encryptionKey, response as string)).toEqual({
         error: RPC_ERROR_MESSAGES.FORBIDDEN,
         errorCode: RPC_ERROR_CODES.FORBIDDEN,
+        effectAttempted: false,
+        failureCause: expect.objectContaining({ phase: 'rpc.admission.reserved_server_origin', errorCode: RPC_ERROR_CODES.FORBIDDEN }),
       });
     }
 
@@ -2240,6 +2252,7 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
     expect(await openRpcResponse(encryptionKey, encryptedResult as string)).toEqual({
       error: RPC_ERROR_MESSAGES.FORBIDDEN,
       errorCode: RPC_ERROR_CODES.FORBIDDEN,
+      effectAttempted: false,
     });
   });
 
