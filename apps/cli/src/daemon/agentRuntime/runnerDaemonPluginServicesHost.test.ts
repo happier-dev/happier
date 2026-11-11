@@ -54,6 +54,7 @@ import {
     createRunnerDaemonPluginServicesHost,
     createRunnerDaemonPluginServicesPreparationError,
     projectRunnerDaemonPluginServicesFailure,
+    projectRunnerDaemonPluginServicesFailureDiagnostic,
     type RunnerDaemonCurrentGlobalExternalSessionsOwner,
     type RunnerDaemonCurrentGlobalMcpOwner,
 } from './runnerDaemonPluginServicesHost';
@@ -745,6 +746,14 @@ describe('runner daemon PluginServices host', () => {
         expect(response).toMatchObject({ ok: false,
             error: { cause: { code: 'provider-busy', stage: 'dispatch' } } });
         expect(JSON.stringify(response)).not.toContain('PRIVATE_SOURCE_CONTENT');
+    });
+
+    it('retains redacted native materialization details in file diagnostics while keeping RPC failures private', () => {
+        const error = new Error('Provider binding refused token=synthetic-private-token\nPRIVATE_STDERR');
+        const diagnostic = projectRunnerDaemonPluginServicesFailureDiagnostic(error);
+        expect(diagnostic).toMatchObject({ providerErrorMessage: expect.stringContaining('Provider binding refused') });
+        expect(JSON.stringify(diagnostic)).not.toMatch(/synthetic-private-token|PRIVATE_STDERR/);
+        expect(JSON.stringify(projectRunnerDaemonPluginServicesFailure(error))).not.toContain('Provider binding refused');
     });
 
     it('retains bounded dispatch failure codes and exception types without exposing private exception text', () => {

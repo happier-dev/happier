@@ -6,6 +6,7 @@ import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic 
 import { readAccountConnectionProviderBrokerFailureDiagnostic } from '@/providers/broker/accountConnectionClient';
 import { logger } from '@/ui/logger';
 import { withExternalSessionFollowRequestId } from '@/session/external/followFailureDiagnostic';
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 
 import {
     isPluginError,
@@ -142,6 +143,7 @@ export function projectRunnerDaemonPluginServicesFailureDiagnostic(error: unknow
     return {
         cause: projectRunnerDaemonPluginServicesFailure(error).cause,
         ...readAccountConnectionProviderBrokerFailureDiagnostic(error),
+        ...readNativeStartupFailureDetail(error),
     };
 }
 
