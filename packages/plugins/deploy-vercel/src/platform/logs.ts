@@ -12,7 +12,7 @@ export const buildLogsAction = {
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
   hostAccess: ['vercel-api', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   dangerLevel: 'safe', readOnly: true, inputSchema: inputs['logs.build'].jsonSchema, resultSchema: output.jsonSchema,
-  async run(raw: JsonValue, context: PluginAccountActionContext) {
+  async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
     // The Action owner has admitted this exact schema, including receipt custody.
     const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;
     const fail = (code: string): never => { throw new PluginError({ code, retryable: false, details: { phase: 'build' } }); };

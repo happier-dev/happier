@@ -174,7 +174,6 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
   }
   const state = deployment.operation === 'teardown' && deployment.state === 'succeeded' ? 'removed'
     : deployment.state === 'failed' || deployment.state === 'cancelled' ? 'failed'
-    : deployment.state === 'waitingApproval' ? 'needsApproval'
     : deployment.state === 'succeeded' && targetUrl !== null ? 'ready' : 'deploying';
   return { kind: 'deployment' as const, environment, deployment, provenance: provenance.data,
     servingSha: sourceIntent.data.sha, state, targetUrl, ...controller };

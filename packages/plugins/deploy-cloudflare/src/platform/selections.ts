@@ -162,7 +162,7 @@ const readSelections: typeof readSelectionsImpl = async (input, context, zonesOn
     if (reason === undefined) throw error;
     // Canonical recognition proves the cross-realm SDK exception; its public details carry authored recovery.
     const original = error as PluginError;
-    const details = original.details && typeof original.details === 'object' && !Array.isArray(original.details)
+    const details = isObject(original.details)
       ? original.details : {};
     const fallback = selectionRecovery(reason);
     throw new PluginError({ ...original.data, details: { ...details,

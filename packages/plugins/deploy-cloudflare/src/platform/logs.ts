@@ -12,7 +12,7 @@ import { pagesCommon, pagesIo } from './pagesPrepare.js';
 export const pagesLogsActions = {
   'pages-build-logs-read': { ...pagesCommon, title: 'Read the selected Cloudflare Pages build logs', dangerLevel: 'safe', readOnly: true,
     inputSchema: inputs['logs.build'].jsonSchema, resultSchema: output.jsonSchema,
-    async run(raw: JsonValue, context: PluginAccountActionContext) {
+    async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
       // The role owner already admitted the retained receipt and provider scope.
       const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;
       const fail = (code: string): never => { throw new PluginError({ code, retryable: false, details: { phase: 'build' } }); };

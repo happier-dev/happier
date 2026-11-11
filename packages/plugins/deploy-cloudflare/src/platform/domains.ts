@@ -62,11 +62,11 @@ async function workers(input: DeploymentTargetDomainInputV1, context: PluginAcco
   const zone = input.domain.zone;
   if (!zone) refuse('deployment_invalid');
   const root = '/workers/domains';
-  const parseRow = (row: unknown) => {
+  const parseRow = (row: unknown): { id: string; enabled: boolean } => {
     if (!isObject(row) || row.hostname !== input.domain.hostname || typeof row.id !== 'string' || !row.id
       || row.service !== environment.scriptName || row.zone_id !== zone.zoneId || row.zone_name !== zone.name
       || typeof row.enabled !== 'boolean') refuse('deployment_conflict');
-    return row;
+    return { id: row.id, enabled: row.enabled };
   };
   const read = async () => {
     const rows = await native(context, input, `${root}?${new URLSearchParams({ hostname: input.domain.hostname })}`);

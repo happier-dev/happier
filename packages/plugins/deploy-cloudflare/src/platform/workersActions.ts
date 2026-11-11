@@ -14,7 +14,7 @@ import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, i
 const base = preparation.jsonSchema;
 const uploadReviewNotice = `Uploads build on the controller using ${CLOUDFLARE_BUILD_IMAGE} and Wrangler ${CLOUDFLARE_WRANGLER_VERSION}.`;
 const prepareProperties = { ...base.properties, product: targetProductSchema, repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
-  triggerUuid: { type: 'string', minLength: 1 }, sourceMethod: { anyOf: [inputs.deploy.jsonSchema.properties!.sourceMethod!, inputs.uploadDeploy.jsonSchema.properties!.sourceMethod!] } } as const;
+  triggerUuid: { type: 'string', minLength: 1 }, sourceMethod: { anyOf: [inputs.deploy.jsonSchema.properties!.sourceMethod!, inputs.uploadDeploy.jsonSchema.properties!.sourceMethod!] } } satisfies NonNullable<PluginJsonSchema['properties']>;
 const prepareRequired = [...base.required ?? [], 'providerIdentity', 'repository'];
 const prepareVariants: PluginJsonSchema[] = [
   { type: 'object', additionalProperties: false, required: [...prepareRequired, 'triggerUuid'], properties: { ...prepareProperties, sourceMethod: inputs.deploy.jsonSchema.properties!.sourceMethod!,

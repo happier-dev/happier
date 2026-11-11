@@ -13,6 +13,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   if (!ctx.services.http) return fail('client_required');
   const environment = input.providerEnvironment;
   if (environment.kind === 'script' || 'scriptName' in environment) return fail('unsupported_action');
+  const gitBranch = environment.kind === 'preview' ? environment.gitBranch : undefined;
   const hostname = input.domain.hostname;
   const project = input.providerIdentity.providerResourceId;
   const account = input.providerIdentity.providerAccountId;
@@ -31,7 +32,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   }
   function selected(domain: unknown): asserts domain is Record<string, unknown> {
     if (!record(domain) || domain.name !== hostname || domain.projectId !== project
-      || (domain.gitBranch ?? undefined) !== (environment.kind === 'preview' ? environment.gitBranch : undefined)
+      || (domain.gitBranch ?? undefined) !== gitBranch
       || (domain.customEnvironmentId ?? undefined) !== (environment.kind === 'custom' ? environment.id : undefined)
       || typeof domain.verified !== 'boolean') return fail('target_mismatch');
   }
