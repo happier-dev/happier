@@ -100,3 +100,19 @@ describe('normalizeRawMessage legacy ACP `provider` envelope', () => {
         expect(normalized).toBeNull();
     });
 });
+
+// QA r1111c external Muse import: tool records have a native callId and an
+// outer stored message id, but no redundant presentation id inside ACP data.
+it.each(['tool-call', 'tool-result'] as const)('renders imported Muse %s without an inner presentation id', type => {
+    const normalized = normalizeRawMessage('imported-row', null, 1000, {
+        role: 'agent', content: { type: 'acp', agentId: 'muse', data: type === 'tool-call'
+            ? { type, callId: 'native-call', name: 'bash', input: { command: 'printf OK' } }
+            : { type, callId: 'native-call', output: 'OK', isError: false } },
+    });
+    expect(readUnsupportedContentMeta(normalized?.meta)).toBeNull();
+    expect(normalized?.role === 'agent' && normalized.content).toEqual([
+        expect.objectContaining(type === 'tool-call'
+            ? { type, id: 'native-call', name: 'bash', input: { command: 'printf OK' }, uuid: 'imported-row' }
+            : { type, tool_use_id: 'native-call', content: 'OK', uuid: 'imported-row' }),
+    ]);
+});
