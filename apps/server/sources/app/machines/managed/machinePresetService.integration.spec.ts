@@ -953,6 +953,55 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(owner, 'get', { homeId, id })).json().preset.launch.credentials).toHaveLength(1);
     });
 
+    it.each(['owner', 'manager', 'delegated'] as const)('binds effect review to controller authority for the %s acquiring a Team preset', async authority => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = `preset-effect-owner-${authority}`;
+        const member = `preset-effect-member-${authority}`;
+        await db.account.createMany({ data: [owner, member].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Effect review authority' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' },
+        ] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        if (authority === 'manager') {
+            await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: member,
+                accessLevel: 'admin', createdByAccountId: owner } });
+        }
+        const definition = { id: `preset-effect-${authority}`, homeId, name: 'Reviewed effects',
+            owner: { kind: 'team', teamId: team.id }, controller, launch, teamAcquireDelegated: true };
+        expect((await requestPreset(owner, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
+        const requesterAccountId = authority === 'owner' ? owner : member;
+        const selected = await inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: requesterAccountId,
+            homeId, id: definition.id, revision: 0 }));
+        expect(selected).toMatchObject({ kind: 'ready', delegated: authority === 'delegated' });
+        if (selected.kind !== 'ready') throw new Error('Expected current Team preset');
+        const reviewedEffectDigest = 'a'.repeat(64);
+        const reviewedFacts = { ...buildManagedConfigurationFactsV1({
+            choicesSchema: createPluginJsonSchemaZodValueAdapter(selected.declaration.provisioner.launchSchema),
+            launch: { ...launch, name: 'Guest' }, controller, optionStatus: 'current', prerequisites: [],
+            provisioner: selected.declaration.provisioner, billing: selected.declaration.billing,
+            retentionCapabilities: selected.declaration.retention, preset: { ...definition, revision: 0 },
+        }), reviewedEffectDigest };
+        const result = admitManagedAcquire({ custodianAccountId: owner, requesterAccountId,
+            requestEnvelopeDigest: `effect-review-${authority}`, input: {
+                requestId: `effect-review-${authority}`, continuationPresent: false, input: {
+                    enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+                    selection: { kind: 'preset', homeId, id: definition.id, revision: 0 }, controller,
+                    retention: reviewedFacts.retention, wakeOnAcceptedMessage: reviewedFacts.wakeOnAcceptedMessage, reviewedFacts,
+                },
+            } });
+        if (authority === 'delegated') {
+            await expect(result).rejects.toMatchObject({ code: 'invalid_request' });
+            expect(await db.managedMachine.count({ where: { presetId: definition.id } })).toBe(0);
+        } else {
+            const acquired = await result;
+            expect(acquired.machine.reviewedFacts?.reviewedEffectDigest).toBe(reviewedEffectDigest);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: acquired.machine.id } })).reviewedFacts)
+                .toMatchObject({ reviewedEffectDigest });
+        }
+    });
+
     it('admits only an exact delegated Team preset without controller access and revisions its spend authority', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const owner = 'preset-delegation-owner';
@@ -1016,9 +1065,6 @@ describe("Machine preset relational owner", () => {
             enrollmentIdentity: request.input.input.enrollmentIdentity, selection: { kind: 'one-off' as const,
                 homeId, controller, launch, retention: definition.retention, wakeOnAcceptedMessage: false },
         } } })).rejects.toMatchObject({ code: 'permission_denied' });
-        await expect(admitManagedAcquire({ ...request, input: { ...request.input, requestId: 'preset-delegation-effect-reviewed', input: {
-            ...request.input.input, reviewedFacts: { ...reviewedFacts, reviewedEffectDigest: 'requester-supplied-effect-digest' },
-        } } })).rejects.toMatchObject({ code: 'invalid_request' });
         const acquired = await admitManagedAcquire(request);
         expect(acquired.machine).toMatchObject({ launch: { ...launch, name: 'Guest' }, retention: definition.retention, enrollmentAccountId: member });
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: acquired.machine.id } })).reviewedFacts)
