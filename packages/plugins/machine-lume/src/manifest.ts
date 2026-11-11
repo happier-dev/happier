@@ -22,9 +22,10 @@ const processAccess = 'lume-process';
 const networkAccess = 'lume-http';
 const registryAccess = 'lume-image-registry';
 const GIB = 1024 ** 3;
-const DEFAULT_CPU = 2;
-const DEFAULT_MEMORY_BYTES = 4 * GIB;
-const DEFAULT_DISK_BYTES = 150 * GIB;
+// Current Lume CLI create defaults (Cua docs CLI reference, generated for
+// 0.5.1): 4 CPU cores and 8GB memory. Disk is image-owned.
+const DEFAULT_CPU = 4;
+const DEFAULT_MEMORY_BYTES = 8 * GIB;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess, networkAccess] } as const;
 const origin = 'http://localhost:7777';
 
@@ -143,7 +144,7 @@ export const LUME_PLUGIN = definePlugin({
         { path: 'storage', title: label('storage'), description: label('storageDescription'), widget: 'text' },
         { path: 'cpu', title: label('cpu'), widget: 'integer', defaultValue: DEFAULT_CPU },
         { path: 'memoryBytes', title: label('memory'), widget: 'integer', unit: 'bytes', defaultValue: DEFAULT_MEMORY_BYTES },
-        { path: 'diskBytes', title: label('disk'), widget: 'integer', unit: 'bytes', defaultValue: DEFAULT_DISK_BYTES },
+        { path: 'diskBytes', title: label('disk'), widget: 'integer', unit: 'bytes' },
         { path: 'image.kind', title: label('imageKind'), widget: 'select', requireExplicitSelection: true,
           options: [{ value: 'catalog', label: label('publishedImage') }, { value: 'native-image', label: label('nativeReference') }] },
         { path: 'image.id', title: label('publishedReference'), widget: 'text',

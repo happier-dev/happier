@@ -292,8 +292,18 @@ describe('activated Lume provisioner Actions', () => {
     const fields = normalizePluginActionInputHintsV2(declaration.inputHints).fields;
     expect(fields.filter(field => ['cpu', 'memoryBytes', 'diskBytes'].includes(field.path))
       .map(field => [field.path, field.defaultValue])).toEqual([
-        ['cpu', 2], ['memoryBytes', 4 * 1024 ** 3], ['diskBytes', 150 * 1024 ** 3],
+        ['cpu', 4], ['memoryBytes', 8 * 1024 ** 3], ['diskBytes', undefined],
       ]);
+  });
+
+  it('uses the selected catalog image disk annotation so the first image is creatable', async () => {
+    const { action, context } = await activated();
+    const options = await action('options')({ storage: 'home', cpu: 4, memoryBytes: 8 * 1024 ** 3,
+      image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } }, context);
+    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: {
+      image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' }, storage: 'home',
+      cpu: 4, memoryBytes: 8 * 1024 ** 3, diskBytes: launch.diskBytes,
+    } });
   });
 
   it.each([undefined, false, true])('carries password opt-in %s through Create, pending recovery and key-first bootstrap', async keepPasswordLogin => {

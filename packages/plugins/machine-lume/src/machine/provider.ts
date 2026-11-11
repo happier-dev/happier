@@ -110,8 +110,14 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
       // Cache IDs lose the tag and truncate the manifest digest. Only native
       // registry-returned references form launch choices; the qualification
       // owner filters private-carrier support. No guessed sizes/headroom.
-      const size = query.cpu !== undefined && query.memoryBytes !== undefined && query.diskBytes !== undefined
-        ? { cpu: query.cpu, memoryBytes: query.memoryBytes, diskBytes: query.diskBytes } : undefined;
+      let diskBytes = query.diskBytes;
+      if (diskBytes === undefined && query.cpu !== undefined && query.memoryBytes !== undefined
+        && selectedImage.success && selectedImage.data.kind === 'catalog' && qualifiedSshImage(selectedImage.data.id)) {
+        const imageDisk = await native.imageDiskBytes(selectedImage.data.id, signal);
+        if (imageDisk.kind === 'image') diskBytes = imageDisk.diskBytes;
+      }
+      const size = query.cpu !== undefined && query.memoryBytes !== undefined && diskBytes !== undefined
+        ? { cpu: query.cpu, memoryBytes: query.memoryBytes, diskBytes } : undefined;
       const storage = locations.locations.find(location => location.name === query.storage)?.name;
       const images = customImage ? [{ reference: customImage.reference, image: customImage }]
         : catalogs.flatMap(catalog => catalog.kind === 'catalog' ? catalog.references : []).filter(qualifiedSshImage)
