@@ -164,6 +164,24 @@ Unsupported helpers or mappings remain
 another registry kind. Their parsers do not own credentials, placement or
 deployment execution.
 
+In the development source, a selected app with available source bytes can carry
+`reviewSource` in its `needs_review` result. Store and Environment Add let the
+person edit those inert source bytes and explicitly check the mapping again.
+The optional `appMappingCorrection` follows registry reads and template
+preparation through the same format adapter and strict descriptor parser. It
+retains the original selected source reference and version; unresolved mappings
+remain review-only. The correction belongs to that review and is not saved as a
+second catalog or template record. Missing upstream bodies remain unavailable.
+
+Store preparation and Environment Add collect public values, existing Saved Secret
+references and named-volume choices before installation. The shared catalog
+binding builder retains explicit choices and adds defaults only for generators
+that were not selected explicitly. Environment Add offers existing services from
+the template planner's preview for `connectTo`, with an explicit list of variable
+keys to replace. Editing these fields performs no Action; the person requests
+another review before confirming Add. Agents pass the same typed bindings,
+`volumeBindings`, `connectTo` and `replace` to the template Action.
+
 The daemon retains one admitted immutable Coolify catalog read per Account,
 source and resolved commit: its index and the selected YAMLs acquired so far.
 Separate preparations share in-flight and completed resource reads. Cancelling a
@@ -686,3 +704,7 @@ UI pass; these development contracts do not establish stable-release availabilit
 - [Plugin platform](plugin-platform.md)
 - [Encryption](encryption.md)
 - [Compatibility](compatibility.md)
+
+## Chrome Web Store source (unreleased 0.3)
+
+The built-in `Chrome Web Store` source is an informational browser-extension registry. Home, the Google collection and the Extensions category are projected from the store’s SSR listing callbacks into the existing marketplace discovery model. Search and detail use form-POST through `RegistryHttpV1.postForm` to the store's private batchexecute endpoints (`zTyKYc`, `xY2Ddd`) and parse defensively; update checks use the existing update2 XML endpoint. These endpoints are unofficial and have no SLA. A non-200, rate limit, shape change or parse failure is surfaced as the existing typed unavailable source state, while paste-link/ID installation remains usable. The adapter never downloads or installs a package: acquisition continues through the browser-extension owner and CRX3 verification.
