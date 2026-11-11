@@ -939,7 +939,7 @@ describe('workspaceSyncTargetBootstrap', () => {
     await rm(fixture, { recursive: true, force: true });
   });
 
-  it.each([1, 2] as const)('rehydrates installed-owner restart custody and preserves READY V%s on publication', async version => {
+  it.each([1, 2] as const)('rehydrates exact restart custody and preserves READY V%s on publication', async version => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-bootstrap-'));
     const targetA = join(fixture, 'target-a');
     const staging = join(fixture, 'staging');
@@ -966,6 +966,7 @@ describe('workspaceSyncTargetBootstrap', () => {
       rootPath: targetA, relationshipId: 'relationship-1', endpointRole: 'beta',
       targetWorkspaceRefId: 'workspace-beta', policyDigest, contentSelection: 'all_files',
       materializationDirectory: staging, rootOwnershipManager,
+      ...(version === 2 ? { requesterCopyCustody: binding } : {}),
     });
     expect(exact).not.toBeNull();
     await exact?.publishReady();

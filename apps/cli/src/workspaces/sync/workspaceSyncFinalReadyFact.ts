@@ -57,7 +57,8 @@ export function matchesWorkspaceSyncFinalReadyFact(fact: WorkspaceSyncFinalReady
     && fact.rootFingerprint === expected.rootFingerprint
     && fact.policyDigest === expected.policyDigest
     && (expected.requesterCopyCustody === undefined
-      || fact.v === 2 && isDeepStrictEqual(fact.requesterCopyCustody, expected.requesterCopyCustody));
+      ? fact.v === 1
+      : fact.v === 2 && isDeepStrictEqual(fact.requesterCopyCustody, expected.requesterCopyCustody));
 }
 
 export async function writeWorkspaceSyncFinalReadyFact(path: string, fact: WorkspaceSyncFinalReadyFactInput): Promise<void> {
