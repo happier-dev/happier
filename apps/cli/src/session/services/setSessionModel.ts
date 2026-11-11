@@ -47,6 +47,10 @@ type SetSessionModelActiveResult = SessionModelTransitionResultV1 & Readonly<{
   sessionId: string;
 }>;
 
+const MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE = {
+  phase: 'turn_start', failureReason: 'unknown',
+} as const;
+
 type SetSessionModelInactiveResult = Readonly<{
   ok: true;
   status: 'intent_updated';
@@ -189,6 +193,7 @@ async function invokeActiveModelTransition(params: Readonly<{
       activeSelection: null,
       requestedSelection: params.selection,
       reason: projectPluginFailureText(error),
+      failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
     };
   }
 }
@@ -440,6 +445,7 @@ export async function setSessionModel(params: Readonly<{
           activeSelection: null,
           requestedSelection: request.selection,
           reason: 'session_model_transition_owner_unproven',
+          failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
         };
       }
       const refreshedRequest = resolveRequestedSelection({
@@ -457,6 +463,7 @@ export async function setSessionModel(params: Readonly<{
           activeSelection: null,
           requestedSelection: request.selection,
           reason: 'session_model_transition_owner_metadata_unavailable',
+          failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
         };
       }
       return await invokeActiveModelTransition({

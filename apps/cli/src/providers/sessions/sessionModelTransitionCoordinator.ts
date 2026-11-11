@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { SessionModelMutationExpectedV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
@@ -8,6 +8,7 @@ import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
   isRuntimeConfigUpdateOutcomeDeferred,
@@ -48,6 +49,7 @@ export type SessionModelTransitionApplyResult =
   | Readonly<{
       status: 'failed' | 'unsupported' | 'unproven' | 'requires_restart';
       reason?: string;
+      failureCause?: SessionRuntimeIssueV1['failureCause'];
       readbackAfterCompletion?: boolean;
     }>;
 
@@ -79,6 +81,9 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
       status: 'unproven',
       reason: 'runtime_model_transition_outcome_unproven',
       readbackAfterCompletion: true,
+      failureCause: classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', startupPhase: 'turn_start',
+      }).failureCause,
     };
   }
   if (isRuntimeConfigUpdateOutcomeDeferred(outcome)) {
@@ -93,6 +98,9 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
       outcome.reason,
       'runtime_model_transition_not_applied',
     ),
+    failureCause: classifyPrimarySessionRuntimeIssue({
+      cause: 'session_error', error: outcome.diagnostic, startupPhase: 'turn_start',
+    }).failureCause,
   };
 }
 
@@ -226,6 +234,7 @@ function failure(
   activeSelection: ProviderBoundModelRef,
   requestedSelection: ProviderBoundModelRef,
   reason?: string,
+  failureCause?: SessionRuntimeIssueV1['failureCause'],
 ): Extract<SessionModelTransitionResultV1, { ok: false }> {
   return {
     ok: false,
@@ -233,6 +242,7 @@ function failure(
     activeSelection,
     requestedSelection,
     ...(reason ? { reason } : {}),
+    ...(failureCause ? { failureCause } : {}),
   };
 }
 
@@ -240,6 +250,7 @@ function reconciliationFailure(
   activeSelection: ProviderBoundModelRef | null,
   requestedSelection: ProviderBoundModelRef,
   reason?: string,
+  failureCause?: SessionRuntimeIssueV1['failureCause'],
 ): Extract<
   SessionModelTransitionResultV1,
   { ok: false; status: 'reconciliation_required' }
@@ -250,6 +261,7 @@ function reconciliationFailure(
     activeSelection,
     requestedSelection,
     ...(reason ? { reason } : {}),
+    ...(failureCause ? { failureCause } : {}),
   };
 }
 
@@ -482,6 +494,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           'runtime_apply_failed',
         ),
         readbackAfterCompletion: true,
+        failureCause: classifyPrimarySessionRuntimeIssue({
+          cause: 'session_error', error, startupPhase: 'turn_start',
+        }).failureCause,
       };
     }
   };
@@ -771,6 +786,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   const recoverAppliedTargetFromRuntimeReadback = async (
     proposal: Proposal,
     target: AuthorizedSessionModelTransitionTarget,
+    failureCause?: SessionRuntimeIssueV1['failureCause'],
   ): Promise<boolean> => {
     if (!params.readRuntimeModelId) return false;
     const settleContradictoryReadback = async (
@@ -788,6 +804,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         null,
         proposal.selection,
         reason,
+        failureCause,
       ));
       return true;
     };
@@ -917,6 +934,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         reconciliationActiveSelection,
         proposal.selection,
         'runtime_readback_publication_failed',
+        failureCause,
       ));
       return true;
     }
@@ -1196,7 +1214,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       forwardEffectObservationRevision = runtimeObservationRevision;
       expectedRuntimeEffectModelId = target.selection.modelId;
       const restart = proposal.restartRuntime;
-      let applied = target.policy === 'restart_session' || restart?.required === true
+      let applied: SessionModelTransitionApplyResult = target.policy === 'restart_session' || restart?.required === true
         ? { status: 'requires_restart' as const }
         : await safelyApply(target);
       if (applied.status === 'requires_restart' && restart) {
@@ -1207,7 +1225,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           applied = await safelyApply(target);
         } catch (error) {
           applied = { status: 'unproven', readbackAfterCompletion: true,
-            reason: projectSessionModelTransitionReason(error instanceof Error ? error.message : null, 'runtime_apply_failed') };
+            reason: projectSessionModelTransitionReason(error instanceof Error ? error.message : null, 'runtime_apply_failed'),
+            failureCause: classifyPrimarySessionRuntimeIssue({
+              cause: 'session_error', error, startupPhase: 'turn_start',
+            }).failureCause };
         } finally {
           runtimeReplacementTarget = null;
         }
@@ -1246,6 +1267,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         null,
         proposal.selection,
         'runtime_effect_observed_after_failed_apply',
+        applied.failureCause,
       ));
       return;
     }
@@ -1254,13 +1276,14 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         null,
         proposal.selection,
         'runtime_model_drift_observed_during_transition',
+        'failureCause' in applied ? applied.failureCause : undefined,
       ));
       return;
     }
     if (applied.status === 'unproven') {
       if (
         applied.readbackAfterCompletion === true
-        && await recoverAppliedTargetFromRuntimeReadback(proposal, target)
+        && await recoverAppliedTargetFromRuntimeReadback(proposal, target, applied.failureCause)
       ) {
         return;
       }
@@ -1271,6 +1294,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         reconciliationActiveSelection,
         proposal.selection,
         applied.reason ?? 'runtime_model_transition_outcome_unproven',
+        applied.failureCause,
       ));
       return;
     }
@@ -1294,6 +1318,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           reconciliationActiveSelection,
           proposal.selection,
           'prompt_fence_release_failed',
+          applied.failureCause,
         ));
         return;
       }
@@ -1310,6 +1335,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         activeTarget.selection,
         proposal.selection,
         applied.reason,
+        applied.failureCause,
       ));
       return;
     }

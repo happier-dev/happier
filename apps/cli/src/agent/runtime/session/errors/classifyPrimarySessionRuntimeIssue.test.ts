@@ -13,6 +13,23 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { StructuredInputComposerAttachmentResolutionError, StructuredInputComposerAttachmentUnavailableError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it.each([
+    ['Authentication required PRIVATE_DEVICE_CODE', 'acp_session_start_failed', 'provider_endpoint_auth_required', 'authentication_required'],
+    ['FX requires an access token with a known, current expiry. Refresh the Connected Account and retry. PRIVATE_TOKEN', 'fx_connected_account_expiry_unavailable', 'provider_endpoint_auth_required', 'auth_expired'],
+    ['The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', 'model_selection_required', 'agent_startup_model_reconciliation_failed', 'model_selection_required'],
+    ['OpenCode model "PRIVATE_MODEL" is not selectable', undefined, 'agent_startup_model_reconciliation_failed', 'model_selection_required'],
+  ] as const)('classifies native construction without persisting provider prose (%s)', (message, code, expectedCode, failureReason) => {
+    const error = code === 'acp_session_start_failed'
+      ? { code, severity: 'error', message, details: { requestErrorCode: -32000 } }
+      : code ? new PluginError({ code, message }) : new Error(message);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error, occurredAt: 100 });
+    expect(issue).toMatchObject({ code: expectedCode, failureCause: { phase: 'client_start', failureReason } });
+    expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100,
+      error: { code: issue.code, severity: 'error', details: { v: 1, source: issue.source, failureCause: issue.failureCause } } }))
+      .toEqual(issue);
+  });
+
   it.each(['plugin_exec_system_tool_resolution_unavailable', 'plugin_exec_managed_dependency_resolution_unavailable', 'native_adapter_invocation_unavailable'])(
     'retains the typed %s construction cause without exposing arbitrary PluginError text', code => {
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'copilot',
@@ -58,6 +75,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
         error: { code, message: 'PRIVATE_OUTER_MESSAGE', details: { v: 1, source: 'agent_session_error', failureCause } } });
       expect(issue.sanitizedPreview).toContain('stage=exec errno=EACCES');
       expect(issue.sanitizedPreview).not.toContain('synthetic-private-token');
+      expect(JSON.stringify(issue)).not.toContain('synthetic-private-token');
       expect(issue.sanitizedPreview).not.toContain('PRIVATE_OUTER_MESSAGE');
       const published = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
         error: { code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause } } });
@@ -68,7 +86,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
   it.each([new Error('PRIVATE_PREPARATION_DETAILS'), new StructuredInputComposerAttachmentUnavailableError()])(
     'keeps a failed host preparation out of Provider outage classification', (error) => {
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
-        error, beforeProviderDispatch: true, occurredAt: 100 });
+        error, preparingPrompt: true, occurredAt: 100 });
       expect(issue).toMatchObject({ code: 'preparation_pending', source: 'dependency_failure' });
       expect(issue.sanitizedPreview).toMatch(/prompt.*prepared/iu);
       expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
@@ -80,7 +98,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
   it('preserves an actual Provider refusal and an unlocated native failure', () => {
     const error = createProviderErrorV1('provider_endpoint_rate_limited');
     const base = { cause: 'session_error' as const, provider: 'codex', occurredAt: 100 };
-    expect(classifyPrimarySessionRuntimeIssue({ ...base, error, beforeProviderDispatch: true }))
+    expect(classifyPrimarySessionRuntimeIssue({ ...base, error, preparingPrompt: true }))
       .toEqual(classifyPrimarySessionRuntimeIssue({ ...base, error }));
     expect(classifyPrimarySessionRuntimeIssue({ ...base, error: new Error('PRIVATE_NATIVE_DETAILS') }))
       .toMatchObject({ code: 'agent_session_error', source: 'agent_session_error' });

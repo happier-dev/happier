@@ -2609,7 +2609,9 @@ describe('runPermissionModePromptLoop', () => {
       diagnostic: {
         code: 'composer_attachment_resolution_failed',
         severity: 'error',
-        message: 'The selected review comment no longer exists.',
+        message: expect.any(String),
+        details: { v: 1, source: 'dependency_failure',
+          failureCause: { phase: 'turn_start', failureReason: 'unknown' } },
       },
       retryable: false,
       retireLocalCustodyAfterDurableBlock: true,
@@ -2737,7 +2739,7 @@ describe('runPermissionModePromptLoop', () => {
 
     // The Session lifecycle classifies the raw error and owns the single failed-turn publication.
     expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ code: -32603, data: 'Prompt already in progress' }), {
-      beforeProviderDispatch: false,
+      preparingPrompt: false, startupPhase: 'turn',
     });
     expect(enqueueAgentMessageCommittedSpy).not.toHaveBeenCalled();
   });
@@ -2788,7 +2790,7 @@ describe('runPermissionModePromptLoop', () => {
     // The Session lifecycle owns the single message and failed-turn marker for this input.
     // This adapter fails inside sendTurnPrompt; the loop cannot prove it was pre-dispatch.
     expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Qwen CLI (qwen) is not available') }), {
-      beforeProviderDispatch: false,
+      preparingPrompt: false, startupPhase: 'turn',
     });
     expect(enqueueAgentMessageCommittedSpy).not.toHaveBeenCalled();
   });

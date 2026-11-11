@@ -3,6 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { SessionModelSelectionV2Schema } from '../../providers/selection/v2.js';
+import { SessionRuntimeFailureCauseV1Schema } from './runtimeIssueV1.js';
 
 const intentOrder = lazyZodSchema(() => z.number().check(z.nonnegative()));
 export const SessionModelMutationScopeV1Schema = lazyZodSchema(() => z.strictObject({
@@ -57,6 +58,7 @@ const SessionModelTransitionKnownActiveFailureV1Schema = lazyZodSchema(() => z.s
   activeSelection: ProviderBoundModelRefSchema,
   requestedSelection: ProviderBoundModelRefSchema,
   reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
 }));
 
 const SessionModelTransitionReconciliationRequiredV1Schema = lazyZodSchema(() => z.strictObject({
@@ -65,6 +67,7 @@ const SessionModelTransitionReconciliationRequiredV1Schema = lazyZodSchema(() =>
   activeSelection: z.nullable(ProviderBoundModelRefSchema),
   requestedSelection: ProviderBoundModelRefSchema,
   reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
 }));
 
 const SessionModelTransitionOwnerUnavailableV1Schema = lazyZodSchema(() => z.strictObject({
@@ -73,6 +76,7 @@ const SessionModelTransitionOwnerUnavailableV1Schema = lazyZodSchema(() => z.str
   activeSelection: z.nullable(ProviderBoundModelRefSchema),
   requestedSelection: ProviderBoundModelRefSchema,
   reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
 }));
 
 export const SessionModelTransitionResultV1Schema = lazyZodSchema(() => z.union([

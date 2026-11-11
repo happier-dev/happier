@@ -85,13 +85,7 @@ export function createCliSessionModelActionDeps(
           ...('candidates' in res && res.candidates ? { candidates: res.candidates } : {}),
           ...('status' in res
             ? {
-                details: {
-                  status: res.status,
-                  activeSelection: 'activeSelection' in res ? res.activeSelection : undefined,
-                  requestedSelection: 'requestedSelection' in res ? res.requestedSelection : undefined,
-                  requestedTeamSelection: 'requestedTeamSelection' in res ? res.requestedTeamSelection : undefined,
-                  ...('reason' in res && res.reason ? { reason: res.reason } : {}),
-                },
+                details: res,
               }
             : {}),
         };

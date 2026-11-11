@@ -1966,6 +1966,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             : isPluginError(error) && error.code === 'acp_model_not_available'
               ? error.code : 'acp_configuration_update_failed',
           error instanceof Error ? error.message : undefined,
+          error,
         ), ...(restartRequired ? { details: { status: 'requires_restart' } } : {}) },
       };
     }

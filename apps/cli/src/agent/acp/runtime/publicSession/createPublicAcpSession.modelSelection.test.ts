@@ -4,8 +4,9 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentSessionConfigurationSnapshot, AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { PluginAgentContributionV2Schema, SessionModelTransitionResultV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { createFxAgentRuntime } from '../../../../../../../packages/plugins/fx/src/agent/runtime/factory';
+import { AGENT_DEFINITION as FX_DEFINITION } from '../../../../../../../packages/plugins/fx/src/agent/definition';
 import { FX_PLUGIN } from '../../../../../../../packages/plugins/fx/src/manifest';
 import { FX_PROVIDER_BINDING_ADAPTER } from '../../../../../../../packages/plugins/fx/src/agent/providerBinding/adapter';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION } from '@happier-dev/protocol/connect/connected-account-request-auth';
@@ -42,6 +43,13 @@ import { createSessionModelTransitionCoordinator, mapRuntimeConfigUpdateOutcomeT
 import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
+import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
+import { createRuntimeOverrideSynchronizers, createRuntimeOverrideTarget } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { buildExecutionRunConfiguration, resolveExecutionRunChildSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
@@ -513,11 +521,91 @@ describe('FX model selection through the public ACP owner', () => {
         expect(f.setters().map(params => params.value)).toEqual(['gateway', 'custom/new']);
         expect(result).toMatchObject({ status: 'rejected', diagnostic: {
           code: 'acp_configuration_update_failed', message: expect.stringContaining('Model was refused by the native route'),
+          details: { requestErrorCode: -32602 },
         } });
         expect(f.publications.modelsSource.read().currentModelId).toBe('gpt-6.1-sol');
         await sendCompletedPrompt(session, 'after-model-refusal', 'Keep the working model');
         expect(f.promptModels()).toEqual(['gpt-6.1-sol']);
       } finally { await session.dispose(); await f.dispose(); }
+    });
+  });
+
+  it('retains the native model refusal cause through a strict transition result and the prompt issue', async () => {
+    await withTempDir('fx-model-refusal-cause-', async dir => {
+      const f = await fixture(dir, 'refuse');
+      const nativeSession = await f.open();
+      const initialConfiguration = configuration('gpt-6.1-sol', 'explicit');
+      const operations = f.operations(nativeSession, initialConfiguration);
+      const agentTargetKey = 'agent:happier.agent.fx/fx';
+      const initialSelection = { agentTargetKey, providerConnectionId: null, modelId: 'gpt-6.1-sol' };
+      const requestedSelection = { ...initialSelection, modelId: 'custom/new' };
+      const nativeModelApplyPolicy = resolveNativeAgentModelApplyPolicy(FX_DEFINITION.modelConfig);
+      const session = createMutableApiSessionClientFixture({ sessionId: 'model-session',
+        metadata: createTestMetadata({ flavor: 'fx', permissionMode: 'default', permissionModeUpdatedAt: 0 }),
+        // Home transport boundary; native configuration, coordination and prompt custody stay real.
+        overrides: { enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }) },
+      });
+      let active: AuthorizedSessionModelTransitionTarget = { selection: initialSelection, policy: nativeModelApplyPolicy,
+        providerBinding: null, sessionBindingMetadata: null, runtimeBindingBasis: null, revalidateBeforeEffect: async () => true };
+      const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'model-session', machineId: 'fixture',
+        agentId: 'fx', agentTargetKey, nativeModelApplyPolicy, readActiveTarget: () => active });
+      const coordinator = createSessionModelTransitionCoordinator({ runId: 'model-refusal', agentTargetKey,
+        initialActiveTarget: authorize.bindCurrentAuthorizationProof(active), initialActiveTargetConfirmed: true,
+        readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(session.getMetadataSnapshot()),
+        isCurrentRun: () => true, checkCurrentPublisherAuthority: async () => true, authorize,
+        publishIntent: async selection => {
+          const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => 2 });
+          session.__setMetadata(candidate.update(session.getMetadataSnapshot()!));
+          const state = candidate.readState();
+          return { accepted: state.accepted, updatedAt: state.updatedAt ?? 0 };
+        },
+        applyRuntime: async target => mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult(
+          await operations.updateSessionRuntimeConfig({ modelId: target.selection.modelId, modelSelectionSource: 'explicit' })),
+        publishActive: async target => { active = target; }, revokeActiveSelectionProof: async () => {},
+        fencePromptAdmission: async () => {}, clearPromptAdmission: async () => {},
+        transferPromptAdmission: async (_epoch, input) => { await input.dispatch(); return { status: 'dispatched', value: undefined }; },
+      });
+      const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(mode => JSON.stringify(mode),
+        { batcher: combinePermissionModeQueuedPrompts });
+      queue.push({ text: 'Use the requested model', localId: 'model-refusal' },
+        { permissionMode: 'default', modelSelection: requestedSelection });
+      const abort = new AbortController();
+      let transition: Awaited<ReturnType<typeof coordinator.submit>> | undefined;
+      let issue: SessionRuntimeIssueV1 | undefined;
+      try {
+        await runPermissionModePromptLoop({ providerName: 'FX', agentMessageType: 'fx', explicitPermissionMode: undefined,
+          session, messageQueue: queue, runtime: operations,
+          permissionHandler: { setPermissionMode() {}, reset() {} },
+          readActiveModelSelection: () => coordinator.readActiveTarget().selection,
+          transitionModelSelectionBeforePrompt: async (selection, runWithActiveSelection, restartRuntime) => {
+            // Exercise the actual closed transport reader, rather than an in-memory extra property.
+            transition = SessionModelTransitionResultV1Schema.parse(JSON.parse(JSON.stringify(await coordinator.submit(selection,
+              { source: 'prompt', runWithActiveSelection, restartRuntime }))));
+            return transition;
+          },
+          createOverrideSynchronizer: isStarted => createRuntimeOverrideSynchronizers({ agentTargetKey, session, isStarted,
+            runtime: createRuntimeOverrideTarget({ runtime: operations,
+              transitionModelSelection: selection => coordinator.submit(selection, { source: 'metadata' }) }) }),
+          messageBuffer: new MessageBuffer(), shouldExit: () => abort.signal.aborted, getAbortSignal: () => abort.signal,
+          keepAlive() {}, setThinking() {}, sendReady: () => { abort.abort(); }, currentPermissionModeUpdatedAt: 0,
+          setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {}, formatPromptErrorMessage: String,
+          registerProviderAcceptedEffect: () => undefined,
+          onPromptFailure: (error, context) => {
+            issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, startupPhase: context.startupPhase });
+          },
+        });
+        const expectedCause = { phase: 'turn_start', failureReason: 'unclassified_provider_error', providerErrorCode: -32602 };
+        expect.soft(transition).toMatchObject({ ok: false, status: 'apply_failed', failureCause: expectedCause });
+        expect.soft(issue).toMatchObject({ source: 'agent_session_error', failureCause: expectedCause });
+        await expect(createRuntimeOverrideTarget({ runtime: operations,
+          transitionModelSelection: selection => coordinator.submit(selection, { source: 'metadata' }),
+        }).setSessionModelSelection(requestedSelection)).rejects.toMatchObject({ details: { failureCause: expectedCause } });
+        expect(f.promptModels()).toEqual([]);
+        expect(coordinator.readActiveTarget().selection).toEqual(initialSelection);
+      } finally {
+        abort.abort();
+        await coordinator.dispose(); await nativeSession.dispose(); await f.dispose();
+      }
     });
   });
 

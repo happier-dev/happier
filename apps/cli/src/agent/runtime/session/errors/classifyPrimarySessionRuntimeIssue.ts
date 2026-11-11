@@ -53,9 +53,9 @@ export type ClassifyPrimarySessionRuntimeIssueInput = Readonly<{
   sessionSeq?: number | null;
   cause?: PrimarySessionRuntimeIssueCause | null;
   error?: unknown;
-  /** Positive host-loop evidence; absent for unlocated/native failures. */
-  beforeProviderDispatch?: boolean;
-  /** Known construction phase; native failure evidence takes precedence. */
+  /** Positive prompt-preparation evidence; runtime startup alone does not establish a dependency failure. */
+  preparingPrompt?: boolean;
+  /** Known construction or turn phase; native failure evidence takes precedence. */
   startupPhase?: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'];
   occurredAt?: number | null;
   /** Closed host evidence from this exact Session turn, independent of Agent error formatting. */
@@ -210,6 +210,25 @@ function refineProviderFailureSource(
   const category = readProviderLimitCategory(input.error);
   if (category === 'usage_limit' || category === 'rate_limit') return 'usage_limit';
   return category === 'unknown' ? fallback : 'agent_status_error';
+}
+
+/** Interpret native construction evidence before prose leaves its owning process. */
+function readNativeConstructionFailure(error: unknown): Readonly<{
+  code: 'provider_endpoint_auth_required' | 'agent_startup_model_reconciliation_failed';
+  failureReason: 'authentication_required' | 'auth_expired' | 'model_selection_required';
+}> | null {
+  const text = extractErrorText(error).toLowerCase();
+  const code = inspectOwnErrorCodeDataProperty(error);
+  if ((code.kind === 'string' && code.value === 'model_selection_required')
+    || /\bmodel\b[^\n]*(?:\bnot selectable\b|\bunavailable in the native catalog\b)/u.test(text)) {
+    return { code: 'agent_startup_model_reconciliation_failed', failureReason: 'model_selection_required' };
+  }
+  const expiry = /\baccess token\b[^\n]*\bknown,?\s+current expiry\b/u.test(text);
+  if (expiry || classifyProviderOutputFailure(text).authenticationError) {
+    return { code: 'provider_endpoint_auth_required',
+      failureReason: expiry || /\bexpired\b/u.test(text) ? 'auth_expired' : 'authentication_required' };
+  }
+  return null;
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -551,8 +570,10 @@ export function classifyPrimarySessionRuntimeIssue(
   const diagnosticPreview = typedDiagnostic?.message?.trim()
     ? redactBugReportSensitiveText(`${requestErrorCode === null ? '' : `ACP ${requestErrorCode}: `}${typedDiagnostic.message}`).slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)
     : null;
-  const nativeFailurePreview = failureCause.success && failureCause.data.providerErrorMessage?.trim()
-    ? redactBugReportSensitiveText(failureCause.data.providerErrorMessage).slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)
+  const nativeFailureMessage = failureCause.success && failureCause.data.providerErrorMessage !== undefined
+    ? redactBugReportSensitiveText(failureCause.data.providerErrorMessage) : undefined;
+  const nativeFailurePreview = nativeFailureMessage?.trim()
+    ? nativeFailureMessage.slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)
     : null;
   const errorCode = inspectOwnErrorCodeDataProperty(input.error);
   // Home adapters preserve only their status; machine bootstrap can also throw
@@ -588,10 +609,17 @@ export function classifyPrimarySessionRuntimeIssue(
   const teamCredential = teamCredentialDenial?.details ?? null;
   const providerCode = !teamCredentialDenial && input.cause === 'session_error' && errorCode.kind === 'string'
     ? ProviderErrorCodeV1Schema.safeParse(errorCode.value) : null;
+  const nativeConstructionFailure = input.startupPhase === 'client_start' && !teamCredentialDenial
+    && !providerCode?.success && !(errorCode.kind === 'string' && readAgentStartupFailureCode(errorCode.value))
+    && (!failureCause.success || failureCause.data.failureReason === 'unclassified_provider_error')
+    ? readNativeConstructionFailure(input.error) : null;
   // Reconstruct only the closed code's policy; binding context and upstream prose stay private.
-  const providerFailure = providerCode?.success ? createProviderErrorV1(providerCode.data) : null;
-  const startupFailureCode = !teamCredentialDenial && input.cause === 'session_error'
-    && errorCode.kind === 'string' ? readAgentStartupFailureCode(errorCode.value) : null;
+  const providerFailure = providerCode?.success ? createProviderErrorV1(providerCode.data)
+    : nativeConstructionFailure?.code === 'provider_endpoint_auth_required'
+      ? createProviderErrorV1(nativeConstructionFailure.code) : null;
+  const startupFailureCode = (!teamCredentialDenial && input.cause === 'session_error'
+    && errorCode.kind === 'string' ? readAgentStartupFailureCode(errorCode.value) : null)
+    ?? (nativeConstructionFailure?.code === 'agent_startup_model_reconciliation_failed' ? nativeConstructionFailure.code : null);
   const sessionPreparationFailureCode = !teamCredentialDenial && input.cause === 'session_error'
     && errorCode.kind === 'string' ? brokerStartupCode
       ?? (brokerCode?.success ? null : readSessionPreparationFailureCode(errorCode.value)) : null;
@@ -620,7 +648,7 @@ export function classifyPrimarySessionRuntimeIssue(
         || errorCode.value === 'profile_missing' || errorCode.value === 'invalid_target'
         || errorCode.value === 'identity_unobserved' || errorCode.value === 'identity_mismatch')
     ? errorCode.value
-    : input.beforeProviderDispatch === true && !typedDiagnostic && !providerFailure
+    : input.preparingPrompt === true && !typedDiagnostic && !providerFailure
       && !startupFailureCode && !sessionPreparationFailureCode && !runtimeAuthSource && !declaredSource
     ? 'preparation_pending' : null;
   const source = missingCli || catalogUnavailable || metadataPrivacyUpgradeRequired || promptPreparationCode
@@ -629,6 +657,8 @@ export function classifyPrimarySessionRuntimeIssue(
     ? 'dependency_failure' as const
     : teamCredentialDenial || brokerStartupCode
     ? 'team_credential' as const
+    : nativeConstructionFailure?.code === 'provider_endpoint_auth_required'
+    ? 'auth_error' as const
     : runtimeAuthSource
     ? runtimeAuthSource
     : declaredSource
@@ -680,7 +710,7 @@ export function classifyPrimarySessionRuntimeIssue(
       ?? (sessionPreparationFailureCode === 'agent_cli_not_runnable'
         ? readSessionStartupFailurePreview(sessionPreparationFailureCode, agentId ? resolveAgentDisplayTitle(agentId) : null) : null)
       ?? (startupFailureCode ? nativeFailurePreview
-        ?? readSessionStartupFailurePreview(startupFailureCode, null, failureCause.success ? failureCause.data : undefined) : null)
+        ?? readSessionStartupFailurePreview(startupFailureCode, null, nativeConstructionFailure ?? (failureCause.success ? failureCause.data : undefined)) : null)
       ?? (sessionPreparationFailureCode ? readSessionStartupFailurePreview(sessionPreparationFailureCode) : null)
       ?? nativeAuthPreview
       ?? (providerFailure ? presentProviderCliRefusal(providerFailure).slice(0, 2).join(' ') : null)
@@ -690,8 +720,14 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
-    ...(failureCause.success ? { failureCause: failureCause.data } : input.startupPhase ? {
-      failureCause: { phase: input.startupPhase, failureReason: 'unclassified_provider_error' },
+    ...(nativeConstructionFailure ? { failureCause: { phase: 'client_start' as const,
+      failureReason: nativeConstructionFailure.failureReason,
+      ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) } }
+      : failureCause.success ? { failureCause: { ...failureCause.data,
+      ...(nativeFailureMessage === undefined ? {} : { providerErrorMessage: nativeFailureMessage }) } } : input.startupPhase ? {
+      failureCause: { phase: input.startupPhase,
+        failureReason: source === 'dependency_failure' ? 'unknown' : 'unclassified_provider_error',
+        ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) },
     } : {}),
     ...(agentProcessExitAfterSwitch === undefined ? {} : { agentProcessExitAfterSwitch }),
   };

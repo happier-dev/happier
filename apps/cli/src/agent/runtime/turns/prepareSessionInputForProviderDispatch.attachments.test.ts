@@ -88,7 +88,7 @@ describe('Composer attachment dispatch failure classification', () => {
       code: 'composer_attachment_resolution_failed', retryable: true,
       preparationCause: { code: 'triage_account_storage_unavailable', stage: 'dispatch', requestId: 'preparation-request-132' },
     });
-    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failed, beforeProviderDispatch: true }))
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failed, preparingPrompt: true }))
       .toMatchObject({ source: 'dependency_failure', failureCause: { preparationCause: { requestId: 'preparation-request-132' } } });
     expect(JSON.stringify(failed)).not.toContain(privateText);
     expect(failed).not.toHaveProperty('cause');

@@ -49,12 +49,29 @@ describe('CLI model transition recovery', () => {
     });
   });
 
-  it.each(['restart_required', 'unsupported'] as const)(
+  it('retains the unavailable model owner phase through an RPC failure', async () => {
+    callSessionRpc.mockRejectedValue(new Error('RPC target unavailable'));
+    const deps = createCliSessionModelActionDeps({
+      token: 'fixture-token', credentials: { token: 'fixture-token', encryption: null },
+    }, { projectHomeId: 'fixture-home', resolveServerRequestHeaders: () => null });
+
+    const result = await deps.sessionModelSet!({ sessionId, modelId: requestedSelection.modelId,
+      providerConnectionId: requestedSelection.providerConnectionId });
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'owner_unavailable',
+      details: { status: 'owner_unavailable', activeSelection: null, requestedSelection,
+        failureCause: { phase: 'turn_start', failureReason: 'unknown' } } });
+  });
+
+  it.each(['restart_required', 'unsupported', 'apply_failed'] as const)(
     'preserves %s and the actual model, offering new-Session recovery only for restart',
     async (status) => {
       const transition = SessionModelTransitionResultV1Schema.parse({
         ok: false, status, activeSelection, requestedSelection,
         ...(status === 'unsupported' ? { reason: 'exact_model_mutation_requires_live_transition' } : {}),
+        ...(status === 'apply_failed' ? { failureCause: {
+          phase: 'turn_start', failureReason: 'unclassified_provider_error', providerErrorCode: -32602,
+        } } : {}),
       });
       callSessionRpc.mockResolvedValue(transition);
       const deps = createCliSessionModelActionDeps({
@@ -66,12 +83,14 @@ describe('CLI model transition recovery', () => {
         providerConnectionId: requestedSelection.providerConnectionId });
 
       expect(result).toMatchObject({ ok: false, errorCode: status,
-        details: { status, activeSelection, requestedSelection } });
+        details: { status, activeSelection, requestedSelection,
+          ...(status === 'apply_failed' ? { failureCause: transition.failureCause } : {}),
+        } });
       const presented = normalizeActionExecuteResult({ ok: true, result });
       expect(presented.ok).toBe(false);
       if (!presented.ok) {
         if (status === 'restart_required') expect(presented.errorMessage).toContain('happier session create');
-        else expect(presented.errorMessage).toBe('unsupported');
+        else expect(presented.errorMessage).toBe(status);
       }
     },
   );

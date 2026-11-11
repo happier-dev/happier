@@ -44,6 +44,26 @@ describe('Provider routing Actions through the real UI composition', () => {
             .toMatchObject({ ok: false });
     });
 
+    it('preserves the runtime failure cause through a failed Session model mutation Action', async () => {
+        const { serverId, accountId } = await account.restore({ machines: [createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() })] });
+        installSessionActionFixture({ homes: account.home, storage, serverId, session: { id: 'lead' } });
+        const activeSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_applied', modelId: 'applied-model' };
+        const requestedSelection = { ...activeSelection, providerConnectionId: 'pc_requested', modelId: 'requested-model' };
+        const failureCause = { phase: 'turn_start', failureReason: 'unclassified_provider_error', providerErrorCode: -32602 };
+        respond = request => {
+            if (request.method !== `lead:${SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION}`) throw new Error('Wrong Session transition wiring');
+            expect(SessionModelTransitionRequestV1Schema.parse(request.params)).toEqual({ v: 1, selection: requestedSelection });
+            return SessionModelTransitionResultV1Schema.parse({ ok: false, status: 'apply_failed', activeSelection,
+                requestedSelection, reason: 'provider_request_failed', failureCause });
+        };
+        const result = await createDefaultActionExecutor().execute('session.model.set', {
+            sessionId: 'lead', providerConnectionId: requestedSelection.providerConnectionId, modelId: requestedSelection.modelId,
+        }, { serverId, expectedAccountId: accountId, surface: 'ui', authority: 'present_user' });
+        expect(result).toMatchObject({ ok: false, errorCode: 'apply_failed', details: {
+            status: 'apply_failed', activeSelection, requestedSelection, reason: 'provider_request_failed', failureCause,
+        } });
+    });
+
     it('preserves the host-produced child choice and no-Run-created evidence through attached start and Action error normalization', async () => {
         const { serverId, accountId } = await account.restore({ serverIdentityId: 'srv_provider_routing',
             machines: [createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() })] });

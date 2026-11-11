@@ -485,7 +485,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
 
   it('settles a native configuration refusal with the same sanitized cause as the runtime issue', async () => {
     const runtime = createRuntime();
-    const onPromptFailure = vi.fn((error: unknown, context: { beforeProviderDispatch: boolean }) =>
+    const onPromptFailure = vi.fn((error: unknown, context: NonNullable<Parameters<NonNullable<Parameters<typeof runPermissionModePromptLoop>[0]['onPromptFailure']>>[1]>) =>
       classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, ...context }));
     const diagnostic = { code: 'opencode_configuration_rejected', severity: 'error' as const,
       message: 'Model is not selectable; Bearer synthetic-private-token' };
@@ -504,7 +504,43 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     }));
     expect(onPromptFailure.mock.results[0]?.value).toMatchObject({ code: diagnostic.code, source: 'agent_session_error' });
     expect(JSON.stringify(result.observeProviderInputSettlement.mock.calls)).not.toContain('synthetic-private-token');
-    expect(onPromptFailure).toHaveBeenCalledWith(error, { beforeProviderDispatch: true });
+    expect(onPromptFailure).toHaveBeenCalledWith(error, { preparingPrompt: true, startupPhase: 'turn_start' });
+  });
+
+  it('retains a native runtime configuration failure as a turn-start failure rather than a prompt dependency', async () => {
+    const runtime = createRuntime();
+    // Native runtime operations cross the external Agent process boundary.
+    runtime.updateSessionRuntimeConfig.mockRejectedValue(new Error('PRIVATE_NATIVE_CONFIGURATION'));
+    const onPromptFailure = vi.fn((error: unknown, context: NonNullable<Parameters<NonNullable<Parameters<typeof runPermissionModePromptLoop>[0]['onPromptFailure']>>[1]>) =>
+      classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, ...context }));
+    const result = await runSingleSpecialCommand({
+      text: 'continue after model selection', localId: 'model-recovery', runtime, onPromptFailure,
+    });
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(onPromptFailure.mock.results[0]?.value).toMatchObject({
+      code: 'agent_session_error', source: 'agent_session_error',
+      failureCause: { phase: 'turn_start', failureReason: 'unclassified_provider_error' },
+    });
+    expect(JSON.stringify(onPromptFailure.mock.results[0]?.value)).not.toContain('PRIVATE_');
+    expect(result.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'rejected_before_effect', diagnostic: expect.objectContaining({
+        details: expect.objectContaining({
+          failureCause: { phase: 'turn_start', failureReason: 'unclassified_provider_error' },
+        }),
+      }),
+    }));
+  });
+
+  it('surfaces a native completion failure through the same typed turn issue owner', async () => {
+    const runtime = createRuntime();
+    runtime.waitForTurnCompletion.mockRejectedValue(new Error('PRIVATE_NATIVE_COMPLETION'));
+    const onPromptFailure = vi.fn((error: unknown, context: NonNullable<Parameters<NonNullable<Parameters<typeof runPermissionModePromptLoop>[0]['onPromptFailure']>>[1]>) =>
+      classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, ...context }));
+    const result = await runSingleSpecialCommand({ text: 'continue', localId: 'completion', runtime, onPromptFailure });
+    expect(onPromptFailure.mock.results[0]?.value).toMatchObject({
+      code: 'agent_session_error', failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error' },
+    });
+    expect(JSON.stringify(result.enqueueAgentMessageCommitted.mock.calls)).not.toContain('PRIVATE_NATIVE_COMPLETION');
   });
 
   it.each(['structured input', 'daemon refusal', 'bridge refusal', 'native send'] as const)('logs only class, code and phase for a %s failure', async (boundary) => {
@@ -555,7 +591,8 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       expect(JSON.stringify(failures)).not.toContain(privateText);
       expect(onPromptFailure).toHaveBeenCalledOnce();
       expect(onPromptFailure).toHaveBeenCalledWith(expect.any(Error), {
-        beforeProviderDispatch: boundary !== 'native send',
+        preparingPrompt: boundary !== 'native send',
+        startupPhase: boundary !== 'native send' ? 'turn_start' : 'turn',
       });
       if (boundary === 'structured input') {
         expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
@@ -978,7 +1015,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     // The Session lifecycle owns the single failed-turn publication through onPromptFailure.
     expect(onPromptFailure).toHaveBeenCalledOnce();
     expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ message: 'provider_input_size_refused' }), {
-      beforeProviderDispatch: false,
+      preparingPrompt: false, startupPhase: 'turn',
     });
     expect(result.enqueueAgentMessageCommitted).not.toHaveBeenCalled();
     expect(withdrawal.withdrawWorkflowStepInput({ localInputId })).toBe('dispatched');

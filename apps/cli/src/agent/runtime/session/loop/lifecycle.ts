@@ -1643,7 +1643,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           provider: params.policyAgentId,
           cause: 'session_error',
           error,
-          ...(context ? { beforeProviderDispatch: context.beforeProviderDispatch } : {}),
+          ...context,
           session: { sessionId: params.session.sessionId, sessionTurnLifecycle },
           allocateTurnWhenIdle: true,
         });

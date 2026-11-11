@@ -48,7 +48,8 @@ export function createRuntimeOverrideTarget(params: Readonly<{
     setSessionModelSelection: async (selection) => {
       const result = await params.transitionModelSelection(selection, 'metadata');
       if (!result.ok) {
-        throw new Error(result.reason ?? `Session model transition failed: ${result.status}`);
+        throw Object.assign(new Error(result.reason ?? `Session model transition failed: ${result.status}`),
+          result.failureCause ? { details: { failureCause: result.failureCause } } : {});
       }
     },
     setPermissionMode: async (permissionMode) => {

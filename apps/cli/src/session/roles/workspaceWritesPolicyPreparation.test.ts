@@ -14,7 +14,7 @@ describe('native workspace policy preparation', () => {
     expect(prepared).toMatchObject({ ok: false, diagnostic });
     if (prepared.ok) throw new Error('Expected a refused configuration');
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'opencode',
-      beforeProviderDispatch: true, error: Object.assign(new Error(prepared.errorCode), prepared), occurredAt: 100 });
+      preparingPrompt: true, error: Object.assign(new Error(prepared.errorCode), prepared), occurredAt: 100 });
     expect(issue).toMatchObject({ code: diagnostic.code, source: 'agent_session_error' });
     expect(issue.sanitizedPreview).toContain('Model is not selectable');
     expect(JSON.stringify(issue)).not.toContain('synthetic-private-token');
@@ -25,7 +25,7 @@ describe('native workspace policy preparation', () => {
     }) });
     const prepared = await prepare('deny');
     if (prepared.ok) throw new Error('Expected a refused Role policy');
-    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', beforeProviderDispatch: true,
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', preparingPrompt: true,
       error: Object.assign(new Error(prepared.errorCode), prepared), occurredAt: 100 });
     expect(issue).toMatchObject({ code: 'role_policy_unenforceable', source: 'agent_session_error' });
   });

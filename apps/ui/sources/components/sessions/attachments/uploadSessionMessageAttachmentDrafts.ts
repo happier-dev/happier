@@ -1,5 +1,9 @@
 import { sessionAttachmentsUploadFile, type AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
-import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
+import { classifyTransferFailure, isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
+import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { describeUploadFailure } from '@/components/transfers/describeUploadFailure';
+import { t } from '@/text';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionAttachmentsUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
@@ -61,7 +65,7 @@ export async function uploadSessionMessageAttachmentDrafts(args: Readonly<{
     isCurrent: () => boolean;
     onUploadedDraftCheckpoint?: (checkpoint: AttachmentTargetUploadedDraftCheckpoint) => Promise<void> | void;
     uploadFile?: typeof sessionAttachmentsUploadFile;
-}>): Promise<readonly IssuedUploadedAttachment[] | null> {
+}>): Promise<readonly IssuedUploadedAttachment[] | ActionExecuteFailure | null> {
     const isCurrent = () => !args.signal?.aborted && args.isCurrent();
     if (!isCurrent()) return null;
 
@@ -118,8 +122,12 @@ export async function uploadSessionMessageAttachmentDrafts(args: Readonly<{
         });
         assertCurrent();
         return uploaded.uploaded;
-    } catch {
+    } catch (error) {
         // Preparation refusal keeps the original composer sources available for a fresh retry.
+        if (!isCurrent()) return null;
+        const errorCode = readRpcErrorCode(error);
+        if (errorCode) return { ok: false, errorCode,
+            error: describeUploadFailure(classifyTransferFailure({ errorCode }), t('common.machine')) };
         return null;
     }
 }

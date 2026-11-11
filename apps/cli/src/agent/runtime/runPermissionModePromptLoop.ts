@@ -8,7 +8,7 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1, AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -300,6 +300,7 @@ type PreTurnFailure = Readonly<{
   message: string;
   retryable: boolean;
   reason?: SessionProviderInputRejectedBeforeEffectReason;
+  diagnostic?: AgentRuntimeDiagnosticDataV1;
 }>;
 
 class PreTurnPromptFailure extends Error {
@@ -321,12 +322,19 @@ function createModelTransitionPreTurnFailure(
       ? 'runtime_config_blocked' as const
       : 'provider_rejected_before_acceptance' as const;
   const providerCode = ProviderErrorCodeV1Schema.safeParse(transition.reason);
-  return new PreTurnPromptFailure({
-    code: providerCode.success ? providerCode.data : `session_model_transition_${transition.status}`,
-    message: transition.reason ?? `Structured model transition failed: ${transition.status}`,
+  const code = providerCode.success ? providerCode.data : `session_model_transition_${transition.status}`;
+  const message = transition.reason ?? `Structured model transition failed: ${transition.status}`;
+  const diagnostic: AgentRuntimeDiagnosticDataV1 | undefined = transition.failureCause
+    ? { code, severity: 'error', message, details: { failureCause: transition.failureCause } }
+    : undefined;
+  const error = new PreTurnPromptFailure({
+    code,
+    message,
     retryable: reason !== 'provider_rejected_before_acceptance',
     reason,
+    ...(diagnostic ? { diagnostic } : {}),
   }, providerCode.success ? providerCode.data : undefined);
+  return diagnostic ? Object.assign(error, { diagnostic }) : error;
 }
 
 function readPreTurnFailure(error: unknown): PreTurnFailure {
@@ -379,7 +387,7 @@ async function observePreTurnFailureSettlement(params: Readonly<{
         localId,
         userMessageSeq: identity.localIds.length === 1 ? identity.userMessageSeq : null,
         reason,
-        diagnostic: {
+        diagnostic: params.error.diagnostic ?? {
           code: params.error.code,
           severity: 'error',
           message: params.error.message,
@@ -575,7 +583,10 @@ export async function runPermissionModePromptLoop(opts: {
     error: unknown;
   }>) => void | Promise<void>) | null;
   /** Host lifecycle records preparation/dispatch failures that have no native turn event. */
-  onPromptFailure?: (error: unknown, context?: Readonly<{ beforeProviderDispatch: boolean }>) => void | Promise<void>;
+  onPromptFailure?: (error: unknown, context?: Readonly<{
+    preparingPrompt: boolean;
+    startupPhase: 'turn_start' | 'turn';
+  }>) => void | Promise<void>;
   startRuntimeBeforeFirstPrompt?: boolean;
   onAfterStart?: (() => void | Promise<void>) | null;
   onBeforeReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
@@ -1840,6 +1851,7 @@ export async function runPermissionModePromptLoop(opts: {
         continue;
       }
     } catch (error) {
+      const preparation = readStructuredInputPreparationFailure(error);
       const preTurnFailure = !beganTurn && !isAbortLikeError(error)
         ? readPreTurnFailure(error)
         : null;
@@ -1875,16 +1887,24 @@ export async function runPermissionModePromptLoop(opts: {
             provider: opts.agentMessageType,
             cause: 'session_error',
             error,
-            beforeProviderDispatch: true,
+            preparingPrompt: promptFailurePhase !== 'runtime_start',
+            startupPhase: 'turn_start',
           })
           : null;
+        const settlement: PreTurnFailure = { ...(issue?.source === 'dependency_failure'
+            ? { ...preTurnFailure, reason: 'runtime_config_blocked' as const }
+            : issue ? { ...preTurnFailure, code: issue.code, message: issue.sanitizedPreview }
+              : preTurnFailure), ...(issue ? { diagnostic: {
+                code: issue.source === 'dependency_failure'
+                  ? preparation?.code ?? issue.code : issue.code,
+                severity: 'error' as const,
+                message: preparation?.message ?? issue.sanitizedPreview,
+                details: { v: 1, source: issue.source, ...(issue.failureCause ? { failureCause: issue.failureCause } : {}) },
+              } } : {}) };
         await observePreTurnFailureSettlement({
           session: opts.session,
           message: message.message,
-          error: issue?.source === 'dependency_failure'
-            ? { ...preTurnFailure, reason: 'runtime_config_blocked' }
-            : issue ? { ...preTurnFailure, code: issue.code, message: issue.sanitizedPreview }
-              : preTurnFailure,
+          error: settlement,
         });
       }
       if (
@@ -1912,7 +1932,6 @@ export async function runPermissionModePromptLoop(opts: {
       }
       if (!isAbortLikeError(error) && !isRuntimeTurnFailureAlreadySurfaced(error)) {
         const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
-        const preparation = readStructuredInputPreparationFailure(error);
         logger.infoFile('[PermissionModePromptLoop] Prompt failed', {
           sessionId: opts.session.sessionId,
           localId: normalizePermissionModeQueuedPromptLocalIds(message.message)[0] ?? null,
@@ -1921,7 +1940,10 @@ export async function runPermissionModePromptLoop(opts: {
           errorCode: preparation?.code ?? diagnostic.errorCode,
           ...(preparation?.preparationCause ? { preparationCause: preparation.preparationCause } : {}),
         });
-        await opts.onPromptFailure?.(error, { beforeProviderDispatch: !beganTurn });
+        await opts.onPromptFailure?.(error, {
+          preparingPrompt: !beganTurn && promptFailurePhase !== 'runtime_start',
+          startupPhase: beganTurn ? 'turn' : 'turn_start',
+        });
         handledPreTurnFailure = !beganTurn;
       }
     } finally {
@@ -1954,10 +1976,14 @@ export async function runPermissionModePromptLoop(opts: {
               // native-return record or turn into a strict identity failure.
               strictInitialResumePending = false;
               if (!isRuntimeTurnFailureAlreadySurfaced(completionError)) {
-                await publishPromptLoopAgentMessage(opts, {
-                  type: 'message',
-                  message: opts.formatPromptErrorMessage(completionError),
-                });
+                if (opts.onPromptFailure) {
+                  await opts.onPromptFailure(completionError, { preparingPrompt: false, startupPhase: 'turn' });
+                } else {
+                  await publishPromptLoopAgentMessage(opts, {
+                    type: 'message',
+                    message: opts.formatPromptErrorMessage(completionError),
+                  });
+                }
               }
             }
           }

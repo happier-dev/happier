@@ -728,6 +728,47 @@ export type DeploymentReceiptResultV1 = z.infer<typeof DeploymentReceiptResultV1
 export type DeploymentEnvironmentGetInputV1 = z.infer<typeof DeploymentEnvironmentGetInputV1Schema>;
 export type DeploymentReceiptGetInputV1 = z.infer<typeof DeploymentReceiptGetInputV1Schema>;
 export type DeploymentEnvironmentListInputV1 = z.infer<typeof DeploymentEnvironmentListInputV1Schema>;
+/** Metadata selects the existing preview controller before original Action mint.
+ * Admission still owns provenance, eligibility and authority on that controller. */
+export async function resolveDeploymentPreviewExecutionMachineIdV1(
+  input: Pick<z.infer<typeof DeploymentEnvironmentCreateIntentInputV1Schema>,
+    'serverId' | 'projectSourceId' | 'preview' | 'controllerMachineId'>,
+  read: Readonly<{
+    listEnvironments(input: DeploymentEnvironmentListInputV1): Promise<unknown>;
+    readTemplateController(): Promise<Readonly<{ ok: true; machineId: string }> | z.infer<typeof ActionExecuteFailureSchema>>;
+  }>,
+): Promise<Readonly<{ ok: true; machineId: string; environment?: DeploymentEnvironmentHeaderV1 }>
+  | z.infer<typeof ActionExecuteFailureSchema>> {
+  const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
+  const preview = input.preview;
+  if (!preview) return failure('invalid_parameters');
+  let environment: DeploymentEnvironmentHeaderV1 | undefined;
+  let cursor: string | null = null;
+  do {
+    const loaded = await read.listEnvironments({ serverId: input.serverId,
+      ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}),
+      previewRepository: preview.provenance.repository,
+      previewPullRequestIds: [preview.pullRequestId], previewTemplateEnvironmentId: preview.templateEnvironmentId,
+      ...(cursor ? { cursor } : {}) });
+    const refused = ActionExecuteFailureSchema.safeParse(loaded);
+    if (refused.success) return refused.data;
+    const page = DeploymentEnvironmentListResultV1Schema.parse(loaded);
+    if (!page.ok) return failure(page.error);
+    if (page.coverage !== 'complete') return failure('deployment_access_denied');
+    for (const row of page.items) {
+      if (row.previewTargetLinkId !== preview.provenance.runtimeTargetLinkId) continue;
+      if (environment) return failure('deployment_conflict');
+      environment = row;
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  const selected = environment ? { ok: true as const, machineId: environment.controllerMachineId }
+    : await read.readTemplateController();
+  if (!selected.ok) return selected;
+  if (input.controllerMachineId !== undefined && input.controllerMachineId !== selected.machineId)
+    return failure('target_mismatch');
+  return { ok: true, machineId: selected.machineId, ...(environment ? { environment } : {}) };
+}
 export type DeploymentReceiptListInputV1 = z.infer<typeof DeploymentReceiptListInputV1Schema>;
 export type DeploymentActionInputV1 = z.infer<typeof DeploymentActionInputSchemasV1[DeploymentTransportActionIdV1]>;
 export type DeploymentActionOutputV1 = z.infer<typeof DeploymentActionOutputSchemasV1[DeploymentTransportActionIdV1]>;

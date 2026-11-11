@@ -935,6 +935,7 @@ describe('createSessionModelTransitionCoordinator', () => {
       status: 'unproven',
       reason: 'runtime_model_transition_outcome_unproven',
       readbackAfterCompletion: true,
+      failureCause: { phase: 'turn_start', failureReason: 'unclassified_provider_error' },
     });
     expect(
       mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
@@ -973,6 +974,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     ).toEqual({
       status: 'unsupported',
       reason: 'provider_source_change_requires_restart',
+      failureCause: { phase: 'turn_start', failureReason: 'unclassified_provider_error' },
     });
     expect(
       mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
@@ -981,6 +983,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     ).toEqual({
       status: 'failed',
       reason: 'runtime_model_transition_not_applied',
+      failureCause: { phase: 'turn_start', failureReason: 'unclassified_provider_error' },
     });
   });
 
