@@ -83,8 +83,11 @@ function createCoordinatorError(reason: unknown, fallback: string): Error {
   return new Error(typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : fallback);
 }
 
-function isArtifactReadUnavailable(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'artifact_read_unavailable';
+/** An unavailable Artifact projection is not an approval decision. */
+export function isArtifactReadUnavailable(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'artifact_read_unavailable'
+    || typeof error === 'object' && error !== null && 'ok' in error && error.ok === false
+      && 'errorCode' in error && error.errorCode === 'artifact_read_unavailable';
 }
 
 function isTargetApproval(request: BlockingApprovalRequest): request is TargetActionApprovalRequestV1 {

@@ -4,7 +4,7 @@ import { buildActionExecuteResultFromRecordedApprovalExecution, type createActio
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema,
   type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestGetResultV1Schema, type ApprovalRequestPublicRead } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
-import { readRecordedApprovalDecision } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { isArtifactReadUnavailable, readRecordedApprovalDecision } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { observeAccountChanges } from '@/api/observeAccountChanges';
 
 export type CliApprovalRequestedHandler = (artifactId: string, signal: AbortSignal,
@@ -106,9 +106,19 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
           try {
             while (invalidated && !stopped) {
               invalidated = false;
-              const receipt = await readReceipt();
+              let receipt: Awaited<ReturnType<typeof readReceipt>>;
+              try { receipt = await readReceipt(); }
+              catch (error) {
+                if (isArtifactReadUnavailable(error)) continue;
+                throw error;
+              }
               if (stopped) return;
-              if (!receipt.ok) { resolve(receipt); return; }
+              // The prompt, cancellation and next push retain this wait. A
+              // failed projection neither approves nor settles the Action.
+              if (!receipt.ok) {
+                if (isArtifactReadUnavailable(receipt)) continue;
+                resolve(receipt); return;
+              }
               const execution = readRecordedCliApprovalResult(receipt.request);
               if (execution) { resolve(execution); return; }
             }

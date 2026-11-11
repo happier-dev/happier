@@ -15,6 +15,7 @@ import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
+import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -23,6 +24,7 @@ import type { ActionExecutorDeps, ApprovalRequestV1, ApprovalRequestV2 } from '@
 import * as persistence from '@/persistence';
 
 import { consumeDeferredCliApprovalResult, createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
@@ -356,7 +358,7 @@ describe('createCliActionExecutorHarness', () => {
       expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
     });
 
-  it('waits for forwarded approval execution after an approved-only decision', async () => {
+  it.each([200, 503])('waits for forwarded approval execution after an approved-only decision (initial Artifact HTTP %s)', async initialStatus => {
     const actionId = 'browser.diagnostics.snapshot';
     const artifactId = 'forwarded-held-execution';
     const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
@@ -371,27 +373,47 @@ describe('createCliActionExecutorHarness', () => {
     let read = false;
     let settled = false;
     const lifetime = new AbortController();
-    // The daemon transport, Artifact persistence and terminal prompt are
-    // boundaries. The real consumer must observe the later native receipt.
+    const app = fastify();
+    let status = initialStatus;
+    let artifactReads = 0;
+    app.get('/v1/artifacts/:id', async (_request, reply) => {
+      read = true;
+      artifactReads++;
+      if (status !== 200) return reply.code(status).send({ error: 'temporarily_unavailable' });
+      return ArtifactHttpReadV1Schema.parse({ id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+    });
+    const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'https://approval-home.example.test' });
+    const store = createCliApprovalsArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    // Only HTTP, daemon transport and terminal presentation are replaced.
+    // The Action executor, Artifact decoder and deferred waiter remain real.
     const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
       serverHttpBaseUrl: 'https://approval-home.example.test',
       onApprovalRequested: async () => {
         notified = true;
         return { ok: true, result: { ok: true, artifactId, status: 'approved' } };
       } }, { ...createUnavailableActionTransportDeps(),
-      runtimeActionExecute: async () => ({ kind: 'approval_request_created', artifactId, actionId }),
-      approvalsGet: async () => { read = true; return request; } });
+      approvalsGet: store.approvalsGet, runtimeActionExecute: async () => ({ kind: 'approval_request_created', artifactId, actionId }) });
     const pending = harness.executor.execute(actionId, { browserSessionId: 'session', viewId: 'view' },
       { surface: 'cli', signal: lifetime.signal });
     void pending.then(() => { settled = true; }, () => { settled = true; });
     try {
-      await vi.waitFor(() => expect(notified && read).toBe(true));
-      expect(settled).toBe(false);
+      await vi.waitFor(() => expect(read || settled).toBe(true));
+      if (!read) expect(await pending).toEqual({ ok: true, result: receipt });
+      expect(notified).toBe(true);
+      expect(settled ? await pending : null).toBeNull();
+      expect(artifactReads).toBe(2);
+      status = 200;
       request = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: 3,
         execution: { ok: true, effectAttempted: true, executedAtMs: 3, result: receipt } });
       for (const socket of wire.sockets) socket.update({ t: 'account-change' });
       await expect(pending).resolves.toEqual({ ok: true, result: receipt });
-    } finally { lifetime.abort(); await pending.catch(() => undefined); }
+      expect(artifactReads).toBe(3);
+    } finally { lifetime.abort(); await pending.catch(() => undefined); restoreHttp(); await app.close(); }
   });
 
   it.each(['rejected', 'executed'] as const)('closes an open deferred approval prompt after a remote %s decision', async status => {

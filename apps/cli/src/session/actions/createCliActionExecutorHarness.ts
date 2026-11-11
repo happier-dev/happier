@@ -399,7 +399,7 @@ export function createCliActionExecutorHarness(
     consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
       token: params.credentials?.token ?? params.token,
       serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-      execute: (actionId, input, actionContext) => executor.execute(actionId, input, actionContext), context });
+      execute: (actionId, input, actionContext) => runOnCapturedHome(() => executor.execute(actionId, input, actionContext)), context });
 
   // The installed controller owns preparation and Ask under the signed root.
   // An unsigned local Ask cannot later capture native custody.
