@@ -70,6 +70,15 @@ export function projectSessionBoundActionToolInputSchema(params: Readonly<{
       ? z.core.clone(params.inputSchema, { ...params.inputSchema._zod.def, left, right }) : params.inputSchema;
   }
 
+  // Keep preprocessing and its canonical parser together while projecting
+  // host-supplied operands, just as for intersections and union arms above.
+  if (params.inputSchema instanceof z.core.$ZodPipe) {
+    const input = projectSessionBoundActionToolInputSchema({ ...params, inputSchema: params.inputSchema._zod.def.in });
+    const output = projectSessionBoundActionToolInputSchema({ ...params, inputSchema: params.inputSchema._zod.def.out });
+    return input instanceof z.core.$ZodType && output instanceof z.core.$ZodType
+      ? z.core.clone(params.inputSchema, { ...params.inputSchema._zod.def, in: input, out: output }) : params.inputSchema;
+  }
+
   if (params.inputSchema instanceof z.core.$ZodObject) {
     const shape = params.inputSchema._zod.def.shape;
     const optionalShape = Object.fromEntries(

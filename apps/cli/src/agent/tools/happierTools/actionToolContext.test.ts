@@ -24,6 +24,8 @@ describe('session-bound Action tool context', () => {
         action: { serverId: 'server', title: 'Fix', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, files: [], hasCommand: false } } }],
       ['workspace.files.search', { query: 'example' }],
       ['workspace.files.replace.preview', { query: 'example', replacement: 'next' }],
+      ['machines.vitals.get', {}], ['machines.vitals.history.get', { range: '1h' }],
+      ['machines.guard.get', {}], ['machines.storage.summary.get', {}], ['machines.storage.suggestions.list', {}],
       ['machines.processes.list', {}], ['machines.processes.check', { refs: ['process'] }],
       ['machines.processes.stop', { targets: [{ ref: 'process', expect: { level: 'proven' } }] }],
       ['machines.processes.kill', { targets: [{ ref: 'process', expect: { level: 'proven' } }], tree: true }],

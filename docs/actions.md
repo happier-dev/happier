@@ -8480,6 +8480,17 @@ fallback cannot distinguish repeated calls with identical operands; native call
 identity remains the precise path. Correlation selects presentation only and
 does not authorize a decision or an effect.
 
+In unreleased 0.3 source, the Actions catalog's contextual-default owner assigns
+required top-level `machineId` operands to the invoking Session's Machine when
+omitted. Explicit Machine ids win. Session-bound agent/MCP tools project that
+operand as optional only when the host has the Machine context; standalone
+hosts keep the canonical required input and its typed refusal. The bound input
+then follows ordinary Action admission and authorization. Optional Machine
+filters, branch-specific operands and nested transfer destinations keep their
+existing owner's selection semantics. Authored defaults remain for the optional
+Memory window and Docker-prune Machine operands; workspace root defaults stay
+on the owning Action.
+
 ### Session-local MCP confirmations (0.3 development)
 
 An Agent calling an Action in its own Session can use the existing Session

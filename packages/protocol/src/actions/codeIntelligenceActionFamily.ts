@@ -107,7 +107,7 @@ function mutationRpcBinding(kind: 'rename' | 'fileRename' | 'codeAction' | 'form
 const shared = {
   executionPlacement: 'machine',
   approval: { result: 'required' }, safety: 'safe', sideEffectClass: 'read', placements: [],
-  contextualDefaults: { machineId: 'current_session_machine', rootPath: 'current_session_root' },
+  contextualDefaults: { rootPath: 'current_session_root' },
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
   inputSchema: CodeIntelligenceActionInputSchema,
   inputHints: { fields: [

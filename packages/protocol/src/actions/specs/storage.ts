@@ -74,8 +74,7 @@ const fields = [
   { path: 'serverId', title: 'Home ID', widget: 'text', required: false },
   { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
 ] as const;
-const base = { safety: 'safe', sideEffectClass: 'read', placements: [], executionPlacement: 'machine', surfaces,
-  contextualDefaults: { machineId: 'current_session_machine' } } as const;
+const base = { safety: 'safe', sideEffectClass: 'read', placements: [], executionPlacement: 'machine', surfaces } as const;
 const storageReferenceGuidance = 'Use the exact machineId and serverId of the requested Machine page or current Session; reuse that target for every read and proposal. If its storage methods are unavailable, report that limitation instead of trying other Machines. Obtain refs from that Machine’s served category, suggestions or scan view: for a StorageItem reuse { itemId, path }; for a DiskNode use { itemId: node.nodeId, path: node.nodeId } verbatim, including bytes: ids. Never invent itemIds from names or labels. items.check accepts those served refs directly without adding them to the person’s pile. Use the returned ref and expect unchanged in the proposal; use pile.set only when asked to collect into the person’s pile.';
 const exampleServedRef = { itemId: '{{itemId}}', path: '/tmp/cache' } as const;
 const exampleRef = {
@@ -99,7 +98,7 @@ function cleanupSpec<const Id extends MachineStorageActionId>([id, title, descri
   readonly [Id, string, string, string, 'read' | 'write' | 'danger', 'safe' | 'danger', z.input<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[Id]>?]): MachineStorageActionSpec<Id> {
   return {
     ...base, id, approval: { result: 'required' }, title, description, safety, sideEffectClass,
-    ...(id === 'machines.storage.docker.prune' ? { operation: {
+    ...(id === 'machines.storage.docker.prune' ? { contextualDefaults: { machineId: 'current_session_machine' }, operation: {
       version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
     } as const } : {}),
     ...(id === 'machines.storage.deleteNow' || id === 'machines.storage.trash.empty' || id === 'machines.storage.docker.prune'

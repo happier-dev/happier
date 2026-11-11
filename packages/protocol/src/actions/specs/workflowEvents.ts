@@ -27,7 +27,6 @@ function createWorkflowEventCatalogActionSpecsV1() {
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
   bindings: { mcpToolName: 'workflow_events_list', voiceClientToolName: 'workflow_events_list' },
   toolExposure: { mcp: 'discoverable_only' },
-  contextualDefaults: { machineId: 'current_session_machine' },
   inputHints: { fields: [{ path: 'machineId', title: 'Machine id', widget: 'text', required: true,
     description: 'In a Session, omit machineId to use that Session’s Machine. For another Machine, use its exact id returned by machines.list; a host name, dev-target name (such as nl1), or server profile id is not a Machine id.' }] },
   cli: { acceptsServerId: true, commands: [{ path: ['workflow', 'events', 'list'], visibility: 'canonical' }] },

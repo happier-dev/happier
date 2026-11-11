@@ -2129,15 +2129,25 @@ export const PUBLIC_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PublicAction
 export const ACTION_SPECS: readonly ActionSpec[] = lazyActionSpecArray(() => Object.freeze(
   ACTION_SPECS_WITH_PUBLIC_EXPOSURE.map((spec): ActionSpec => {
     const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
-    const contextualDefaults = resolveBuiltInActionContextualDefaults(spec.id);
     const argsExample = spec.examples?.voice?.argsExample ?? ACTION_VOICE_ARGS_EXAMPLES[spec.id];
-    return completeActionInputHints({
+    const completed = completeActionInputHints({
       ...spec,
       ...(argsExample ? { examples: { ...spec.examples, voice: { ...spec.examples?.voice, argsExample } } } : {}),
       ...(pluginCallerPolicy ? { pluginCallerPolicy } : {}),
-      ...(contextualDefaults ? { contextualDefaults } : {}),
       placements: [...spec.placements],
     });
+    // Like schema-derived hints, resolve only on demand: catalog construction
+    // can happen before every schema's module has finished initializing.
+    Object.defineProperty(completed, 'contextualDefaults', {
+      enumerable: true, configurable: true,
+      get() {
+        const defaults = resolveBuiltInActionContextualDefaults(spec.id, spec.inputSchema);
+        const value = defaults ? { ...spec.contextualDefaults, ...defaults } : spec.contextualDefaults;
+        Object.defineProperty(completed, 'contextualDefaults', { value, enumerable: true });
+        return value;
+      },
+    });
+    return completed;
   }),
 ));
 

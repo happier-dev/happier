@@ -1,3 +1,4 @@
+import { z } from '../../zodRuntimePolicy.js';
 import { type ActionId } from '../actionIds.js';
 import { type ActionContextualDefaults } from '../contextualDefaults.js';
 
@@ -125,11 +126,28 @@ export const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'sessions.external.status.get',
 ]);
 
-export function resolveBuiltInActionContextualDefaults(actionId: ActionId): ActionContextualDefaults | undefined {
-  if (actionId === 'memory.search' || actionId === 'memory.get_window') {
-    return { machineId: 'current_session_machine' };
+/** Only required top-level targets default; optional filters and nested destinations keep their owner's semantics. */
+function requiresMachineTarget(schema: z.core.$ZodType): boolean {
+  if (schema instanceof z.core.$ZodObject) {
+    const machineId = schema._zod.def.shape.machineId;
+    return machineId !== undefined && !z.safeParse(machineId, undefined).success;
   }
-  return CURRENT_SESSION_CONTEXT_ACTION_IDS.has(actionId)
-    ? { sessionId: 'current_session' }
-    : undefined;
+  if (schema instanceof z.core.$ZodIntersection) {
+    return requiresMachineTarget(schema._zod.def.left) || requiresMachineTarget(schema._zod.def.right);
+  }
+  if (schema instanceof z.core.$ZodPipe) {
+    // A preprocessing transform delegates the accepted shape to its output parser.
+    return requiresMachineTarget(schema._zod.def.in instanceof z.core.$ZodTransform
+      ? schema._zod.def.out : schema._zod.def.in);
+  }
+  if (schema instanceof z.core.$ZodUnion) return schema._zod.def.options.every(requiresMachineTarget);
+  return false;
+}
+
+export function resolveBuiltInActionContextualDefaults(actionId: ActionId, inputSchema: z.core.$ZodType): ActionContextualDefaults | undefined {
+  const sessionId = CURRENT_SESSION_CONTEXT_ACTION_IDS.has(actionId) ? 'current_session' as const : undefined;
+  // get_window intentionally defaults its optional Machine operand as well.
+  const machineId = requiresMachineTarget(inputSchema) || actionId === 'memory.get_window'
+    ? 'current_session_machine' as const : undefined;
+  return sessionId || machineId ? { ...(sessionId ? { sessionId } : {}), ...(machineId ? { machineId } : {}) } : undefined;
 }

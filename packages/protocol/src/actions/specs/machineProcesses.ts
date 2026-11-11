@@ -61,7 +61,7 @@ function processSpec<const Id extends MachineProcessesActionId>([id, title, desc
   return {
   id, approval: safety === 'danger' ? { result: 'required' } : { result: 'none' }, title,
   description,
-  contextualDefaults: { machineId: 'current_session_machine' }, safety, sideEffectClass, placements: [], executionPlacement: 'machine',
+  safety, sideEffectClass, placements: [], executionPlacement: 'machine',
   ...(id === 'machines.processes.stop' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
   ...(id === 'machines.processes.kill' ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
   toolExposure: { agent: id === 'machines.processes.list' ? 'direct' : 'discoverable_only' },
