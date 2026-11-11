@@ -406,7 +406,7 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                 </Animated.View>
             ) : null}
 
-            <View style={instrumentStripStyles.spacer} />
+            <View style={[instrumentStripStyles.spacer, props.connectionStatus ? instrumentStripStyles.spacerBesideLine : null]} />
 
             <View style={instrumentStripStyles.cluster}>
                 {isCollapsed && collapsibleInstruments.length > 0 ? (

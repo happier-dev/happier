@@ -89,6 +89,10 @@ export const instrumentStripStyles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 8,
     },
+    /** Beside a status line the line itself takes the free room; a growing spacer would split it and crush the line. */
+    spacerBesideLine: {
+        flexGrow: 0,
+    },
     cluster: {
         flexDirection: 'row',
         alignItems: 'center',

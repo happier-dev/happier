@@ -135,6 +135,12 @@ describe('the composer status line on a phone (owner 2026-11-10)', () => {
     // One line: the strip is no taller than its line and the gauge sits on it, inside the edge.
     expect(frame.bottom - frame.top).toBeLessThanOrEqual(40);
     expect(gauge.right).toBeLessThanOrEqual(frame.right + 0.5);
+    // The line keeps the room the gauge leaves: no empty half-line between its action and the gauge while its
+    // sentence is crushed to a letter a line (native 2026-11-11).
+    const sentence = layout.rect('agent-input-connection-status-text');
+    const action = layout.rect('agent-input-connection-recovery');
+    expect(gauge.left - action.right).toBeLessThanOrEqual(24);
+    expect(sentence.right - sentence.left).toBeGreaterThan(100);
   });
 });
 
