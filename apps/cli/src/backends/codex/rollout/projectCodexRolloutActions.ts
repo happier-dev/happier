@@ -7,7 +7,7 @@ import type { CodexRolloutAction } from '../localControl/rolloutMapper';
 export type CodexProjectedRolloutEvent =
     | { type: 'codex-session-id'; id: string }
     | { type: 'context-compaction'; phase: 'completed'; lifecycleId: string; source: 'provider-event' | 'transcript-inference'; providerEventId?: string; sidechainId: string | null }
-    | { type: 'user-text'; text: string }
+    | { type: 'user-text'; text: string; clientId?: string }
     | { type: 'assistant-text'; text: string; sidechainId: string | null }
     | { type: 'thinking'; text: string; sidechainId: string | null }
     | { type: 'tool-call'; callId: string; name: string; input: unknown; sidechainId: string | null }
