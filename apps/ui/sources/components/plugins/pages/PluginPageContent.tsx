@@ -237,6 +237,7 @@ export function PluginPageContent(props: Readonly<{
     const initialViewRef = React.useRef(props.initialView ?? null);
     initialViewRef.current = props.initialView ?? null;
     const locationOwner = React.useMemo(() => createPluginPageLocationOwner({
+        pageLocalId: props.localId,
         currentSubPath: () => pageLocationRef.current,
         initialView: initialViewRef.current,
         routePathFor: props.routePathFor,

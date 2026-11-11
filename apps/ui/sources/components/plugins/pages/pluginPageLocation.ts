@@ -46,6 +46,8 @@ export type PluginPageLocationOwner = Readonly<{
 }>;
 
 export type CreatePluginPageLocationOwnerInput<Route = string> = Readonly<{
+    /** Naming the mounted page's view is equivalent to the route's implicit default. */
+    pageLocalId?: string;
     /** The page's current plugin-local location; `null` when it is not a live page. */
     currentSubPath: () => string | null;
     /**
@@ -98,7 +100,10 @@ export function createPluginPageLocationOwner<Route = string>(
     // what lets a foreign location change be told apart from this owner's own
     // replacement without a second navigation observer.
     let declaredBackLocation: string | null = null;
-    let settledView: string | null = input.initialView ?? null;
+    const normalizeView = (view: string | null | undefined): string | null => (
+        view === input.pageLocalId ? null : view ?? null
+    );
+    let settledView: string | null = normalizeView(input.initialView);
     // A view the route named belongs to the location it arrived on, so a foreign location change retires it.
     let settledSubPath: string | null = settledView === null ? null : input.currentSubPath();
     let backPreservesUnsavedChanges = false;
@@ -165,9 +170,10 @@ export function createPluginPageLocationOwner<Route = string>(
                 && at !== null && sameLocation(backLocation, at);
             declaredBackLocation = backLocation ?? null;
             backPreservesUnsavedChanges = preserveUnsavedChanges === true;
-            const viewChanged = (view ?? null) !== settledView;
+            const nextView = normalizeView(view);
+            const viewChanged = nextView !== settledView;
             settledSubPath = subPath;
-            settledView = view ?? null;
+            settledView = nextView;
             // Updating a Back declaration at the same location retires no editor; the same location in another view
             // still rewrites the route, because the view is part of where the reader is.
             if (changesLocation || viewChanged) {

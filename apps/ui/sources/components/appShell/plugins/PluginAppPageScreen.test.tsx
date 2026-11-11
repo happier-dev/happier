@@ -1697,6 +1697,24 @@ describe('plugin app page host route (EU-5b)', () => {
         const hostApi = readRenderContext().hostApi;
         expect(hostApi.version().methods).toContain('replacePageLocation');
 
+        // An explicit declaration of the mounted page is the route's implicit
+        // default view. Replacing that same URL remounts a native page forever
+        // when its artifact republishes its current view on every mount.
+        await act(async () => {
+            await hostApi.replacePageLocation('', { view: 'notes' });
+            await hostApi.replacePageLocation('');
+            await hostApi.replacePageLocation('', { view: 'notes' });
+        });
+        expect(routerReplacements).toEqual([]);
+        expect(routerPushes).toEqual([]);
+
+        await act(async () => {
+            await hostApi.replacePageLocation('', { view: 'tasks' });
+            await hostApi.replacePageLocation('', { view: 'notes' });
+        });
+        expect(routerReplacements).toEqual([`${NOTES_PAGE_PATH}?view=tasks`, NOTES_PAGE_PATH]);
+        routerReplacements.length = 0;
+
         // The page's filter/selection state moved. That is a LOCATION change,
         // not a destination selection: a push here would bury whatever screen
         // the user came from under the page's own interaction trail.
