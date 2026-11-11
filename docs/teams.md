@@ -438,12 +438,8 @@ redirects the selected daemon or creates a preset. Unlocked placement defaults r
 selection before that exact-target request. File-policy locks retain their machine-local owner.
 
 Home, Team and Group Machine defaults share one eligibility owner: saving requires
-the Machine to be usable by every active member receiving that layer. In unreleased
-0.3, a refused save returns `managed_default_machine_not_member_usable` through the
-policy route and Action. The defaults editor asks the administrator to share the
-Machine with the members or choose another. Sharing with the administrator alone
-does not establish member access. If access later changes, New Session falls back
-to a Machine in the member's own usable inventory.
+the Machine to be usable by every active member receiving that layer. If access later
+changes, New Session falls back to a Machine in the member's own usable inventory.
 
 ### Accepted authentication
 
