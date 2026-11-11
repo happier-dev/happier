@@ -66,6 +66,16 @@ const unselectedLocaleModules = new Set();
 const eagerSecondaryRoutes = new Set();
 const eagerProtocolRootModules = new Set();
 const eagerSessionImplementations = new Set();
+// Attribute the suspected entry leaks from Metro's emitted map, rather than
+// inferring delivery from source imports (or from a retained export).
+const entryLeakPatterns = {
+    hugeIconsBarrel: /\/@hugeicons\/core-free-icons\/(?:dist\/[^/]+\/)?index\.js$/,
+    pluginTranslationAggregate: /\/text\/bundledPluginTranslations\.generated\.ts$/,
+    nonEnglishHostLocales: /\/text\/translations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-HantOverrides)\.ts$/,
+    nonEnglishPluginLocales: /\/text\/bundledPluginTranslations\/(?!en\.)[^/]+\.generated\.ts$/,
+    protocolRoot: /\/packages\/protocol\/src\/index\.ts$/,
+    revenueCatSdk: /\/@revenuecat\/purchases-js\//,
+};
 for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g)) {
     const filename = match[1].replace(/^\//, '');
     const source = await readFile(join(webOutputDir, filename), 'utf8');
@@ -111,6 +121,10 @@ for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g)) {
         attributedBytes: [...bytesBySource.values()].reduce((sum, bytes) => sum + bytes, 0),
         groupedBytes, appSourceBytes: appContributors.reduce((sum, contribution) => sum + contribution.bytes, 0),
         topContributors, appContributors: appContributors.slice(0, 10),
+        entryLeaks: Object.fromEntries(Object.entries(entryLeakPatterns).map(([name, pattern]) => {
+            const modules = contributors.filter(({ file }) => pattern.test(file));
+            return [name, { bytes: modules.reduce((sum, module) => sum + module.bytes, 0), modules }];
+        })),
         featureDependencies: contributors.filter(({ file }) => /\/(?:@revenuecat\/purchases-js|livekit-client|katex|@sentry-internal\/replay)\/|\/web\/wasm\/md4c\.js$/.test(file)),
         textContributors: textContributors.slice(0, 15) });
 }
@@ -145,6 +159,11 @@ console.log(JSON.stringify({ ...measurement,
     eagerSecondaryRoutes: { count: measurement.eagerSecondaryRoutes.length,
         examples: measurement.eagerSecondaryRoutes.slice(0, 5) },
 }, null, 2));
+if (process.argv.includes('--verify-entry-demand')) {
+    for (const script of required) for (const [name, leak] of Object.entries(script.entryLeaks)) {
+        assert.deepEqual(leak.modules, [], `${script.file} must not eagerly deliver ${name}`);
+    }
+}
 if (process.argv.includes('--verify-locale-demand')) {
     assert.deepEqual(measurement.unselectedLocaleModules, [],
         'required production scripts must not download unselected host or aggregate plugin locales');
