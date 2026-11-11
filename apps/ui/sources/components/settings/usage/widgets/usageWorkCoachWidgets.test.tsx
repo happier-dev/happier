@@ -514,7 +514,7 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
       .toContain(`${t('usage.board.coach.summarySessions')}: —`);
   });
-  it('holds one finding row of room while a phone-width Coach reads, so its findings land without moving the page', async () => {
+  it('does not reserve a second cold-read room inside the Coach widget', async () => {
     const pendingSlice = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
       sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }).results[0]!;
@@ -523,7 +523,7 @@ describe('Work and Coach widget bodies', () => {
         footprint: { columns: 1, columnSpan: 1, rowSpan: 2, width: 'full', height: 'regular' }, geometry: { width: 326, height: 260 } }}>
         <UsageCoachWidget {...props} slice={pendingSlice} id="usage_coach" testID="phone-coach" />
       </WidgetPresentationProvider>);
-      // The held room is the min height of the wrapper around the body (the body is what gets measured).
+      // Cold-read room belongs to UsageWidgetBody's usageBodyHeightMemory owner.
       let held = 0;
       for (let node = screen.findHostByTestId('phone-coach.coach')?.parent; node; node = node.parent) {
         for (const entry of ([] as unknown[]).concat(node.props.style ?? []).flat(2)) {
@@ -532,7 +532,7 @@ describe('Work and Coach widget bodies', () => {
       }
       return held;
     };
-    expect(await heldRoom('medium')).toBeGreaterThan(0);
+    expect(await heldRoom('medium')).toBe(0);
     // The Coach's own view lists freely: nothing is held there.
     expect(await heldRoom('large')).toBe(0);
   });

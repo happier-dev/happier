@@ -31,7 +31,6 @@ import { useUsageChartDetails } from './usageMountedControls';
 import { usageSignatureAccent } from '../usageAccent';
 import {
   leadingUsageRows,
-  useSettledBodyHeightFloor,
   UsageBodyInsufficient,
   UsageShowAllRows,
   useUsagePluginTheme,
@@ -225,15 +224,9 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   ] : []);
   const chooseWindow = React.useCallback((key: string) => { void windowCommands.invoke(key); }, [windowCommands.invoke]);
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), !list && Boolean(focus?.window.pace));
-  // Beside other widgets the body is a list of meters. Its first reads land inside the height the dispatch
-  // remembers for this body, the one cold-load reservation. After the list settles, every re-read swaps the pace
-  // alert / shared reason / legend inside the height the list has already shown, so the cards beside and below it
-  // never move.
-  const floor = useSettledBodyHeightFloor(list && settled, `${expanded}:${width !== null && width < STACKED_BELOW_PX}`);
-  const bodyStyle = floor.minHeight !== undefined ? [styles.body, { minHeight: floor.minHeight }] : styles.body;
   if (projection.accounts.length === 0) {
     return (
-      <View style={bodyStyle}>
+      <View style={styles.body}>
         <UsagePlansNothingRead
           testID={`${props.testID}.none`}
           slice={props.slice}
@@ -304,7 +297,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
       : [...repeatedReasons].sort((left, right) => right[1] - left[1]).find(([, count]) => count > 1) ?? [null, 0];
     const quietReason = sharedReason ?? repeatedReason;
     return (
-      <View style={bodyStyle} onLayout={floor.onLayout} testID={`${props.testID}.projections`}>
+      <View style={styles.body} testID={`${props.testID}.projections`}>
         {rows.length ? (
           <UsageMeterStack testID={`${props.testID}.windows`}>
             {lead.rows.map((row) => (

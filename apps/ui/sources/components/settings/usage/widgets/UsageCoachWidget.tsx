@@ -46,9 +46,7 @@ import {
   UsageCoverageLine,
   UsageShowAllRows,
   leadingUsageRows,
-  SETTLED_COACH_STRIP_BODY_PX,
   usagePeriodPhrase,
-  useSettledBodyHeightFloor,
   useUsagePluginTheme,
   type UsageBodyProps,
 } from './usageBodyKit';
@@ -68,12 +66,6 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 /** Below this body width the Overview strip's three columns would crush their titles; it lists instead. */
 const STRIP_MIN_WIDTH_PX = 760;
 const STRIP_FINDINGS = 3;
-/**
- * Where the Coach lists instead of striping (a phone), its reading state holds the two finding rows its
- * evidence usually settles with (measured at 390 px: 195 px for one, 334 px for two), so a second finding
- * arriving fills the room instead of pushing every card below it.
- */
-const SETTLED_COACH_LIST_BODY_PX = 334;
 /** On Overview, at the strip's width, the Coach is three findings in a row; its loading state holds that room. */
 export function isUsageCoachStrip(presentation: ReturnType<typeof useWidgetPresentation>): boolean {
   return presentation?.size !== undefined && presentation.size !== 'large'
@@ -297,18 +289,9 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   // the Coach (hidden, checks, digest, preferences) stays on the Coach view.
   const glance = presentation?.size !== undefined && presentation.size !== 'large';
   const strip = isUsageCoachStrip(presentation);
-  // The strip holds its populated height while the evidence it reads is outstanding, so the loading
-  // state, the "need more evidence" line and the findings come and go inside one height; once settled it
-  // keeps the tallest height it has drawn, so a re-read never moves what sits below.
   const reading = readUsageCoachState(props.slice) === 'reading';
   // When a read's coverage names no count, the period's own Sessions read is the same fact the Overview shows.
   const periodSessions = useUsageAnalyticsView(props.slice, props.query)?.hero.sessions ?? null;
-  const floor = useSettledBodyHeightFloor(!reading, `${glance}:${strip}`);
-  // The held room is a wrapper's min height and the body inside it is what gets measured, so the floor can follow
-  // the drawn height down once at the first settle instead of measuring itself.
-  const heldRoom = reading && glance
-    ? { minHeight: strip ? SETTLED_COACH_STRIP_BODY_PX : SETTLED_COACH_LIST_BODY_PX }
-    : floor.minHeight !== undefined ? { minHeight: floor.minHeight } : null;
   // Preferences are rare: a quiet disclosure after the findings, never a bar above them (lab d2coach).
   const configuration = <UsagePlanDisclosure title={t('usage.board.coach.configure')} testID={`${props.testID}.configure`}>
     <UsageCoachSettingsGroup serverId={props.serverId} testID={`${props.testID}.preferences`} />
@@ -324,8 +307,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   );
   if (!coach)
     return (
-      <View style={heldRoom}>
-        <View style={styles.body} onLayout={floor.onLayout}>
+      <View style={styles.body}>
           <UsageBodyInsufficient
             testID={`${props.testID}.unavailable`}
             title={t('usage.board.coach.unavailableTitle')}
@@ -337,7 +319,6 @@ export function UsageCoachWidget(props: UsageBodyProps) {
             onRetry={refresh}
             testID={`${props.testID}.coverage`}
           />
-        </View>
       </View>
     );
   const { visible, suppressed, appliedOnly } = projectUsageCoachFindings(coach.findings, snapshot, nowMs);
@@ -385,8 +366,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
     />
   );
   return (
-    <View style={heldRoom}>
-      <View style={styles.body} onLayout={floor.onLayout} testID={`${props.testID}.coach`}>
+    <View style={styles.body} testID={`${props.testID}.coach`}>
         {/* The facts band belongs to the Coach view; the Overview strip is the findings alone (lab wgusage-CD). */}
         {glance ? null : <UsageCoachSummaryBand facts={summary} testID={`${props.testID}.summary`} />}
         {visible.length === 0 && appliedOnly.length === 0 ? (
@@ -462,7 +442,6 @@ export function UsageCoachWidget(props: UsageBodyProps) {
           onRetry={refresh}
           testID={`${props.testID}.coverage`}
         />
-      </View>
     </View>
   );
 }
