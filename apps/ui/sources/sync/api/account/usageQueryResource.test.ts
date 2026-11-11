@@ -879,6 +879,11 @@ describe('usage query captured Resource adapter', () => {
     expect(reads, 'One scoped physical read serves the mounted Coach cohort').toBe(2);
     await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(reads, 'Returning to Usage reuses its admitted work records').toBe(2);
+    await readUiUsageQueryBatch(captured, { queries: [
+      normalizeUsageQuery({ ...query, period: { relative: '90days' } }),
+      normalizeUsageQuery({ ...coach, period: { relative: '90days' } }),
+    ] });
+    expect(coachRecords, 'Coach joining work-only membership still acquires its private payload').toBe(count * 2);
   });
 
   it('reuses one complete transcript conversion across work-only and Coach fact scopes', async () => {
@@ -909,7 +914,8 @@ describe('usage query captured Resource adapter', () => {
     expect(coach.results[0]?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
     const reads = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .map(request => UsageSessionEvidenceRequestSchema.parse(request.body));
-    expect(reads.filter(input => input.readWorkFacts).map(input => input.workFactKinds)).toEqual([['work'], ['work', 'coach']]);
+    expect(reads.filter(input => input.readWorkFacts).map(input => input.workFactKinds),
+      'the completed transcript conversion already admitted both fact kinds').toEqual([['work']]);
     expect(reads.filter(input => input.requests.some(demand => demand.query.includeTranscriptEvidence)),
       'fact scope changes do not repeat the same Session transcript conversion').toHaveLength(1);
   });
@@ -3988,7 +3994,7 @@ describe('usage query captured Resource adapter', () => {
       expect(readPendingPlanAccountCount(projectionOf(homeEntry).accounts)).toBe(3);
       const cold = await renderBody(homeEntry);
       expect(cold.findHostByTestId('timeline.reading')).not.toBeNull();
-      refs.forEach(ref => expect(cold.findHostByTestId(`timeline.cell.${ref.accountId}`)).not.toBeNull());
+      refs.forEach(ref => expect(cold.findHostByTestId(`timeline.cell.${ref.accountId}`)).toBeNull());
       gates[0]!.resolve();
       await expect.poll(() => projectionOf(homeEntry).accounts[0]?.observedAtMs).toBe(now);
       expect(projectionOf(homeEntry).tightest).toMatchObject({ provisional: true, window: { remainingFraction: 0.6 } });
@@ -5153,8 +5159,8 @@ describe('usage query captured Resource adapter', () => {
         expect(screen.findByTestId('quota-fit.plan.slow')).toBeNull();
         expect(slowState()).toMatchObject({ status: 'error', errorCode: 'snapshot_read_failed' });
       } else {
-        expect(screen.findByTestId('quota-capacity.cell.slow')).toBeTruthy();
-        expect(screen.findByTestId('quota-fit.plan.slow')).toBeTruthy();
+        expect(screen.findByTestId('quota-capacity.cell.slow')).toBeNull();
+        expect(screen.findByTestId('quota-fit.plan.slow')).toBeNull();
       }
       if (!failureFirst) {
         expect(screen.findByTestId('quota-capacity.reading')).toBeTruthy();
@@ -7151,7 +7157,7 @@ describe('usage query captured Resource adapter', () => {
     if (batchFailure && !retainQuery) {
       expect(replacement.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null });
       expect(replacement.results[0]?.sources).toContainEqual(expect.objectContaining({
-        source: 'how_you_work', status: 'error', errorCode: 'usage_session_evidence_read_failed',
+        source: 'how_you_work', status: 'error', errorCode: 'http_error',
       }));
     } else if (status === 503 && retainQuery) {
       expect(replacement.results[0]?.howYouWork?.intervals, 'retain the complete admitted population, never only the surviving Session')
@@ -8082,7 +8088,11 @@ describe('usage query Work composition', () => {
       : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No hosting provider for this local repository' });
     const standalone = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(standalone.results[0]?.work?.branchAllocations[0]).toMatchObject({ reason: 'allocated', contribution,
-      branch: { repositoryKey: 'repo', branch: { ref: 'refs/heads/standalone' }, contributionIds: ['cost'] } });
+      branch: { repositoryKey: 'repo', branch: { ref: 'refs/heads/standalone' } } });
+    expect(standalone.results[0]?.work?.branchAllocations[0]?.branch).not.toHaveProperty('contributionIds');
+    expect(standalone.results[0]?.work?.branches).toEqual([expect.objectContaining({
+      repositoryKey: 'repo', branch: { ref: 'refs/heads/standalone', headSha: 'b'.repeat(40) }, contributionIds: ['cost'],
+    })]);
     expect(standalone.results[0]?.work?.outcomes).toEqual([]);
     // A local branch remains readable without a remote. Unsupported hosting
     // does not become a failed Work read or poison its exact branch evidence.

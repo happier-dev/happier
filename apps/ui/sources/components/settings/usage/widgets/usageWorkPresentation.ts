@@ -5,10 +5,11 @@ import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import type {
   UsageWorkAllocation,
-  UsageWorkOutcome,
   UsageWorkProjection,
-  UsageWorkBranch,
 } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+
+type UsageWorkOutcome = NonNullable<UsageWorkAllocation['outcome']>;
+type UsageWorkBranch = NonNullable<UsageWorkProjection['branchAllocations'][number]['branch']>;
 
 /**
  * Display grouping of U7's canonical allocation. It never reallocates: every row sums the exact

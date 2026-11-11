@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
-import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryBatchResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { applyPostgresMigrations } from '../../../scripts/prismaMigrations';
 import { openPgliteMigrationSession, type PgliteMigrationSession } from '../../../scripts/pgliteMigrationSession';
@@ -15,6 +15,8 @@ import { inTx, type Tx } from '@/storage/inTx';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from './usageSourceClassifier';
 import { captureUsageAnalyticsInTx, projectUsageAnalytics } from './usageQueryService';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerAccountUsageRoutes } from '@/app/api/routes/account/registerAccountUsageRoutes';
 import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 
@@ -95,6 +97,32 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
+    it('captures 51 accounting slices through one PostgreSQL transaction', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(100),
+            agentId: 'codex', source: 'runtime', scope: 'turn_delta', totalTokens: 7 } });
+        // Observe the real persistent boundary; all route, capture, and projection logic stays real.
+        const transaction = db.$transaction;
+        // db forwards to the real client through a Proxy without own descriptors.
+        const acquire = vi.fn(transaction);
+        db.$transaction = acquire as typeof db.$transaction;
+        try {
+            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+                const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                    headers: { 'x-test-user-id': account.id }, payload: {
+                        queries: Array.from({ length: 51 }, (_, index) => ({
+                            dateRange: { startMs: 0, endMs: 200 + index }, includeSeries: false,
+                        })), includeContributions: true,
+                    } });
+                expect(response.statusCode, response.body).toBe(200);
+                const batch = UsageAnalyticsQueryBatchResponseSchema.parse(response.json());
+                expect(batch.results).toHaveLength(51);
+                expect(batch.results.every(row => 'value' in row && row.value.totals.tokens.total === 7)).toBe(true);
+                expect(acquire).toHaveBeenCalledTimes(1);
+            });
+        } finally { db.$transaction = transaction; }
+    });
+
     it('preserves nullable measurements through PostgreSQL row transport and known-only aggregation', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const unknown = { accountId: account.id, observedAt: new Date(100), agentId: 'codex', source: 'runtime',
@@ -173,9 +201,9 @@ describe('Usage analytics PostgreSQL event transport', () => {
         { readOnly: true, isolationLevel: 'Serializable' });
         expect(empty.rows).toEqual([]);
         expect(emptyCount).toEqual({ reads: 1, ormRows: 0 });
-        // usageAggregation.createEmptyUsageTokens retains null until a measurement is admitted.
+        // An empty population is known zero; the nonempty unknown-only control above stays null.
         expect(projectUsageAnalytics(empty, UsageAnalyticsQueryRequestSchema.parse({ dateRange: { endMs: 100 } }))
-            .totals.tokens.total).toBeNull();
+            .totals.tokens.total).toBe(0);
     });
 
     it('keeps opaque native competitors, fallback baselines and malformed historical metadata coherent', async () => {
@@ -240,7 +268,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
                     return async (...args: unknown[]) => {
                         const input = args[0] as { strings?: readonly string[]; raw?: readonly string[] } | undefined;
                         const statement = input?.strings ?? input?.raw ?? [];
-                        if (statement.some(part => part.includes('WITH history AS MATERIALIZED'))) candidateSql = args[0] as Prisma.Sql;
+                        if (statement.some(part => part.includes('history AS MATERIALIZED'))) candidateSql = args[0] as Prisma.Sql;
                         return Reflect.apply(target.$queryRaw, target, args);
                     };
                 },
@@ -249,13 +277,40 @@ describe('Usage analytics PostgreSQL event transport', () => {
             expect(captured.rows).toHaveLength(17);
             expect(candidateSql).toBeDefined();
             if (!candidateSql) return;
-            type PlanNode = { 'Node Type'?: string; 'Actual Rows'?: number; Plans?: PlanNode[] };
+            type PlanNode = { 'Node Type'?: string; 'Subplan Name'?: string; 'Actual Rows'?: number; Filter?: string; Plans?: PlanNode[] };
             const [plan] = await db.$queryRaw<Array<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>>(
                 prismaRuntime.sql`EXPLAIN (ANALYZE, FORMAT JSON) ${candidateSql}`);
             const find = (node: PlanNode, type: string): PlanNode | undefined =>
                 node['Node Type'] === type ? node : node.Plans?.map(child => find(child, type)).find(Boolean);
+            // PREPARE retains parameters: EXPLAIN GENERIC_PLAN through Prisma's
+            // bound-query protocol substitutes values before PostgreSQL plans it.
+            const literal = (value: unknown): string => {
+                if (typeof value === 'string') return `E'${value.replaceAll('\\', '\\\\').replaceAll("'", "''")}'`;
+                if (Array.isArray(value)) return `ARRAY[${value.map(literal).join(',')}]::text[]`;
+                throw new Error('Candidate fixture binds text and text arrays only');
+            };
+            const statement = candidateSql;
+            const generic = await inTx(async tx => {
+                await tx.$executeRawUnsafe('SET LOCAL plan_cache_mode=force_generic_plan');
+                await tx.$executeRawUnsafe(`PREPARE usage_candidate_cost AS ${statement.text}`);
+                try {
+                    return await tx.$queryRawUnsafe<Array<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>>(
+                        `EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE usage_candidate_cost(${statement.values.map(literal).join(',')})`);
+                } finally { await tx.$executeRawUnsafe('DEALLOCATE usage_candidate_cost'); }
+            }, { readOnly: true, isolationLevel: 'Serializable' });
+            const unindexedArrayFilters = (node: PlanNode): number =>
+                (node.Filter && /\bANY\s*\(\s*\$\d+/.test(node.Filter) ? 1 : 0)
+                + (node.Plans ?? []).reduce((count, child) => count + unindexedArrayFilters(child), 0);
+            expect(unindexedArrayFilters(generic[0]?.['QUERY PLAN']?.[0]?.Plan ?? {}),
+                'generic plans must not compare each history row with the entire parameter array').toBe(0);
             const append = find(plan?.['QUERY PLAN']?.[0]?.Plan ?? {}, 'Append');
             expect(append?.['Actual Rows'], 'candidate branches must not re-emit admitted window rows').toBeLessThanOrEqual(17);
+            const findHistory = (node: PlanNode): PlanNode | undefined =>
+                node['Subplan Name'] === 'CTE history' ? node : node.Plans?.map(findHistory).find(Boolean);
+            for (const value of [plan, generic[0]]) {
+                const history = findHistory(value?.['QUERY PLAN']?.[0]?.Plan ?? {});
+                expect(history?.['Actual Rows'], 'admitted window rows bypass historical metadata materialization in both plan modes').toBe(1);
+            }
         } finally {
             await db.account.delete({ where: { id: account.id } });
         }

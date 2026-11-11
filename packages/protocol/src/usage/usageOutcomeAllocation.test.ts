@@ -107,7 +107,7 @@ describe('evidence-derived Work allocation', () => {
     const contributions = [contribution('a', 's', 't')];
     const result = allocateUsageOutcomes({ contributions, evidence: [], branchEvidence: [...branchEvidence, ...branchEvidence] });
     expect(result.allocations[0].outcome).toBeNull();
-    expect(result.branchAllocations[0].branch?.contributionIds).toEqual(['a']);
+    expect(result.branches[0].contributionIds).toEqual(['a']);
     expect(result.branches).toHaveLength(1);
     expect(result.branchAllocations[0].contribution.cost.reportedUsd).toBe(3);
     expect(UsageWorkProjectionSchema.safeParse(result).success).toBe(true);

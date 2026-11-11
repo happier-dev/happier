@@ -4013,7 +4013,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it('admits compact Session evidence only as a personal Usage read purpose', async () => {
+    it('admits scalar and batch accounting and compact Session evidence only as personal Usage read purposes', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const { app } = await createApp(fixture.team.id);
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -4034,6 +4034,17 @@ describe("external Action execution authorization", () => {
                         target: authorization.binding.target, installationId: fixture.machine.installationId!,
                         requestId: authorization.binding.requestId, method, path: requestPath, body: requestBody,
                         privateKey: fixture.keyPair.secretKey }) });
+            const accountingPath = '/v2/usage/query-batch';
+            const accountingBody = { queries: Array.from({ length: 51 }, (_, index) => ({
+                dateRange: { startMs: 10, endMs: 20 + index }, includeSeries: false,
+            })), includeContributions: true };
+            expect(await verify('POST', '/v2/usage/query', accountingBody.queries[0])).not.toBeNull();
+            expect(await verify('POST', accountingPath, accountingBody)).toMatchObject({ effectActionId: actionId });
+            expect(await verify('GET', accountingPath, accountingBody)).toBeNull();
+            expect(await verify('POST', `${accountingPath}?accountId=other`, accountingBody)).toBeNull();
+            expect(await verify('POST', accountingPath, { ...accountingBody, accountId: 'other' })).toBeNull();
+            expect(await verify('POST', accountingPath, { queries: [{ unknown: true }] })).toBeNull();
+            expect(await verify('POST', accountingPath, accountingBody, 'connectedServices.quota.get')).toBeNull();
             expect(await verify('POST', path, body)).toMatchObject({ effectActionId: actionId, binding: { accountId: fixture.account.id } });
             expect(await verify('GET', path, body)).toBeNull();
             expect(await verify('POST', `${path}?accountId=other`, body)).toBeNull();

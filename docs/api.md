@@ -3334,8 +3334,11 @@ Public populations and mixed rich/detail demands use the ordinary path.
 Conditional publication follows the read snapshot; startup and event writes
 perform no summary maintenance. Existing migrations are unchanged.
 
-Development pages acquire their distinct accounting slices through
-`POST /v2/usage/query-batch`. Identical
+Development pages and multi-slice CLI/agent Usage Actions acquire their distinct
+accounting slices through `POST /v2/usage/query-batch`. The server admits and
+captures a batch in one read transaction, then releases it before aggregation,
+pricing, projection and serialization. A single Action accounting slice retains
+the scalar route. Identical
 queries are returned once. One capture supplies the common accounting population
 and tariff; each query keeps its own range, filters, publication-bounded message
 counts and Session access admission. An unreadable Session selection returns

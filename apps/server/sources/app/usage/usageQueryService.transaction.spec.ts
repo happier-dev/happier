@@ -25,7 +25,7 @@ vi.mock('@/utils/logging/log', () => ({ log: logSink }));
 
 // Only the persistent database boundary is substituted. Transactions, retries,
 // accounting, route registration and HTTP serialization all execute real code.
-const boundary = createDbMocks({ usageReport: ['findMany'],
+const boundary = createDbMocks({ usageEvent: ['findFirst'], usageReport: ['findMany'],
     homeSettings: ['findUnique'], homeGovernancePolicy: ['findUnique'], simpleCache: ['findFirst'] });
 const usageEventRawRead = vi.fn();
 const usageEventReads: boolean[] = [];
@@ -61,7 +61,7 @@ function transactionReader() {
 }
 const transactions = createDbTransactionMock(transactionReader);
 // Preserve the real transaction options: the generic mock wrapper omits them.
-installDbModuleMock({ db: { ...boundary.db, $transaction: async (fn: (tx: object) => Promise<unknown>,
+installDbModuleMock({ db: { ...boundary.db, ...homeConfigSnapshotPostgresQueryMock, $transaction: async (fn: (tx: object) => Promise<unknown>,
     options?: { isolationLevel?: string }) => {
     isolationLevel = options?.isolationLevel;
     return transactions.transaction(fn);
@@ -86,6 +86,7 @@ describe('Usage snapshot transaction lifetime', () => {
         boundary.db.homeSettings.findUnique.mockResolvedValue(null);
         boundary.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
         boundary.db.simpleCache.findFirst.mockResolvedValue(null);
+        boundary.db.usageEvent.findFirst.mockResolvedValue({ id: 'historical-event' });
         boundary.db.usageReport.findMany.mockResolvedValue([]);
         usageEventRawRead.mockImplementation(async () => [eventForAttempt(attempt)]);
         transactions.transaction.mockImplementation(async (fn: (tx: object) => Promise<unknown>) => {
@@ -99,6 +100,7 @@ describe('Usage snapshot transaction lifetime', () => {
     afterEach(() => { restoreEnv(env); boundary.reset(); usageEventRawRead.mockReset(); });
 
     it('yields for slow batch projection only after releasing the snapshot transaction', async () => {
+        boundary.db.usageEvent.findFirst.mockResolvedValue(null);
         let clockMs = 0;
         let yieldsInTransaction = 0;
         let yieldsAfterCommit = 0;
@@ -117,7 +119,7 @@ describe('Usage snapshot transaction lifetime', () => {
                 expect(response.statusCode, response.body).toBe(200);
                 const batch = UsageAnalyticsQueryBatchResponseSchema.parse(response.json());
                 expect(batch.results[0]).toHaveProperty('value.totals.tokens.total', 7);
-                expect(usageEventReads).toEqual([true, true]);
+                expect(usageEventReads).toEqual([true]);
                 expect(yieldsInTransaction).toBe(0);
                 expect(yieldsAfterCommit).toBeGreaterThan(0);
             });
@@ -307,7 +309,7 @@ describe('Usage snapshot transaction lifetime', () => {
         await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
             const response = await app.inject({ method: 'POST', url: '/v2/usage/query',
                 headers: { 'x-test-user-id': 'account' }, payload: { population: 'public_eligible_personal' } });
-            expect(response.statusCode).toBe(enabled ? 200 : 404);
+            expect(response.statusCode, response.body).toBe(enabled ? 200 : 404);
             if (enabled) {
                 expect(UsageAnalyticsQueryResponseSchema.safeParse(response.json()).success).toBe(true);
                 expect(committed).toBe(true);

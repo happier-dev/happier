@@ -20,13 +20,12 @@ const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, agents
 // Check the supplied authenticated transport ports before adapting this fixture
 // to the cross-family executor; unrelated family ports are unreachable here.
 describe('personal usage Action execution', () => {
-  it('keeps exact accounting and small siblings when requested Work evidence exceeds the response envelope', async () => {
+  it('delivers complete Work with bytes proportional to contributions sharing an outcome', async () => {
     const heavy = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
       includeQuotaHistory: true, includeSessionEvidence: true, includeTranscriptEvidence: true, includeWorkEvidence: true });
     const small = normalizeUsageQuery({ ...heavy, session: 'session-0' });
     // The performance lane's Account-scale shape: 1k Sessions linked to one PR.
-    // Repeating the shared outcome's contribution identities in every allocation
-    // exceeds the real envelope without oversized strings or a lowered test cap.
+    // One shared outcome must not repeat every contribution identity in every allocation.
     const contributions = Array.from({ length: 1_000 }, (_, index) => ({
       id: `session-${index}:turn-${index}:runtime-contribution-0`, observedAtMs: 150,
       sessionId: `session-${index}`, turnId: `turn-${index}`, agentId: 'codex', modelId: null,
@@ -45,7 +44,7 @@ describe('personal usage Action execution', () => {
         value: { ...accounting, contributions: query === small ? contributions.slice(0, 1) : contributions } })),
       work: [heavy, small].map(query => ({ query, status: 'available' as const, evidence })),
     });
-    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich)).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
     let reads = 0;
     let admitted = rich;
     const deps: Partial<ActionExecutorDeps> = { usageActions: { query: async () => { reads += 1; return admitted; } } };
@@ -58,26 +57,25 @@ describe('personal usage Action execution', () => {
       .toMatchObject({ execution: { ok: true } });
     const batch = UsageQueryBatchResultSchema.parse(result.result);
     const bounded = batch.results.find(slice => slice.key === getUsageQueryKey(heavy))!;
-    expect(bounded).toMatchObject({ requestedQuery: heavy, shownQuery: heavy, accounting: { totals: accounting.totals },
-      incomplete: { reason: 'response_size_limit', omittedSections: ['work'], recovery: 'narrow_query' } });
-    expect(bounded.work).toBeUndefined();
-    expect(bounded.accounting?.contributions).toBeUndefined();
-    expect(bounded.coach).toEqual(rich.results.find(slice => slice.key === bounded.key)?.coach);
+    expect(bounded).toMatchObject({ requestedQuery: heavy, shownQuery: heavy, accounting: { totals: accounting.totals } });
+    expect(bounded.work?.allocations).toHaveLength(1_000);
+    expect(bounded.work?.outcomes[0]?.contributionIds).toHaveLength(1_000);
+    expect(new Set(bounded.work?.allocations.map(row => row.contribution.sessionId)).size).toBe(1_000);
+    expect(bounded).not.toHaveProperty('incomplete');
+    expect(bounded.workSummary).toMatchObject({ sessionCount: 1_000, contributionCount: 1_000, allocatedContributionCount: 1_000 });
     const narrow = batch.results.find(slice => slice.key !== bounded.key)!;
     expect(narrow.work?.allocations).toHaveLength(1);
     expect(narrow).not.toHaveProperty('incomplete');
-    expect(UsageQueryBatchResultSchema.safeParse({ ...batch, results: [{ ...narrow, incomplete: bounded.incomplete }] }).success).toBe(false);
     expect(reads).toBe(1);
     expect(rich.results.find(slice => slice.key === bounded.key)?.work?.allocations).toHaveLength(1_000);
-    // A caller-driven narrower read near the actual budget retains every row;
-    // an arbitrary Session/row cap would incorrectly truncate this control.
-    const selected = contributions.slice(0, 698); // Measured near-envelope valid fixture; 700 occupies 24,066,346 bytes.
+    const selected = contributions.slice(0, 500);
     const near = normalizeUsageQuery({ ...heavy, session: selected.map(row => row.sessionId) });
     admitted = resolveUsagePageAggregation({ queries: [near], accounting: [{ query: near, status: 'available',
       value: { ...accounting, contributions: selected } }], work: [{ query: near, status: 'available', evidence }] });
     const nearBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(admitted);
-    expect(nearBytes).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES * 0.9);
-    expect(nearBytes).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    // Doubling the real contributions adds at most another half-sized slice.
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich)).toBeLessThan(nearBytes * 2 +
+      measureExternalActionResultResponseEnvelopeUtf8BytesV1({ v: 1, results: [rich.results[1]] }));
     const recovered = await executor.execute('usage.query', { queries: [near] }, { surface: 'cli' });
     expect(recovered.ok).toBe(true);
     if (!recovered.ok) throw new Error('Expected caller-selected evidence');
@@ -85,6 +83,23 @@ describe('personal usage Action execution', () => {
     expect(recoveredSlice.work?.allocations).toHaveLength(selected.length);
     expect(recoveredSlice).not.toHaveProperty('incomplete');
     expect(reads).toBe(2);
+    // A real envelope-sized collection still retains bounded Work/session facts.
+    const copies = Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES /
+      measureExternalActionResultResponseEnvelopeUtf8BytesV1({ v: rich.v, results: [rich.results[0]] })) + 1;
+    const wideQueries = Array.from({ length: copies }, (_, index) => normalizeUsageQuery({ ...heavy,
+      period: { startMs: 100, endMs: 200 + index } }));
+    const wide = resolveUsagePageAggregation({ queries: wideQueries,
+      accounting: wideQueries.map(query => ({ query, status: 'available' as const, value: { ...accounting, contributions } })),
+      work: wideQueries.map(query => ({ query, status: 'available' as const, evidence })),
+    });
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(wide)).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const wideDelivery = usageDelivery.projectUsageQueryDelivery(wide);
+    expect(wideDelivery.results.some(slice => slice.incomplete?.omittedSections.includes('work'))).toBe(true);
+    expect(UsageQueryBatchResultSchema.safeParse(wideDelivery).success).toBe(true);
+    for (const slice of wideDelivery.results) {
+      expect(slice.workSummary).toMatchObject({ sessionCount: 1_000, contributionCount: 1_000, allocatedContributionCount: 1_000 });
+      expect(slice.accounting?.totals).toEqual(accounting.totals);
+    }
     console.info('[PERF usage delivery]', JSON.stringify({ section: 'work',
       richBytes: measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich),
       deliveredBytes: measureExternalActionResultResponseEnvelopeUtf8BytesV1(result.result), nearBytes, nearRows: selected.length }));
