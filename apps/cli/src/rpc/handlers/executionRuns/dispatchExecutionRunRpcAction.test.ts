@@ -698,14 +698,18 @@ describe('createExecutionRunRpcActionExecutor', () => {
       runClass: 'long_lived',
       ioMode: 'streaming',
     };
+    const launchOrigin = { kind: 'discussion' as const, serverId: 'server-1', discussionId: 'discussion-1',
+      messageIds: ['message-1'], draftCorrelationId: 'draft-1' };
     const result = await executor.execute(actionId,
       actionId === 'execution.run.start' ? input : { sessionId: 'sess_1', start: input }, {
       ...APPROVED_INTERNAL_RUNTIME_ACTION_CONTEXT,
       actionCaller,
+      sessionInputSource: launchOrigin,
       agentStartContext: { ...CURRENT_SESSION_AGENT_START_CONTEXT,
         caller: { kind: 'originless', runId: actionCaller.runId, runDepth: 0, runOriginSessionId: 'sess_1' } },
       actionRequestId: 'workflow-input-v2:stable:execution-run-start',
     });
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ launchOrigin }));
     expect(result).toMatchObject({
       ok: true,
       result: {

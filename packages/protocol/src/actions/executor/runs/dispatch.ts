@@ -377,11 +377,22 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
             ? bindAgentExistingExecutionRunAuthority(ctx, opts)
             : { ok: true as const, opts };
           if (!existingAuthority.ok) return existingAuthority.error;
-          const capability = await checkDetachedExecutionRunProtocolV2(deps, sessionId, existingAuthority.opts, { startAndWait: false });
-          if (!capability.ok) return capability;
           let start = data.start ? withoutExecutionRunScope(data.start) : undefined;
-          let dispatchOpts = capability.opts;
+          let dispatchOpts = existingAuthority.opts;
           if (start) {
+            const exactInputResults = start.localInputId !== undefined || start.resultContract !== undefined;
+            const runScopedAgentBindings = start.roleId !== undefined || start.launchProfileId !== undefined
+              || start.teamCredentialModel !== undefined || (start.intent === 'agent' && (
+                start.cwd !== undefined || start.capabilitySelection !== undefined || start.modelId !== undefined
+                || start.modelSelection !== undefined || start.sessionConfigOptionOverrides !== undefined
+                || start.connectedServices !== undefined));
+            const secretReferenceOverlay = start.secretReferenceOverlay !== undefined;
+            const capability = await checkDetachedExecutionRunProtocolV2(deps, sessionId, dispatchOpts, {
+              startAndWait: false, exactInputResults, runScopedAgentBindings, secretReferenceOverlay,
+            });
+            if (!capability.ok) return capability;
+            dispatchOpts = capability.opts;
+            start = { ...start, launchOrigin: resolveExecutionRunLaunchOrigin(ctx) };
             const executionRunPermission = resolveAgentExecutionRunPermission(
               ctx,
               start.permissionMode,
@@ -403,6 +414,9 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
                 causalPermissionAuthority: executionRunPermission.causalPermissionAuthority,
               };
             }
+            if (ctx.agentStartWorkDepth !== undefined) dispatchOpts = { ...dispatchOpts,
+              workDepth: ctx.agentStartWorkDepth, agentStartContext: ctx.agentStartContext,
+              workspaceWrites: ctx.agentStartWorkspaceWrites, sessionAgentSpawnPolicyV1: ctx.sessionAgentSpawnPolicyV1 };
           }
           const res = await deps.executionRunEnsureOrStart(sessionId, {
             ...(data.runId ? { runId: data.runId } : {}),
