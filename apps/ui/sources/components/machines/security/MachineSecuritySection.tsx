@@ -16,7 +16,10 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import {
+  describeActionExecutionPrerequisite,
+  resolveActionExecutionErrorMessage,
+} from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { UpdateRow } from '@/components/updates/UpdateRow';
 import type { UpdateItem } from '@/updates/items/updateItem';
 import { useUpdatesContentModel } from '@/updates/useUpdatesContentModel';
@@ -512,7 +515,7 @@ function RestartRow(
           testID="machine-security-restart"
           icon={restartIcon}
           title={t(`${s}.restartFailed`, { machine })}
-          subtitle={t(`${s}.restartFailedReason`)}
+          subtitle={resolveActionExecutionErrorMessage({ code: reboot.code }, t(`${s}.restartFailedReason`))}
           showChevron={false}
           rightElement={restartButton}
           accessoryLayout="adaptive"

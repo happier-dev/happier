@@ -110,6 +110,7 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'profile_unavailable') return t('browserShell.profile.management.profileUnavailable');
     if (code === 'profile_purge_failed') return t('browserShell.profile.management.profilePurgeFailed');
     if (code === 'managed_browser_required') return t('browserShell.profile.management.managedBrowserRequired');
+    if (code === 'project_workspace_unavailable') return t('terminalEmbedded.errors.projectWorkspaceUnavailable');
     const nativeFailure = describeMachineNativeFailureCode(code);
     if (nativeFailure) {
         const details = asRecord(record.details);

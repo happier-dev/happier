@@ -208,6 +208,16 @@ describe('Machine → Security page', () => {
     expect(row(screen, 'machine-security-restart')?.props.subtitle).toBe(t('machineDetailPage.security.restartNoInstallation'));
     expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-security-restart-start' })?.props.disabled).toBe(true);
   });
+  it('preserves the typed restart failure reason in the Security row', async () => {
+    const screen = await render(
+      model({ status: 'drifted', pendingSecurity: 1, pendingAll: 1, rebootNeeded: true }),
+      true,
+      controls({ reboot: { kind: 'failed', code: 'project_workspace_unavailable' } }),
+    );
+    expect(row(screen, 'machine-security-restart')?.props.subtitle).toBe(
+      t('terminalEmbedded.errors.projectWorkspaceUnavailable'),
+    );
+  });
   it('shows a Use grantee the updates read-only: no Install, no Restart, and why instead of a check failure', async () => {
     const failure = { ok: false as const, errorCode: 'action_forbidden', error: 'forbidden' };
     const none = await render(model(null, { read: { kind: 'failed', failure }, failure }), true, controls(), false);
