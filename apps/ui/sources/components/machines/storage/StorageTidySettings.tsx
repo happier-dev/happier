@@ -228,7 +228,8 @@ function DaysRow(props: Readonly<{
     return (
         <Item testID={props.testID} title={props.title} subtitle={props.failed ? t('machineStorage.tidy.saveFailed') : props.subtitle}
             subtitleStyle={props.failed ? { color: theme.colors.state.danger.textForeground } : undefined}
-            mode="info" showDivider={props.showDivider}
+            // A select follows the shared row rule: beside its label on a wide row, beneath it on a phone.
+            mode="info" showDivider={props.showDivider} accessoryLayout="adaptive"
             rightElement={
                 <PolicyValueSelect testID={`${props.testID}-select`} label={props.label}
                     value={days === null ? (props.foreverLabel ?? '') : props.format(days)} choices={choices}
