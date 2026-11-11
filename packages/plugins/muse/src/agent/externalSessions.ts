@@ -53,11 +53,17 @@ function nativeErrorKind(error: unknown): string | undefined {
   return data !== null && typeof data === 'object' && 'kind' in data && typeof data.kind === 'string' ? data.kind : undefined;
 }
 
-function failed(error: unknown): AgentExternalSessionsResult<never> {
+export function mapMuseExternalHistoryError(error: unknown): AgentExternalSessionsResult<never> {
   const kind = nativeErrorKind(error);
   if (kind === 'sessionNotFound' || kind === 'notFound') return { ok: false, code: 'candidate_not_found' };
   if (kind === 'invalidParams') return { ok: false, code: 'invalid_request' };
+  if (kind === 'agent_unavailable') return { ok: false, code: 'agent_unavailable',
+    ...(error instanceof Error && error.message ? { message: error.message } : {}), retryable: true };
   return { ok: false, code: 'source_unreachable', retryable: true };
+}
+
+function failed(error: unknown): AgentExternalSessionsResult<never> {
+  return mapMuseExternalHistoryError(error);
 }
 
 function bounded<T>(value: T, request: AgentExternalSessionsInvocation): AgentExternalSessionsResult<T> {

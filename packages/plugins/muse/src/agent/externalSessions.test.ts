@@ -21,12 +21,22 @@ import { resolveExternalSessionSourceSurface } from '@/session/actions/externalS
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createMuseMspProcessFixture, readMuseMspProcessAudit } from './testkit/mspProcess.js';
 import { readMuseRecord } from './events.js';
+import { mapMuseExternalHistoryError } from './externalSessions.js';
 
 function value<T>(result: AgentExternalSessionsResult<T>): T {
   expect(result.ok ? null : result).toBeNull();
   if (!result.ok) throw new Error(`Native external history refused: ${result.code}`);
   return result.value;
 }
+
+it('retains the native agent_unavailable boundary for external history', () => {
+  const error = Object.assign(new Error('external_session_agent_unavailable'), {
+    name: 'JsonRpcApplicationError',
+    data: { kind: 'agent_unavailable' },
+  });
+  expect(mapMuseExternalHistoryError(error)).toEqual({ ok: false,
+    code: 'agent_unavailable', message: 'external_session_agent_unavailable', retryable: true });
+});
 
 it('discovers, links and pages native history through all six admitted callbacks without attaching a conversation', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'happier-muse-external-'));
