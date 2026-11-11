@@ -1408,8 +1408,8 @@ async function executeClientContributedAction(
                 if ('errorCode' in admitted) return clientActionFailure(admitted.errorCode);
                 environmentAdmission = admitted;
             } finally { account.dispose(); }
-        } catch {
-            return clientActionFailure('deployment_unavailable');
+        } catch (error) {
+            return clientActionPreparationFailure(error);
         }
     }
     // Browser Account Actions prefer an own Machine through the incumbent relay;

@@ -2312,6 +2312,32 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { storage.setState(previous); await activation.composition.unload(); accountLifetime.retire(); }
     });
 
+    it('reports signed-out Account admission instead of an unavailable deployment for an Environment-scoped Account Action', async () => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const home = rpcHomes.get('server-client-action')!;
+        const accountLifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
+        const handler = vi.fn(async () => ({ published: true }));
+        const activation = createClientActionActivation({ pluginId: 'acme.releases', localId: 'publish',
+            approvalScope: 'environment', dangerLevel: 'writesRemote', accountLifetime,
+            accountPlacement: true, handler, accountHandler: handler, inputSchema: {
+                type: 'object', properties: { serverId: { type: 'string' }, environmentId: { type: 'string' } },
+                required: ['serverId', 'environmentId'], additionalProperties: false,
+            } });
+        await activation.composition.reconcile([activation.activation]);
+        // Persistent credential storage is the system boundary. Account capture,
+        // Environment admission and the dispatcher remain real.
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null);
+        try {
+            const result = await dispatchPluginSurfaceAction({ action: { pluginId: 'acme.releases', localId: 'publish' },
+                input: { serverId: home.id, environmentId: 'preview-child' }, clientAction: {},
+                pluginUiProjection: activation.projection,
+                resolveContributedAction: resolveExactClientAction(activation.action),
+            });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, reason: 'action_home_signed_out' });
+            expect(handler).not.toHaveBeenCalled();
+        } finally { credentials.mockRestore(); await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
     it('retains the Account refusal proof through the HTTP carrier and client invocation', async () => {
         const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
         const { createPluginSurfaceActionFailureError, projectClientActionInvocationFailure } = await import('./actionFailure');
