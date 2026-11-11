@@ -1137,6 +1137,26 @@ export async function buildAtmosphereRenderers({ web = true } = {}) {
   assert.equal(readFileSync(output, 'utf8'), 'web=false');
 });
 
+// Measured 2026-11-11 (controller, n2): the generator bundles one file in about
+// 0.1 s at about 53 MB peak RSS. The 12 GiB 'source-bundle' floor queued every
+// worker UI source test behind whole-host reservations before its payload.
+test('UI atmosphere core preparation reserves the source-asset floor, not a source bundle', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-ui-atmosphere-floor-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
+  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const observed = fixture.path('atmosphere-floor.json');
+  mkdirSync(join(generator, '..'), { recursive: true });
+  writeFileSync(generator, `import { writeFileSync } from 'node:fs';
+export async function buildAtmosphereRenderers() {
+  writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ floorKiB: Number(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB) }));
+}
+`);
+  await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'apps/ui',
+    validationKind: 'source-test', env: native.env });
+  assert.deepEqual(JSON.parse(readFileSync(observed, 'utf8')), { floorKiB: 1024 * 1024 });
+  await assertNativeAdmissionIdle(native);
+});
+
 test('source-test readers leave cold, current and stale outputs to their producers', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-source-preparation-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, root);

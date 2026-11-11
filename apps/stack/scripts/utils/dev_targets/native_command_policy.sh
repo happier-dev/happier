@@ -15,6 +15,7 @@ heavyweight_cpu_cores() {
     entry-loads) heavyweight_cpu_cost=$2 ;;
     native-source-test) heavyweight_cpu_cost=1 ;;
     native-custody) heavyweight_cpu_cost=1 ;;
+    source-asset) heavyweight_cpu_cost=1 ;;
     source-bundle) heavyweight_cpu_cost=$2 ;;
     source-web-export) heavyweight_cpu_cost=${3:-$2} ;;
     dependency-install) heavyweight_cpu_cost=$2 ;;
@@ -65,6 +66,7 @@ heavyweight_memory_floor_kib() {
     entry-loads) heavyweight_policy_floor='3145728' ;;
     native-source-test) heavyweight_policy_floor='1048576' ;;
     native-custody) heavyweight_policy_floor='1048576' ;;
+    source-asset) heavyweight_policy_floor='1048576' ;;
     source-bundle) heavyweight_policy_floor='12582912' ;;
     source-web-export) heavyweight_policy_floor='33554432' ;;
     dependency-install) heavyweight_policy_floor='3145728' ;;
@@ -550,6 +552,9 @@ native_command_policy_finish() {
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'source-bundle' ]; }; then
     policy_heavyClass='source-bundle'
+  fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'source-asset' ]; }; then
+    policy_heavyClass='source-asset'
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'source-web-export' ]; }; then
     policy_heavyClass='source-web-export'

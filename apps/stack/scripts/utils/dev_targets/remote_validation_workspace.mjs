@@ -52,12 +52,12 @@ async function prepareTypecheckBatch({ repoDir, componentRelativeDirs, batchRead
 async function prepareUiAtmosphereCore(repoDir, env, signal) {
   const generator = resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
   if (!existsSync(generator)) return;
-  // Source bundling uses the existing source-build envelope, independently of
-  // the later validation reader. The child inherits admission's thread budget.
+  // Measured 2026-11-11: one esbuild bundle, ~0.1 s at ~53 MB peak RSS, so it
+  // uses the 1 GiB 'source-asset' class rather than the server source-bundle floor.
   const result = await runWorkspaceBuildAdmission({ command: process.execPath,
     args: ['--input-type=module', '--eval',
       `import { buildAtmosphereRenderers } from ${JSON.stringify(pathToFileURL(generator).href)}; await buildAtmosphereRenderers({ web: false });`],
-    cwd: repoDir, env, signal, admissionClass: 'source-bundle', stdio: 'inherit' });
+    cwd: repoDir, env, signal, admissionClass: 'source-asset', stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0 || result.signal) {
     throw Object.assign(new Error('UI source compilation failed'), { exitCode: result.status, signal: result.signal });

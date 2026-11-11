@@ -44,6 +44,10 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // a blanket margin. Samples are not a certified maximum or cross-platform
   // calibration. Go still checks source.
   'native-custody': { memoryKiB: 1 * 1024 * 1024, cpuCores: 1, diskClass: 'package-dist' },
+  // UI source assets (the atmosphere worklet core): one esbuild bundle measured
+  // 2026-11-11 on the controller at ~53 MB peak RSS in ~0.1 s (n2). Round to
+  // 1 GiB like native-custody; one core.
+  'source-asset': { memoryKiB: 1 * 1024 * 1024, cpuCores: 1, diskClass: 'package-dist' },
   // Successful isolated Linux x64 server source bundle, 2026-11-08:
   // sampled tree RSS 11,856,864 KiB, rounded up without a blanket margin.
   // admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
