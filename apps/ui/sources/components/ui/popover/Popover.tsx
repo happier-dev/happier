@@ -1262,7 +1262,16 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
             // Treat the on-screen keyboard, or the floating bottom chrome it rises over, as reducing the usable
             // bottom viewport. Without this, `placement="auto"` can flip a menu into the covered region, making
             // it look like the popover disappeared, and a tall panel runs under the tab bar.
-            const bottomOcclusion = Math.max(keyboardHeight, bottomChromeClearance);
+            // A popover opened from inside that chrome (the docked composer's chips) is not bounded by it: the
+            // chrome stops at its anchor's own bottom edge, so the box ends where its room was measured to (native QA:
+            // a top-placed engine picker was otherwise pinned 101 pt above its chip, into the status bar). An anchor
+            // the keyboard covers still keeps the keyboard's bound.
+            const boundaryBottom = boundaryRectBase.y + boundaryRectBase.height;
+            const anchorBottom = anchorRect.y + anchorRect.height;
+            const chromeOcclusion = anchorBottom > boundaryBottom - bottomChromeClearance
+                ? Math.max(0, boundaryBottom - anchorBottom)
+                : bottomChromeClearance;
+            const bottomOcclusion = Math.max(keyboardHeight, chromeOcclusion);
             const unoccludedBoundary: WindowRect = {
                 ...boundaryRectBase,
                 height: Math.max(0, boundaryRectBase.height - bottomOcclusion),

@@ -394,6 +394,46 @@ describe('Popover (native keyboard)', () => {
         },
     );
 
+    // Native QA (mac-outer, iPhone 17 Pro): the docked composer floats inside the bottom chrome, so its engine picker's
+    // room ran to the chip (578 pt) while the box's bottom was pinned to the chrome's top edge 101 pt higher, carrying
+    // the picker under the status bar. A popover opened from inside the bottom chrome ends at its own anchor.
+    it('ends a top-placed popover at its anchor when the anchor stands inside the floating bottom chrome', async () => {
+        vi.useFakeTimers();
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+        const { SessionCockpitBottomChromeHeightContext } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+        const portalRootNode = { measureInWindow: (cb: any) => cb(0, 0, 402, 874) } as any;
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(58, 710, 108, 32),
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(58, 710, 108, 32),
+        } as any;
+        const portalTarget = { rootRef: { current: portalRootNode }, layout: { width: 402, height: 874 } } as const;
+        let latestRenderProps: { placement?: string; maxHeight?: number } = {};
+        const screen = await renderScreen(
+            <SessionCockpitBottomChromeHeightContext.Provider value={257}>
+                <PopoverPortalTargetContextProvider value={portalTarget}>
+                    <OverlayPortalProvider>
+                        <Popover open anchorRef={{ current: anchorNode } as any} boundaryRef={null} portal={{ native: true }}
+                            placement="top" gap={8} maxHeightCap={874} onRequestClose={() => {}}>
+                            {(renderProps) => {
+                                latestRenderProps = renderProps;
+                                return React.createElement('PopoverChild');
+                            }}
+                        </Popover>
+                        <OverlayPortalHost />
+                    </OverlayPortalProvider>
+                </PopoverPortalTargetContextProvider>
+            </SessionCockpitBottomChromeHeightContext.Provider>,
+        );
+        await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+        expect(latestRenderProps.placement).toBe('top');
+        const style = flattenStyle(findPopoverContentView(screen)?.props?.style);
+        // The box's bottom edge stands the gap above the chip, where its room was measured to.
+        expect(874 - readStyleNumber(style, 'bottom') - readStyleNumber(style, 'paddingBottom')).toBe(710 - 8);
+        vi.useRealTimers();
+    });
+
     it('pins top placement to the keyboard-safe boundary when the anchor is under the keyboard', async () => {
         vi.useFakeTimers();
 
