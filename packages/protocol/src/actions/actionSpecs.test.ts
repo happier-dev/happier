@@ -801,6 +801,7 @@ describe('Action Spec Registry', () => {
       expect(getActionSpec(actionId).originalExecution?.daemonIngressSurfaces, actionId).toEqual(['cli', 'ui']);
     }
     expect(getActionSpec('machines.services.exec').originalExecution?.daemonIngressSurfaces).toEqual(['ui']);
+    expect(getActionSpec('localServices.actions.restartManaged').originalExecution?.daemonIngressSurfaces).toEqual(['ui']);
     const terminal = getActionSpec('machines.terminal.list');
     expect(terminal.originalExecution?.daemonIngressSurfaces).toEqual(['cli']);
     const neighbor = getActionSpec('machines.storage.summary.get');
