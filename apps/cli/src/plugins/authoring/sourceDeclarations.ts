@@ -51,14 +51,24 @@ export async function emitSourceAuthorDeclarations(
       });
       await rename(join(compilerInputs, 'src'), join(workingDirectory, 'src'));
       await writeFile(join(workingDirectory, 'package.json'), manifestSource);
+      // Ambient packages must be visible beside src, just like runtime
+      // dependencies. A nested typeRoots lookup makes inferred JSX types name
+      // the capture directory rather than the public react/jsx-runtime module.
+      const capturedModules = join(compilerInputs, 'node_modules');
+      if (existsSync(capturedModules)) {
+        await rename(capturedModules, join(workingDirectory, 'node_modules'));
+      }
       for (const [packageName, dependencyRoot] of dependencies) {
         const destination = join(workingDirectory, 'node_modules', packageName);
+        // The capture already owns ambient dependencies such as @types/node.
+        if (existsSync(destination)) continue;
         await mkdir(dirname(destination), { recursive: true });
         await symlink(dependencyRoot, destination, process.platform === 'win32' ? 'junction' : 'dir');
       }
       const compilerProject = join(compilerInputs, 'tsconfig.json');
       const project: { compilerOptions: Record<string, unknown> } = JSON.parse(await readFile(projectPath, 'utf8'));
       project.compilerOptions.outDir = join(packageRoot, 'dist');
+      project.compilerOptions.typeRoots = ['../../node_modules/@types'];
       await writeFile(compilerProject, JSON.stringify(project));
       await compile(compilerProject, workingDirectory);
     } finally {
