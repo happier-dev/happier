@@ -347,10 +347,14 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         return admitted ? { ...admitted, role: native.admittedMachineRole ?? admitted.role }
             : { kind: 'denied', code: 'machine_unavailable' };
     }
-    if (native && (input.capturedMachineAdmission || readAdmittedDeploymentNativePrincipal(native) || readAdmittedTemplateExecutionPrincipal(native)) && input.actionId === native.actionId
+    if (native && (input.capturedMachineAdmission || readAdmittedDeploymentNativePrincipal(native) || readAdmittedTemplateExecutionPrincipal(native)
+        || native.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && native.workflowActionOrigin !== undefined
+            && native.admittedMachineRole === 'manage' && native.deploymentPreparationAdmission?.operation === 'setup'
+            && native.deploymentPreparationAdmission.machineTargets?.includes(native.machineId)) && input.actionId === native.actionId
         && input.actorAccountId === native.accountId && input.machineId === native.machineId) {
         const admitted = await readAdmittedExternalActionMachineInTx(reader, native, native.machineId, native.installationId, input.capturedMachineAdmission);
-        return admitted ?? { kind: 'denied', code: 'machine_unavailable' };
+        return admitted ? { ...admitted, role: native.admittedMachineRole ?? admitted.role }
+            : { kind: 'denied', code: 'machine_unavailable' };
     }
     // Exact native binding admission is mandatory even for a controller manager.
     if (input.actionId === 'machines.managed.credentials.install') return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
@@ -473,6 +477,8 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
     publisherCustodianAccountId: string;
     publisherMachineId: string;
     publisherInstallationId: string;
+    target?: ExternalActionTargetV1;
+    preparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
 }>): Promise<WorkflowExternalActionAdmission | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorization.token);
     if (!binding || !matchesExternalActionAuthorizationBinding(binding, input.authorization.binding)
@@ -486,9 +492,28 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         || (input.origin.reviewedChild?.actionId ?? binding.actionId) !== MACHINE_SETUP_APPLY_ACTION_ID_V1
         || deriveMachineSetupCombinedRunIdV1({ homeId: binding.serverIdentityId, accountId: binding.accountId,
             requestId: binding.requestId, reviewedChild: input.origin.reviewedChild }) !== input.origin.runId) return null;
-    const captured = projectAcceptedDeploymentPrincipal(binding);
-    const principal = captured && projectExternalActionBoundPrincipal({ ...binding, workflowActionOrigin: input.origin }, captured);
-    return principal ? { binding: { ...binding, admittedMachineRole: binding.admittedMachineRole }, principal } : null;
+    const scope = binding.deploymentPreparationAdmission;
+    const child = input.preparationAdmission;
+    const target = input.target ?? binding.target;
+    // Every child operand spends a reviewed parent fact, never new permission.
+    if (target.kind !== 'machine' || scope?.operation !== 'setup' || child?.operation !== 'setup'
+        || !child.machineTargets?.includes(target.machineId)
+        || !child.machineTargets.every(machineId => scope.machineTargets?.includes(machineId))
+        || !child.deployments.every(selected => scope.deployments.some(admitted => sameManagedInput(admitted, selected)))
+        || !(child.catalogSources ?? []).every(selected => (scope.catalogSources ?? []).some(admitted => sameManagedInput(admitted, selected)))
+        || !(child.connectorGrants ?? []).every(selected => (scope.connectorGrants ?? []).some(admitted => sameManagedInput(admitted, selected)))) return null;
+    let receiverBinding = { ...binding, deploymentPreparationAdmission: child };
+    if (target.machineId !== binding.machineId) {
+        // The root admitted all selected Machines before any child effects.
+        // Select this receiver's installation without evaluating its grants again.
+        const admitted = await readAdmittedExternalActionMachineInTx(db, binding, target.machineId, undefined);
+        if (!admitted) return null;
+        receiverBinding = { ...receiverBinding, target, machineId: admitted.machineId,
+            installationId: admitted.installationId, custodianAccountId: admitted.custodianAccountId };
+    }
+    const captured = projectAcceptedDeploymentPrincipal(receiverBinding);
+    const principal = captured && projectExternalActionBoundPrincipal({ ...receiverBinding, workflowActionOrigin: input.origin }, captured);
+    return principal ? { binding: { ...receiverBinding, admittedMachineRole: binding.admittedMachineRole }, principal } : null;
 }
 
 /** Only a Home-verified native member root may spend its captured finite admission. */
@@ -708,7 +733,7 @@ export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, inp
         // The installed FIN producer already admitted the exact leaf/Session.
         // Home cannot open that E2EE binding; later effects only read Run liveness.
         return await reader.automationRun.findFirst({ where: { id: origin.runId, accountId: input.accountId,
-            claimedByMachineId: input.publisherMachineId ?? input.machineId,
+            claimedByMachineId: input.publisherMachineId ?? (origin.sessionLeaf ? input.machineId : { not: null }),
             workflowAcceptedSnapshotEnvelope: { not: null }, workflowCustodyState: 'pending',
             state: { in: ['claimed', 'running'] } }, select: { id: true } }) !== null;
     }
@@ -1754,20 +1779,24 @@ function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string
         && proof.path === '/v1/account/encryption/currentness';
 }
 
-/** A reviewed Setup spends its root only at the original Home and Machine. */
-function isReviewedMachineSetupHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
-    proof: ExternalActionExecutionRequestProof): boolean {
-    if (isMachineSetupCombinedRunHttpPurpose(verified, proof)) return true;
+/** A reviewed Setup spends its root at its original Home and admitted Machines. */
+function readReviewedMachineSetupHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): Readonly<{ machineId?: string }> | null {
+    if (isMachineSetupCombinedRunHttpPurpose(verified, proof)) return {};
     if (proof.method.toUpperCase() === 'GET' && proof.body === undefined) {
-        return isAccountEncryptionCurrentnessHttpRead(proof)
-            || proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`;
+        if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
+        const scope = verified.binding.deploymentPreparationAdmission;
+        const machineId = proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`
+            ? verified.binding.machineId : scope?.operation === 'setup' ? scope.machineTargets?.find(machineId =>
+                proof.path === `/v1/machines/${encodeURIComponent(machineId)}`) : undefined;
+        return machineId ? { machineId } : null;
     }
-    if (proof.method.toUpperCase() !== 'POST') return false;
+    if (proof.method.toUpperCase() !== 'POST') return null;
     const input = proof.path === '/v1/machines/setup/resolve' ? MachineSetupResolveInputV1Schema.safeParse(proof.body)
         : verified.effectActionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
             && proof.path === '/v1/machines/setup/report' ? MachineSetupReportInputV1Schema.safeParse(proof.body) : null;
     return input?.success === true && input.data.homeId === verified.binding.serverIdentityId
-        && input.data.machineId === verified.binding.machineId;
+        && input.data.machineId === verified.binding.machineId ? {} : null;
 }
 
 /** Canonical Artifact detail/header reads retain the Artifact owner's per-record access checks. */
@@ -3281,6 +3310,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && verified.reviewedChildAdmission?.actionId === verified.effectActionId;
     let managedGuestActivity: VerifiedExternalActionExecutionRequest['managedGuestActivity'];
     let deploymentChildMachineRead: DeploymentChildMachineRead | undefined;
+    let setupMachineReadId: string | undefined;
     let deploymentChildArtifactRead: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
     let registryAppUpdateRead: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'];
     let backupHttpPurpose: DeploymentBackupHttpPurpose | undefined;
@@ -3316,7 +3346,9 @@ export async function verifyExternalActionDomainExecutionRequest(
             { authenticationAuthority: verified.effectiveAuthority, authenticationEvidence: verified.principal.authenticationEvidence },
             isReadOnlyArtifactHttpPurpose, undefined, verified.setupReceiverMachineId)) return refuseExternalActionExecutionRequest('deployment_setup_receiver_purpose', proof);
     } else if (reviewedMachineSetupChild) {
-        if (!isReviewedMachineSetupHttpPurpose(verified, proof)) return null;
+        const purpose = readReviewedMachineSetupHttpPurpose(verified, proof);
+        if (!purpose) return null;
+        setupMachineReadId = purpose.machineId;
     } else if (verified.signedChildPurpose.reviewedSessionAgentReadinessChild) {
         // These finite children need the existing requester Machine codec only.
         // Installation permission is consumed at the install RPC admission.
@@ -3557,9 +3589,11 @@ export async function verifyExternalActionDomainExecutionRequest(
             && ['/v1/machines/setup/resolve', '/v1/machines/setup/report'].includes(path)
             || managedRoot.data === 'machines.setup.plan' && verified.binding.managedContinuation
                 && path === '/v1/machines/setup/resolve');
-        // Combined setup reads its host and requester Account codec even when
-        // there are no app children and thus no app-preparation admission.
-        const setupWorkflowPurpose = isMachineSetupCombinedRunHttpPurpose(verified, proof);
+        // Combined Setup uses one finite purpose for Run storage and selected
+        // receiver installation publications, including plans without apps.
+        const setupWorkflowPurpose = managedRoot.data === MACHINE_SETUP_APPLY_ACTION_ID_V1
+            ? readReviewedMachineSetupHttpPurpose(verified, proof) : null;
+        setupMachineReadId = setupWorkflowPurpose?.machineId;
         const setupHostReviewPurpose = (method === 'GET' && proof.body === undefined && path === '/v1/machines'
             || isAccountEncryptionCurrentnessHttpRead(proof))
             && (managedRoot.data === 'machines.setup.plan' || managedRoot.data === 'machines.setup.apply')
@@ -3755,6 +3789,15 @@ export async function verifyExternalActionDomainExecutionRequest(
         // confer the human authority required by the actual mutation route.
         surface: isDiscussionActionHttpPreparation(verified, proof)
             ? readExternalActionSessionProposalSurface(verified.binding) : undefined }).ok) return null;
+    if (setupMachineReadId) {
+        const admitted = await readAdmittedExternalActionMachineInTx(db, verified.binding, setupMachineReadId,
+            setupMachineReadId === verified.binding.machineId ? verified.binding.installationId : undefined);
+        if (!admitted) return refuseExternalActionExecutionRequest('deployment_child_machine_read', proof);
+        const { kind: _kind, ...codecAdmission } = admitted;
+        deploymentChildMachineRead = { machineId: admitted.machineId, installationId: admitted.installationId,
+            actorAccountId: admitted.actorAccountId,
+            codecAdmission: { ...codecAdmission, role: verified.binding.admittedMachineRole ?? admitted.role } };
+    }
     const { signedChildPurpose: _signedChildPurpose, ...publicVerified } = verified;
     const result = { ...publicVerified, ...(deploymentChildMachineRead ? { deploymentChildMachineRead } : {}),
         ...(registryAppUpdateRead ? { registryAppUpdateRead } : {}),

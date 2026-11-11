@@ -5176,23 +5176,24 @@ inventory, Prepare's exact workspace row, and their Account codec reads. It
 does not grant Source or Artifact mutation, a private census, native I/O or Run
 storage authority; subsequent effects retain their own approved operation owner.
 
-In 0.3 development source, combined `machines.setup.plan` and
-`machines.setup.apply` reuse this carrier only when their reviewed app children
-include an existing-Environment deployment. The optional `setup` arm projects
-each exact target Machine, Environment and runtime-link revision, plus the
-prepared candidate Artifact reference and CAS. Home rechecks current requester
-Manage access and the runtime member's installation before admitting selected
-Environment metadata, its current content Artifact or that exact candidate.
-The receiver compares the projection with opened input; Compose content stays
-in the Account-mode envelope. No-app setup needs no preparation carrier, and
-these reads grant no deployment mutation or Run storage authority.
+In 0.3 development source, `machines.setup.apply` uses this carrier to admit
+every selected native Machine before the combined Run starts. Its `setup` arm
+also projects reviewed app references: each exact Environment and runtime-link
+revision, prepared candidate Artifact reference and CAS. Setup Plan carries
+only its reviewed app references. Home checks requester Manage access once at
+root admission. The receiver compares the projection with opened input; Compose
+content stays in the Account-mode envelope. Preparation reads grant no
+deployment mutation or Run storage authority.
 
 Ordinary public development setup Apply requests, including Docker-only plans
-without app children, retain their requester Account custody independently of
-that optional preparation carrier. An installed Workflow's admitted finite Setup
-leaf instead carries an installation-key sealed fresh invocation codec, without
-the requester Account bearer or key. Both paths preserve the signed parent
-identity rather than substituting the publisher's credential kind.
+without app children, retain their requester Account custody. An installed
+Workflow's admitted finite Setup leaf instead carries a fresh invocation codec sealed to the selected receiver's
+installation key, without the requester Account bearer or key. The publisher
+signs the Workflow origin; Home binds the child to a Machine in the parent's
+admitted target set and its current installation. Every child preparation operand
+must be present in the signed parent scope; minting retains that narrowed scope
+without evaluating requester grants again. Both paths preserve the signed
+parent identity rather than substituting the publisher's credential kind.
 
 The same installation-key encrypted requester box can carry a closed private
 invocation for UI Account-machine Actions: caller provenance and permission/input

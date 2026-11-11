@@ -1721,19 +1721,24 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
   }
   if (!await isCurrent()) return refused('binding', 'active_session_action');
   const binding = minted.authorization.binding;
+  // Workflow requests are signed by their publisher and minted for the selected receiver.
+  const receiverMachineId = input.workflowActionOrigin && input.target.kind === 'machine'
+    ? input.target.machineId : input.machineId;
+  const remoteReceiver = receiverMachineId !== (input.sourceMachineId ?? input.machineId);
   if (binding.accountId !== input.accountId
-    || input.executionAuthorization && binding.custodianAccountId !== input.executionAuthorization.binding.custodianAccountId
+    || input.executionAuthorization && !(input.workflowActionOrigin && remoteReceiver)
+      && binding.custodianAccountId !== input.executionAuthorization.binding.custodianAccountId
     || ('authentication' in requesterIdentity
       ? !('authentication' in binding) || !sameStrictJsonValue(binding.authentication, requesterIdentity.authentication)
       : 'authentication' in binding || binding.principalId !== requesterIdentity.principalId
         || binding.credentialId !== requesterIdentity.credentialId || !sameStrictJsonValue(binding.grant, requesterIdentity.grant))
     || binding.accountEncryptionMode !== input.accountEncryptionMode
     || binding.serverIdentityId !== input.serverIdentityId
-    || (!sessionActionOrigin || input.sourceMachineId === input.machineId) && binding.installationId !== input.installationId
-    || binding.machineId !== input.machineId
+    || !remoteReceiver && binding.installationId !== input.installationId
+    || binding.machineId !== receiverMachineId
     || binding.actionId !== actionId
     || binding.requestId !== input.requestId
-    || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId, machineId: input.machineId, envelope })
+    || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId, machineId: receiverMachineId, envelope })
     || !sameStrictJsonValue(binding.pendingResetStartAdmission, pendingResetStartAdmission)
     || !sameStrictJsonValue(binding.approvalDecisionAdmission, approvalDecisionAdmission)
     || !sameStrictJsonValue(binding.sessionActionOrigin, sessionActionOrigin)
@@ -1743,18 +1748,34 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
     || !externalActionTargetsEqualV1(binding.target, input.target)) return refused('binding', 'home_authorization_binding');
   // The destination daemon owns HTTP effect signatures. A remote source only
   // forwards the same Home proof; it must not impersonate the destination signer.
-  if (sessionActionOrigin && input.sourceMachineId !== input.machineId)
+  if (remoteReceiver && !input.controllerCodecMaterial)
     return { authorization: Object.freeze(minted.authorization), envelope };
   const continuationChecker = input.isContinuationCurrent;
   const continuationCurrent = sessionActionOrigin && continuationChecker
     ? async () => await continuationChecker(minted.authorization)
     : isCurrent;
+  let codecPublicKey: Uint8Array | undefined;
+  if (input.controllerCodecMaterial && remoteReceiver) {
+    const root = input.executionAuthorization;
+    const installed = await readExternalActionInstalledMachineResult({ serverHttpBaseUrl: input.serverHttpBaseUrl,
+      machineId: receiverMachineId,
+      headers: root ? createExternalActionAuthorizedRequestHeaders({ authorization: root,
+        effectActionId: root.binding.actionId, target: root.binding.target,
+        installationId: input.installationId, privateKey: input.privateKey,
+        method: 'GET', path: `/v1/machines/${encodeURIComponent(receiverMachineId)}` })
+        : { Authorization: `Bearer ${input.token}` },
+      ...(input.signal ? { signal: input.signal } : {}) });
+    if (!installed.ok || installed.machine.installationId !== binding.installationId
+      || !installed.machine.installationPublicKey) return refused('binding', 'receiver_installation_key');
+    codecPublicKey = decodeBase64(installed.machine.installationPublicKey);
+  }
   const carried = input.controllerCodecMaterial ? sealManagedControllerActionCodecV1({
     authorization: minted.authorization, material: input.controllerCodecMaterial,
-    installationPublicKey: deriveEd25519KeyPair((typeof input.privateKey === 'string'
+    installationPublicKey: codecPublicKey ?? deriveEd25519KeyPair((typeof input.privateKey === 'string'
       ? decodeBase64(input.privateKey, 'base64url') : input.privateKey).slice(0, ED25519_PUBLIC_KEY_BYTES)).publicKey,
     randomBytes,
   }) : minted.authorization;
+  if (remoteReceiver) return { authorization: Object.freeze(carried), envelope };
   const authorization = await projectExternalActionRequesterHttpAuthorization({
     authorization: carried,
     serverId: input.serverId, serverIdentityId: input.serverIdentityId,

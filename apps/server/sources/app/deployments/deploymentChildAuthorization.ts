@@ -135,7 +135,7 @@ export async function isCurrentDeploymentChildInTx(tx: Tx, binding: ExternalActi
 }
 
 export type DeploymentChildMachineRead = Readonly<{
-    machineId: string; installationId: string; actorAccountId: string; routing: DeploymentChildRoutingV1;
+    machineId: string; installationId: string; actorAccountId: string; routing?: DeploymentChildRoutingV1;
     codecAdmission: SocketRpcMachineAdmissionContextV1;
     archiveOrigin?: DeploymentChildExecutionProofV1['archiveOrigin'];
 }>;

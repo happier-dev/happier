@@ -764,7 +764,10 @@ class AuthModule {
             if (!workspaceSyncAdmission) throw new ApiTokenOperationError('credential_scope_denied');
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, workspaceSyncAdmission });
         };
-        if (isDeploymentPreparationActionIdV1(supplied.actionId) || supplied.deploymentPreparationAdmission !== undefined) {
+        // Installed child scope was narrowed against its signed parent by the
+        // Workflow admission owner; later minting must not admit that work again.
+        if (!context.workflowAdmission
+            && (isDeploymentPreparationActionIdV1(supplied.actionId) || supplied.deploymentPreparationAdmission !== undefined)) {
             const { isDeploymentPreparationAuthorizedInTx } = await import('@/app/deployments/deploymentPreparationAuthorization');
             if (!supplied.deploymentPreparationAdmission || !await isDeploymentPreparationAuthorizedInTx(db, supplied,
                 supplied.deploymentPreparationAdmission, { authenticationAuthority: 'account_automation',

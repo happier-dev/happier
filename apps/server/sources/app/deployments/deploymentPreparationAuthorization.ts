@@ -1158,8 +1158,9 @@ export async function isDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Ext
     if (admission.operation === 'create') return await readCreateSource(tx, binding, admission, authentication) !== null;
     if (admission.operation === 'setup') {
         if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'setup') return false;
-        const receiverMachineIds = [...admission.deployments, ...(admission.catalogSources ?? []),
-            ...(admission.connectorGrants ?? [])].map(selected => selected.machineId);
+        const receiverMachineIds = [...new Set([...(admission.machineTargets ?? []),
+            ...[...admission.deployments, ...(admission.catalogSources ?? []),
+                ...(admission.connectorGrants ?? [])].map(selected => selected.machineId)])];
         if (binding.admittedMachineRole !== undefined && receiverMachineIds.includes(binding.machineId)
             && binding.admittedMachineRole !== 'manage') return false;
         const receivers = await resolveMachineAdmissionsInTx(tx, { actorAccountId: binding.accountId,

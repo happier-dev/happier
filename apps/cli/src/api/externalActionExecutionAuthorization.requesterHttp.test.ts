@@ -111,7 +111,9 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       actionId: 'session.spawn_new', requestId: crypto.randomUUID(), target, admittedMachineRole: 'manage',
       accountEncryptionMode, requestEnvelopeDigest: 'a'.repeat(43),
     } });
-    const childInput = { homeId: 'srv_bob_home', machineId: target.machineId, targets: [] };
+    const childInput = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_bob_home', machineId: target.machineId,
+      targets: [{ homeId: 'srv_bob_home', machineId: target.machineId, desiredRevision: 0, recipePlans: [],
+        sources: [{ kind: 'direct', setup: { items: [] } }] }] });
     const reviewedChild = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
       role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
       inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', childInput) };
@@ -133,6 +135,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
         return { status: 200, data: { v: 1, token: 'scoped-setup-leaf', binding: {
           ...parent.binding, actionId: 'machines.setup.apply', requestId,
           workflowActionOrigin: request.workflowActionOrigin,
+          deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('machines.setup.apply', childInput),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
         } } };
       }
@@ -228,6 +231,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
           : { status: 401, data: { error: 'invalid_token' } };
         return { status: 200, data: { v: 1, token: 'scoped-pat-setup-leaf', binding: {
           ...parent.binding, actionId: 'machines.setup.apply', requestId, workflowActionOrigin: request.workflowActionOrigin,
+          deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('machines.setup.apply', childInput),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
           ...(denial === 'credential_substitution' ? { credentialId: crypto.randomUUID() } : {}),
           ...(denial === 'grant_substitution' ? { grant: API_TOKEN_FULL_GRANT_V1 } : {}),

@@ -94,7 +94,7 @@ export async function dispatchInstalledWorkflowNativeSetupAction(input: Paramete
     || ('authentication' in binding ? binding.accountId : binding.custodianAccountId) !== readAccountIdFromToken(input.credentials.token)
     || binding.machineId !== installed.machineId || binding.installationId !== installed.installationId
     || binding.serverIdentityId !== input.serverIdentityId || !binding.accountEncryptionMode
-    || input.target.kind !== 'machine' || input.target.machineId !== installed.machineId
+    || input.target.kind !== 'machine'
     || context.executionRunWorkflowRunId !== caller.runId || context.actionRequestId !== input.requestId) return refused;
   // This is an invocation key, distinct from the requester's Account machine key.
   const material = { type: 'dataKey' as const, machineKey: new Uint8Array(randomBytes(32)) };
@@ -116,7 +116,7 @@ export async function dispatchInstalledWorkflowNativeSetupAction(input: Paramete
       ...(prepared.failureCause ? { failureCause: prepared.failureCause } : {}) };
   }
   return await deliverExternalActionRequest({ actionId: input.actionId, serverHttpBaseUrl: input.serverHttpBaseUrl,
-    envelope: prepared.envelope, body: { v: 1, machineId: installed.machineId,
+    envelope: prepared.envelope, body: { v: 1, machineId: input.target.machineId,
       envelope: prepared.envelope, executionAuthorization: prepared.authorization },
     headers: { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json',
       [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' }, isCurrent,

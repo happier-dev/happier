@@ -491,7 +491,8 @@ describe('whole external Action encryption', () => {
     const setupBinding = { ...binding, actionId: 'machines.setup.apply' };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: setupBinding, input, material, randomBytes });
-    const admission = { operation: 'setup' as const, deployments: [], connectorGrants: [{ machineId: root.machineId, grantRef }] };
+    const admission = { operation: 'setup' as const, deployments: [], machineTargets: [root.machineId],
+      connectorGrants: [{ machineId: root.machineId, grantRef }] };
     expect(request.deploymentPreparationAdmission).toEqual(admission);
     expect(JSON.stringify(request)).not.toContain('/private/invocation/connector-key');
     expect(JSON.stringify(request)).not.toContain('saved-secret-reference');
@@ -507,7 +508,7 @@ describe('whole external Action encryption', () => {
   });
 
   it.each(['machines.setup.plan', 'machines.setup.apply'] as const)(
-    'binds only the prepared app references of %s without changing ordinary setup admission', actionId => {
+    'binds reviewed app references and Apply Machine targets for %s', actionId => {
       const child = { sourceIndex: 0, itemIndex: 0, actionId: 'deployments.deploy', input: {
         serverId: binding.serverIdentityId, environmentId: 'staging', expectedRevision: 4,
         targetLinkId: 'runtime', expectedTargetLinkRevision: 2, requestKey: 'reviewed-deploy',
@@ -540,7 +541,10 @@ describe('whole external Action encryption', () => {
       expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: missing, binding: setupBinding, material })).toBeNull();
       const plainSetup = { ...root, targets: input.targets.map(({ appChildren: _children, ...target }) => target) };
       const ordinary = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: setupBinding, input: plainSetup, material, randomBytes });
-      expect(ordinary).not.toHaveProperty('deploymentPreparationAdmission');
+      if (actionId === 'machines.setup.apply') expect(ordinary).toMatchObject({ deploymentPreparationAdmission: {
+        operation: 'setup', deployments: [], machineTargets: [root.machineId],
+      } });
+      else expect(ordinary).not.toHaveProperty('deploymentPreparationAdmission');
       expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: ordinary, binding: setupBinding, material })).toEqual({ input: plainSetup });
       expect(isDeploymentPreparationActionIdV1(actionId)).toBe(false);
     });
@@ -569,6 +573,7 @@ describe('whole external Action encryption', () => {
       const setupBinding = { ...binding, actionId };
       const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: setupBinding, input, material, randomBytes });
       const admission = { operation: 'setup', deployments: [],
+        ...(actionId === 'machines.setup.apply' ? { machineTargets: [root.machineId] } : {}),
         catalogSources: [{ machineId: root.machineId, source: { id: 'source' } }] };
       expect(request.deploymentPreparationAdmission).toEqual(admission);
       for (const privateValue of ['Private catalog app title', 'private-runtime-value', 'PRIVATE_VALUE', templateRef.ref.repo]) {

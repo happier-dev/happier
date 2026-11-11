@@ -15,6 +15,16 @@ frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped local
 changes, has no current Usage analytics contract or query-service path. No
 predecessor adapter or capability gate is introduced.
 
+## Combined Machine Setup admission (unreleased 0.3)
+
+The existing Setup preparation admission adds optional `machineTargets` for
+Apply. Matching CLI, Home and protocol source admit all selected native Machines
+before starting the combined Run. Installed Workflow children retain the
+publisher's signed origin, narrow their operands to the signed parent scope,
+and bind delivery and invocation encryption to their selected receiver. This development correction requires the matching source
+components to reload together; it adds no released wire epoch. The retained 0.2
+release at `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Machine Setup contract.
+
 ## Machine Setup connector grant scope (unreleased 0.3)
 
 The existing Setup preparation admission optionally carries `connectorGrants`

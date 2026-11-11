@@ -145,6 +145,8 @@ async function readInstalledWorkflowRequestPrincipal(actionId: string,
         authorization: body.executionAuthorization, origin, publisherAccountId: principal.accountId,
         publisherCustodianAccountId: source.accountId,
         publisherMachineId: body.machineId, publisherInstallationId: source.installationId,
+        target: body.envelope.target,
+        preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
     }) : null;
     const requester = workflowAdmission?.principal ?? (body.executionAuthorization ? null : principal);
     if (!requester || !await hasCurrentExternalActionWorkflowOriginInTx(db, { accountId: requester.accountId, machineId: body.machineId,
@@ -309,8 +311,7 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     // eligibility. Re-enter the existing root through current rows, not another
     // provider HTTP request after the origin's source check.
     const current = await verifyCurrentExternalActionPrincipalInTx(db, root);
-    if (!current || !await hasCurrentExternalActionSessionSource(root, app.resolveCurrentSessionMachine)
-        || !await verifyCurrentExternalActionPrincipalInTx(db, root)) return null;
+    if (!current || !await hasCurrentExternalActionSessionSource(root, app.resolveCurrentSessionMachine)) return null;
     const admission = root.handoffAdmission
         ? await readAdmittedExternalActionHandoffMachineInTx(db, root)
         : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: root.accountId,

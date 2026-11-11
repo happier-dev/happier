@@ -40,7 +40,8 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     environment: z.strictObject({ id, revision }), target: z.strictObject({ id, revision }),
     candidate: DeploymentArtifactContentReferenceV1Schema,
   })), catalogSources: z.optional(z.array(z.strictObject({ machineId: id, source: z.strictObject({ id }) })).check(z.minLength(1))),
-    connectorGrants: z.optional(z.array(z.strictObject({ machineId: id, grantRef: id })).check(z.minLength(1))) }),
+    connectorGrants: z.optional(z.array(z.strictObject({ machineId: id, grantRef: id })).check(z.minLength(1))),
+    machineTargets: z.optional(z.array(id).check(z.minLength(1))) }),
   z.strictObject({ operation: z.literal('prepare'), source,
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
   z.strictObject({ operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
@@ -59,7 +60,7 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     ]),
   }),
 ]).check(z.refine(value => value.operation !== 'setup' || value.deployments.length > 0 || (value.catalogSources?.length ?? 0) > 0
-  || (value.connectorGrants?.length ?? 0) > 0,
+  || (value.connectorGrants?.length ?? 0) > 0 || (value.machineTargets?.length ?? 0) > 0,
   { message: 'Setup preparation names a reviewed operand.' }),
 z.refine(value => value.operation !== 'create' && value.operation !== 'catalog' && value.operation !== 'template'
   || hasOneDeploymentProjectV1(value.source, value.newProject), { message: 'Preparation names one Project authority.' })));
@@ -92,17 +93,12 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
     // The target schema owns app operands and exact credential references in
     // reviewed native plans; neither authored configuration nor secrets leave it.
     const candidates = Array.isArray(value.targets) ? value.targets : [input];
-    if (!candidates.some(target => {
+    if (actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1 && !candidates.some(target => {
       const candidate = readRecord(target);
       const children = candidate.appChildren;
       if (Array.isArray(children) && children.some(child => readRecord(child).actionId === 'deployments.deploy'
         || readRecord(child).actionId === 'deployments.templates.instantiate')) return true;
-      return actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && Array.isArray(candidate.recipePlans)
-        && candidate.recipePlans.some(entry => {
-          const steps = readRecord(readRecord(entry).plan).steps;
-          return Array.isArray(steps) && steps.some(step => readRecord(step).kind === 'file'
-            && readRecord(readRecord(step).content).kind === 'secretGrant');
-        });
+      return false;
     })) return undefined;
     const root = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 ? MachineSetupApplyInputV1Schema.parse(input)
       : Array.isArray(value.targets) ? MachineSetupCombinedPlanInputV1Schema.parse(input) : MachineSetupPlanInputV1Schema.parse(input);
@@ -127,8 +123,11 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
     const connectorGrants = targets.flatMap(target => ('recipePlans' in target ? target.recipePlans : []).flatMap(({ plan }) =>
       plan.steps.flatMap(step => step.kind === 'file' && step.content?.kind === 'secretGrant'
         ? [{ machineId: target.machineId, grantRef: step.content.grantRef }] : [])));
-    if (deployments.length === 0 && catalogSources.length === 0 && connectorGrants.length === 0) return undefined;
+    const machineTargets = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+      ? [...new Set(targets.map(target => target.machineId))] : undefined;
+    if (!machineTargets && deployments.length === 0 && catalogSources.length === 0 && connectorGrants.length === 0) return undefined;
     return DeploymentPreparationAdmissionV1Schema.parse({ operation, deployments,
+      ...(machineTargets ? { machineTargets } : {}),
       ...(catalogSources.length ? { catalogSources } : {}),
       ...(connectorGrants.length ? { connectorGrants } : {}) });
   }
