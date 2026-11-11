@@ -20,7 +20,7 @@ import { resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/pr
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN as HETZNER_PLUGIN, MACHINE_PROVISIONER as HETZNER_MACHINE_PROVISIONER } from '../../../../../../../packages/plugins/machine-hetzner/src/index';
-import { createManagedConfiguratorDraft, type ManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities, managedConfiguratorEnrollmentDefault } from './managedConfiguratorModel';
+import { createManagedConfiguratorDraft, type ManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities, managedConfiguratorEnrollmentDefault, managedConfiguratorChoiceOwnsField } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
@@ -46,6 +46,12 @@ const fresh = (name = 'Guest') => createManagedConfiguratorDraft({ provisioner, 
 const small = () => selectManagedConfiguratorDimension(refreshManagedConfiguratorOptions(fresh(), options), 'size', 'small');
 
 describe('managed configurator draft owner', () => {
+    it('lets a selected root assignment own nested form fields', () => {
+        expect(managedConfiguratorChoiceOwnsField('image', 'image')).toBe(true);
+        expect(managedConfiguratorChoiceOwnsField('image', 'image.kind')).toBe(true);
+        expect(managedConfiguratorChoiceOwnsField('image', 'image.privateCarrier.user')).toBe(true);
+        expect(managedConfiguratorChoiceOwnsField('image', 'storage')).toBe(false);
+    });
     it('reviews selected configuration prerequisites and drops them when image options replace an unavailable CLI configuration', () => {
         const docker = { requirement: { kind: 'systemTool', id: 'docker' }, status: 'available' } as const;
         const cli = { requirement: { kind: 'systemTool', id: 'devcontainer' }, status: 'unavailable',

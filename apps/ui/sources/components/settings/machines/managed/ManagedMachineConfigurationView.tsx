@@ -88,7 +88,7 @@ import { countryName, formatProviderAmount, formatPriceUnit, presentManagedCost 
 import { ManagedImagePreview, useManagedImagePreviews } from './useManagedImagePreviews';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { ManagedSizeTable, ManagedImageTiles, ManagedLocationGroup, ManagedNetworkGroup } from './ManagedChoiceSections';
-import { managedConfiguratorDimensionChoices, managedConfiguratorDimensionSelection, managedConfiguratorEnrollmentDefault, selectManagedConfiguratorDimension } from './managedConfiguratorModel';
+import { managedConfiguratorChoiceOwnsField, managedConfiguratorDimensionChoices, managedConfiguratorDimensionSelection, managedConfiguratorEnrollmentDefault, selectManagedConfiguratorDimension } from './managedConfiguratorModel';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedMachineUse } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -963,7 +963,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         return rows[0]?.assignments.map(assignment => assignment.path)
             .filter(path => rows.every(row => row.assignments.some(assignment => assignment.path === path))) ?? [];
     }));
-    const formFields = launchFields.filter(field => !sizeFields.includes(field) && !decidedByChoice.has(field.path))
+    const formFields = launchFields.filter(field => !sizeFields.includes(field)
+        && ![...decidedByChoice].some(path => managedConfiguratorChoiceOwnsField(path, field.path)))
         .map(field => launchRefusal?.fieldPath === field.path
             ? { ...field, description: localized(provisioner.contribution.pluginId, launchRefusal.status) } : field);
     const launchEditable = !!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true);

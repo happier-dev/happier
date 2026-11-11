@@ -50,6 +50,10 @@ export type ManagedConfiguratorDraft = Readonly<{
     delegatedFacts?: ManagedConfigurationFactsV1;
 }>;
 export type ManagedConfiguratorDimension = MachineProvisionerDimensionV1;
+/** A choice assignment owns its nested input fields (for example `image` owns `image.id`). */
+export function managedConfiguratorChoiceOwnsField(assignmentPath: string, fieldPath: string): boolean {
+    return fieldPath === assignmentPath || fieldPath.startsWith(`${assignmentPath}.`);
+}
 /** Revalidation withdraws ready mutation facts, while an existing refusal remains the last answer. */
 export function beginManagedConfiguratorRead(draft: ManagedConfiguratorDraft,
     status: 'loading' | 'unavailable' = 'loading'): ManagedConfiguratorDraft {
