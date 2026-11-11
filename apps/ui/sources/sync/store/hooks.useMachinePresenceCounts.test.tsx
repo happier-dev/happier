@@ -6,7 +6,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 
 const home = createHomeGovernanceHarness();
@@ -27,6 +28,7 @@ beforeEach(async () => {
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     storage.setState({ profileScope: { serverId: homeIdentityId, accountId: 'account' },
         machines: {}, machineDisplayById: {}, machineListByServerId: {}, machineListStatusByServerId: {},
+        machineRecordsByServerId: {},
         machinePresenceById: {}, machinePresenceByServerId: {},
     });
 });
@@ -53,19 +55,16 @@ function machine(id: string, overrides: Partial<Machine> = {}): Machine {
         daemonState: null,
         daemonStateVersion: 0,
         revokedAt: null,
+        presenceProtocolVersion: 1,
         operationProtocolCapabilities: { machinePresence: { protocolVersions: [1] } },
         operationProtocolCapabilitiesRevision: 1,
         ...overrides,
     };
 }
 
-function setHomeMachines(machines: readonly Machine[]) {
+async function setHomeMachines(machines: readonly Machine[]) {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || 'server-active';
-    storage.setState((state) => ({
-        ...state,
-        machines: {},
-        machineListByServerId: { ...state.machineListByServerId, [activeServerId]: [...machines] },
-    }));
+    await publishMachineInventoryForTest({ serverId: activeServerId, accountId: 'account' }, machines);
 }
 
 describe('useMachinePresenceCounts', () => {
@@ -76,6 +75,7 @@ describe('useMachinePresenceCounts', () => {
         const options = { sourceServerId: serverId, sourceAccountId: 'account' };
         const legacy = machine('legacy', { operationProtocolCapabilities: null,
             operationProtocolCapabilitiesRevision: null });
+        delete legacy.presenceProtocolVersion;
         storage.getState().applyMachines([legacy], true, options);
         storage.getState().markMachineListSettled(serverId);
         const hook = await renderHook(() => useMachinePresenceCounts());
@@ -125,22 +125,33 @@ describe('useMachinePresenceCounts', () => {
             expect(hook.getCurrent()).toEqual({ online: 0, offline: 1, unknown: 0 });
         } finally { stopRoot(); await hook.unmount(); }
     });
-    it('keeps withdrawn machines unknown until that exact Home and Account observes them again', async () => {
-        setHomeMachines([machine('laptop'), machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS })]);
-        const hook = await renderHook(() => useMachinePresenceCounts());
+    it('retains answered presence across socket withdrawal and follows only its scoped Machine publication', async () => {
+        const rows = [machine('laptop'), machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS })];
+        await setHomeMachines(rows);
+        let renders = 0;
+        const hook = await renderHook(() => { renders++; return useMachinePresenceCounts(); });
         const scope = { serverId: homeIdentityId, accountId: 'account' };
+        const initial = hook.getCurrent();
+        const before = renders;
         try {
-            await act(async () => { withdrawMachinePresenceForScope(scope); });
-            expect(hook.getCurrent()).toEqual({ online: 0, offline: 0, unknown: 2 });
+            expect(initial).toEqual({ online: 1, offline: 1, unknown: 0 });
             await act(async () => {
+                withdrawMachinePresenceForScope(scope);
                 captureMachinePresenceObservation({ ...scope, accountId: 'another-account' })(['laptop', 'studio']);
                 captureMachinePresenceObservation({ ...scope, serverId: 'another-home' })(['laptop', 'studio']);
+                captureMachinePresenceObservation(scope)(['laptop', 'studio']);
             });
-            expect(hook.getCurrent()).toEqual({ online: 0, offline: 0, unknown: 2 });
-            await act(async () => { captureMachinePresenceObservation(scope)(['studio']); });
-            expect(hook.getCurrent()).toEqual({ online: 0, offline: 1, unknown: 1 });
-            await act(async () => { captureMachinePresenceObservation(scope)(['laptop']); });
-            expect(hook.getCurrent()).toEqual({ online: 1, offline: 1, unknown: 0 });
+            expect(hook.getCurrent()).toBe(initial);
+            expect(renders).toBe(before);
+            const update = { id: 'laptop', active: false, activeAt: rows[0]!.activeAt };
+            await act(async () => {
+                storage.getState().applyMachineActivityUpdates([update], { sourceServerId: scope.serverId, sourceAccountId: 'another-account' });
+            });
+            expect(hook.getCurrent()).toBe(initial);
+            await act(async () => {
+                storage.getState().applyMachineActivityUpdates([update], { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+            });
+            expect(hook.getCurrent()).toEqual({ online: 0, offline: 2, unknown: 0 });
         } finally { await hook.unmount(); }
     });
 
@@ -181,6 +192,7 @@ describe('useMachinePresenceCounts', () => {
             ], { sourceServerId: serverId, sourceAccountId: 'account' }); });
             expect(hook.getCurrent()).toEqual({ online: 0, offline: 1, unknown: 0 });
             const before = storage.getState();
+            expect(readMachineActivity(before.machines.laptop)).toMatchObject({ active: false, activeAt });
             await act(async () => {
                 storage.getState().applyMachineActivityUpdates([{ id: 'laptop', active: true, activeAt }],
                     { sourceServerId: serverId, sourceAccountId: 'account' });
@@ -191,8 +203,8 @@ describe('useMachinePresenceCounts', () => {
                 vi.advanceTimersByTime(1);
                 storage.getState().applyMachines([machine('laptop')], false, { sourceServerId: serverId, sourceAccountId: 'account' });
             });
-            expect(before.machines.laptop.active).toBe(false);
-            expect(before.machines.laptop.activeAt).toBe(activeAt);
+            expect(before.machines.laptop.active).toBe(true);
+            expect(readMachineActivity(before.machines.laptop)).toMatchObject({ active: true, activeAt: activeAt + 1 });
             expect(hook.getCurrent()).toEqual({ online: 1, offline: 0, unknown: 0 });
         } finally { await hook.unmount(); }
     });
@@ -207,7 +219,7 @@ describe('useMachinePresenceCounts', () => {
             // Request observations belong to the authenticated Home; retain the real scope owners.
             publishAppliedActiveServerSnapshot({ ...getActiveServerSnapshot(), serverId });
             storage.setState({ profileScope: { serverId, accountId: 'account' } });
-            setHomeMachines([machine('laptop', { activeAt: now })]);
+            await setHomeMachines([machine('laptop', { activeAt: now })]);
             const hook = await renderHook(() => useMachinePresenceCounts(), { flushOptions: { cycles: 1, turns: 4 } });
             expect(hook.getCurrent()).toEqual({ online: 1, offline: 0, unknown: 0 });
 
@@ -216,7 +228,7 @@ describe('useMachinePresenceCounts', () => {
             });
             expect(hook.getCurrent()).toEqual({ online: 0, offline: 1, unknown: 0 });
             await act(async () => {
-                setHomeMachines([machine('laptop', { activeAt: now + 2 })]);
+                await setHomeMachines([machine('laptop', { activeAt: now + 2 })]);
             });
             expect(hook.getCurrent()).toEqual({ online: 0, offline: 1, unknown: 0 });
             await hook.unmount();
@@ -229,7 +241,7 @@ describe('useMachinePresenceCounts', () => {
     it('counts the Home machines online and offline, leaving out revoked and replaced identities', async () => {
         const previousState = storage.getState();
         try {
-            setHomeMachines([
+            await setHomeMachines([
                 machine('laptop'),
                 machine('devbox'),
                 machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS }),
@@ -249,7 +261,7 @@ describe('useMachinePresenceCounts', () => {
     it('keeps the closed summary still while machines change without changing the counts, and follows a presence change', async () => {
         const previousState = storage.getState();
         try {
-            setHomeMachines([machine('laptop'), machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS })]);
+            await setHomeMachines([machine('laptop'), machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS })]);
             let renders = 0;
             const hook = await renderHook(() => {
                 renders += 1;
@@ -257,20 +269,21 @@ describe('useMachinePresenceCounts', () => {
             }, { flushOptions: { cycles: 1, turns: 4 } });
             const first = hook.getCurrent();
             const rendersBefore = renders;
+            const options = { sourceServerId: getActiveServerSnapshot().serverId, sourceAccountId: 'account' };
 
             // A heartbeat and a metadata edit: every machine object is replaced, the counts are not.
             await act(async () => {
-                setHomeMachines([
+                storage.getState().applyMachines([
                     machine('laptop', { activeAt: Date.now(), metadataVersion: 2 }),
                     machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS, updatedAt: 2000 }),
-                ]);
+                ], true, options);
             });
             expect(renders).toBe(rendersBefore);
             expect(hook.getCurrent()).toBe(first);
 
             // Studio wakes up: the summary follows.
             await act(async () => {
-                setHomeMachines([machine('laptop'), machine('studio')]);
+                storage.getState().applyMachines([machine('laptop'), machine('studio')], true, options);
             });
             expect(hook.getCurrent()).toEqual({ online: 2, offline: 0, unknown: 0 });
             await hook.unmount();

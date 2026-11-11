@@ -70,6 +70,48 @@ it('a fetched census row answers presence, while a warm-cache bit alone stays pe
   }
 });
 
+it('publishes an answered Machine before content replacement reaches presence readers', async () => {
+  const home = 'srv_presence-content-replacement';
+  const connection = await restoreServerAccountForTest({
+    serverUrl: 'https://presence-content-replacement.test', serverIdentityId: home,
+  });
+  const scope = { serverId: home, accountId: 'account' };
+  const options = { sourceServerId: home };
+  const machine = createMachineFixture({ id: 'content-replacement', activeAt: Date.now(), presenceProtocolVersion: 1 });
+  const { createMachinePresenceSnapshotSource } = await import('@/sync/domains/machines/reachability/useMachinePresenceSummary');
+  storage.getState().applyMachines([machine], false, options);
+  const source = createMachinePresenceSnapshotSource(
+    () => [storage.getState().machines[machine.id]!],
+    nowMs => resolveMachineReachability(scope, storage.getState().machines[machine.id]!, nowMs),
+    [{ serverId: home, machineIds: [machine.id] }],
+  );
+  const observations: Array<ReturnType<typeof resolveMachineReachability>> = [];
+  const stop = source.subscribe(() => observations.push(source.getSnapshot()));
+  let activityPublications = 0;
+  const stopActivity = subscribeMachineActivity(storage.getState().machines[machine.id]!, () => {
+    activityPublications += 1;
+  });
+  try {
+    expect(source.getSnapshot()).toBe('reachable');
+    observations.length = 0;
+    storage.getState().applyMachines([{ ...machine, metadataVersion: 2,
+      metadata: { ...machine.metadata!, homeDir: '/changed/home' } }], false, options);
+    expect(observations).not.toContain('unknown');
+    expect(source.getSnapshot()).toBe('reachable');
+    expect(activityPublications).toBe(0);
+
+    storage.getState().applyMachineActivityUpdates([
+      { id: machine.id, active: false, activeAt: machine.activeAt },
+    ], options);
+    expect(source.getSnapshot()).toBe('unreachable');
+    expect(activityPublications).toBe(1);
+  } finally {
+    stopActivity();
+    stop();
+    await connection.dispose();
+  }
+});
+
 
 it('answers a warm-matching census once and renders only rows whose presence becomes known', async () => {
   const home = 'srv_warm-matching-answer';

@@ -26,11 +26,11 @@ import {
     scheduleMachineDisplayWarmCacheSave,
     scheduleMachineListDisplayWarmCacheSave,
 } from '../../domains/state/machineDisplayWarmCacheWriter';
-import { retainMachineRecord, readMachineContributionRegistryProjectionInvalidation, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
+import { retainMachineRecord, haveSameMachineContentAuthority, readMachineContributionRegistryProjectionInvalidation, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { applyWorkspaceSyncRuntimeEvent } from '../../domains/sessionHandoff/applyWorkspaceSyncRuntimeEvent';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { buildMachineActivityPlaceholder, publishMachineActivities, readMachineActivity, readMachinePresenceAnswer, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
+import { buildMachineActivityPlaceholder, carryMachineActivity, publishMachineActivities, readMachineActivity, readMachinePresenceAnswer, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { indexMachineInventory, mergeMachineInventory } from './machines/machineInventory';
@@ -317,7 +317,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             const changedMachineIds = new Set<string>();
             const changedMachines: Machine[] = [];
             let activityUpdates: MachineActivityUpdate[] = [];
-            set((state) => {
+            const published = ((state: S) => {
                 const shouldUpdateActiveProjection = !sourceServerId || areServerProfileIdentifiersEquivalent(sourceServerId, activeServerId);
                 const currentScopedMachines = sourceServerId
                     ? state.machineListByServerId[sourceServerId]
@@ -349,10 +349,16 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 // Retain once, then publish that exact record to both projections.
                 // Two independent reconciliations can create distinct retained
                 // copies, forcing liveness to search and patch both inventories.
-                const retainedMachines = normalizedMachines.map(machine => retainMachineRecord(
-                    shouldUpdateActiveProjection ? state.machines[machine.id] ?? currentMachineById[machine.id]
-                        : currentMachineById[machine.id], machine,
-                ));
+                const retainedMachines = normalizedMachines.map(machine => {
+                    const previous = shouldUpdateActiveProjection ? state.machines[machine.id] ?? currentMachineById[machine.id]
+                        : currentMachineById[machine.id];
+                    const retained = retainMachineRecord(previous, machine);
+                    if (previous && previous.storageMode === retained.storageMode && haveSameMachineContentAuthority(previous, retained)) {
+                        // Content replacement keeps this authority's answered activity and its subscribers.
+                        carryMachineActivity(retained, previous);
+                    }
+                    return retained;
+                });
                 activityUpdates = normalizedMachines.flatMap((machine, index) => {
                     const activity = readMachineActivity(retainedMachines[index]);
                     return activity.active === machine.active && activity.activeAt === machine.activeAt ? []
@@ -615,8 +621,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     scheduleActiveWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies);
                 }
                 return nextState;
-            });
-            const published = get();
+            })(get());
             const changedActivityRows: Machine[] = [];
             const changedActivityIds: string[] = [];
             if (options?.activityUpdates?.length) {
@@ -638,6 +643,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         return current && (current.active !== activity.active || current.activeAt !== activity.activeAt);
                     })) yield { machine, activity: { active: activity.active, activeAt: activity.activeAt }, projections };
                 }
+                // Answer and link the incoming rows before store subscribers can observe them.
+                // The bulk publisher wakes activity readers only after this projection is visible.
+                set(published);
                 yield* reconcileActivityUpdates(activityUpdates, scope, changedActivityRows, changedActivityIds);
             })());
             if (changedActivityRows.length > 0) get().applyMachines(changedActivityRows, false, { sourceServerId, sourceAccountId });

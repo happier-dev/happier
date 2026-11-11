@@ -26,6 +26,7 @@ import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessi
 import { installSessionActionFixture } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -142,7 +143,7 @@ const CACHES: MachineStorageCategoryListResultV1 = {
 };
 
 function machine(overrides: Partial<Machine> = {}): Machine {
-    return createMachineFixture({ id: 'machine', activeAt: Date.now(), storageMode: 'plain', isShared: false,
+    return createMachineFixture({ id: 'machine', activeAt: Date.now(), presenceProtocolVersion: 1, storageMode: 'plain', isShared: false,
         metadata: { host: 'leeroy-mbp', platform: 'darwin', happyCliVersion: '0.3.0', happyHomeDir: '/Users/leeroy/.happier', homeDir: '/Users/leeroy' },
         access: { role: 'manage', custodian: { accountId: 'owner', displayName: 'Owner' }, resourceMode: 'plain', accessState: 'ready' },
         daemonState: { resources: { v: 1, vitals: { state: 'reporting' },
@@ -164,7 +165,7 @@ function ControlledStorageTab(props: Readonly<{ serverId: string; initial: React
 }
 async function mount(params: React.ComponentProps<typeof MachineStorageTab>['params'], overrides: Partial<Machine> = {},
     answer?: (rpc: Rpc) => unknown, controlled = false, listHost: MachinePageListHost | null = null,
-    frame: (page: React.ReactElement) => React.ReactElement = (page) => page) {
+    frame: (page: React.ReactElement) => React.ReactElement = (page) => page, presence: 'answered' | 'pending' = 'answered') {
     const serverId = await home.addHome({ name: 'Storage Home', serverUrl: `https://storage-tab-${Math.random().toString(36).slice(2)}.test`,
         serverIdentityId: 'srv_storage_tab', accountId: 'owner' });
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
@@ -180,7 +181,13 @@ async function mount(params: React.ComponentProps<typeof MachineStorageTab>['par
     storage.getState().activateProfileScope(resolution.scope);
     await storage.getState().activateSettingsScope(resolution.scope);
     storage.getState().applySettings(settings, 1);
-    storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine(overrides)] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {}, machineRecordsByServerId: {},
+        machinePresenceById: {}, machinePresenceByServerId: {}, machineListStatusByServerId: {} });
+    if (presence === 'pending') {
+        storage.getState().replaceMachineDisplays([machine(overrides)], { sourceServerId: serverId, sourceAccountId: 'owner' });
+    } else {
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine(overrides)]);
+    }
     transport.rpc.mockImplementation(async (rpc: Rpc) => {
         const { method } = rpc;
         const answered = answer?.(rpc);
@@ -220,6 +227,19 @@ beforeEach(async () => { viewport.start = 0; viewport.listeners.clear(); await h
 afterEach(async () => { standardCleanup(); setPreferredLanguageFromSettings('en'); machineStorageStore.reset(); storage.setState(before); await home.reset(); });
 
 describe('MachineStorageTab', () => {
+    it('starts the storage summary when a pending Machine receives its online census answer', async () => {
+        const { screen, serverId } = await mount({ id: 'storage' }, {}, undefined, false, null, undefined, 'pending');
+        const summaryReads = () => transport.rpc.mock.calls.filter(([rpc]) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET);
+        expect(summaryReads()).toHaveLength(0);
+        expect(screen.findByTestId('machine-storage-loading')).not.toBeNull();
+
+        await act(async () => {
+            await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine()]);
+        });
+        await act(async () => { await vi.waitFor(() => expect(summaryReads()).toHaveLength(1)); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-loading')).toBeNull()); });
+        expect(screen.getTextContent()).toContain(formatMachineBytes(17.6 * GB, 'storage'));
+    });
     it.each(['0.2.10', '0.0.9', 'custom-build'])('shows an old daemon untyped Storage reason for %s with only existing minimum-version update guidance, then recovers on retry', async version => {
         // Actual 0.2.10 direct daemon reply: browser-r77-pressure-storage-transport-correct.json.
         const reason = "EACCES: permission denied, lstat '/boot/efi/.happier-trash-1000'";
@@ -1033,7 +1053,7 @@ describe('MachineStorageTab', () => {
             rpc.method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST ? Promise.reject(new Error('no answer')) : undefined);
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-page-error')).not.toBeNull()); });
         await act(async () => {
-            storage.setState({ machineListByServerId: { [serverId]: [machine({ active: false, activeAt: Date.now() - 60 * 60_000 })] } });
+            await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine({ active: false, activeAt: Date.now() })]);
         });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-page-offline')).not.toBeNull()); });
         expect(screen.findByTestId('machine-storage-page-error')).toBeNull();
@@ -2020,7 +2040,7 @@ describe('MachineStorageTab', () => {
         const { screen, serverId } = await mount({ id: 'storage', view: 'disk' });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-invite')).not.toBeNull()); });
         await act(async () => {
-            storage.setState({ machineListByServerId: { [serverId]: [machine({ active: false, activeAt: Date.now() - 60 * 60_000 })] } });
+            await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine({ active: false, activeAt: Date.now() })]);
         });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-offline')).not.toBeNull()); });
         expect(screen.findByTestId('machine-storage-disk-invite')).toBeNull();
