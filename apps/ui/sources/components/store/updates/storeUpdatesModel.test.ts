@@ -6,8 +6,10 @@ import {
 import { McpServerCatalogEntryV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { RegistryUpdateCheckResultV1 } from '@happier-dev/protocol/registries';
+import { PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 
-import type { InstalledRow, InstalledSkillRow } from '../catalog/storeKinds';
+import type { InstalledRow, InstalledSkillRow, InstalledPluginRow } from '../catalog/storeKinds';
 import { buildStoreUpdates, captureStoreUpdateBasis, describeUncheckedSources } from './storeUpdatesModel';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' };
@@ -285,10 +287,19 @@ describe('describeUncheckedSources', () => {
 });
 
 describe('buildStoreUpdates plugin observations', () => {
-  const plugin = (pluginId: string): InstalledRow => ({
-    kind: 'plugin', key: `plugin:${pluginId}`, scope, installations: [],
-    native: { pluginId, title: pluginId, enabled: true, version: '1.0.0', installations: [] } as never,
-  });
+  const scope = { serverId: 'srv_store_updates', accountId: 'account-a' };
+  const plugin = (pluginId: string): InstalledPluginRow => {
+    const admission = createPluginAccountAvailabilityReader({ scope, snapshot: {
+      availabilityCursor: 1, intentReads: [], snapshots: [], inventoryComplete: true,
+      materializations: [PluginMachineMaterializationV1Schema.parse({ serverIdentityId: scope.serverId,
+        machineId: 'plugin-machine', materializationId: `installed-${pluginId}`, pluginId, version: '1.0.0',
+        sourceClass: 'registryPackage', portableRelease: false, uiArtifacts: [], enabled: true,
+        trustState: 'trusted', observedAt: 1 })],
+    } }).readInstalledPlugins();
+    if (admission.kind !== 'available' || !admission.plugins[0]) throw new Error('Expected installed plugin');
+    const native = admission.plugins[0];
+    return { kind: 'plugin', key: `plugin:${pluginId}`, scope, installations: native.installations, native };
+  };
   const update = (pluginId: string, state: 'available' | 'removed' | 'unchecked' | 'unknown') => ({
     key: `plugin:${pluginId}`, pluginId, state, from: '1.0.0',
     observation: state === 'available' ? { state: 'update_available' as const, latest: { kind: 'version' as const, version: '2.0.0' } }
@@ -296,29 +307,32 @@ describe('buildStoreUpdates plugin observations', () => {
       : state === 'unchecked' ? { state: 'unchecked' as const, reason: { state: 'needs_machine' as const } } : null,
     ...(state === 'unchecked' ? { reason: { state: 'needs_machine' as const } } : {}),
   });
-  const rows = [plugin('a'), plugin('b'), plugin('c')];
+  const rows = [plugin('acme.a'), plugin('acme.b'), plugin('acme.c')];
 
   it('lists an observed newer plugin as a Plugins section entry with its versions', () => {
-    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('a', 'available'), update('b', 'unknown'), update('c', 'removed')]);
+    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('acme.a', 'available'), update('acme.b', 'unknown'), update('acme.c', 'removed')]);
     expect(view.sections.map(section => section.kind)).toEqual(['plugin']);
     expect(view.sections[0]!.entries.map(entry => [entry.key, entry.state, entry.from, entry.to])).toEqual([
-      ['plugin:a', 'available', '1.0.0', '2.0.0'], ['plugin:c', 'removed', '1.0.0', null],
+      ['plugin:acme.a', 'available', '1.0.0', '2.0.0'], ['plugin:acme.c', 'removed', '1.0.0', null],
     ]);
-    expect(view.tracked).toBe(2);
-    expect(view.count).toBe(2);
+    expect(view.tracked).toBe(3);
+    expect(view.count).toBeNull();
   });
 
   it('says it could not check a plugin the checker reports as unchecked, and never calls that up to date', () => {
-    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('a', 'unchecked')]);
+    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('acme.a', 'unchecked')]);
     expect(view.sections[0]!.entries[0]).toMatchObject({ state: 'unchecked', reason: { state: 'needs_machine' } });
     expect(view.unchecked).toBe(1);
     expect(view.count).toBeNull();
   });
 
-  it('does not let plugins without an observation block a complete check', () => {
-    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('a', 'unknown')]);
+  it('keeps installed plugins checkable before their first observation and does not claim complete coverage', () => {
+    const cold = buildStoreUpdates(rows, [], undefined, rows.map(row => update(row.native.pluginId, 'unknown')));
+    expect(cold.tracked).toBe(3);
+    expect(cold.count).toBeNull();
+    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('acme.a', 'unknown')]);
     expect(view.sections).toEqual([]);
-    expect(view.tracked).toBe(0);
-    expect(view.count).toBe(0);
+    expect(view.tracked).toBe(3);
+    expect(view.count).toBeNull();
   });
 });

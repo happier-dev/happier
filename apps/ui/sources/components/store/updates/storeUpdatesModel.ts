@@ -159,10 +159,9 @@ export function buildStoreUpdates(
   let complete = check?.checkedAt != null && !check.failed;
   for (const row of rows) {
     if (row.kind === 'plugin') {
-      // No observation means nothing is claimed, so it never holds back "up to date".
-      const update = pluginUpdates.get(row.key);
-      if (!update?.observation) continue;
       tracked += 1;
+      const update = pluginUpdates.get(row.key);
+      if (!update?.observation) { complete = false; continue; }
       if (update.state === 'unchecked') { unchecked += 1; complete = false; }
       else successful += 1;
       const pluginEntry: StoreUpdateEntry | null = update.state === 'unchecked'
