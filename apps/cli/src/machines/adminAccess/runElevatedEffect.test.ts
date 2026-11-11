@@ -461,17 +461,30 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         expect(f.launches).toEqual([]);
     });
 
-    it('never gives the password or plan to an unexpected principal or passwordless Ask process', async () => {
-        for (const mode of ['unexpectedPrincipal', 'noPasswordPrompt'] as const) {
-            const f = nativeFixture(); f[mode]();
-            const plan = await planFor(f);
-            expect(await runElevatedEffect({ machineId: 'machine-a', operationId: mode,
-                effect: { kind: 'setupOperation', plans: [{ plan }] } },
-                { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) }))
-                .toMatchObject({ outcome: 'not_applied', reasonCode: 'denied' });
-            expect(f.authentication.filter(Boolean)).toEqual([]);
-            expect(f.mutations).toEqual([]);
-        }
+    it.each(['check', 'apply'] as const)('allows an attended Ask %s when sudo already permits root without consuming the password', async kind => {
+        const f = nativeFixture(); f.noPasswordPrompt();
+        const plan = await planFor(f);
+        const dependencies = { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) };
+        const input = { machineId: 'machine-a', operationId: 'passwordless-ask' };
+        const result = kind === 'check'
+            ? await checkElevatedMachineSetupPlanResult({ ...input, basis, steps: plan.steps }, dependencies)
+            : await runElevatedEffect({ ...input, effect: { kind: 'setupOperation', plans: [{ plan }] } }, dependencies);
+        expect(result).toMatchObject({ outcome: kind === 'check' ? 'checked' : 'applied' });
+        expect(f.authentication).toEqual([]);
+        expect(f.mutations).toEqual(kind === 'check' ? [] : ['first', 'second']);
+        expect(f.boundaryFailures).toEqual([]);
+        expect(JSON.stringify(f.launches)).not.toContain('one-use-password');
+    });
+
+    it('never gives the password or plan to an unexpected password principal', async () => {
+        const f = nativeFixture(); f.unexpectedPrincipal();
+        const plan = await planFor(f);
+        expect(await runElevatedEffect({ machineId: 'machine-a', operationId: 'unexpectedPrincipal',
+            effect: { kind: 'setupOperation', plans: [{ plan }] } },
+            { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) }))
+            .toMatchObject({ outcome: 'not_applied', reasonCode: 'denied' });
+        expect(f.authentication.filter(Boolean)).toEqual([]);
+        expect(f.mutations).toEqual([]);
     });
 
     it('refuses unavailable currentness after attendance without starting an effect', async () => {

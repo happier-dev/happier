@@ -413,7 +413,9 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                 if (requestSent && record.type === 'result' && record.result.status === 'outcome_unknown'
                     && record.result.reason === 'plugin_exec_termination_incomplete') { terminal = record; continue; }
                 if (record.type === 'ready') {
-                    if (ask && !submitted) { await stop('denied'); continue; }
+                    // Sudo may already permit root (for example an incumbent NOPASSWD grant).
+                    // Its ready child needs only the request frame, never an unused password.
+                    if (!submitted) { password?.fill(0); password = null; }
                     if (requestSent || stopReason) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                     // CHECK prepares the already-admitted operation. Its
                     // authority boundary is the resulting APPLY frame below.
