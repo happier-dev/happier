@@ -666,8 +666,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const refusalRecoveryAction = startAdmission.refusal?.recoveryAction;
     const recoverStart = React.useCallback(() => {
         if (!refusalRecoveryAction) return;
-        const target: Href | null = refusalRecoveryAction === 'open_session' ? '/new'
-            : refusalRecoveryAction === 'open_setup' ? SETTINGS_ROUTES.voice : resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
+        let target: Href | null = null;
+        if (refusalRecoveryAction === 'open_session') target = '/new';
+        else if (refusalRecoveryAction === 'open_setup') target = SETTINGS_ROUTES.voice;
+        else target = resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
         if (target) navigateWithFocusReturn(() => router.push(target as never));
     }, [navigateWithFocusReturn, refusalRecoveryAction, router]);
     const refusalReason = refusalReasonKey ? translateVoiceReadiness(refusalReasonKey) : null;

@@ -381,7 +381,10 @@ export function createForkedVoiceInferenceRuntimeClient(
           return;
         }
         deadlineTimer = (setTimeout as typeof nodeSetTimeout)(onDeadline, effectiveTimeoutMs);
-        deadlineTimer.unref?.();
+        const timerHandle: unknown = deadlineTimer;
+        if (timerHandle !== null && typeof timerHandle === 'object' && 'unref' in timerHandle && typeof timerHandle.unref === 'function') {
+          timerHandle.unref();
+        }
       };
 
       const finish = (run: () => void) => {

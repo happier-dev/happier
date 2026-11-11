@@ -25,5 +25,5 @@ export function DictationModelPackRecovery(): React.ReactElement | null {
         requestedExecution: stt.localNeural.execution,
     }).preferredExecution !== 'daemon') return null;
     return <DaemonDictationModelPackRecovery
-        packId={stt.localNeural.assetId ?? getDefaultModelPackId('stt_sherpa')} />;
+        packId={stt.localNeural.assetId ?? getDefaultModelPackId('stt_sherpa')!} />;
 }
