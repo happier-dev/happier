@@ -231,6 +231,10 @@ describe('artifactBrowserModel', () => {
         } });
         expect([pdf, image, file].map(classifyArtifactBrowserKind)).toEqual(['pdf', 'image', 'file']);
         expect([...countArtifactBrowserKinds([pdf, image, file])]).toEqual([['pdf', 1], ['image', 1], ['file', 1]]);
+        expect(classifyArtifactBrowserKind({ ...pdf, body: undefined })).toBe('pdf');
+        expect(classifyArtifactBrowserKind(artifact('json', { mime: 'application/json', excerpt: '{\"hello\":true}' }))).toBe('document');
+        expect(projectArtifactBrowserRows([pdf, image, file], { query: '', kind: 'pdf', sort: 'title_asc' }).map(row => row.key))
+            .toEqual(['pdf-kind']);
     });
     it('lists ordinary kinds, opens each in its own owner, and leaves approvals and drafts out', () => {
         const note = artifact('n1', { title: 'Root cause' });

@@ -15,7 +15,9 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { formatFilePageBytes } from '@/components/workspaces/files/file/FilePageStates';
+import type { PdfPageInfo } from '@/components/ui/media/pdf/PdfViewerStates';
+import type { PdfZoom } from '@/components/ui/media/pdf/pdfZoom';
 import { usePublishArtifactBodyActions, type ArtifactBodyActions } from './artifactBodyActions';
 
 /** A PDF well fits one page at the column's width (US Letter, the common page; taller A4 pages scroll a few points). */
@@ -52,7 +54,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
     const reference = props.reference;
     const { actions } = useArtifactBinaryActions(props.actions, props.scope);
     const key = `${props.artifactId}:${reference.blobId}:${reference.sha256}`;
-    const viewer = resolveFileViewerKind({ path: props.name, mimeType: reference.mime });
+    const viewer = resolveFileViewerKind({ path: props.name, mimeType: reference.mime, isBinaryContent: true });
     const previewable = viewer.previewable;
     const window = useWindowDimensions();
     const [preview, setPreview] = React.useState<Preview>({ key, phase: 'loading' });
@@ -60,6 +62,11 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
     const [downloading, setDownloading] = React.useState(false);
     const [downloadFailed, setDownloadFailed] = React.useState(false);
     const [stage, setStage] = React.useState<FileViewerStageHandle | null>(null);
+    const [pdfZoom, setPdfZoom] = React.useState<PdfZoom>('fit-width');
+    const [pdfPages, setPdfPages] = React.useState<Readonly<{ key: string; total: number }> | null>(null);
+    const onPdfPageInfo = React.useCallback((info: PdfPageInfo) => {
+        setPdfPages(current => current?.key === key && current.total === info.total ? current : { key, total: info.total });
+    }, [key]);
     const downloadController = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         setDownloading(false); setDownloadFailed(false);
@@ -121,19 +128,23 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         // The page sits inside the well's gap on every side (the PDF page CSS uses the same step).
         ? Math.min(scrollingWellHeight, Math.round((columnWidth - theme.space.s16 * 2) * PDF_PAGE_ASPECT) + theme.space.s16 * 2)
         : scrollingWellHeight;
+    const pdfPageCount = viewer.kind === 'pdf' && pdfPages?.key === key ? pdfPages.total : null;
+    const facts = [t(viewer.labelKey as never), formatFilePageBytes(reference.sizeBytes),
+        ...(pdfPageCount === null ? [] : [t('files.viewer.pdfPageCount', { count: pdfPageCount })])].join(' · ');
     const card = <View style={{ gap: theme.space.s8 }} testID="artifact:fileCard">
         <Icon name={reference.mime.startsWith('image/') ? 'image' : 'file'} size={24} color={theme.colors.text.secondary} />
         <Text>{props.name}</Text>
-        <Text style={{ color: theme.colors.text.secondary }}>{`${reference.mime} · ${formatHappierDataBytes(reference.sizeBytes, { kind: 'storage' })}`}</Text>
     </View>;
     return <View style={{ gap: theme.space.s16 }} testID="artifact:binaryBody">
+        {previewable ? <Text variant="meta" style={{ color: theme.colors.text.secondary }} testID="artifact:binaryFacts">{facts}</Text> : null}
         {ready && filePreview.status === 'loaded' ? (
             // Pages, players and wells are the File page's bodies over these bytes (lab files AD1); a
             // scrolling page bounds the scrolling kinds to most of the window so the page still scrolls past.
             <View style={viewer.kind === 'pdf' || viewer.kind === 'video' ? { height: wellHeight } : null}
                 onLayout={(event) => setColumnWidth(event.nativeEvent.layout.width)}>
                 <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}
-                    isActive findSurfaceId={`artifact:${props.artifactId}`} layout="inline" stageRef={setStage} testID="artifact:viewerBody" />
+                    isActive findSurfaceId={`artifact:${props.artifactId}`} layout="inline" stageRef={setStage}
+                    pdf={{ zoom: pdfZoom, onZoomChange: setPdfZoom, onPageInfo: onPdfPageInfo }} testID="artifact:viewerBody" />
             </View>
         )
             : previewable && preview.key === key && (preview.phase === 'failed' || filePreview.status === 'error') ? <SurfaceStateCard testID="artifact:previewFailed" kind="error"

@@ -48,6 +48,13 @@ export function assembleArtifactHtmlBundleV1(input: Readonly<{
   return parsed.data;
 }
 
+/** Whether an Artifact MIME permits a UTF-8 text body; all other MIME types keep their bytes. */
+export function artifactMimeAllowsTextV1(mime: string | undefined): boolean {
+  const normalized = mime?.split(';', 1)[0].trim().toLowerCase();
+  return !normalized || normalized.startsWith('text/')
+    || ['application/json', 'application/javascript', 'application/xml'].includes(normalized);
+}
+
 /** File classification and provenance shared by the keyholding publication hosts. */
 export function prepareArtifactWorkspaceFileV1(params: Readonly<{
   caller: Readonly<{ machineId: string } & (
@@ -59,17 +66,21 @@ export function prepareArtifactWorkspaceFileV1(params: Readonly<{
 }>) {
   const { file, input, caller } = params;
   const declaredMime = input.mime?.split(';', 1)[0].trim().toLowerCase();
+  // PDF's ASCII syntax can be valid UTF-8. Its file signature owns the representation even
+  // when the publisher supplies a text MIME or a filename without an extension.
+  const isPdf = file.bytes[0] === 37 && file.bytes[1] === 80 && file.bytes[2] === 68
+    && file.bytes[3] === 70 && file.bytes[4] === 45;
+  if (isPdf && input.kind === 'html') throw forbiddenWorkspaceSource();
   if (file.bundle && ((input.kind !== undefined && input.kind !== 'html')
     || (declaredMime !== undefined && declaredMime !== 'text/html' && declaredMime !== ARTIFACT_HTML_BUNDLE_MIME_V1))) {
     throw Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
   }
   const acquiredBundle = file.bundle ? ArtifactHtmlBundleV1Schema.parse(file.bundle) : undefined;
-  const inferredHtml = input.kind === undefined && (declaredMime === 'text/html'
+  const inferredHtml = !isPdf && input.kind === undefined && (declaredMime === 'text/html'
     || declaredMime === ARTIFACT_HTML_BUNDLE_MIME_V1
     || (!input.mime && file.name.lastIndexOf('.') > 0 && /\.html?$/i.test(file.name)));
   const kind = input.kind ?? (acquiredBundle || inferredHtml ? 'html' : 'published.v1');
-  const allowsText = !acquiredBundle && (!declaredMime || declaredMime.startsWith('text/')
-    || ['application/json', 'application/javascript', 'application/xml'].includes(declaredMime));
+  const allowsText = !acquiredBundle && !isPdf && artifactMimeAllowsTextV1(declaredMime);
   let body: string | undefined;
   if (allowsText) {
     try {
@@ -78,7 +89,7 @@ export function prepareArtifactWorkspaceFileV1(params: Readonly<{
     } catch { /* Non-UTF8 content uses the binary body path. */ }
   }
   const mime = acquiredBundle ? ARTIFACT_HTML_BUNDLE_MIME_V1
-    : input.mime ?? (kind === 'html' ? 'text/html' : body === undefined ? 'application/octet-stream' : 'text/plain');
+    : isPdf ? 'application/pdf' : input.mime ?? (kind === 'html' ? 'text/html' : body === undefined ? 'application/octet-stream' : 'text/plain');
   const header = { title: input.title ?? file.name, kind, mime, sizeBytes: file.bytes.length };
   const source = ArtifactWorkspaceSourceV1Schema.parse({ ...(caller.rootPath !== undefined ? { rootPath: caller.rootPath }
     : { sessionId: caller.sessionId, ...(caller.runId ? { runId: caller.runId } : {}) }),

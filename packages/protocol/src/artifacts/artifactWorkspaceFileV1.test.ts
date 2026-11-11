@@ -27,6 +27,22 @@ it('prepares private workspace provenance without inventing a Session and preser
   expect(result.header).not.toHaveProperty('source');
 });
 
+it.each([{}, { mime: 'text/plain' }, { mime: 'application/octet-stream' }, { mime: 'text/html' }, { mime: 'application/pdf' }])('publishes PDF signature bytes through the binary PDF path (%j)', input => {
+  const bytes = new TextEncoder().encode('%PDF-1.7\n1 0 obj');
+  const result = prepareArtifactWorkspaceFileV1({ caller: { machineId: 'machine', rootPath: '/repo' },
+    file: { bytes, name: 'Report', path: 'Report', sha: 'a'.repeat(64) }, input });
+  expect(result).toMatchObject({ header: { kind: 'published.v1', mime: 'application/pdf', sizeBytes: bytes.length }, binary: { bytes, mime: 'application/pdf' } });
+  expect(result).not.toHaveProperty('body');
+});
+
+it.each(['text/plain', 'application/json'])('keeps valid UTF-8 %s content as text', mime => {
+  const body = '{"message":"A report about %PDF- files"}';
+  const result = prepareArtifactWorkspaceFileV1({ caller: { machineId: 'machine', rootPath: '/repo' },
+    file: { bytes: new TextEncoder().encode(body), name: 'Note', path: 'Note', sha: 'a'.repeat(64) }, input: { mime } });
+  expect(result).toMatchObject({ header: { mime }, body });
+  expect(result).not.toHaveProperty('binary');
+});
+
 describe('workspace HTML publication', () => {
   const bundle = { v: 1 as const, entrypoint: 'pages/index.html', files: {
     'pages/index.html': { mime: 'text/html', contentBase64: 'PGgxPkhlbGxvPC9oMT4=' },

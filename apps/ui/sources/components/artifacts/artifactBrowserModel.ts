@@ -1,3 +1,5 @@
+import { artifactMimeAllowsTextV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
+import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { artifactKindIsTextDocumentV1, getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -34,9 +36,9 @@ import { buildBotTemplateRecipientRoute } from '@/components/sessions/bots/templ
  */
 
 /** The browser's kinds. Documents are untyped and published text; the rest open in their own owner. */
-export type ArtifactBrowserKind = 'document' | 'prompt' | 'memory' | 'board' | 'widget' | 'workflow' | 'role' | 'launchProfile';
+export type ArtifactBrowserKind = 'document' | 'prompt' | 'memory' | 'board' | 'widget' | 'workflow' | 'role' | 'launchProfile' | 'pdf' | 'image' | 'file';
 
-export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document', 'prompt', 'memory', 'board', 'widget', 'workflow', 'role', 'launchProfile'];
+export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document', 'prompt', 'memory', 'board', 'widget', 'workflow', 'role', 'launchProfile', 'pdf', 'image', 'file'];
 
 const USE_TARGET_TO_BROWSER_KIND = {
     open: 'document', prompt_doc: 'prompt', prompt_bundle: 'prompt', memory: 'memory', board: 'board', widget: 'widget',
@@ -48,7 +50,19 @@ export type ArtifactBrowserArtifact = Readonly<{
     id: string; title?: string | null; header?: Readonly<Record<string, unknown>> | null;
     rawHeader?: Readonly<Record<string, unknown>> | null; kindHint?: string | null; draft?: boolean;
     access?: DecryptedArtifact['access']; ownerAccountId?: string; createdAt?: number; updatedAt?: number;
+    body?: DecryptedArtifact['body'];
 }>;
+
+/** Binary bodies and unopened binary MIME headers share the File viewer's existing presentation policy. */
+function readArtifactBinaryKind(artifact: Pick<ArtifactBrowserArtifact, 'header' | 'rawHeader' | 'title' | 'body'>): 'pdf' | 'image' | 'file' | null {
+    const header = artifact.rawHeader ?? artifact.header;
+    if (isArtifactHtmlHeaderV1(header) || typeof artifact.body === 'string') return null;
+    const reference = artifact.body !== null && typeof artifact.body === 'object' ? artifact.body : null;
+    const mime = reference?.mime ?? (typeof header?.mime === 'string' ? header.mime : undefined);
+    if (!reference && artifactMimeAllowsTextV1(mime)) return null;
+    const viewer = resolveFileViewerKind({ path: artifact.title ?? '', mimeType: mime, isBinaryContent: true });
+    return viewer.kind === 'pdf' ? 'pdf' : viewer.kind === 'image' || viewer.kind === 'svg' ? 'image' : 'file';
+}
 
 export function classifyArtifactBrowserKind(artifact: ArtifactBrowserArtifact): ArtifactBrowserKind | null {
     if (artifact.draft === true) return null;
@@ -58,7 +72,8 @@ export function classifyArtifactBrowserKind(artifact: ArtifactBrowserArtifact): 
     if (!header && !getArtifactKindPolicyV1(artifact.kindHint).browserListed) return null;
     const target = getArtifactUseTargetV1({ artifactId: artifact.id,
         header: header ?? {}, body: null });
-    return target.browserListed ? USE_TARGET_TO_BROWSER_KIND[target.kind] : null;
+    return target.browserListed ? (target.kind === 'open' ? readArtifactBinaryKind(artifact) : null)
+        ?? USE_TARGET_TO_BROWSER_KIND[target.kind] : null;
 }
 
 /** What the Artifact view names an artifact: its browser kind, or a kind the browser never lists. */
@@ -112,8 +127,8 @@ export function artifactViewRoute(artifactId: string): string {
  * Whether this artifact is a text document: offered to the text editor and open to passage comments.
  * Its kind's policy decides; a structured kind (a dashboard layout) is changed only by its own owner.
  */
-export function isArtifactTextDocument(artifact: Pick<ArtifactBrowserArtifact, 'header' | 'rawHeader'>): boolean {
-    return artifactKindIsTextDocumentV1((artifact.rawHeader ?? artifact.header)?.kind);
+export function isArtifactTextDocument(artifact: Pick<ArtifactBrowserArtifact, 'header' | 'rawHeader' | 'title' | 'body'>): boolean {
+    return readArtifactBinaryKind(artifact) === null && artifactKindIsTextDocumentV1((artifact.rawHeader ?? artifact.header)?.kind);
 }
 
 /**

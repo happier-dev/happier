@@ -118,6 +118,30 @@ function installDownloadDocument() {
 }
 
 describe('ArtifactBinaryBody', () => {
+    it('keeps PDF type and size visible and adds the page count reported by the viewer without another read', async () => {
+        const previous = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        const source = binarySource('pdf-facts', 'application/pdf', new TextEncoder().encode('%PDF-1.7'));
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            screen = await renderScreen(<ArtifactBinaryBody artifactId="pdf-facts" name="Report.pdf" {...source} />);
+            await vi.waitFor(() => expect(screen!.tree.root.findAllByType('WebView')).toHaveLength(1));
+            const text = () => JSON.stringify(screen!.findByTestId('artifact:binaryFacts')?.props.children) ?? '';
+            expect(text()).toContain('files.kind.pdf');
+            expect(text()).toContain('8 B');
+            expect(text()).not.toContain('files.viewer.pdfPageCount');
+            await act(async () => {
+                screen!.tree.root.findByType('WebView').props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'ready', pages: 3 }) } });
+            });
+            await vi.waitFor(() => expect(text()).toContain('files.viewer.pdfPageCount'));
+            expect(text()).toContain('3');
+            expect(text()).toContain('files.kind.pdf');
+            expect(source.request).toHaveBeenCalledOnce();
+        } finally {
+            await screen?.unmount();
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
+        }
+    });
     it('opens a PDF in the shared full-screen stage with the already acquired bytes', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });

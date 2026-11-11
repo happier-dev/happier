@@ -6,6 +6,9 @@ import type { ArtifactBrowserKind, ArtifactViewKind } from './artifactBrowserMod
 /** Each kind's mark: the same glyph its own destination uses (Boards, Workflows, Prompts, Roles, Launch profiles). */
 export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactViewKind, IconName>> = {
     document: 'file-text',
+    pdf: 'file-text',
+    image: 'image',
+    file: 'file',
     prompt: 'books',
     memory: 'bookmark',
     board: 'squares-four',
@@ -20,6 +23,9 @@ export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactViewKind, IconName>> =
 export function artifactKindLabel(kind: ArtifactViewKind): string {
     switch (kind) {
         case 'document': return t('artifacts.browser.kindOne.document');
+        case 'pdf': return t('files.kind.pdf');
+        case 'image': return t('files.kind.image');
+        case 'file': return t('files.kind.binary');
         case 'prompt': return t('artifacts.browser.kindOne.prompt');
         case 'memory': return t('artifacts.browser.kindOne.memory');
         case 'board': return t('artifacts.browser.kindOne.board');
@@ -46,6 +52,9 @@ export function artifactKindFilterLabel(kind: ArtifactBrowserKind | 'all'): stri
     switch (kind) {
         case 'all': return t('artifacts.browser.kinds.all');
         case 'document': return t('artifacts.browser.kinds.document');
+        case 'pdf': return t('files.kind.pdf');
+        case 'image': return t('files.kind.image');
+        case 'file': return t('files.kind.binary');
         case 'prompt': return t('artifacts.browser.kinds.prompt');
         case 'memory': return t('artifacts.browser.kinds.memory');
         case 'board': return t('artifacts.browser.kinds.board');
@@ -59,7 +68,10 @@ export function artifactKindFilterLabel(kind: ArtifactBrowserKind | 'all'): stri
 /** The open action a recipient sees for a kind that lives in its own destination. */
 export function artifactKindOpenLabel(kind: ArtifactBrowserKind): string {
     switch (kind) {
-        case 'document': return t('artifacts.browser.open.document');
+        case 'document':
+        case 'pdf':
+        case 'image':
+        case 'file': return t('artifacts.browser.open.document');
         case 'prompt': return t('artifacts.browser.open.prompt');
         case 'memory': return t('artifacts.browser.open.memory');
         case 'board': return t('artifacts.browser.open.board');
