@@ -57,7 +57,8 @@ describe('Boards pinned to the Sessions column', () => {
         try {
             await vi.waitFor(() => expect(hook.getCurrent().rows.map(row => row.title)).toEqual(['Pinned board']));
             expect(loadWorkBoardSummariesWarmCache(runtime.serverId, 'account-a')?.boards)
-                .toEqual([{ id: '22222222-2222-4222-8222-222222222223', name: 'Pinned board', pinnedInSessions: true, readsNeedsYou: false }]);
+                .toEqual([{ id: '22222222-2222-4222-8222-222222222223', name: 'Pinned board', pinnedInSessions: true, readsNeedsYou: false,
+                    counts: { widgets: 0, picked: 0, filtered: false } }]);
         } finally {
             await hook.unmount();
         }

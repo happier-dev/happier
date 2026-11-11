@@ -39,10 +39,11 @@ function retainedWorkBoardSummaries(serverId: string, accountId: string): WorkBo
     try { cached = loadWorkBoardSummariesWarmCache(serverId, accountId); } catch { /* Unreadable device storage: a cold read. */ }
     return {
         summaries: (cached?.boards ?? []).map(board => ({ id: board.id, name: board.name, pinnedInSessions: board.pinnedInSessions,
-            source: { sections: board.readsNeedsYou ? ['needs_you' as const] : [] } })),
+            source: { sections: board.readsNeedsYou ? ['needs_you' as const] : [] }, counts: board.counts ?? null })),
         remember: summaries => saveWorkBoardSummariesWarmCache(serverId, accountId, { boards: summaries.map(board => ({
             id: board.id, name: board.name, pinnedInSessions: board.pinnedInSessions,
             readsNeedsYou: board.source.sections.includes('needs_you'),
+            counts: board.counts,
         })) }),
     };
 }

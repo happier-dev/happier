@@ -729,3 +729,16 @@ describe('board cards', () => {
         expect(describeBoardColumnLine(cards.slice(2))).toEqual({ needYou: 0, text: 'boards.meta.items:1' });
     });
 });
+
+describe('describeBoardSummaryCounts (an index row whose body is not read)', () => {
+    it('says what the saved layout holds, and nothing when the header has no layout', async () => {
+        const { describeBoardSummaryCounts } = await import('./boardCards');
+        expect(describeBoardSummaryCounts(null, [])).toBeUndefined();
+        expect(describeBoardSummaryCounts({ widgets: 3, picked: 2, filtered: false }, [])).toBe('boards.meta.widgets:3 · boards.meta.items:2');
+        expect(describeBoardSummaryCounts({ widgets: 1, picked: 0, filtered: true }, [])).toBe('boards.meta.widgets:1');
+        // A hand-picked board with nothing on it says so; one that a filter or a section fills says nothing it can't know.
+        expect(describeBoardSummaryCounts({ widgets: 0, picked: 0, filtered: false }, [])).toBe('boards.meta.handPicked · boards.meta.empty');
+        expect(describeBoardSummaryCounts({ widgets: 0, picked: 0, filtered: true }, [])).toBeUndefined();
+        expect(describeBoardSummaryCounts({ widgets: 0, picked: 0, filtered: false }, ['needs_you'])).toBeUndefined();
+    });
+});

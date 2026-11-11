@@ -1299,6 +1299,7 @@ const ja: BoardsTranslations = {
         itemsAtLeast: ({ count }) => `${count}+ 件`,
         needYouAtLeast: ({ count }) => `${count}+ 件が対応待ち`,
         widgets: ({ count }) => `${count} 個のウィジェット`,
+        widgets: ({ count }) => `${count} 個のウィジェット`,
         handPicked: '手動で選択',
         empty: '空',
         moreSources: ({ count }) => `+ ${count}`,

@@ -1299,6 +1299,7 @@ const ca: BoardsTranslations = {
         itemsAtLeast: ({ count }) => `${count}+ elements`,
         needYouAtLeast: ({ count }) => `${count}+ et necessiten`,
         widgets: ({ count }) => (count === 1 ? '1 giny' : `${count} ginys`),
+        widgets: ({ count }) => (count === 1 ? '1 giny' : `${count} ginys`),
         handPicked: 'Triats a mà',
         empty: 'Buit',
         moreSources: ({ count }) => `+ ${count}`,

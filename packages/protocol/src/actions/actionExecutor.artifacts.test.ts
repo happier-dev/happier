@@ -579,6 +579,7 @@ describe('ordinary Artifact Actions', () => {
       nextRevision: { headerVersion: 3, bodyVersion: 3 } });
     expect(readWorkBoardArtifactSummaryV1(current.id, header)).toEqual({
       id: 'board-1', name: 'Prior', pinnedInSessions: true, source: { sections: ['needs_you'] },
+      counts: { widgets: 0, picked: 0, filtered: false },
     });
     expect(header).not.toHaveProperty('source');
   });

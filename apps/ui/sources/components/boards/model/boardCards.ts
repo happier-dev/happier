@@ -616,6 +616,24 @@ export function describeBoardSummaryLine({ needYou, itemCount, undetermined }: P
 }
 
 /**
+ * An index row's line before its Board is read (owner 11-11): what the saved layout holds — its widgets, then the items
+ * picked by hand — or, for a hand-picked Board with nothing on it, that it is empty. A Board a filter or a section fills
+ * says nothing until it is read, and a header without a layout says nothing.
+ */
+export function describeBoardSummaryCounts(
+    counts: Readonly<{ widgets: number; picked: number; filtered: boolean }> | null,
+    sections: readonly string[],
+): string | undefined {
+    if (counts === null) return undefined;
+    const parts = [
+        counts.widgets > 0 ? t('boards.meta.widgets', { count: counts.widgets }) : null,
+        counts.picked > 0 ? t('boards.meta.items', { count: counts.picked }) : null,
+    ].filter((part): part is string => part !== null);
+    if (parts.length > 0) return parts.join(' · ');
+    return counts.filtered || sections.length > 0 ? undefined : `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}`;
+}
+
+/**
  * The one line a Board says when its answered filter could not classify some candidates: how many, then why.
  * The count and reasons are the membership owner's; this only words them.
  */

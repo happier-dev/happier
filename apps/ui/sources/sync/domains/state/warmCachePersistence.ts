@@ -619,6 +619,12 @@ const WorkBoardSummariesWarmCacheSchema = z.object({
         name: z.string(),
         pinnedInSessions: z.boolean(),
         readsNeedsYou: z.boolean(),
+        // What the saved layout holds, so an index row paints its line with the first frame (absent on older records).
+        counts: z.optional(z.nullable(z.object({
+            widgets: z.number().check(z.int(), z.nonnegative()),
+            picked: z.number().check(z.int(), z.nonnegative()),
+            filtered: z.boolean(),
+        }))),
     })),
 });
 export type WorkBoardSummariesWarmCache = z.infer<typeof WorkBoardSummariesWarmCacheSchema>;

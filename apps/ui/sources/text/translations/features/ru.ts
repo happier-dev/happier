@@ -1321,6 +1321,7 @@ const ru: BoardsTranslations = {
         itemsAtLeast: ({ count }) => `${count}+ элементов`,
         needYouAtLeast: ({ count }) => `Ждут вас: ${count}+`,
         widgets: ({ count }) => `Виджеты: ${count}`,
+        widgets: ({ count }) => `Виджеты: ${count}`,
         handPicked: 'Выбрано вручную',
         empty: 'Пусто',
         moreSources: ({ count }) => `+ ${count}`,

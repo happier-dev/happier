@@ -12,7 +12,7 @@ import { t } from '@/text';
 
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE, createBoardRoute, readOpenBoardId } from './boardsRoutes';
-import { describeBoardSummaryLine, hasWorkBoardContent } from './model/boardCards';
+import { describeBoardSummaryCounts, describeBoardSummaryLine, hasWorkBoardContent } from './model/boardCards';
 import { useBoardLiveSummary } from './model/useBoardContent';
 import { useDispatchWorkBoardIntent, useWorkBoardReadState, useWorkBoardSaveState, useWorkBoardSummaries, useWorkBoards } from './model/useWorkBoards';
 import { resolveCollectionSaveFailure } from './model/boardSaveFailure';
@@ -57,7 +57,8 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoa
             testID={`boards-column:board:${summary.id}`}
             href={createBoardRoute(summary.id)}
             title={summary.name}
-            subtitle={board ? `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}` : undefined}
+            // Unread, the row says what its saved layout holds; read and empty, that it is hand-picked and empty.
+            subtitle={board ? `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}` : describeBoardSummaryCounts(summary.counts, summary.source.sections)}
             selected={props.selected}
             showDivider={props.showDivider}
             onPress={onPress}

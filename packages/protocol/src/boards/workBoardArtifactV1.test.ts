@@ -21,7 +21,11 @@ describe('one Artifact per Board', () => {
         expect(WorkBoardPreviewLayoutV1Schema.safeParse({ ...preview, widgets: [{ title: null, size: 'medium' }] }).success).toBe(false);
         expect(WorkBoardPreviewLayoutV1Schema.safeParse({ ...preview, source: { sections: [], pickedCount: 0 } }).success).toBe(false);
         const header = { kind: 'work-board.v1', v: 1, title: 'One', pinnedInSessions: false, readsNeedsYou: false, obsolete: true };
-        expect(readWorkBoardArtifactSummaryV1('one', header)).toEqual({ id: 'one', name: 'One', pinnedInSessions: false, source: { sections: [] } });
+        // A header without a readable layout says no counts; never invented zeros.
+        expect(readWorkBoardArtifactSummaryV1('one', header)).toEqual({ id: 'one', name: 'One', pinnedInSessions: false, source: { sections: [] }, counts: null });
+        // The saved layout's counts reach the summary, so an index row can say what a board holds without its body.
+        expect(readWorkBoardArtifactSummaryV1('one', { ...header, previewLayout: { ...preview, source: { ...preview.source, pickedCount: 2 } } })?.counts)
+            .toEqual({ widgets: preview.widgets.length, picked: 2, filtered: preview.source.hasFilter });
         const { title: _title, ...missingTitle } = header;
         expect(readWorkBoardArtifactSummaryV1('one', missingTitle)).toBeNull();
     });
@@ -251,8 +255,8 @@ describe('one Artifact per Board', () => {
         const port = createWorkBoardArtifactPortV1({ ...b.transport, list: async options => options.cursor
             ? { items: [items[1]!] } : { items: [items[0]!], nextCursor: 'next' } });
         expect(await port.list()).toEqual([
-            { id: 'one', name: 'Pinned', pinnedInSessions: true, source: { sections: ['needs_you'] } },
-            { id: 'two', name: 'Two', pinnedInSessions: false, source: { sections: [] } },
+            { id: 'one', name: 'Pinned', pinnedInSessions: true, source: { sections: ['needs_you'] }, counts: { widgets: 0, picked: 0, filtered: false } },
+            { id: 'two', name: 'Two', pinnedInSessions: false, source: { sections: [] }, counts: { widgets: 0, picked: 0, filtered: false } },
         ]);
         expect(b.reads).toEqual([]);
     });

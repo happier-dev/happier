@@ -1294,6 +1294,7 @@ const zhHans: BoardsTranslations = {
         itemsAtLeast: ({ count }) => `${count}+ 项`,
         needYouAtLeast: ({ count }) => `${count}+ 项需要你`,
         widgets: ({ count }) => `${count} 个小组件`,
+        widgets: ({ count }) => `${count} 个小组件`,
         handPicked: '手动挑选',
         empty: '空',
         moreSources: ({ count }) => `+ ${count}`,

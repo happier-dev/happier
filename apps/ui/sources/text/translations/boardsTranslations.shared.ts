@@ -18,6 +18,8 @@ export type BoardsTranslations = Readonly<{
         moreSources: Count;
         itemsAtLeast: Count;
         needYouAtLeast: Count;
+        /** The widgets a board holds, said from its saved layout before its body is read. */
+        widgets: Count;
     }>;
     sections: Readonly<{
         needs_you: Readonly<{ title: string; description: string }>;
@@ -158,6 +160,7 @@ export const en: BoardsTranslations = {
         items: ({ count }) => (count === 1 ? '1 item' : `${count} items`),
         itemsAtLeast: ({ count }) => `${count}+ items`,
         needYouAtLeast: ({ count }) => `${count}+ need you`,
+        widgets: ({ count }) => (count === 1 ? '1 widget' : `${count} widgets`),
         handPicked: 'Hand-picked',
         empty: 'empty',
         moreSources: ({ count }) => `+ ${count}`,

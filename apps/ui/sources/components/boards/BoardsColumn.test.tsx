@@ -347,7 +347,7 @@ describe('BoardsColumn collection search', () => {
         liveBoard = { ...boards[0]!, pinnedInSessions: true, source: { picked: Object.keys(rows).map(id => ({ kind: 'session', qualifiedId: { serverId, id } })) } };
         getStorage().setState({ sessionListRowsByServerId: { [serverId]: rows } });
         await screen.update(<InjectedAuthProvider credentials={credentials}><BoardsColumn />
-            <PinnedBoardNeedsYouCount board={{ id: 'alpha', name: liveBoard.name, pinnedInSessions: true, source: { sections: [] } }} />
+            <PinnedBoardNeedsYouCount board={{ id: 'alpha', name: liveBoard.name, pinnedInSessions: true, source: { sections: [] }, counts: null }} />
         </InjectedAuthProvider>);
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull());
         expect(titleReads).toBe(0);

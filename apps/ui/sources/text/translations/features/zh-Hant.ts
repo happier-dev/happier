@@ -1294,6 +1294,7 @@ const zhHant: BoardsTranslations = {
         itemsAtLeast: ({ count }) => `${count}+ 項`,
         needYouAtLeast: ({ count }) => `${count}+ 項需要你`,
         widgets: ({ count }) => `${count} 個小工具`,
+        widgets: ({ count }) => `${count} 個小工具`,
         handPicked: '手動挑選',
         empty: '空',
         moreSources: ({ count }) => `+ ${count}`,

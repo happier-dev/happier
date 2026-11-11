@@ -1299,6 +1299,7 @@ const it: BoardsTranslations = {
         itemsAtLeast: ({ count }) => `${count}+ elementi`,
         needYouAtLeast: ({ count }) => `${count}+ hanno bisogno di te`,
         widgets: ({ count }) => (count === 1 ? '1 widget' : `${count} widget`),
+        widgets: ({ count }) => (count === 1 ? '1 widget' : `${count} widget`),
         handPicked: 'Scelti a mano',
         empty: 'Vuota',
         moreSources: ({ count }) => `+ ${count}`,

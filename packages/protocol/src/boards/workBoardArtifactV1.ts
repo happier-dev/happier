@@ -48,6 +48,11 @@ export type WorkBoardArtifactSummaryV1 = Readonly<{
     id: string; name: string; pinnedInSessions: boolean;
     /** Header projection, used solely to mount the existing Inbox boundary. */
     source: Readonly<{ sections: readonly ('needs_you')[] }>;
+    /**
+     * What the saved layout holds, from the header's `previewLayout` (no body read): widgets placed, items picked by
+     * hand, and whether a filter adds more. `null` when the header carries no readable layout.
+     */
+    counts: Readonly<{ widgets: number; picked: number; filtered: boolean }> | null;
 }>;
 export type WorkBoardArtifactTransportV1 = Readonly<{
     read(artifactId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<WorkBoardArtifactV1 | null>;
@@ -81,8 +86,12 @@ export function buildWorkBoardArtifactHeaderV1(board: WorkBoardV1): Readonly<Rec
 export function readWorkBoardArtifactSummaryV1(artifactId: string, header: Readonly<Record<string, unknown>>): WorkBoardArtifactSummaryV1 | null {
     if (header.kind !== WORK_BOARD_ARTIFACT_KIND_V1 || header.v !== 1 || typeof header.title !== 'string'
         || typeof header.pinnedInSessions !== 'boolean' || typeof header.readsNeedsYou !== 'boolean') return null;
+    const layout = WorkBoardPreviewLayoutV1Schema.safeParse(header.previewLayout);
     return { id: artifactId, name: header.title, pinnedInSessions: header.pinnedInSessions,
-        source: { sections: header.readsNeedsYou ? ['needs_you'] : [] } };
+        source: { sections: header.readsNeedsYou ? ['needs_you'] : [] },
+        counts: layout.success
+            ? { widgets: layout.data.widgets.length, picked: layout.data.source.pickedCount, filtered: layout.data.source.hasFilter }
+            : null };
 }
 
 function readBody(artifact: Pick<WorkBoardArtifactV1, 'artifactId' | 'header' | 'body'>): unknown {
