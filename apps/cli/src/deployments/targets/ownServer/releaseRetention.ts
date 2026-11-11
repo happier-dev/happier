@@ -64,6 +64,14 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
     const previous = selectDeploymentRetainedPreviousV1(input.receipts.map(receipt => receipt.deployment),
         input.link.activeDeploymentId, input.environment.content.retainPreviousDeployments);
     for (const receipt of previous) protectedIds.add(receipt.id);
+    // The newest operation remains the investigation even when its release is
+    // retired. A later attempt lets its diagnostic log follow release retention.
+    let latest: DeploymentReceiptDetailV1 | undefined;
+    for (const receipt of input.receipts) {
+        if (!latest || receipt.deployment.requestedAtMs > latest.deployment.requestedAtMs
+            || receipt.deployment.requestedAtMs === latest.deployment.requestedAtMs
+                && receipt.deployment.id.localeCompare(latest.deployment.id) > 0) latest = receipt;
+    }
     const receiptsById = new Map(input.receipts.map(receipt => [receipt.deployment.id, receipt]));
     const missingImageCustody = [...protectedIds].filter(id => {
         const receipt = receiptsById.get(id);
@@ -87,7 +95,7 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
     return { imageProtection, expiredImages, retainedPreviousDeploymentIds: previous.map(receipt => receipt.id),
         expiredSources: input.receipts.flatMap(receipt => receipt.content.ownServer?.sources ?? [])
         .filter(source => source.role === 'build' ? !unsettledIds.has(source.deploymentId) : !protectedIds.has(source.deploymentId)),
-        expiredLogs: input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id))
+        expiredLogs: input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id) && receipt.deployment.id !== latest?.deployment.id)
             .flatMap(receipt => (receipt.content.ownServer?.stageLogs ?? []).map(log => ({ deploymentId: receipt.deployment.id, log }))) };
 }
 

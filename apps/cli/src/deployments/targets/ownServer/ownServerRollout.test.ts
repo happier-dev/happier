@@ -365,14 +365,15 @@ function createSettlementNoticeHttpBoundary(serverHttpBaseUrl: string) {
 }
 
 it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retained rollback without build',
-    'activation failure diagnostic', 'activation failure diagnostic with cleanup'] as const)(
+    'activation failure diagnostic', 'activation failure diagnostic with cleanup', 'unverified incumbent joining'] as const)(
     'restores native members to U after %s', { timeout: 300_000 }, async (scenario, testContext) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-own-server-rollout-'));
     const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
         controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
     const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
     const activationFailure = scenario.startsWith('activation failure diagnostic');
-    const machineIds = scenario === 'retained rollback without build' || activationFailure
+    const unverified = scenario === 'unverified incumbent joining';
+    const machineIds = scenario === 'retained rollback without build' || unverified || activationFailure
         ? ['machine-a'] : ['machine-a', 'machine-b', 'machine-c'];
     let selectedMachine = machineIds[0];
     const tools = new Map<string, Awaited<ReturnType<typeof createOwnServerDockerBoundary>>>();
@@ -382,7 +383,7 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') }];
     }));
     const environment = createDeploymentEnvironmentDetailV1();
-    environment.content.retainPreviousDeployments = scenario === 'retained rollback without build' ? 2 : 0;
+    environment.content.retainPreviousDeployments = scenario === 'retained rollback without build' || unverified ? 2 : 0;
     environment.environment.protection = 'production';
     environment.environment.owner = { kind: 'team', teamId: 'shared-source-team' };
     const link = environment.targetLinks[0].targetLink;
@@ -434,6 +435,8 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             }));
             const host: OwnServerDeploymentTargetHostInput = {
                 credentials, serverId: 'home', serverHttpBaseUrl: 'https://rollout-home.test', machineId,
+                ...(unverified ? { async enrollMemberRoutes() { return { ok: true as const, environmentId: environment.environment.id,
+                    revision: environment.environment.revision, deploymentId: link.activeDeploymentId!, deploymentRevision: 1, state: 'running' as const }; } } : {}),
                 async readEnvironment() { return structuredClone(environment); },
                 async readRetentionHeaders({ deploymentId }) {
                     return structuredClone({ environment: environment.environment, deployment: receipts.get(deploymentId)!.deployment, link });
@@ -517,7 +520,7 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
         let sourceRevision = 0;
         const candidate = async (version: string, onFailure: 'rollbackAll' | 'keepPartial', previous?: OwnServerDeploymentReceipt) => {
             const images = await Promise.all(machineIds.map(machineId => tools.get(machineId)!.registerImage('app', version)));
-            const document = JSON.stringify({ services: { app: { image: images[0].registryReference, environment: { VERSION: version } } } });
+            const document = JSON.stringify({ services: { app: { image: images[0].registryReference, environment: { VERSION: version }, ...(unverified ? { healthcheck: { disable: true } } : {}) } } });
             const sourceIntent = { kind: 'stored' as const, document, contentRevision: ++sourceRevision,
                 composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, services: ['app'], profiles: [] };
             environment.content.definition = sourceIntent;
@@ -588,15 +591,19 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             expect(JSON.stringify(observed)).not.toContain('private-missing-entrypoint-sentinel');
             return;
         }
-        if (scenario === 'retained rollback without build') {
+        if (scenario === 'retained rollback without build' || unverified) {
+            const expectedState = unverified ? 'running_unverified' : 'succeeded';
             const first = await candidate('v1', 'rollbackAll');
-            expect(await onMachine('machine-a', () => targets.get('machine-a')!.execute(first.request))).toMatchObject({ ok: true, state: 'succeeded' });
+            expect(await onMachine('machine-a', () => targets.get('machine-a')!.execute(first.request))).toMatchObject({ ok: true, state: expectedState });
+            if (unverified) link.members[0].state = 'joining';
             const second = await candidate('v2', 'rollbackAll', first.receipt);
-            expect(await onMachine('machine-a', () => targets.get('machine-a')!.execute(second.request))).toMatchObject({ ok: true, state: 'succeeded' });
+            const secondResult = await onMachine('machine-a', () => targets.get('machine-a')!.execute(second.request));
+            expect(secondResult, JSON.stringify({ failure: second.receipt.content.failure, dispatchErrors }))
+                .toMatchObject({ ok: true, state: expectedState });
             expect(link.activeDeploymentId).toBe('v2');
             expect(buildRequests).toEqual(['v1', 'v2']);
 
-            for (const mode of ['joining', 'retained'] as const) {
+            for (const mode of (unverified ? ['retained'] : ['joining', 'retained']) as readonly ('joining' | 'retained')[]) {
                 const recovery = createDeploymentReceiptDetailV1();
                 recovery.deployment = createDeploymentReceiptHeaderV1({ ...second.receipt.deployment,
                     id: `rollback-${mode}`, operation: 'rollback', rollbackOfDeploymentId: 'v1',
@@ -628,12 +635,12 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
                     expect(recovery.content.failure).toEqual({ code: 'unsupported_action', phase: 'admission' });
                     continue;
                 }
-                expect(result, JSON.stringify({ failure: recovery.content.failure, dispatchErrors })).toMatchObject({ ok: true, state: 'succeeded' });
+                expect(result, JSON.stringify({ failure: recovery.content.failure, dispatchErrors })).toMatchObject({ ok: true, state: expectedState });
                 expect(buildRequests).toEqual(['v1', 'v2']);
                 expect(link.activeDeploymentId).toBe(recovery.deployment.id);
                 expect(recovery.content.images).toEqual(first.receipt.content.images);
                 expect(recovery.content.machineResults).toContainEqual(expect.objectContaining({ activation: 'succeeded',
-                    currentDeploymentId: recovery.deployment.id, health: 'healthy' }));
+                    currentDeploymentId: recovery.deployment.id, health: unverified ? 'unverified' : 'healthy' }));
                 expect(await tools.get('machine-a')!.readRunningImageConfig('app')).toBe(first.image.configDigest);
             }
             return;
@@ -740,7 +747,7 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
     } finally {
         Object.defineProperty(configuration, 'happyHomeDir', originalHome);
         await mounted.dispose();
-        await rm(root, { recursive: true, force: true });
+        await rm(root, { recursive: true, force: true, maxRetries: 3 });
     }
 });
 

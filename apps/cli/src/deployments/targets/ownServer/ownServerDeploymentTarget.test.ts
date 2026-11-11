@@ -3862,6 +3862,18 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 expect(JSON.stringify(restored)).not.toContain('review-secret-value-sentinel');
                 expect(await readOwnServerDeploymentStageLogs({ deploymentRoot: await resolveOwnServerDeploymentRootForHost(root, 'home'),
                     serverId: homeServerIdentityId, machineId: 'machine-a', installationId: 'installation-a' }, serving)).toEqual(cleaned);
+                // DJ28: the latest failed attempt remains the investigation log even
+                // when release retention is zero and the incumbent serves again.
+                receipt.deployment = { ...receipt.deployment, state: 'failed',
+                    requestedAtMs: serving.deployment.requestedAtMs + 1 };
+                environment.content.retainPreviousDeployments = 0;
+                const retaining = createOwnServerDeploymentTargetForHost({ ...host,
+                    async readRetentionHeaders() { return structuredClone({ environment: environment.environment,
+                        deployment: receipt.deployment, link: environment.targetLinks[0]!.targetLink }); } });
+                expect(await retaining.retain({ request: restoration, machineId: 'machine-a', installationId: 'installation-a',
+                    settledTargetLinkRevision: environment.targetLinks[0]!.targetLink.revision,
+                    settledDeploymentRevision: receipt.deployment.revision, activeDeploymentId: serving.deployment.id }))
+                    .toMatchObject({ ok: true, state: 'failed' });
                 phase('frontdoor-read');
                 const deps = createDaemonDeploymentActionDeps({ ...host, resolveRequesterIdentity });
                 const stage = await deps.deploymentAction('deployments.logs.read', { serverId: 'home', environmentId: environment.environment.id,

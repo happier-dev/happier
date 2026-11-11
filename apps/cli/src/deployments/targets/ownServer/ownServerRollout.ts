@@ -225,7 +225,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                 if (!restored.ok && restored.errorCode === 'outcome_unknown' || row?.restoration === 'outcome_unknown') {
                     return await write('outcome_unknown');
                 }
-                if (!restored.ok || row?.restoration !== 'succeeded' || row.health !== 'healthy') {
+                if (!restored.ok || row?.restoration !== 'succeeded' || row.health !== 'healthy' && row.health !== 'unverified') {
                     return await write('failed', { ...receipt.content,
                         failure: projectFailure('restore', restored.ok ? 'deployment_health_failed' : restored.errorCode,
                             restored.ok ? undefined : restored) });
@@ -233,7 +233,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             }
             if (joining.length) {
                 // The ingress owner reconciles the complete admitted member set,
-                // after every joining receiver has established healthy U.
+                // after every joining receiver has restored serving U.
                 const enrolled = await host.enrollMemberRoutes!(request, { link: admitted.link,
                     signal: initial.signal });
                 await read();

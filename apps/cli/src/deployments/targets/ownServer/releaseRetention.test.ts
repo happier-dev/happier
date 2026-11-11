@@ -58,6 +58,26 @@ it('applies retention zero, one and greater while keeping the uniform and unsett
         .map(source => source.deploymentId)).toEqual(['older-2']);
 });
 
+it('keeps the newest attempt log for investigation without retaining its expired release or earlier failed logs', () => {
+    const { environment, link, receipt, approvedInputBasis } = retentionRecords();
+    environment.content.retainPreviousDeployments = 0;
+    const failed = ['earlier-failure', 'latest-failure'].map((id, index) => {
+        const value = structuredClone(receipt);
+        value.deployment = { ...value.deployment, id, state: 'failed' as const,
+            requestedAtMs: receipt.deployment.requestedAtMs + index + 1 };
+        value.content.machineResults = [];
+        value.content.ownServer = { approvedInputBasis, stageLogs: [{ machineId: 'machine-a', installationId: 'installation-a',
+            relativePath: '.happier/deploy.log' }], sources: [{ machineId: 'machine-a', installationId: 'installation-a',
+            deploymentId: id, role: 'runtime', rootFingerprint: 'root', manifestFingerprint: 'manifest', manifestEntries: [], sharedBinds: [] }] };
+        return value;
+    });
+    const result = projectOwnServerDeploymentRetention({ serverId: 'home', environment, link,
+        receipts: [failed[0]!, receipt, failed[1]!] });
+    expect(result.expiredLogs.map(value => value.deploymentId)).toEqual(['earlier-failure']);
+    expect(result.expiredSources.map(value => value.deploymentId)).toEqual(['earlier-failure', 'latest-failure']);
+    expect(result.expiredImages.map(value => value.deploymentId)).toEqual(['earlier-failure', 'latest-failure']);
+});
+
 it('protects exact uniform, mixed, retained and unsettled image custody and refuses an incomplete protection basis', () => {
     const { environment, link, receipt } = retentionRecords();
     environment.content.retainPreviousDeployments = 1;

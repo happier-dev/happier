@@ -827,7 +827,11 @@ do not manufacture another transition.
 The current-source receipt lease also exposes `facts` from the already-opened
 private receipt: a captured failure code/phase, selected commit subject and
 revision, recorded incumbent rollback target, masked stage-log excerpts, and
-step-to-operation log references and sink-recorded step ranges. Historical evidence
+step-to-operation log references and sink-recorded step ranges. Its typed restoration
+consequence reconciles the recorded failure with all captured member outcomes:
+a restore-phase failure cannot claim restoration succeeded, and a restored version
+without verified health remains explicitly unverified. The receipt banner and
+recovery choice consume that same consequence. Historical evidence
 needs no additional request. In 0.3 development, the receipt hook also joins the
 Environment's runtime pointer with its shared retained-history page. That page
 opens visible receipt contents in one Account batch, projecting revision and
@@ -1862,6 +1866,9 @@ rotation without persisting an inode witness in the receipt. Writers create the 
 exclusively and never recreate a missing retained log. Cleanup removes only unchanged
 manifest leaves and that pinned log under the source-root and native storage deletion
 fence, preserving mounted paths, modified application files, shared data and other runtime bytes.
+The latest attempt's operation log remains available for investigation even when
+its failed release's source and images expire. Once another attempt becomes latest,
+the older log follows the existing active and retained-release policy.
 File and symlink removal cannot recurse
 if an application replaces a leaf with a directory.
 
@@ -1887,8 +1894,9 @@ guessed increment or a new current-state snapshot. Missing child authority or
 execution wiring fails closed. Scoped semantic preparation/key-bootstrap issuance,
 semantic accepted-host continuity after controller changes still require their owning producers.
 Joining restores the retained uniform artifacts onto every joining installation
-and requires healthy native results before the existing Domain owner enrolls
-routes. Successful uniform settlement activates membership only after signed
+and requires a successful native restore before the existing Domain owner enrolls
+routes. Native health can be healthy or unverified when no health check is defined;
+unknown and unhealthy results cannot enroll. Successful uniform settlement activates membership only after signed
 Domain health is stored. Scoped teardown reconciles Domains to the surviving
 members before native removal; target-link replacement consumes that teardown's
 exact installation proof through `drainedDeploymentId`, retaining predecessor
@@ -3623,7 +3631,11 @@ Machine, installation, Caddy container, network and native server. The controlle
 forwards this selection unchanged through the existing child transport and
 rejects a discovery reply for another Machine or installation before admission.
 Missing or unequal endpoint facts return `required_fact_unavailable` for the
-complete active set; joining members are included when they become active.
+complete active set. Ordinary discovery also includes an exact Machine installation
+whose incumbent receipt records a current release, even when a failed rollout
+has left its TargetLink flag as joining. A joining installation without that
+serving proof stays excluded. Admitted membership children consume their exact
+desired installation set.
 There is no reduced member set, per-Machine remote Tunnel configuration or
 inferred Docker DNS name. Different observed addresses need a proven shared
 native endpoint mapping before they can serve one global Tunnel configuration.
