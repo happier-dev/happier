@@ -79,7 +79,7 @@ export async function uploadDaemonSessionAttachmentFromReader(params: SessionAtt
     if (context) {
         if (context.sessionId !== sessionId) {
             await params.fileReader.close();
-            return { success: false, error: 'Session attachment scope is unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
+            return { success: false, error: 'Session attachment scope is unavailable', errorCode: 'attachment_session_unavailable' };
         }
         let expiresAt: number | undefined;
         const readFinalizeResponse = async (request: Readonly<{ uploadId: string }>, signal?: AbortSignal | null): Promise<SessionAttachmentsUploadFinalizeResponse & { expiresAt?: number }> => {
@@ -167,7 +167,7 @@ export async function uploadDaemonSessionAttachmentFromReader(params: SessionAtt
         return {
             success: false,
             error: SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR,
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            errorCode: 'attachment_session_unavailable',
         };
     }
 

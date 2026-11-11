@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { findPopoverContentView, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
@@ -12,16 +12,10 @@ installPopoverCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeNativeMock({ platformOS: 'android' }, {
-            // Tall enough to show the settled 848-tall boundary: a popover's room ends at the window's edge.
-            useWindowDimensions: () => ({ width: 1000, height: 900 }),
+            useWindowDimensions: () => ({ width: 1000, height: 800 }),
         });
     },
 });
-
-// The popover module graph is large: load it once, outside each test's own time.
-beforeAll(async () => {
-    await import('./Popover');
-}, 300_000);
 
 describe('Popover (native sizing retries)', () => {
     it('retries measurement when an initial layout would yield maxHeight=0 (avoids 0-height popovers on native)', async () => {

@@ -13,6 +13,8 @@ export function describeUploadFailureReason(reason: TransferFailureReason, machi
         case 'executionUnavailable': return t('errors.agentIsolationUnavailable');
         case 'permission': return t('errors.permissionDenied');
         case 'tooLarge': return t('files.transfers.failureReasons.tooLarge');
+        case 'sourceUnavailable': return t('files.transfers.failureReasons.sourceUnavailable');
+        case 'sessionUnavailable': return t('files.transfers.failureReasons.sessionUnavailable');
         case 'unconfirmed': return t('files.transfers.failureReasons.unconfirmed');
         case 'other': return t('files.transfers.failureReasons.other', { machine: machineName });
     }

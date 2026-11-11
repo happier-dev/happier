@@ -106,19 +106,19 @@ export async function sessionAttachmentsUploadFile(args: SessionAttachmentUpload
         if (args.file.kind === 'folder') {
             const folder = args.file;
             const root = resolveUploadRelativePath(args.attachmentId ?? randomUUID(), folder.name);
-            if (!root) return { success: false, error: 'Invalid attachment relativePath' };
+            if (!root) return { success: false, error: 'Invalid attachment relativePath', errorCode: 'attachment_source_unavailable' };
             const entries = folder.entries.map(entry => ({ ...entry, path: resolveUploadRelativePath(root, entry.relativePath) }));
-            if (entries.some(entry => !entry.path)) return { success: false, error: 'Invalid attachment relativePath' };
+            if (entries.some(entry => !entry.path)) return { success: false, error: 'Invalid attachment relativePath', errorCode: 'attachment_source_unavailable' };
             let totalBytes = 0;
             for (const entry of entries) {
                 const size = await resolveLocalUploadSourceSizeBytes(entry.source);
                 assertCurrent();
-                if (size == null || size < 0) return { success: false, error: 'Unknown attachment size' };
-                if (size > args.config.maxFileBytes) return { success: false, error: 'File exceeds maximum allowed size' };
+                if (size == null || size < 0) return { success: false, error: 'Unknown attachment size', errorCode: 'attachment_source_unavailable' };
+                if (size > args.config.maxFileBytes) return { success: false, error: 'File exceeds maximum allowed size', errorCode: 'attachment_too_large' };
                 totalBytes += size;
             }
             const directories = folder.directories ?? [];
-            if (directories.some(directory => !resolveUploadRelativePath(root, directory))) return { success: false, error: 'Invalid attachment directory path' };
+            if (directories.some(directory => !resolveUploadRelativePath(root, directory))) return { success: false, error: 'Invalid attachment directory path', errorCode: 'attachment_source_unavailable' };
             let completedBytes = 0;
             const uploadNext = async (start: number, recovered?: SessionAttachmentsUploadFinalizeResponse): Promise<SessionAttachmentsUploadFileResult> => {
                 for (let index = start; index <= entries.length; index += 1) {
@@ -169,7 +169,7 @@ export async function sessionAttachmentsUploadFile(args: SessionAttachmentUpload
             const resolved = await resolveSizeBytesWithTimeout(args.file);
             assertCurrent();
             if (!resolved.ok) {
-                return { success: false, error: resolved.error };
+                return { success: false, error: resolved.error, errorCode: 'attachment_source_unavailable' };
             }
             if (resolved.value != null) {
                 described = { ...described, sizeBytes: resolved.value };
@@ -177,10 +177,10 @@ export async function sessionAttachmentsUploadFile(args: SessionAttachmentUpload
         }
 
         if (described.sizeBytes < 0) {
-            return { success: false, error: 'Unknown attachment size' };
+            return { success: false, error: 'Unknown attachment size', errorCode: 'attachment_source_unavailable' };
         }
         if (described.sizeBytes > args.config.maxFileBytes) {
-            return { success: false, error: 'File exceeds maximum allowed size' };
+            return { success: false, error: 'File exceeds maximum allowed size', errorCode: 'attachment_too_large' };
         }
 
         const reader = await openLocalUploadSourceReader(args.file);
@@ -199,7 +199,7 @@ export async function sessionAttachmentsUploadFile(args: SessionAttachmentUpload
                     args.sessionTarget ? { purpose: 'attachmentUpload', target: args.sessionTarget } : undefined);
             assertCurrent();
             if (args.sessionTarget && !transferContext) {
-                return { success: false, error: 'Session attachment scope is unavailable' };
+                return { success: false, error: 'Session attachment scope is unavailable', errorCode: 'attachment_session_unavailable' };
             }
             const bulkUpload = await uploadDaemonSessionAttachmentFromReader({
                 session: args.sessionTarget ?? args.sessionId,

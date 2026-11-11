@@ -27,6 +27,8 @@ export type SessionSpawnNewResultFailureMessageKey =
     | 'newSession.launchStillPendingBody'
     | 'newSession.daemonRpcUnavailableBody'
     | 'newSession.actionMethodUnavailable'
+    | 'newSession.checkoutUnavailableBody'
+    | 'newSession.requesterCredentialsUnavailableBody'
     | 'session.access.repairBody'
     | 'session.access.preparationKeyUnavailable'
     | 'teams.policy.externalSharingDisabled'
@@ -82,6 +84,8 @@ export function resolveSessionSpawnNewResultFailureMessageKey(
     }
     // A target that cannot take this start says what to do on that Machine, never a bare code.
     const incompatible = result.code === 'incompatible_target' ? result.incompatibleTarget?.reason : undefined;
+    if (incompatible === 'checkout_unavailable') return 'newSession.checkoutUnavailableBody';
+    if (incompatible === 'requester_credentials_unavailable') return 'newSession.requesterCredentialsUnavailableBody';
     if (incompatible === 'daemon_rpc_unavailable') return 'newSession.daemonRpcUnavailableBody';
     if (incompatible && INCOMPATIBLE_TARGET_NEEDS_UPDATE.has(incompatible)) return 'newSession.actionMethodUnavailable';
     if (
@@ -140,6 +144,10 @@ function resolveSessionSpawnNewResultFailureBody(
     if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.pluginCodeRefusal) {
         return t(result.launchError.pluginCodeRefusal.remedy.kind === 'ask_machine_manager'
             ? 'errors.pluginCodeUnreadableAskManager' : 'errors.pluginCodeUnreadableOpenSecurity');
+    }
+    if (result.type === 'error' && result.code === 'spawn_failed'
+        && result.launchError?.agentIsolationRefusal?.reason === 'workspace_not_ready') {
+        return t('errors.agentIsolationWorkspaceUnavailable');
     }
     if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.agentIsolationRefusal?.remedy) {
         return t(result.launchError.agentIsolationRefusal.remedy.kind === 'ask_machine_manager'

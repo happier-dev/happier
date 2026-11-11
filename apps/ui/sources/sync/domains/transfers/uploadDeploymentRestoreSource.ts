@@ -4,6 +4,7 @@ import { openLocalUploadSourceReader, type LocalUploadSource } from '@/sync/runt
 import { uploadBulkPayloadFromFile } from './runtime/transferRuntime/plumbing/uploadBulkPayloadFromFile';
 import { createWorkspaceFileTransferRpcCaller } from './runtime/transferRuntime/families/workspaceFileTransferRpcCaller';
 import type { ChunkUploadProgress } from './runtime/transferRuntime/plumbing/chunkTransferClient';
+import { RpcError } from '@/sync/runtime/rpcErrors';
 
 /** A local file enters the existing encrypted finite-transfer owner; restore only receives its opaque handle. */
 export async function uploadDeploymentRestoreSource(input: Readonly<{
@@ -13,7 +14,7 @@ export async function uploadDeploymentRestoreSource(input: Readonly<{
     const reader = await openLocalUploadSourceReader(input.file);
     if (reader.sizeBytes === null) {
         await reader.close();
-        throw new Error('restore_upload_source_unavailable');
+        throw new RpcError('Upload source is unavailable', 'attachment_source_unavailable');
     }
     const rpc = createWorkspaceFileTransferRpcCaller(input);
     type Init = Awaited<ReturnType<Parameters<typeof uploadBulkPayloadFromFile>[0]['init']>>;

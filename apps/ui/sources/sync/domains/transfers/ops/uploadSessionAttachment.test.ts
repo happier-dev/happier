@@ -5,6 +5,11 @@ import { sessionAttachmentsUploadFile, type AttachmentsUploadConfig } from './up
 import type { SessionAttachmentTransferContext, SessionAttachmentsUploadFinalizeResponse } from '../runtime/transferRuntime/families/sessionAttachmentTransfers';
 import { isTransferFinalizeRecoveryFailure } from '../runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '../runtime/transferRuntime/plumbing/transferChunkEncryption';
+import { uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { classifyTransferFailure } from '../runtime/transferRuntime/plumbing/transferFailureCode';
+import { describeUploadFailure } from '@/components/transfers/describeUploadFailure';
+import { t } from '@/text';
+import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 
 const nativeOpenSpy = vi.hoisted(() => vi.fn());
 const nativeCloseSpy = vi.hoisted(() => vi.fn());
@@ -92,6 +97,39 @@ function createSessionTransport() {
 }
 
 describe('uploadSessionAttachment', () => {
+    it.each([
+        ['oversized file', 'tooLarge'], ['oversized folder', 'tooLarge'],
+        ['unknown size', 'sourceUnavailable'], ['invalid path', 'sourceUnavailable'],
+        ['invalid Session context', 'sessionUnavailable'],
+        ['receiver size limit', 'tooLarge'],
+    ] as const)('keeps an %s refusal actionable in the attachment draft', async (kind, reason) => {
+        const transport = createSessionTransport();
+        if (kind === 'receiver size limit') transport.call.mockResolvedValue({
+            success: false, error: 'File exceeds the server-routed transfer size limit', errorCode: 'attachment_too_large',
+        });
+        const file = { kind: 'memory' as const, name: 'note.txt', bytes: new Uint8Array(kind.startsWith('oversized') ? 5 : 1) };
+        const source = kind === 'unknown size'
+            ? { kind: 'native' as const, uri: 'file:///tmp/unknown.txt', name: 'unknown.txt', sizeBytes: null }
+            : kind === 'oversized folder' || kind === 'invalid path'
+                ? { kind: 'folder' as const, name: 'project', mimeType: 'inode/directory' as const,
+                    entries: [{ relativePath: kind === 'invalid path' ? '../note.txt' : 'note.txt', source: file }] }
+                : file;
+        const applyDraftPatch = vi.fn();
+        const failure: unknown = await uploadAttachmentDraftsToSession({
+            sessionId: 's1', messageLocalId: 'm1', transferContext: kind === 'invalid Session context'
+                ? { ...transport.transferContext, sessionId: 'other' } : transport.transferContext,
+            drafts: [{ id: 'draft', source, status: 'pending' }],
+            config: { ...config, maxFileBytes: 4 }, applyDraftPatch,
+        }).catch((error: unknown) => error);
+
+        expect(classifyTransferFailure({ errorCode: readRpcErrorCode(failure), thrown: failure })).toBe(reason);
+        expect(applyDraftPatch).toHaveBeenLastCalledWith('draft', expect.objectContaining({
+            status: 'error', error: describeUploadFailure(reason, t('common.machine')),
+        }));
+        if (kind === 'receiver size limit') expect(transport.finalize).not.toHaveBeenCalled();
+        else expect(transport.call).not.toHaveBeenCalled();
+    });
+
     it.each(['web', 'native'] as const)('uploads a %s folder through the same owner without applying the file limit to the whole folder', async (kind) => {
         const transport = createSessionTransport();
         const paths: string[] = [];
@@ -289,7 +327,7 @@ describe('uploadSessionAttachment', () => {
             file: { kind: 'native', uri: 'file:///tmp/unknown.txt', name: 'unknown.txt', sizeBytes: null },
             messageLocalId: 'm1', config,
         });
-        expect(result).toEqual({ success: false, error: 'Unknown attachment size' });
+        expect(result).toEqual({ success: false, error: 'Unknown attachment size', errorCode: 'attachment_source_unavailable' });
         expect(transport.call).not.toHaveBeenCalled();
         expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
     });
@@ -302,13 +340,18 @@ describe('uploadSessionAttachment', () => {
         // Stall the native module load instead of replacing internal size resolution.
         vi.doMock('expo-file-system', () => nativeModule);
         const transport = createSessionTransport();
-        const result = sessionAttachmentsUploadFile({
+        const applyDraftPatch = vi.fn();
+        const result = uploadAttachmentDraftsToSession({
             sessionId: 's1', transferContext: transport.transferContext,
-            file: { kind: 'native', uri: 'file:///tmp/unknown.txt', name: 'unknown.txt', sizeBytes: null },
-            messageLocalId: 'm1', config,
-        });
+            drafts: [{ id: 'draft', status: 'pending',
+                source: { kind: 'native', uri: 'file:///tmp/unknown.txt', name: 'unknown.txt', sizeBytes: null } }],
+            messageLocalId: 'm1', config, applyDraftPatch,
+        }).catch((error: unknown) => error);
         await vi.advanceTimersByTimeAsync(100);
-        await expect(result).resolves.toEqual({ success: false, error: 'Upload preflight size resolution timed out' });
+        expect(readRpcErrorCode(await result)).toBe('attachment_source_unavailable');
+        expect(applyDraftPatch).toHaveBeenLastCalledWith('draft', expect.objectContaining({
+            status: 'error', error: describeUploadFailure('sourceUnavailable', t('common.machine')),
+        }));
         expect(transport.call).not.toHaveBeenCalled();
         resolveNativeModule(createNativeFileModule());
         await vi.waitFor(() => expect(nativeCloseSpy).toHaveBeenCalledTimes(1));
@@ -320,7 +363,7 @@ describe('uploadSessionAttachment', () => {
             sessionId: 's1', transferContext: transport.transferContext,
             file: { kind: 'web', file: webFile() }, messageLocalId: 'm1', config: { ...config, maxFileBytes: 4 },
         });
-        expect(result).toEqual({ success: false, error: 'File exceeds maximum allowed size' });
+        expect(result).toEqual({ success: false, error: 'File exceeds maximum allowed size', errorCode: 'attachment_too_large' });
         expect(transport.call).not.toHaveBeenCalled();
     });
 });

@@ -7679,6 +7679,7 @@ localTailscale: {
       pluginCodeUnreadableAskManager: "個別ユーザーからプラグインのコードにアクセスできません。マシンの管理者に個別ユーザーの設定とマシン上の Happier の再起動を依頼してから、もう一度お試しください。",
       pluginCodeUnreadableOpenSecurity: "個別ユーザーからプラグインのコードにアクセスできません。このマシンの「セキュリティ」ページで個別ユーザーを設定し、マシン上の Happier を再起動してから、もう一度お試しください。",
       requesterSessionCustodyUnavailable: "このセッションの要求者のアクセスを復元できませんでした。元のアカウントから開き直すか、マシンの管理者にアクセスの確認を依頼してください。",
+      agentIsolationWorkspaceUnavailable: "このセッションで使用できるワークスペースまたはパスを選んで、再試行してください。",
       agentIsolationUnavailable:
         "このマシンではエージェントの分離の準備ができていません。マシンの所有者に設定の確認を依頼してから、もう一度お試しください。",
       tryAgain: "再試行してください",
@@ -7971,6 +7972,8 @@ localTailscale: {
     startNewSessionInFolder: "このフォルダで新しいセッション",
     failedToStart:
       "セッションを開始できませんでした。もう一度試すか、選択したマシンとセッション設定を確認してください。",
+    checkoutUnavailableBody: "選択したチェックアウトはこのマシンでは利用できません。利用可能なチェックアウトまたはフォルダーを選んで、セッションを開始し直してください。",
+    requesterCredentialsUnavailableBody: "セッションの認証情報を利用できません。このHomeに再接続して、セッションを開始し直してください。下書きは保持されています。",
     actionMethodUnavailable: "新しいセッションを作成するには、対象のマシンで Happier を更新してください。",
     sessionTimeout:
       "セッションの開始がタイムアウトしました。マシンが遅いか、デーモンが応答していない可能性があります。",
@@ -11380,6 +11383,8 @@ localTailscale: {
           teamSignIn: "チームに再度サインインしてから、もう一度お試しください",
           updateRequired: ({ machine }: { machine: string }) => `${machine} の Happier を更新する必要があります`,
           tooLarge: "サイズが大きすぎます",
+          sourceUnavailable: "このファイルを読み取れません · もう一度選択してください",
+          sessionUnavailable: "このセッションのアップロード接続が利用できません · セッションを開き直して再試行してください",
           unconfirmed: "完了したか確認できません · フォルダを確認してください",
           other: ({ machine }: { machine: string }) => `${machine} が受け付けられませんでした`,
       },

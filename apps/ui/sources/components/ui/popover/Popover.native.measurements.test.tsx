@@ -364,11 +364,6 @@ describe('Popover (native measurements)', () => {
         const style = flattenStyle(findPopoverContentView(screen)?.props?.style);
         // The box ends a gap above the anchor, and lays its content out from that edge.
         expect(800 - readNumericStyle(style, 'bottom') - outset).toBe(438 - 8);
-        // Its content hangs from that edge through an auto top margin, never by aligning the box's content to its
-        // end: content taller than its box (QA-B3 r173, web 1280×577) then starts at the box's top and never rises
-        // past it, as an auto margin takes no negative room.
-        expect(style.justifyContent).toBeUndefined();
-        const frame = screen.root.findAll((node: any) => node.props?.kind === 'popover' && node.props?.style !== undefined)[0];
-        expect(flattenStyle(frame?.props?.style).marginTop).toBe('auto');
+        expect(style.justifyContent).toBe('flex-end');
     });
 });

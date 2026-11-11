@@ -797,32 +797,12 @@ const compactDocumentGrid = StyleSheet.create({
     laneJoinBend: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX + SPINE_WIDTH },
     heading: { gap: COMPACT_ORDINAL_GAP_PX, marginLeft: -COMPACT_GUTTER_PX },
 });
-/** The grid-dependent rows of the wide document, named one by one from the authored styles. */
-const WIDE_GRID_STYLES = {
-    blockColumn: workflowEditorStyles.blockColumn,
-    blockGap: workflowEditorStyles.blockGap,
-    listEnd: workflowEditorStyles.listEnd,
-    listNote: workflowEditorStyles.listNote,
-    laneEndInserter: workflowEditorStyles.laneEndInserter,
-    laneLabelRow: workflowEditorStyles.laneLabelRow,
-    laneTurn: workflowEditorStyles.laneTurn,
-    laneFork: workflowEditorStyles.laneFork,
-    laneJoinBend: workflowEditorStyles.laneJoinBend,
-    heading: workflowEditorStyles.heading,
-};
-/** The same rows with the compact overrides layered on, key for key (the compiler checks every key). */
-const COMPACT_GRID_STYLES: { readonly [Key in keyof typeof WIDE_GRID_STYLES]: readonly [(typeof WIDE_GRID_STYLES)[Key], (typeof compactDocumentGrid)[Key]] } = {
-    blockColumn: [workflowEditorStyles.blockColumn, compactDocumentGrid.blockColumn],
-    blockGap: [workflowEditorStyles.blockGap, compactDocumentGrid.blockGap],
-    listEnd: [workflowEditorStyles.listEnd, compactDocumentGrid.listEnd],
-    listNote: [workflowEditorStyles.listNote, compactDocumentGrid.listNote],
-    laneEndInserter: [workflowEditorStyles.laneEndInserter, compactDocumentGrid.laneEndInserter],
-    laneLabelRow: [workflowEditorStyles.laneLabelRow, compactDocumentGrid.laneLabelRow],
-    laneTurn: [workflowEditorStyles.laneTurn, compactDocumentGrid.laneTurn],
-    laneFork: [workflowEditorStyles.laneFork, compactDocumentGrid.laneFork],
-    laneJoinBend: [workflowEditorStyles.laneJoinBend, compactDocumentGrid.laneJoinBend],
-    heading: [workflowEditorStyles.heading, compactDocumentGrid.heading],
-};
+type WorkflowDocumentGridKey = keyof typeof compactDocumentGrid;
+const GRID_KEYS = Object.keys(compactDocumentGrid) as WorkflowDocumentGridKey[];
+const WIDE_GRID_STYLES = Object.fromEntries(GRID_KEYS.map((key) => [key, workflowEditorStyles[key]])) as
+    Readonly<Record<WorkflowDocumentGridKey, (typeof workflowEditorStyles)[WorkflowDocumentGridKey]>>;
+const COMPACT_GRID_STYLES = Object.fromEntries(GRID_KEYS.map((key) => [key, [workflowEditorStyles[key], compactDocumentGrid[key]]])) as
+    Readonly<Record<WorkflowDocumentGridKey, readonly [(typeof workflowEditorStyles)[WorkflowDocumentGridKey], (typeof compactDocumentGrid)[WorkflowDocumentGridKey]]>>;
 
 /** The grid-dependent document styles for the grid the editor publishes (stable per grid). */
 export function useWorkflowDocumentGridStyles(): typeof WIDE_GRID_STYLES | typeof COMPACT_GRID_STYLES {

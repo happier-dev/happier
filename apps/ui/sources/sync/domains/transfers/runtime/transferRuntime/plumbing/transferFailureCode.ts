@@ -27,7 +27,7 @@ export function readTransferFailureCode(error: unknown): string | undefined {
  */
 export type TransferFailureReason =
     | 'unreachable' | 'carrierUnavailable' | 'carrierInterrupted' | 'declined' | 'accessRefused' | 'teamSignIn'
-    | 'updateRequired' | 'executionUnavailable' | 'permission' | 'tooLarge' | 'unconfirmed' | 'other';
+    | 'updateRequired' | 'executionUnavailable' | 'permission' | 'tooLarge' | 'sourceUnavailable' | 'sessionUnavailable' | 'unconfirmed' | 'other';
 
 const REACHABILITY_CODES: ReadonlySet<string> = new Set([MACHINE_RPC_TIMEOUT_ERROR_CODE, 'server_unreachable', 'home_unreachable']);
 const DECLINED_CODES: ReadonlySet<string> = new Set(['approval_canceled', 'approval_rejected', 'approval_stale']);
@@ -54,6 +54,8 @@ const TOO_LARGE_CODE = /too_large|max_bytes|quota_exceeded/i;
 export function classifyTransferFailure(failure: Readonly<{ errorCode?: string | undefined; thrown?: unknown }>): TransferFailureReason {
     const code = failure.errorCode ?? readTransferFailureCode(failure.thrown);
     if (code === undefined) return 'other';
+    if (code === 'attachment_source_unavailable') return 'sourceUnavailable';
+    if (code === 'attachment_session_unavailable') return 'sessionUnavailable';
     if (code === 'machine_carrier_unavailable') return 'carrierUnavailable';
     if (code === 'machine_carrier_transport_failed') return 'carrierInterrupted';
     if (REACHABILITY_CODES.has(code)) return 'unreachable';
