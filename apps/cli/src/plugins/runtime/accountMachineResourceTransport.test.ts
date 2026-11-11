@@ -14,7 +14,7 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
 }));
 afterEach(() => vi.restoreAllMocks());
 
-it('lets the selected Machine decide an Account Resource source read', async () => {
+it.each(['executed', 'notStarted'] as const)('lets the selected Machine decide an Account Resource source read (%s)', async (outcome) => {
     const callerManifest = normalizePluginManifestV2(accountManifest);
     const callerSourceCustody = { kind: 'account_release' as const, pluginId: callerManifest.id,
         version: callerManifest.version, archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
@@ -32,7 +32,9 @@ it('lets the selected Machine decide an Account Resource source read', async () 
         const parsed = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request);
         expect(parsed).toMatchObject({ machineId: 'selected-machine', requiredReadOnly: true,
             qualifiedActionId: `${manifest.id}/read`, expectedContributorOccurrenceId: source.occurrenceId });
-        return { ok: true, result: { value: 'machine source' } };
+        return outcome === 'notStarted'
+            ? { ok: false, code: 'action_forbidden', actionHandlerInvocation: 'notStarted' }
+            : { ok: true, result: { value: 'machine source' } };
     });
     const result = await invokeAccountMachineSourceAction({ credentials: { token: 'requester-token', encryption: null },
         serverUrl: 'http://requester-home.test', machineId: 'selected-machine', callerManifest,
@@ -41,5 +43,7 @@ it('lets the selected Machine decide an Account Resource source read', async () 
             caller: { kind: 'plugin', pluginId: callerManifest.id, occurrenceId: 'resource-occurrence', sourceCustody: callerSourceCustody,
                 contribution: { id: 'personal-context', qualifiedId: `${callerManifest.id}/resources/personal-context` } },
             signal: new AbortController().signal } });
-    expect(result).toEqual({ status: 'executed', value: { value: 'machine source' } });
+    expect(result).toEqual(outcome === 'notStarted'
+        ? { status: 'failed', code: 'action_forbidden', message: 'action_forbidden', actionHandlerInvocation: 'notStarted' }
+        : { status: 'executed', value: { value: 'machine source' } });
 });

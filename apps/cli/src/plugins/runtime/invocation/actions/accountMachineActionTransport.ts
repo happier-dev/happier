@@ -112,7 +112,8 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
         }));
         return result.ok ? { status: 'executed', value: result.result }
             : { status: 'failed', code: result.code, message: result.message ?? result.code,
-                ...(result.retryable === undefined ? {} : { retryable: result.retryable }) };
+                ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+                ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }) };
     } catch (error) {
         if (readMachineRpcRequestDisposition(error) === 'notSent') {
             // Disposition proves no dispatch, not why the RPC owner refused it.
