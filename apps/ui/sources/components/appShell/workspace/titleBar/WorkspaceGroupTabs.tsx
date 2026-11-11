@@ -297,6 +297,8 @@ export function WorkspaceGroupTabs(props: Readonly<{
                 panelNativeId={(key) => `workspace-${safeGroup}-panel-${toTestIdSafeValue(key)}`}
                 testIds={{ tab: (key) => `workspace-tab-${key}`, tabClose: (key) => `workspace-tab-close-${key}` }}
             />
+            {/* The spacer, then the pane's tab actions as one group: + New tab, All tabs and (last pane) split. */}
+            <View style={styles.grow} />
             <IconButton
                 testID={`workspace-new-tab-${safeGroup}`}
                 variant="plain"
@@ -308,7 +310,6 @@ export function WorkspaceGroupTabs(props: Readonly<{
                 interactiveTargetEdgesPx={NEW_TAB_EDGES_PX}
                 onPress={() => execute({ actionId: 'workspace.tabs.open', input: { groupId: group.id } })}
             />
-            <View style={styles.grow} />
             <DropdownMenu
                 open={overflowOpen}
                 onOpenChange={setOverflowOpen}
@@ -363,14 +364,14 @@ export function WorkspaceGroupTabs(props: Readonly<{
     );
 }
 
-/** The empty spacer between + New tab and the controls at the pane's end never gets narrower than this. */
+/** The empty spacer between the tabs and the pane's tab actions never gets narrower than this. */
 const SPACER_MIN_PX = 8;
 /**
- * The row's hit areas tile its gaps: + New tab takes the whole 2 px gap to the last tab (whose close stays inside the
- * tab) and half of the narrowest spacer, All tabs the other half and half the gap to the pane's trailing control.
+ * The row's hit areas tile its gaps: + New tab takes half of the narrowest spacer after the tabs and half the strip gap
+ * to All tabs, which takes the other half and half the gap to the pane's trailing control.
  */
-const NEW_TAB_EDGES_PX = { leading: B.stripGapPx, trailing: (B.stripGapPx * 2 + SPACER_MIN_PX) / 2 } as const;
-const ALL_TABS_EDGES_PX = { leading: (B.stripGapPx * 2 + SPACER_MIN_PX) / 2, trailing: B.stripGapPx / 2 } as const;
+const NEW_TAB_EDGES_PX = { leading: (B.stripGapPx * 2 + SPACER_MIN_PX) / 2, trailing: B.stripGapPx / 2 } as const;
+const ALL_TABS_EDGES_PX = { leading: B.stripGapPx / 2, trailing: B.stripGapPx / 2 } as const;
 
 const stylesheet = StyleSheet.create(() => ({
     row: {

@@ -190,6 +190,11 @@ export const DOCUMENT_TAB_BAR_METRICS = Object.freeze({
     trailingSlotPx: 18,
     trailingRadiusPx: 5,
     stripGapPx: 2,
+    /**
+     * Between unrelated control groups in the strip (the tab actions and Voice): one step past `stripGapPx`, the
+     * gap between related controls (+, the tab list, split), so groups read apart without drifting (owner 1334 #08).
+     */
+    groupBreakPx: 4,
 });
 const B = DOCUMENT_TAB_BAR_METRICS;
 /**

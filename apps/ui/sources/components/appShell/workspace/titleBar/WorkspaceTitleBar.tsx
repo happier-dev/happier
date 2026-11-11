@@ -19,8 +19,8 @@ import {
     useWorkspaceBarFrames, WorkspaceBarGeometryContext, type WorkspaceBarGeometry,
 } from './workspaceBarGeometry';
 
-/** With the column hidden, the first pane's tabs start this far after the strip's own controls (lab T). */
-const SEGMENT_END_PADDING_PX = 6;
+/** A pane's segment ends one group break before the strip's next group (Voice). */
+const SEGMENT_END_PADDING_PX = B.groupBreakPx;
 const SPLIT_EDGES_PX = { leading: B.stripGapPx / 2, trailing: SEGMENT_END_PADDING_PX } as const;
 
 /**

@@ -351,7 +351,7 @@ describe('WorkspaceTitleBar', () => {
 
     // The strip's controls sit 2 px (+ New tab, All tabs, Split) apart, with an 8 px spacer between New tab and All
     // tabs: a finger's hit areas split those gaps, so none of them overlaps the next.
-    it('splits the gaps between the pane end controls instead of reaching into each other', async () => {
+    it('groups the pane end controls: + and the tab list beside the split, one strip gap apart, the next group one step further (owner 1334 #08)', async () => {
         const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
             <Harness initial={threePanes()} clusterEndPx={200} />
         </HappierUiPlatformProvider>, {
@@ -363,9 +363,16 @@ describe('WorkspaceTitleBar', () => {
             }),
         });
         const reachOf = (id: string) => readHitFrameReach(screen.findByTestId(id)!);
-        expect([reachOf('workspace-new-tab-group_1')?.left, reachOf('workspace-new-tab-group_1')?.right]).toEqual([2, 6]);
-        expect([reachOf('workspace-overflow-group_1')?.left, reachOf('workspace-overflow-group_1')?.right]).toEqual([6, 1]);
+        // + New tab stands after the spacer, beside All tabs: it takes half the narrowest spacer and half the strip gap.
+        expect([reachOf('workspace-new-tab-group_1')?.left, reachOf('workspace-new-tab-group_1')?.right]).toEqual([6, 1]);
+        expect([reachOf('workspace-overflow-group_1')?.left, reachOf('workspace-overflow-group_1')?.right]).toEqual([1, 1]);
         expect(reachOf('workspace-split-right')?.left).toBe(1);
+        // The segment ends one step past the related gap, before the strip's next group (Voice).
+        const { DOCUMENT_TAB_BAR_METRICS } = await import('@/components/ui/navigation/DocumentTabStrip');
+        const segment = screen.findByTestId('workspace-bar-segment-group:1')!;
+        const segmentStyle = Object.assign({}, ...[segment.props.style].flat(Infinity).filter(Boolean));
+        expect(segmentStyle.paddingRight).toBe((DOCUMENT_TAB_BAR_METRICS as { groupBreakPx?: number }).groupBreakPx);
+        expect(segmentStyle.paddingRight).toBeGreaterThan(DOCUMENT_TAB_BAR_METRICS.stripGapPx);
     });
 
     it('starts the first pane\'s tabs after the strip\'s own controls when the pane reaches under them', async () => {
