@@ -11,9 +11,9 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 type RepositorySource = Extract<DeploymentSourceIntentV1, { kind: 'repository' }>;
-
 /** The SCM reader selects the displayed head. Deploy admission still fetches and verifies that exact base-repository PR head. */
 export function DeploymentPullRequestDeploy(props: Readonly<{
   workspaceRef?: WorkspaceRefV1 | null;
@@ -29,7 +29,8 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
   const [reference, setReference] = React.useState('');
   const [candidate, setCandidate] = React.useState<Readonly<{ pullRequest: ScmPullRequestSummary; source: RepositorySource | null }> | null>(null);
   const [pending, setPending] = React.useState(false);
-  const [unavailable, setUnavailable] = React.useState(false);
+  const [emptyResult, setEmptyResult] = React.useState(false);
+  const [readFailure, setReadFailure] = React.useState<string | null>(null);
   const read = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => read.current?.abort(), []);
   const workspace = props.workspaceRef;
@@ -41,7 +42,8 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
     const abort = new AbortController();
     read.current = abort;
     setPending(true);
-    setUnavailable(false);
+    setEmptyResult(false);
+    setReadFailure(null);
     try {
       const result = await machineScmPullRequestGet(workspace.machineId, { cwd: workspace.rootPath, prReference: parsedReference.data },
         { serverId: props.serverId, accountId: props.accountId, signal: abort.signal });
@@ -52,8 +54,20 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
         sha: pullRequest.headSha, pullRequestHead: { number: pullRequest.number }, ...(props.compose ? { compose: props.compose } : {}),
       } : null;
       setCandidate(pullRequest ? { pullRequest, source } : null);
-      setUnavailable(!result.success || result.pullRequest === null);
-    } catch { if (!abort.signal.aborted) { setCandidate(null); setUnavailable(true); } }
+      if (result.success) {
+        setEmptyResult(result.pullRequest === null);
+        setReadFailure(null);
+      } else {
+        setEmptyResult(false);
+        setReadFailure(resolveActionExecutionFailureMessage({ ...result, ok: false }, t('projects.deployments.editors.prUnavailable')));
+      }
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        setCandidate(null);
+        setEmptyResult(false);
+        setReadFailure(resolveActionExecutionErrorMessage(error, t('projects.deployments.editors.prUnavailable')));
+      }
+    }
     finally { if (!abort.signal.aborted) setPending(false); }
   };
   return <ItemGroup testID="project-deployments.pr" title={t('projects.deployments.editors.pullRequest')}>
@@ -61,7 +75,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
       <FieldItem label={t('projects.deployments.editors.pullRequestNumber')}>
         <FieldTextInput testID="project-deployments.pr.number" accessibilityLabel={t('projects.deployments.editors.pullRequestNumber')}
           value={reference} keyboardType="number-pad" editable={!pending}
-          onChangeText={value => { setReference(value); setCandidate(null); setUnavailable(false); }} />
+          onChangeText={value => { setReference(value); setCandidate(null); setEmptyResult(false); setReadFailure(null); }} />
       </FieldItem>
       <Item testID="project-deployments.pr.load" title={t('projects.deployments.editors.loadPrHead')}
         subtitle={pending ? t('common.loading') : undefined} disabled={pending || !parsedReference.success} onPress={() => { void load(); }} />
@@ -71,7 +85,12 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
       {pullRequest?.headSha ? <Item testID="project-deployments.pr.deploy" title={t('projects.deployments.editors.deployPrHead')}
         subtitle={pullRequest.headSha} disabled={props.disabled || pending || exactSource === null}
         onPress={() => { if (exactSource) void props.onDeploy(exactSource); }} /> : null}
-      {unavailable || candidate && exactSource === null ? <Item testID="project-deployments.pr.unavailable"
+      {readFailure ? <Item testID="project-deployments.pr.unavailable"
+        title={readFailure}
+        showChevron={false} /> : null}
+      {emptyResult ? <Item testID="project-deployments.pr.unavailable"
+        title={t('projects.deployments.editors.prUnavailable')} showChevron={false} /> : null}
+      {candidate && exactSource === null ? <Item testID="project-deployments.pr.sourceUnavailable"
         title={t('projects.deployments.editors.prUnavailable')} showChevron={false} /> : null}
     </> : <Item testID="project-deployments.pr.checkout" title={t('projects.deployments.editors.openSourceCheckout')}
       subtitle={t('projects.deployments.editors.comparisonNeedsCheckout')} onPress={() => router.push(projectSourceRoute(props.projectSourceId) as never)} />}
