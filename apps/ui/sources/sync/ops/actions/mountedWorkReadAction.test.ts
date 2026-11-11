@@ -25,6 +25,8 @@ import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArt
 import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome';
 import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/sessions/readState/actions';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 
 it('acknowledges an exact Inbox address from voice through the production bulk-read owner', async () => {
     installDisconnectedServerSocketBoundary();
@@ -56,8 +58,16 @@ it('acknowledges an exact Inbox address from voice through the production bulk-r
     } finally { await disconnect(); await home.dispose(); }
 });
 
-it('reads approval and Automation rows from the canonical Inbox grouping without disclosing their private content', async () => {
-    const home = await serveSessionActionHome();
+it.each([false, true])('reads canonical Inbox rows with Voice approval delegation=%s without disclosing private content', async canApproveRequests => {
+    const settings = settingsParse({});
+    const configuredSettings = settingsParse({ ...settings, ...normalizeVoiceSettingsLocalDelta({
+        voice: { ...settings.voice, canApproveRequests },
+    }, settings) });
+    const home = await serveSessionActionHome({
+        homes: [{ key: 'session', serverUrl: 'https://session-actions.test', accountId: 'session-account', currentAccount: true,
+            settings: configuredSettings }],
+        route: () => undefined,
+    });
     const serverId = home.serverId;
     const run = createAutomationRunFixture({ id: 'weekly-run' });
     const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -98,7 +108,13 @@ it('reads approval and Automation rows from the canonical Inbox grouping without
     const { createFrontDoorActionExecute } = await import('./frontDoorRuntimeActionExecutor');
     const execute = createFrontDoorActionExecute();
     try {
-        const response = await execute('inbox.get', {}, context);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const version = (storage.getState().settingsVersion ?? 0) + 1;
+        home.replaceAccountSettings('session', { settings: configuredSettings, version });
+        storage.getState().applySettingsForScope({ serverId, accountId: 'session-account' }, configuredSettings, version);
+        expect(storage.getState().settings.voice.canApproveRequests).toBe(canApproveRequests);
+        const response = await execute('inbox.get', {}, { surface: 'voice', serverId });
+        expect(await execute('inbox.get', {}, { ...context, surface: 'ui' })).toEqual(response);
         expect(await execute('inbox.get', {}, { ...context, surface: 'cli' })).toEqual(response);
         expect(response.ok).toBe(true);
         if (!response.ok) throw new Error('Expected a readable mounted Inbox');

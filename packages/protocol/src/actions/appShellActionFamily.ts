@@ -36,7 +36,8 @@ export function readNoticeInboxAccountIdV1(context: ActionExecutorContext, inten
     && context.actionCaller?.kind === 'plugin') return accountId;
   const host = context.actionCaller === undefined || context.actionCaller.kind === 'host';
   if (host && (context.surface === 'ui' && context.authority === 'present_user'
-    || context.surface === 'voice' && context.authority === 'account_automation')) return accountId;
+    || context.surface === 'voice' && (context.authority === 'account_automation'
+      || context.authority === 'present_user'))) return accountId;
   return (context.surface === 'cli' || context.surface === 'agent' || context.surface === 'mcp')
     && (context.authority === 'account_automation' || context.authority === 'present_user')
     && context.runtimeAccountId === accountId && (host || context.actionCaller?.kind === 'session') ? accountId : null;

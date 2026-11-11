@@ -10,6 +10,21 @@ import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionIdSchema } from './actionIds.js';
 
 describe('app shell Actions', () => {
+  it.each(['account_automation', 'present_user'] as const)(
+    'admits the own-Account Voice host with %s authority while refusing foreign and external callers', authority => {
+      const context = { surface: 'voice', authority, runtimeAccountId: 'owner', expectedAccountId: 'owner',
+        actionCaller: { kind: 'host' } } as const;
+      expect(readNoticeInboxAccountIdV1(context)).toBe('owner');
+      expect(readNoticeInboxAccountIdV1(context, 'read')).toBe('owner');
+      expect(readNoticeInboxAccountIdV1({ ...context, expectedAccountId: 'foreign' })).toBeNull();
+      expect(readNoticeInboxAccountIdV1({ ...context, actionCaller: {
+        kind: 'session', sessionId: 'worker', starterDepth: 0, turnDepth: 0,
+      } })).toBeNull();
+      expect(readNoticeInboxAccountIdV1({ ...context, externalActionCredential: {
+        accountId: 'owner', principalId: 'api', credentialId: 'token', grant: API_TOKEN_FULL_GRANT_V1,
+      } })).toBeNull();
+    },
+  );
   it('owns notice admission for native and signed own-Account agents while excluding foreign and external credentials', () => {
     const native = { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'owner', expectedAccountId: 'owner',
       actionCaller: { kind: 'session', sessionId: 'worker', starterDepth: 0, turnDepth: 0 } } as const;
