@@ -97,6 +97,7 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
 }>) {
     const styles = stylesheet;
     const { voice } = props;
+    const reading = resolveVoicePresenceReadAloud(voice, props.readAloud);
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
     React.useLayoutEffect(() => registerVoiceGlancePresentation((expanded) => {
@@ -134,8 +135,8 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
                 style={({ pressed }) => [styles.label, pressed ? styles.labelPressed : null]}
             >
                 <View style={styles.labelRow}>
-                    {props.readAloud?.phase !== 'idle'
-                        ? <VoiceReadAloudStatus phase={props.readAloud.phase} size="pill" testID={`${props.testID}-read-aloud-status`} />
+                    {reading
+                        ? <VoiceReadAloudStatus phase={reading.phase} size="pill" testID={`${props.testID}-read-aloud-status`} />
                         : <VoiceStatusLine voice={voice} size="pill" />}
                     {/* The admitted target stays named through its clean ended moment; global has none. */}
                     {voice.targetSessionAddress ? (
