@@ -1630,6 +1630,12 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
                 && sameStrictJsonValue(parsed.data.machines, [{ machineId: admission.machineId, installationId: admission.target.installationId }]) && routeMatches(parsed.data);
         }
         if (effectActionId === 'deployments.bindings.set') {
+            // Authored binding changes publish one private candidate under the
+            // reviewed bindings child's deterministic id before the bindings CAS.
+            const publication = await readDeploymentPrivateCandidatePublicationHttpPurpose(tx, environmentId, proof,
+                createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, environmentId }),
+                DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+            if (publication !== null) return publication;
             if (method !== 'POST') return false;
             const launch = EnvironmentSecretAdmissionRequestV1Schema.safeParse(proof.body);
             if (proof.path === `${path}/secret-launch-admission`) return launch.success && launch.data.serverId === binding.serverIdentityId

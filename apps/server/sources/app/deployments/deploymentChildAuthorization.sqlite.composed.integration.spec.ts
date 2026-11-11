@@ -1697,6 +1697,18 @@ describe('deployment children retain their controller Action authority', () => {
                 const secrets = await app.inject({ method: 'POST', url: path, payload: value, headers: headers('POST', path, value) });
                 expect(secrets.statusCode, secrets.body).toBe(200);
                 expect(secrets.json()).toEqual({ ok: true, grants: [grant] });
+                if (actionId === 'deployments.backups.prune') {
+                    // Prune protects unsettled pre-migration captures, so it reads its own Environment's receipt history.
+                    const listSpec = getActionSpec('deployments.receipts.list');
+                    if (!listSpec.serverTransport) throw new Error('Receipt list transport unavailable');
+                    const listPath = (environmentId: string) => bindHomeDomainHttpRequestV1({ transport: listSpec.serverTransport!,
+                        inputSchema: listSpec.inputSchema, input: { serverId, environmentId } }).path;
+                    const history = await app.inject({ method: 'GET', url: listPath(f.environment.id),
+                        headers: headers('GET', listPath(f.environment.id), undefined, 'deployments.receipts.list') });
+                    expect(history.statusCode, history.body).toBe(200);
+                    expect((await app.inject({ method: 'GET', url: listPath(other.environment.id),
+                        headers: headers('GET', listPath(other.environment.id), undefined, 'deployments.receipts.list') })).statusCode).toBe(401);
+                }
                 const foreignPath = `/v1/artifacts/${other.receipt.contentArtifactId}`;
                 expect((await app.inject({ method: 'GET', url: foreignPath, headers: headers('GET', foreignPath) })).statusCode).toBe(401);
             }, { authentication: 'real' });
@@ -3151,6 +3163,32 @@ describe('deployment children retain their controller Action authority', () => {
             expect(prepared.statusCode, prepared.body).toBe(200);
             expect(prepared.json()).toMatchObject({ ok: true, bindingPreparation: {} });
         }, { authentication: 'real' });
+        // Authored binding changes publish one private candidate under the bindings
+        // child's deterministic id, then commit it through the bindings CAS.
+        const verify = (method: string, path: string, body: unknown) => verifyExternalActionDomainExecutionRequest({
+            authorizationToken: authorization.token, effectActionId: 'deployments.bindings.set',
+            encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body, routeInput: body,
+            ...(reviewedChild ? { reviewedChild } : {}),
+            machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId: 'deployments.bindings.set', target, installationId: f.controller.installationId,
+                requestId: envelope.requestId, method, path, body, ...(reviewedChild ? { reviewedChild } : {}),
+                privateKey: f.controller.keys.secretKey }) });
+        const reviewedChild: ReviewedActionChildHttpProofV1 | undefined = actionId === 'deployments.templates.instantiate' ? {
+            actionId: 'deployments.bindings.set', role: 'template.bindings',
+            inputDigest: computeActionInputApprovalDigestV1('deployments.bindings.set', { serverId,
+                environmentId: f.environment.id, expectedRevision: f.environmentRevision, set: [], remove: [] }),
+        } : undefined;
+        const candidateId = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding,
+            actionId: 'deployments.bindings.set', environmentId: f.environment.id });
+        const candidate = (id: string) => ArtifactJsonCreateHttpInputV1Schema.parse({ id, kind: 'v1:other:deployment-environment.v1',
+            header: encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Bindings' }),
+            body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER });
+        expect(await verify('POST', '/v1/artifacts', candidate(candidateId))).not.toBeNull();
+        expect(await verify('POST', '/v1/artifacts', candidate(crypto.randomUUID()))).toBeNull();
+        const storage = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, contentArtifactId: candidateId, contentHeaderVersion: 1,
+            contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [] });
+        expect(await verify('POST', `/v1/deployments/environments/${f.environment.id}/bindings`, storage)).not.toBeNull();
     });
 
     it.each(['deployments.targets.link', 'deployments.bindings.set'] as const)(
@@ -3172,7 +3210,7 @@ describe('deployment children retain their controller Action authority', () => {
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             for (const [environmentId, statusCode] of [[f.environment.id, 200],
-                [foreign.environment.id, actionId === 'deployments.targets.link' ? 401 : 404]] as const) {
+                [foreign.environment.id, 401]] as const) {
                 const path = `/v1/deployments/environments/${environmentId}?serverId=${serverId}`;
                 const effectActionId = 'deployments.environments.get';
                 const response = await app.inject({ method: 'GET', url: path, headers: {
@@ -3362,7 +3400,10 @@ describe('deployment children retain their controller Action authority', () => {
                 .toMatchObject({ ok: true });
             await db.account.update({ where: { id: f.account.id }, data: { tokenEpoch: { increment: 1 } } });
             const observations = created.domain.placements.map(capture => {
-                const observation = { capture, state: 'active' as const };
+                // A desired placement settles active only with matched DNS; otherwise it is a warning.
+                const observation = { capture, state: 'active' as const, dnsHealth: { status: 'up' as const,
+                    evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'dns' },
+                        author: { kind: 'process' as const }, text: JSON.stringify({ reason: 'dns_matched' }) }] } } };
                 return { ...observation, proof: signMachineInstallationProof({ payload: deploymentDomainObservationProofPayloadV1({
                     expectedDomainRevision: created.domain.revision, observation }), privateKey: f.member.keys.secretKey }) };
             });
@@ -4916,7 +4957,8 @@ describe('deployment children retain their controller Action authority', () => {
             expect(defaults.statusCode, defaults.body).toBe(200);
             expect(defaults.json()).toMatchObject({ ok: true, projectSourceId: source.id, content });
             expect((await get(`/v1/artifacts/${content.contentArtifactId}`)).statusCode).toBe(200);
-            expect((await get(`/v1/artifacts/${f.environment.contentArtifactId}`)).statusCode).toBe(401);
+            // Backup defaults inspect the admitted Environment's own stored definition (6e0d00f1f0a).
+            expect((await get(`/v1/artifacts/${f.environment.contentArtifactId}`)).statusCode).toBe(200);
             const foreign = await fixture('account', 'account', { contentMode: mode, readableEnvironment: true });
             expect((await get(`/v1/projects/sources/${foreign.environment.projectSourceId}?serverId=${serverId}`, 'projects.sources.read')).statusCode).toBe(401);
             expect((await get(`/v1/projects/${foreign.environment.projectSourceId}/deployment-defaults?serverId=${serverId}`)).statusCode).toBe(401);
@@ -6206,7 +6248,7 @@ describe('deployment children retain their controller Action authority', () => {
     it.each([
         { contentMode: 'plain', templateRoot: false }, { contentMode: 'e2ee', templateRoot: false },
         { contentMode: 'plain', templateRoot: true }, { contentMode: 'e2ee', templateRoot: true },
-    ] as const)('reads only the selected builder before child routing exists ($contentMode, template: $templateRoot)', async ({ contentMode, templateRoot }) => {
+    ] as const)('reads only admitted Environment Machines before child routing exists ($contentMode, template: $templateRoot)', async ({ contentMode, templateRoot }) => {
         const f = await fixture('team', 'account', { separateControllerCustodian: !templateRoot, contentMode, templateRoot });
         const actionId = templateRoot ? 'deployments.templates.instantiate' : 'deployments.deploy';
         const input = templateRoot ? f.templateInput : { serverId, environmentId: f.environment.id, targetLinkId: f.link.id };
@@ -6253,7 +6295,8 @@ describe('deployment children retain their controller Action authority', () => {
                 const offline = await send();
                 expect(offline.statusCode, offline.body).toBe(200);
                 expect(offline.json()).toMatchObject({ machine: { installationId: f.builder.installationId, active: false } });
-                expect((await send(f.member.id)).statusCode).toBe(401);
+                // The admitted Environment's own link members are in its read scope (760d535a21); others are not.
+                expect((await send(f.member.id)).statusCode).toBe(200);
                 expect((await send(f.outsider.id)).statusCode).toBe(401);
                 expect((await send(f.builder.id, f.builder.keys.secretKey)).statusCode).toBe(401);
             }, { authentication: 'real' });
@@ -6866,7 +6909,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect(ordinary.json()).not.toMatchObject({ ok: true });
             const mixed = await app.inject({ method: 'POST', url: path, headers: { ...headers, authorization: `Bearer ${token}` }, payload: body });
             expect(mixed.statusCode, mixed.body).toBe(403);
-            expect(mixed.json()).toEqual({ error: 'credential_scope_denied' });
+            expect(mixed.json()).toEqual({ error: 'credential_scope_denied', authorizationRefusal: 'proof_shape' });
             const send = (payload: unknown = body) => app.inject({ method: 'POST', url: path, headers, payload });
             const admitted = await send();
             expect(admitted.statusCode).toBe(200);

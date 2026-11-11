@@ -35,7 +35,8 @@ import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironmentContentArtifactIdV1,
+    projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
@@ -55,6 +56,8 @@ it.each([
         name: 'authors backup credential references with retained builder grants before any target exists' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, replay: true, configureChild: true,
         name: 'publishes the reviewed configure binding child with its distinct admitted artifact identity' },
+    { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, replay: true, configureChild: true, templateChild: true,
+        name: 'publishes the reviewed template binding child with its distinct admitted artifact identity' },
     { placementChange: false, mode: 'plain' as const, external: false, name: 'prepares plain authored and prepared bindings through the default daemon factory' },
     { placementChange: false, mode: 'e2ee' as const, external: false, name: 'prepares E2EE authored and prepared bindings through the default daemon factory' },
     { placementChange: false, mode: 'plain' as const, external: false, replay: true, name: 'uses the reacquired root requester custody for approved copy bindings' },
@@ -67,7 +70,7 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, missingCustody }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
         document: 'services: {app: {image: "example/app:1"}, database: {image: "postgres:17", volumes: ["data:/var/lib/postgresql/data"]}}\nvolumes: {data: {}}',
@@ -263,9 +266,15 @@ it.each([
                 authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'approved-copy-root', binding: {
                     accountId: missingCustody ? 'requester' : 'owner', custodianAccountId: 'owner', accountEncryptionMode: mode, serverIdentityId: 'home',
                     machineId: installation.machineId, installationId: installation.installationId,
-                    actionId: configureChild ? 'deployments.environments.create' : 'deployments.bindings.set',
+                    actionId: templateChild ? 'deployments.templates.instantiate' : configureChild ? 'deployments.environments.create' : 'deployments.bindings.set',
                     requestId: 'copy-request', requestEnvelopeDigest: 'a'.repeat(43),
                     target: { kind: 'machine', machineId: installation.machineId }, authentication: { kind: 'account', tokenEpoch: 1 },
+                    ...(templateChild ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', {
+                        mode: 'apply', serverId: 'home', machineId: installation.machineId, projectSourceId: 'project',
+                        templateRef: { sourceId: 'apps', itemId: 'app', version: 'one', ref: { kind: 'version', version: 'one' } },
+                        environment: { kind: 'existing', environmentId: environment.id, expectedRevision: environment.revision },
+                        target: { kind: 'new', installationId: installation.installationId }, destination: { kind: 'stored' },
+                        bindings: [] }) } : {}),
                 } }) });
             expect(requester, JSON.stringify(refusalDiagnostics.mock.calls
                 .filter(([message]) => message === '[external-action-phase]'))).not.toBeNull();
@@ -319,8 +328,13 @@ it.each([
                             config: { path: '/private/repository' }, credentialBindings: [],
                             sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
                             ownership: { environmentId: environment.id, prefix: '' }, retention: { kind: 'keepEverything' } } } };
-                const bindingChild = { action: 'deployments.bindings.set' as const, role: 'backup.bindings', input: bindingInput };
-                const result = configureChild ? await invokeHostReviewedChildV1({
+                const bindingChild = { action: 'deployments.bindings.set' as const,
+                    role: templateChild ? 'template.bindings' : 'backup.bindings', input: bindingInput };
+                const result = templateChild ? await invokeHostReviewedChildV1({
+                    parent: { actionId: 'deployments.templates.instantiate', input: { serverId: 'home' } }, child: bindingChild,
+                    context: replayContext, admittedReview: { action: bindingChild.action, role: bindingChild.role, surface: 'api' },
+                    execute: async (_input, bindingContext) => daemon.deploymentAction!('deployments.bindings.set', bindingInput, bindingContext),
+                }) : configureChild ? await invokeHostReviewedChildV1({
                     parent: { actionId: 'deployments.environments.create', input: { serverId: 'home' } },
                     child: configure, context: replayContext,
                     admittedReview: { action: configure.action, role: configure.role, surface: 'api' },

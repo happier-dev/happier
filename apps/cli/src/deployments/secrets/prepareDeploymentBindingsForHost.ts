@@ -148,7 +148,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 const binding = context.externalActionExecutionAuthorization?.binding;
                 const child = readHostAdmittedReviewedChildV1(context);
                 const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                    || child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && child.role === 'backup.bindings')
+                    || child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+                        && (child.role === 'backup.bindings' || child.role === 'template.bindings'))
                     ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
                         environmentId: input.environmentId }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
