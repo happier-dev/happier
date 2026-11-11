@@ -656,7 +656,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         : accountHostUnreadable ? t('common.unavailable')
         : accountHostPending ? t('managedMachines.options.loading', { provider: title })
         : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedReview ? t('managedMachines.controller.requiredUnnamed')
-        : poolUnavailableAtReview ? t('managedMachines.poolNoMachine')
+        : poolUnavailableAtReview ? t('machinePresets.poolNoMachine')
         : !credentialsReady ? t('managedMachines.credential.choose')
         : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false ? t('managedMachines.creation.disabledTitle')
         : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true ? t(accountSettings.error ? 'common.unavailable' : 'common.loading')
