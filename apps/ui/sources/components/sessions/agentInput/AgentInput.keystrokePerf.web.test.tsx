@@ -35,6 +35,7 @@ const drafts = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { useDraft } = await import('@/hooks/session/useDraft');
 const { useSessionAgentInputComposerPersistence } = await import('@/hooks/session/useSessionAgentInputComposerPersistence');
 const { SessionComposerAgentInput } = await import('@/components/sessions/composer/SessionComposerAgentInput');
+const COLLAPSED_INPUT = { expanded: false, setExpanded: () => {} };
 const { useAttachmentDraftManager } = await import('@/components/sessions/attachments/useAttachmentDraftManager');
 const { t } = await import('@/text');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -74,7 +75,7 @@ describe('Session composer keystroke work', () => {
             const persistence = useSessionAgentInputComposerPersistence({ sessionId: 's1', accountLifetime: lifetime, textStore: store });
             const draft = useDraft('s1', store, { accountLifetime: lifetime, session: storage.getState().sessions.s1, active: true });
             const attachments = useAttachmentDraftManager({ enabled: true, maxFileBytes: 1024 });
-            return <SessionComposerAgentInput textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
+            return <SessionComposerAgentInput cardsHeight={0} expansion={COLLAPSED_INPUT} textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
                 onSend={() => {}} placeholder="Message" autocompleteKinds={[]} autocompleteSuggestions={async () => []}
                 inputPersistence={persistence.inputPersistence} structuredInputPersistence={persistence.structuredInputPersistence}
                 onStructuredInputMentionsChange={persistence.structuredInputPersistence.onMentionsChange}
@@ -125,7 +126,7 @@ describe('Session composer keystroke work', () => {
             const persistence = useSessionAgentInputComposerPersistence({ sessionId: 's1', accountLifetime: lifetime, textStore: store });
             const draft = useDraft('s1', store, { accountLifetime: lifetime, session: storage.getState().sessions.s1, active: true });
             return <React.Profiler id="AgentInput" onRender={() => counts.commits++}>
-                <SessionComposerAgentInput textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
+                <SessionComposerAgentInput cardsHeight={0} expansion={COLLAPSED_INPUT} textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
                     onSend={onSend} placeholder="Message" autocompleteKinds={kinds} autocompleteSuggestions={suggestions}
                     inputPersistence={persistence.inputPersistence} structuredInputPersistence={persistence.structuredInputPersistence}
                     onStructuredInputMentionsChange={persistence.structuredInputPersistence.onMentionsChange} />
@@ -202,7 +203,7 @@ describe('Session composer keystroke work', () => {
         function SessionHost() {
             const persistence = useSessionAgentInputComposerPersistence({ sessionId: 's1', accountLifetime: lifetime, textStore: store });
             const draft = useDraft('s1', store, { accountLifetime: lifetime, session: storage.getState().sessions.s1, active: true });
-            return <SessionComposerAgentInput textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
+            return <SessionComposerAgentInput cardsHeight={0} expansion={COLLAPSED_INPUT} textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
                 onSend={() => {}} placeholder="Message" autocompleteKinds={[]} autocompleteSuggestions={async () => []}
                 inputPersistence={persistence.inputPersistence} structuredInputPersistence={persistence.structuredInputPersistence}
                 onStructuredInputMentionsChange={persistence.structuredInputPersistence.onMentionsChange} />;

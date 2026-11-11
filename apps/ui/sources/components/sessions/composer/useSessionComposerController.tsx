@@ -28,8 +28,6 @@ import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pend
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
 import { SessionComposerAgentInput } from "@/components/sessions/composer/SessionComposerAgentInput";
 import type { SessionInstrumentStripQuota } from "@/components/sessions/agentInput/instrumentStrip";
-import { computeExistingSessionComposerInputMaxHeight, computeExistingSessionComposerPanelMaxHeight } from "@/components/sessions/agentInput/inputMaxHeight";
-import { useComposerAvailablePanelHeight, useComposerKeyboardLayoutContext } from "@/components/sessions/keyboardAvoidance";
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from "@/components/sessions/agentInput/agentInputContracts";
 import { projectAgentInputAttachmentRowItems } from "@/components/sessions/agentInput/agentInputContracts";
 import { AttachmentFilePicker } from "@/components/sessions/attachments/AttachmentFilePicker";
@@ -195,7 +193,7 @@ import { useDestinationRouter } from "@/components/appShell/workspace/Destinatio
 import { admitInternalRouteHref } from "@/utils/path/routeUtils";
 import * as React from "react";
 import { useSessionFilePaneNavigation } from "@/components/sessions/panes/useSessionFileDetailsOpener";
-import { Platform, View, useWindowDimensions } from "react-native";
+import { Platform, View } from "react-native";
 import { useMeasuredStackHeight } from "@/components/sessions/composer/useMeasuredStackHeight";
 import { useUnistyles } from "react-native-unistyles";
 import { shouldRequestRemoteControlAfterPendingEnqueue } from "@/sync/domains/session/control/localControlSwitch";
@@ -502,33 +500,6 @@ export function SessionAuthRecoveryBanner() {
  * Session view: the view reads the text when it acts (send, actions, persistence) and follows
  * only what the text means to it. A pending-message edit shows that edit's own text instead.
  */
-function normalizeComposerKeyboardHeight(height: number | null | undefined): number {
-    return typeof height === 'number' && Number.isFinite(height)
-        ? Math.max(0, Math.round(height))
-        : 0;
-}
-
-function useComposerKeyboardHeight(): number {
-    const layout = useComposerKeyboardLayoutContext();
-    const [keyboardHeight, setKeyboardHeight] = React.useState(
-        () => normalizeComposerKeyboardHeight(layout?.getKeyboardHeight?.()),
-    );
-
-    React.useEffect(() => {
-        if (!layout) {
-            setKeyboardHeight(0);
-            return undefined;
-        }
-
-        setKeyboardHeight(normalizeComposerKeyboardHeight(layout.getKeyboardHeight?.()));
-        return layout.subscribeKeyboardHeight?.((nextHeight) => {
-            const normalizedHeight = normalizeComposerKeyboardHeight(nextHeight);
-            setKeyboardHeight((current) => (current === normalizedHeight ? current : normalizedHeight));
-        });
-    }, [layout]);
-
-    return keyboardHeight;
-}
 
 function hasSessionWriteAccess(access: Session['access']): boolean {
     return access?.capabilities.submitAgentInput === true;
@@ -744,42 +715,11 @@ export function useSessionComposerController({
         externalTranscriptAuthority.kind === 'server_snapshot',
     );
     const router = useDestinationRouter();
-    const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-    const scaffoldAvailablePanelHeight = useComposerAvailablePanelHeight();
-    const keyboardHeight = useComposerKeyboardHeight();
-    const composerAvailablePanelHeight = scaffoldAvailablePanelHeight ?? windowHeight;
     // Notices and a draft conflict stand above the input in the same column, so the panel gets only the room they
-    // leave; capping the panel alone let the column run up over the page tabs (owner 2026-11-11).
+    // leave; capping the panel alone let the column run up over the page tabs (owner 2026-11-11). The caps
+    // themselves are derived inside the composer (SessionComposerAgentInput), under the keyboard scaffold.
     const [ownCardsHeight, handleComposerCardsLayout] = useMeasuredStackHeight();
     const composerCardsHeight = ownCardsHeight + (sessionNoticesHeight ?? 0);
-    const maxAgentInputPanelHeight = React.useMemo(
-        () => computeExistingSessionComposerPanelMaxHeight({
-            availablePanelHeight: composerAvailablePanelHeight,
-            reservedHeight: composerCardsHeight,
-            viewportHeight: windowHeight,
-        }),
-        [composerAvailablePanelHeight, composerCardsHeight, windowHeight],
-    );
-    const collapsedAgentInputTextHeight = React.useMemo(
-        () => computeExistingSessionComposerInputMaxHeight({
-            availablePanelHeight: composerAvailablePanelHeight,
-            reservedHeight: composerCardsHeight,
-            expanded: false,
-            keyboardHeight,
-            viewportHeight: windowHeight,
-        }),
-        [composerAvailablePanelHeight, composerCardsHeight, keyboardHeight, windowHeight],
-    );
-    const expandedAgentInputTextHeight = React.useMemo(
-        () => computeExistingSessionComposerInputMaxHeight({
-            availablePanelHeight: composerAvailablePanelHeight,
-            reservedHeight: composerCardsHeight,
-            expanded: true,
-            keyboardHeight,
-            viewportHeight: windowHeight,
-        }),
-        [composerAvailablePanelHeight, composerCardsHeight, keyboardHeight, windowHeight],
-    );
     const composerTextStore = useComposerTextStore(() => {
         if (!isEmbedWindowContext() || !sessionAccountScope) return '';
         const draft = getSessionDraftSnapshot(sessionAccountScope, { kind: 'session', sessionId })?.document;
@@ -797,18 +737,10 @@ export function useSessionComposerController({
     });
     const isInputExpanded = inputComposerPersistence.expanded;
     const setInputExpanded = inputComposerPersistence.setExpanded;
-    const maxAgentInputTextHeight = isInputExpanded
-        ? expandedAgentInputTextHeight
-        : collapsedAgentInputTextHeight;
-    const inputExpansion = React.useMemo(() => ({
-        expanded: isInputExpanded,
-        ...(typeof collapsedAgentInputTextHeight === 'number'
-            ? { collapsedMaxHeight: collapsedAgentInputTextHeight }
-            : {}),
-        onToggle: () => {
-            setInputExpanded((current) => !current);
-        },
-    }), [collapsedAgentInputTextHeight, setInputExpanded, isInputExpanded]);
+    const inputExpansionState = React.useMemo(
+        () => ({ expanded: isInputExpanded, setExpanded: setInputExpanded }),
+        [isInputExpanded, setInputExpanded],
+    );
     const [isComposerSending, setIsComposerSending] = React.useState(false);
     const [modelAskFailure, setModelAskFailure] = React.useState<Readonly<{
         sessionId: string; scopeKey: string; intentSignature: string; message: string;
@@ -7850,8 +7782,8 @@ export function useSessionComposerController({
                 extraActionChips={agentInputExtraActionChips}
                 attachmentRowItems={sessionAttachmentRowItems}
                 isSending={isComposerSending}
-                inputMaxHeight={maxAgentInputTextHeight}
-                inputExpansion={inputExpansion}
+                cardsHeight={composerCardsHeight}
+                expansion={inputExpansionState}
                 inputPersistence={inputComposerPersistence.inputPersistence}
                 structuredInputMentions={pendingComposerDocument?.mentions}
                 onStructuredInputMentionsChange={pendingComposerDocument
@@ -7863,7 +7795,6 @@ export function useSessionComposerController({
                         ));
                     }
                     : inputComposerPersistence.structuredInputPersistence.onMentionsChange}
-                maxPanelHeight={maxAgentInputPanelHeight}
             />
             <CurrentSessionPresentationSurface
                 session={session}
