@@ -11,12 +11,14 @@ import { createDeferred } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { ActionOperationSnapshotV1} from '@happier-dev/protocol/actions/operations/v1';
 import type { ProjectWorkerStatusResultV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
 import { installNewSessionComponentsCommonModuleMocks } from '../newSessionComponentsTestHelpers';
@@ -53,6 +55,16 @@ const { getServerProfileById, setServerProfileIdentityForUrl, resolveServerProfi
 let serverId = '';
 let homeProfileId = '';
 
+async function seedAnsweredScopedMachine(machine: Machine) {
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
+    const admitted = storage.getState().machineRecordsByServerId[serverId]?.[machine.id];
+    if (!admitted) throw new Error('expected an admitted Machine fixture');
+    linkMachineActivity(admitted, machine);
+    const row = { ...machine, serverId, serverName: 'Worker picker' };
+    linkMachineActivity(machine, row);
+    return row;
+}
+
 beforeEach(async () => {
     actionOperationStore.reset();
     await homes.reset();
@@ -69,6 +81,16 @@ beforeEach(async () => {
         accountEncryptionMode: 'plain', serverIdentityId: 'srv_worker_home' });
     await setServerProfileIdentityForUrl('https://worker-picker.test', 'srv_worker_home');
     serverId = resolveServerProfileScopeIdForIdentifier(homeProfileId);
+    storage.setState((state) => ({
+        ...state,
+        machines: {},
+        machineDisplayById: {},
+        machineListByServerId: {},
+        machineListStatusByServerId: {},
+        machineRecordsByServerId: {},
+        machinePresenceById: {},
+        machinePresenceByServerId: {},
+    }));
     homes.answer(homeProfileId, '/v1/machines/managed/actions/list', { body: { machines: [] } });
     expect(await resolveServerCredentialAccountScope(homeProfileId)).toMatchObject({ kind: 'bound',
         scope: { serverId: resolveServerProfileScopeIdForIdentifier(homeProfileId), accountId: 'owner' } });
@@ -353,7 +375,7 @@ describe('worker destination list demand', () => {
                 controller: { machineId: 'controller', installationId: 'installation' } } } : {}),
             observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } });
         homes.answer(homeProfileId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
-        storage.setState({ machineListByServerId: { [serverId]: [controller, guest] } });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controller, guest]);
         const hook = await renderHook(() => useMachineSelectionListModel<Machine>({
             purpose: 'finite', workerPlacement: { workspace: { serverId, refId: 'checkout' } },
             groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
@@ -376,7 +398,8 @@ describe('worker destination list demand', () => {
             await waitForHomeGovernance(() => expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBe(wake));
             expect(option()?.disabled).toBe(false);
             expect(rpc.machine).not.toHaveBeenCalled();
-            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...controller, installationId: 'replacement' }, guest] } }));
+            await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+                [{ ...controller, installationId: 'replacement' }, guest]));
             expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBeUndefined();
             expect(option()?.disabled).toBe(true);
         } finally { await hook.unmount(); }
@@ -459,6 +482,7 @@ describe('worker destination list demand', () => {
     });
     it.each(['finite', 'service-start'] as const)('demands exact %s status and keeps a full queue selectable', async (purpose) => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now() });
+        const scopedMachine = await seedAnsweredScopedMachine(machine);
         const worker = { eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'known', running: 2, queued: 7, accepting: true, runAtMost: 2 }, explanation: 'eligible' };
         rpc.machine.mockResolvedValue(worker);
@@ -466,7 +490,7 @@ describe('worker destination list demand', () => {
             purpose,
             workerPlacement: { workspace: { serverId, refId: 'checkout' } },
             groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
-                machines: [{ ...machine, serverId, serverName: 'Worker picker' }] }],
+                machines: [scopedMachine] }],
             selectedMachine: null, selectedServerId: serverId, recentMachines: [], favoriteMachines: [],
             onSelectMachine: () => {}, onSelectScopedMachine: () => {},
             showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,

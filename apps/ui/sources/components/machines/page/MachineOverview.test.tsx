@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { MachinePageState } from './machinePageContext';
@@ -41,14 +42,16 @@ it('retains known presence across socket withdrawal and changes daemon read admi
     const homeId = await home.addHome({ name: 'Presence Home', serverUrl: 'https://resource-presence.test', accountId: 'owner' });
     accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://resource-presence.test', accountId: 'owner', request: home.request });
     const serverId = accountConnection.serverId;
-    const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
-    storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
-    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
+    const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: Date.now(), storageMode: 'plain',
+        access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
     const hook = await renderHook(() => ({
         read: useMachineDaemonReadTarget({ serverId, machineId: machine.id }),
         fleet: useMachineDaemonReadTargets({ serverId, machineIds: [machine.id] }),
         widget: useMachineWidgetMachine({ serverId, machineId: machine.id }),
     }));
+    await vi.waitFor(() => expect(hook.getCurrent().read.accountBinding?.isCurrent()).toBe(true));
+    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
     await vi.waitFor(() => expect(hook.getCurrent().read.enabled).toBe(true));
     const scope = { serverId, accountId: 'owner' };
     await act(async () => { withdrawMachinePresenceForScope(scope); });
@@ -80,7 +83,7 @@ it('retains known presence across socket withdrawal and changes daemon read admi
     expect(hook.getCurrent().read).toMatchObject({ enabled: true, offline: false });
     expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: true, offline: false });
     expect(hook.getCurrent().widget.online).toBe(true);
-    await act(async () => { storage.setState({ machineListByServerId: { [serverId]: [] } }); });
+    await act(async () => { await publishMachineInventoryForTest(scope, []); });
     expect(hook.getCurrent().read).toMatchObject({ enabled: false, offline: false });
     expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: false, offline: false });
     expect(hook.getCurrent().widget.online).toBeNull();
@@ -104,11 +107,11 @@ it('shares the Account-qualified Overview sample and retries the same retained r
     accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://overview-freshness.test', accountId: 'owner', request: home.request });
     const serverId = accountConnection.serverId;
     const machine = createMachineFixture({ id: 'freshness-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
-    storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
     const authority = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(serverId).binding,
         managedEnrolled: useManagedEnrolledMachine({ enrolledMachineId: machine.id, serverId }) }));
     await vi.waitFor(() => expect(authority.getCurrent().binding?.isCurrent()).toBe(true));
-    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
+    recordMachineRequestSucceeded({ serverId: authority.getCurrent().binding!.scope.serverId, accountId: authority.getCurrent().binding!.scope.accountId, machineId: machine.id });
     const key = { serverId, expectedAccountId: 'owner', machineId: machine.id, view: 'overview' as const };
     let sampledAt = Date.now() - 60_000;
     let snapshot = { state: 'reporting', sample: { v: 1, sampledAt, intervalMs: 15_000,
@@ -152,11 +155,11 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://overview-scope.test', accountId: 'owner', request: home.request });
     const serverId = accountConnection.serverId;
     const machine = createMachineFixture({ id: 'overview-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
-    storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
     const authority = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(serverId).binding,
         managedEnrolled: useManagedEnrolledMachine({ enrolledMachineId: machine.id, serverId }) }));
     await vi.waitFor(() => expect(authority.getCurrent().binding?.isCurrent()).toBe(true));
-    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
+    recordMachineRequestSucceeded({ serverId: authority.getCurrent().binding!.scope.serverId, accountId: authority.getCurrent().binding!.scope.accountId, machineId: machine.id });
     const state = {
         target: { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
             machineName: 'Overview Machine', machineSentenceName: 'Overview Machine', isServerSwitching: false, isHydratingMachine: false, switchReady: true },

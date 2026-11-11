@@ -5,6 +5,8 @@ import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { storage } from '@/sync/domains/state/storageStore';
 import { buildMachineDestinationModel as buildScopedMachineDestinationModel, resolveMachineDestinationPurposeEligibility } from './buildMachineDestinationModel';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine, ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
@@ -57,6 +59,16 @@ beforeAll(async () => {
 beforeEach(async () => {
     await network.addHome('https://server-a', 'account-a');
     await network.addHome('https://server-b', 'account-b');
+    storage.setState((state) => ({
+        ...state,
+        machines: {},
+        machineDisplayById: {},
+        machineListByServerId: {},
+        machineListStatusByServerId: {},
+        machineRecordsByServerId: {},
+        machinePresenceById: {},
+        machinePresenceByServerId: {},
+    }));
 });
 
 function createMachine(id: string): Machine {
@@ -82,11 +94,17 @@ function createMachine(id: string): Machine {
 }
 
 function createScopedMachine(machine: Machine): ServerScopedMachine {
-    return {
+    storage.getState().applyMachines([machine], false, { sourceServerId: 'server-a', sourceAccountId: 'account-a' });
+    const admitted = storage.getState().machineRecordsByServerId['server-a']?.[machine.id];
+    if (!admitted) throw new Error('expected an admitted Machine fixture');
+    linkMachineActivity(admitted, machine);
+    const row = {
         ...machine,
         serverId: 'server-a',
         serverName: 'Server A',
     };
+    linkMachineActivity(machine, row);
+    return row;
 }
 
 type Fixture = Readonly<{
@@ -97,8 +115,7 @@ type Fixture = Readonly<{
 }>;
 
 /** Each case owns its Machine records and the canonical activity subscriptions they acquire. */
-function createFixture(): Fixture {
-    const machines = ['m-1', 'm-2', 'm-3'].map(createMachine);
+function createFixture(machines: readonly Machine[] = ['m-1', 'm-2', 'm-3'].map(createMachine)): Fixture {
     return {
         machines,
         groups: [{
@@ -1419,9 +1436,11 @@ describe('useMachineSelectionListModel', () => {
     });
 
     it('lets a consuming domain decide which rows are selectable and shows its reason', async () => {
-        const fixture = createFixture();
+        // Admit the intended initial state, rather than replaying an older offline clock over a live row.
+        const fixture = createFixture([createMachine('m-1'),
+            { ...createMachine('m-2'), active: false, activeAt: 0 }, createMachine('m-3')]);
         const handlers = makeHandlers();
-        const offline: Machine = { ...fixture.machines[1]!, active: false, activeAt: 0 };
+        const offline = fixture.machines[1]!;
         const machines = [fixture.machines[0]!, offline].map(createScopedMachine);
         const params = (withDomainDecision: boolean): BuildMachineSelectionListModelParams => ({
             ...buildParams(fixture, handlers),
