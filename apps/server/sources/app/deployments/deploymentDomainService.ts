@@ -18,7 +18,7 @@ import { defaultRepeatKeyExpiresAt, fetchRepeatKey, saveRepeatKey } from '@/stor
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { readProjectSourceCustodyInTx } from '@/app/projects/sources/projectSourceService';
-import { deploymentFailure, admitDeploymentMachinesInTx, type DeploymentAuthentication } from './deploymentAdmission';
+import { deploymentFailure, deploymentMachineUnavailable, admitDeploymentMachinesInTx, type DeploymentAuthentication } from './deploymentAdmission';
 import { projectDeploymentListRow } from './deploymentListProjection';
 import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
@@ -358,13 +358,13 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     if (input.provider === true) {
         if (membership || link.sourceKind !== 'plugin' || previous && (!readProviderCapture(previous) || previous.targetLinkId !== link.id))
             return deploymentFailure('deployment_conflict');
-        if (!loaded.row.controllerMachineId) return deploymentFailure('machine_unavailable');
+        if (!loaded.row.controllerMachineId) return deploymentFailure('deployment_unavailable');
         const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
         if (contentFailure) return contentFailure;
         const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
             revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
         if (!controller?.installationId || !controller.installationPublicKey
-            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentFailure('machine_unavailable');
+            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentMachineUnavailable(controller.id, 'controller');
         const capturedPlacements = DeploymentDomainProviderCaptureV1Schema.parse({ kind: 'provider',
             placement: { serverId: input.serverId, accountId: actorAccountId, environmentId: input.environmentId,
                 targetLinkId: link.id, domainId: input.domainId, controller: { machineId: controller.id,
@@ -498,7 +498,7 @@ export async function prepareDeploymentTeardownDomainsInTx(tx: Tx, actorAccountI
         const controller = await tx.machine.findUnique({ where: { id: binding.machineId },
             select: { installationId: true, installationPublicKey: true } });
         if (!controller?.installationPublicKey || controller.installationId !== binding.installationId)
-            return deploymentFailure('machine_unavailable');
+            return deploymentMachineUnavailable(binding.machineId, 'controller');
         for (const job of providers) await tx.deploymentDomain.update({ where: { id: job.row.id }, data: {
             state: 'removing', revision: { increment: 1 }, capturedPlacements: { ...job.capture,
                 installationPublicKey: encodeBase64(controller.installationPublicKey, 'base64url'),
@@ -536,11 +536,11 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     if (provider) {
         if (row.deletedAt || row.revision !== input.expectedDomainRevision || loaded.row.revision !== input.expectedRevision)
             return deploymentFailure('deployment_conflict');
-        if (!loaded.row.controllerMachineId) return deploymentFailure('machine_unavailable');
+        if (!loaded.row.controllerMachineId) return deploymentFailure('deployment_unavailable');
         const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
             revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
         if (!controller?.installationId || !controller.installationPublicKey
-            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentFailure('machine_unavailable');
+            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentMachineUnavailable(controller.id, 'controller');
         const changed = await tx.deploymentDomain.update({ where: { id: row.id }, data: { state: 'removing', revision: { increment: 1 },
             capturedPlacements: { ...provider, installationPublicKey: encodeBase64(controller.installationPublicKey, 'base64url'),
                 placement: { ...provider.placement, accountId: actorAccountId, controller: {

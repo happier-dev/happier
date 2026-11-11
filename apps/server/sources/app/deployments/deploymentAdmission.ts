@@ -16,7 +16,7 @@ export type DeploymentFailure = DeploymentActionFailure & Readonly<{
     error: Exclude<DeploymentActionFailure['error'], 'unsupported_action'>;
 }>;
 export type DeploymentAuthentication = Partial<TeamOperationAuthenticationContext>;
-export const deploymentFailure = <TError extends Extract<DeploymentActionFailure['error'], 'deployment_invalid' | 'deployment_unavailable' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'unsupported_action' | 'client_required'>>(error: TError): Readonly<{ ok: false; error: TError }> => ({ ok: false, error });
+export const deploymentFailure = <TError extends Extract<DeploymentActionFailure['error'], 'deployment_invalid' | 'deployment_unavailable' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'machine_unavailable' | 'unsupported_action' | 'client_required'>>(error: TError): Readonly<{ ok: false; error: TError }> => ({ ok: false, error });
 
 /** The admission owner supplies the recorded placement; callers never select a replacement controller. */
 export function projectDeploymentControllerPlacementFailure(controllerMachineId: string): ActionExecuteFailure {
@@ -78,15 +78,19 @@ const sourceMachineAccessMissing = { reason: 'source_machine_access_missing', re
     remedy: 'share_machine_with_source_owner' } as const satisfies DeploymentMachinePlacementDiagnosticV1;
 
 /** The first failed placement role owns the recovery diagnostic. */
+export function deploymentMachineUnavailable(machineId: string, role: 'controller' | 'build' | 'target'): DeploymentFailure {
+    return { ok: false, error: 'machine_unavailable', role, machineIds: [machineId],
+        nextActions: role === 'target' ? ['start', 'removeFromEnvironment'] : ['start', 'chooseAnother'] };
+}
+
 function unavailableDeploymentMachines(inputs: readonly DeploymentMachineInput[],
     diagnostic?: DeploymentMachinePlacementDiagnosticV1, effectAttempted?: false,
 ): DeploymentFailure | null {
     const first = inputs[0];
     if (!first) return null;
     const role = first.role ?? 'target';
-    return { ok: false, error: 'machine_unavailable', role,
+    return { ...deploymentMachineUnavailable(first.machineId, role),
         machineIds: inputs.filter(input => (input.role ?? 'target') === role).map(input => input.machineId),
-        nextActions: role === 'target' ? ['start', 'removeFromEnvironment'] : ['start', 'chooseAnother'],
         ...(effectAttempted !== undefined ? { effectAttempted } : {}), ...(diagnostic ? { diagnostic } : {}) };
 }
 
