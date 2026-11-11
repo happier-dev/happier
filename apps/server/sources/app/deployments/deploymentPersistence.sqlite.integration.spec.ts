@@ -1626,7 +1626,7 @@ describe('deployment storage real SQLite boundary', () => {
         });
     });
 
-    it('keeps immutable receipt identity, exclusion and signed CAS at the real HTTP/storage boundary', async () => {
+    it.each(['succeeded', 'running_unverified'] as const)('keeps immutable receipt identity, exclusion and signed CAS across two consecutive single-member deploys (%s)', async firstState => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
@@ -1757,13 +1757,35 @@ describe('deployment storage real SQLite boundary', () => {
             expect((await db.artifact.findUniqueOrThrow({ where: { id: receiptContent.contentArtifactId } })).bodyVersion).toBe(2);
             const settled = await app.inject({ method: 'POST', url: transitionUrl, headers, payload: sign({
                 serverId, environmentId, deploymentId: firstId, expectedRevision: 3, actionOperationId: intent.actionOperationId,
-                machineId, installationId, kind: 'settle', state: 'succeeded',
+                machineId, installationId, kind: 'settle', state: firstState,
                 expectedTargetLinkRevision: 1,
             }) });
             expect(settled.statusCode, settled.body).toBe(200);
             expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: targetLinkId } })).toMatchObject({ activeDeploymentId: firstId, revision: 2 });
             expect(await db.deploymentTargetLinkMachine.findMany({ where: { targetLinkId } })).toMatchObject([{ machineId, state: 'active' }]);
-            const unsignedIntent = { ...intent, ...otherContent, expectedRevision: first.json().revision, expectedTargetLinkRevision: 2,
+            const firstReceipt = await db.deployment.findUniqueOrThrow({ where: { id: firstId } });
+            const secondIntent = { ...intent, ...otherContent, expectedRevision: first.json().revision, expectedTargetLinkRevision: 2,
+                requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID() };
+            const second = await reserve('deploy', secondIntent);
+            expect(second.statusCode, second.body).toBe(200);
+            const secondId: string = second.json().deploymentId;
+            const secondTransitionUrl = `${base}/deployments/${secondId}/transitions`;
+            const secondStarted = await app.inject({ method: 'POST', url: secondTransitionUrl, headers, payload: sign({
+                serverId, environmentId, deploymentId: secondId, expectedRevision: 1, actionOperationId: secondIntent.actionOperationId,
+                machineId, installationId, kind: 'stage', state: 'running',
+            }) });
+            expect(secondStarted.statusCode, secondStarted.body).toBe(200);
+            const secondSettled = await app.inject({ method: 'POST', url: secondTransitionUrl, headers, payload: sign({
+                serverId, environmentId, deploymentId: secondId, expectedRevision: 2, actionOperationId: secondIntent.actionOperationId,
+                machineId, installationId, kind: 'settle', state: firstState, expectedTargetLinkRevision: 2,
+            }) });
+            expect(secondSettled.statusCode, secondSettled.body).toBe(200);
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: targetLinkId } }))
+                .toMatchObject({ activeDeploymentId: secondId, revision: 3 });
+            expect(await db.deploymentTargetLinkMachine.findMany({ where: { targetLinkId } }))
+                .toMatchObject([{ machineId, installationId, state: 'active' }]);
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: firstId } })).toEqual(firstReceipt);
+            const unsignedIntent = { ...intent, ...otherContent, expectedRevision: second.json().revision, expectedTargetLinkRevision: 3,
                 requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID() };
             const unsigned = await app.inject({ method: 'POST', url: `${base}/deploy`, headers, payload: unsignedIntent });
             expect(unsigned.statusCode, unsigned.body).toBe(200);
@@ -1780,13 +1802,13 @@ describe('deployment storage real SQLite boundary', () => {
             expect(cancelled.statusCode, cancelled.body).toBe(200);
             const immutable = await db.deployment.findUniqueOrThrow({ where: { id: firstId } });
             const rollback = await reserve('rollback', {
-                ...intent, ...otherContent, expectedRevision: unsigned.json().revision, expectedTargetLinkRevision: 2,
+                ...intent, ...otherContent, expectedRevision: unsigned.json().revision, expectedTargetLinkRevision: 3,
                 requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), deploymentId: firstId,
             });
             expect(rollback.statusCode, rollback.body).toBe(200);
             expect(rollback.json().deploymentId).not.toBe(firstId);
             expect(await db.deployment.findUniqueOrThrow({ where: { id: rollback.json().deploymentId } })).toMatchObject({
-                operation: 'rollback', rollbackOfDeploymentId: firstId, predecessorDeploymentId: firstId,
+                operation: 'rollback', rollbackOfDeploymentId: firstId, predecessorDeploymentId: secondId,
             });
             expect(await db.deployment.findUniqueOrThrow({ where: { id: firstId } })).toEqual(immutable);
             expect((await app.inject({ method: 'GET', url: `${base}?serverId=${serverId}`,

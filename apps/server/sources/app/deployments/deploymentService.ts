@@ -336,7 +336,9 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             current.machineId === member.machineId && current.installationId === member.installationId))) return deploymentFailure('deployment_conflict');
     }
     const joining = link.machines.filter(member => member.state === 'joining');
-    if (input.expectedTargetLinkRevision !== undefined && input.state === 'succeeded' && joining.length > 0
+    const activatesJoining = input.expectedTargetLinkRevision !== undefined
+        && (input.state === 'succeeded' || input.state === 'running_unverified') && joining.length > 0;
+    if (activatesJoining
         && !await haveDeploymentMembershipRoutesInTx(tx, { environmentId: row.environmentId,
             targetLinkId: link.id, members: joining, mode: 'join' })) return deploymentFailure('deployment_conflict');
     if (input.contentUpdate) {
@@ -357,7 +359,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (input.expectedTargetLinkRevision !== undefined) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: row.id, state: 'deployed', revision: { increment: 1 } } });
         // The signed uniform receipt and Domain owner jointly prove joining readiness.
-        if (input.state === 'succeeded' && joining.length > 0) {
+        if (activatesJoining) {
             await tx.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId: link.id, state: 'joining' }, data: { state: 'active' } });
         }
         await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);

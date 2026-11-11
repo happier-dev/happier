@@ -344,6 +344,9 @@ describe('current runtime membership replacement', () => {
         { count: 2, state: 'succeeded' as const, baseline: false, domain: 'up' },
         { count: 2, state: 'succeeded' as const, baseline: false, domain: 'down' },
         { count: 2, state: 'succeeded' as const, baseline: false, domain: 'pending' },
+        { count: 2, state: 'running_unverified' as const, baseline: false, domain: 'up' },
+        { count: 2, state: 'running_unverified' as const, baseline: false, domain: 'down' },
+        { count: 2, state: 'running_unverified' as const, baseline: false, domain: 'pending' },
         { count: 1, state: 'failed' as const, baseline: false }, { count: 1, state: 'outcome_unknown' as const, baseline: false },
         { count: 2, state: 'failed' as const, baseline: true },
     ])('requires ingress admission and successful release settlement ($count members, $state, baseline=$baseline, domain=$domain)', async ({ count, state, baseline, domain }) => {
@@ -626,7 +629,7 @@ describe('current runtime membership replacement', () => {
             const settled = await app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`,
                 headers: { 'x-test-user-id': owner.id }, payload: { ...body, proof } });
-            const successful = state === 'succeeded' && (!domain || domain === 'up');
+            const successful = (state === 'succeeded' || state === 'running_unverified') && (!domain || domain === 'up');
             expect(settled.statusCode, settled.body).toBe(domain === 'down' || domain === 'pending' ? 409 : successful || baseline ? 200 : 400);
             expect((await db.deploymentTargetLinkMachine.findMany({ where: { targetLinkId: link.id } })).map(member => member.state))
                 .toEqual(Array.from({ length: count }, () => baseline || successful ? 'active' : 'joining'));
