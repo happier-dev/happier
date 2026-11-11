@@ -165,10 +165,13 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
         return { ...base, items, summary: { ...base.summary, count: items.length } };
     };
     // Retained-fact overlays cannot prove that the machine's policy is readable again.
-    const apply = (state: MachineStorageState, update: Update): MachineStorageState => update.kind === 'summary' || update.kind === 'summary_overlay'
-        ? retainDeep(state, { status: update.kind === 'summary' ? 'ready' : state.status, summary: reconcileSummary(state.summary, update.summary),
-            ...(update.kind === 'summary_overlay' && state.failure ? { failure: state.failure } : {}) })
-        : retainDeep(state, { status: update.kind, summary: state.summary, ...(update.failure ? { failure: update.failure } : {}) });
+    const apply = (state: MachineStorageState, update: Update): MachineStorageState => {
+        if ('summary' in update) {
+            return retainDeep(state, { status: update.kind === 'summary' ? 'ready' : state.status, summary: reconcileSummary(state.summary, update.summary),
+                ...(update.kind === 'summary_overlay' && state.failure ? { failure: state.failure } : {}) });
+        }
+        return retainDeep(state, { status: update.kind, summary: state.summary, ...(update.failure ? { failure: update.failure } : {}) });
+    };
     const refreshChangedDetails = (input: MachineStorageKey, previous: MachineStorageState, incoming: HappierStorageSummaryV1) => {
         const recovered = previous.status === 'policy_unavailable'
             || (previous.summary !== null && incoming.revision < previous.summary.revision);

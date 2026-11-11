@@ -664,7 +664,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesApps: "アプリ",
                 recipesSetup: "セットアップ",
                 recipesSoftware: "ソフトウェア",
-                offline: "マシンはオフラインです。オンラインに戻るとセットアップを確認できます。",
+                offline: ({ machine }: { machine: string }) => `${machine} はオフラインです。オンラインに戻るとセットアップを確認できます。`,
                 presets: "プリセット",
                 presetsHelp: ({ machine }: { machine: string }) => `追加した順に並びます。プリセットを編集しても ${machine} は変わりません。差分だけを取り込むにはもう一度適用します。`,
                 attachPreset: "プリセットを追加",

@@ -664,7 +664,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesApps: "Aplikacje",
                 recipesSetup: "Konfiguracja",
                 recipesSoftware: "Oprogramowanie",
-                offline: "Maszyna jest offline. Konfigurację można sprawdzić, gdy znów będzie dostępna.",
+                offline: ({ machine }: { machine: string }) => `${machine} jest offline. Konfigurację można sprawdzić, gdy znów będzie dostępna.`,
                 presets: "Szablony",
                 presetsHelp: ({ machine }: { machine: string }) => `W kolejności dołączenia. Edycja szablonu nigdy nie zmienia ${machine}; zastosuj go ponownie, aby przyjąć tylko różnicę.`,
                 attachPreset: "Dołącz szablon",

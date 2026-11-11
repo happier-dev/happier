@@ -664,7 +664,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesApps: "Apps",
                 recipesSetup: "Configuração",
                 recipesSoftware: "Software",
-                offline: "A máquina está offline. A configuração poderá ser verificada quando voltar a estar disponível.",
+                offline: ({ machine }: { machine: string }) => `${machine} está offline. A configuração poderá ser verificada quando voltar a estar disponível.`,
                 presets: "Predefinições",
                 presetsHelp: ({ machine }: { machine: string }) => `Na ordem em que foram anexadas. Editar uma predefinição nunca altera ${machine}; aplique-a de novo para receber só a diferença.`,
                 attachPreset: "Anexar uma predefinição",

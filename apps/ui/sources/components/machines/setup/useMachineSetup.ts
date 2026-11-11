@@ -410,7 +410,7 @@ export function readMachineSetupApps(sources: readonly MachineSetupPlanResultV1[
  */
 export function readMachineSetupRecipes(
     plan: MachineSetupPlanResultV1 | null,
-    observation: Readonly<{ recipes: readonly Readonly<{ ref: SetupItem['selection']['ref']; status: RecipeStatus; reason?: MachineSetupPlanResultV1['support'][number]['reason'] }>[] }> | null,
+    observation: Readonly<{ recipes: readonly Readonly<{ ref: SetupItem['selection']['ref']; status: RecipeStatus; reason?: MachineSetupPlanResultV1['support'][number]['reason'] }>[] }> | null | undefined,
 ): readonly MachineSetupRecipeRow[] {
     if (!plan) return NO_RECIPES;
     const rows: MachineSetupRecipeRow[] = [];

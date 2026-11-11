@@ -56,6 +56,16 @@ describe('Network joins admitted service, membership and installed Domain facts'
       .toMatchObject({ services: [{ domainIds: null }] });
   });
 
+  it('skips provider domains because they do not publish a native service target', () => {
+    const providerContent = DeploymentDomainContentV1Schema.parse({
+      hostname: 'shop.example.test',
+      target: { kind: 'provider', zone: { zoneId: 'zone', name: 'example.test' } },
+      ingress: selection,
+    });
+    expect(projectMachineNetworkExposureFacts({ ...input, domains: [{ ...input.domains[0]!, content: providerContent }] }))
+      .toMatchObject({ domains: [], services: [{ domainIds: [] }] });
+  });
+
   it('retains unavailable and fallback observations without turning local-origin or desired policy into public reachability', () => {
     const unavailable = { ...domain, networkExposure: domain.networkExposure!.map(entry => ({ ...entry,
       observation: { kind: 'unavailable' as const, reason: 'route_absent' } })) };

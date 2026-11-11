@@ -66,11 +66,13 @@ export function projectMachineNetworkExposureFacts(input: MachineNetworkExposure
     const captures: NonNullable<DomainObservation> = item.domain.networkExposure ?? [];
     for (const capture of captures) {
       if (capture.machineId !== input.machineId || capture.installationId !== member.installationId) continue;
+      const target = item.content.target;
+      if (target.kind === 'provider') continue;
       const observation = capture.observation;
       const provider = item.content.ingress?.provider ?? null;
       domains!.push({ domainId: item.domain.id, environmentId: item.domain.environmentId, installationId: capture.installationId,
-        nativeServer: capture.nativeServer, hostname: item.content.hostname, targetService: item.content.target.service,
-        targetPort: item.content.target.containerPort, provider, observedAtMs: item.domain.observedAtMs ?? null, observation,
+        nativeServer: capture.nativeServer, hostname: item.content.hostname, targetService: target.service,
+        targetPort: target.containerPort, provider, observedAtMs: item.domain.observedAtMs ?? null, observation,
         ...(observation.kind === 'ready' ? { state: 'ready', localOrigin: observation.localOrigin, fallback: observation.fallback } as const
           : { state: 'unavailable', reason: observation.reason } as const) });
       if (observation.kind !== 'ready') continue;

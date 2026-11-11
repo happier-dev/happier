@@ -664,7 +664,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesApps: "Apps",
                 recipesSetup: "Einrichtung",
                 recipesSoftware: "Software",
-                offline: "Der Rechner ist offline. Die Einrichtung kann geprüft werden, sobald er wieder online ist.",
+                offline: ({ machine }: { machine: string }) => `${machine} ist offline. Die Einrichtung kann geprüft werden, sobald er wieder online ist.`,
                 presets: "Vorlagen",
                 presetsHelp: ({ machine }: { machine: string }) => `In der Reihenfolge, in der sie angehängt wurden. Eine Vorlage zu bearbeiten ändert ${machine} nie; wende sie erneut an, um nur den Unterschied zu übernehmen.`,
                 attachPreset: "Vorlage anhängen",

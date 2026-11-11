@@ -664,7 +664,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesApps: "Apps",
                 recipesSetup: "Configuración",
                 recipesSoftware: "Software",
-                offline: "La máquina está sin conexión. La configuración se podrá comprobar cuando vuelva a estar disponible.",
+                offline: ({ machine }: { machine: string }) => `${machine} está sin conexión. La configuración se podrá comprobar cuando vuelva a estar disponible.`,
                 presets: "Preajustes",
                 presetsHelp: ({ machine }: { machine: string }) => `En el orden en que se adjuntaron. Editar un preajuste nunca cambia ${machine}; vuelve a aplicarlo para tomar solo la diferencia.`,
                 attachPreset: "Adjuntar un preajuste",

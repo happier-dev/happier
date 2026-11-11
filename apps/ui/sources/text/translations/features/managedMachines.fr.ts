@@ -664,7 +664,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesApps: "Apps",
                 recipesSetup: "Configuration",
                 recipesSoftware: "Logiciels",
-                offline: "La machine est hors ligne. La configuration pourra être vérifiée dès qu’elle sera de nouveau disponible.",
+                offline: ({ machine }: { machine: string }) => `${machine} est hors ligne. La configuration pourra être vérifiée dès qu’elle sera de nouveau disponible.`,
                 presets: "Préréglages",
                 presetsHelp: ({ machine }: { machine: string }) => `Dans l’ordre où ils ont été attachés. Modifier un préréglage ne change jamais ${machine} ; appliquez-le à nouveau pour ne reprendre que la différence.`,
                 attachPreset: "Attacher un préréglage",
