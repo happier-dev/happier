@@ -45,10 +45,8 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
     const { state } = props;
     const { theme } = useUnistyles();
     const machines = useMachineListForServer(state.serverId) ?? EMPTY_MACHINES;
-    // A member default may name only a Machine already shared into the Team/Home
-    // inventory. Private Machines belong to the administrator and cannot be used
-    // by the member who receives this default.
-    const memberUsableMachines = React.useMemo(() => machines.filter(machine => machine.isShared === true), [machines]);
+    // The accessible inventory supplies candidates; the server checks audience
+    // usability when saving the default and returns a typed refusal if needed.
     const placement = state.defaults.placement;
     const [open, setOpen] = React.useState(false);
     // Load selectable targets only while open; a closed field reads only its selected record.
@@ -79,7 +77,7 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
         offer.homeId === placement.homeId && offer.presetId === placement.presetId)?.title
         ?? selectedRecord.state.value?.name : undefined;
     const selectedMachine = placement?.kind === 'machine' && placement.target.serverId === state.serverId
-        ? memberUsableMachines.find(machine => machine.id === placement.target.machineId) ?? null : null;
+        ? machines.find(machine => machine.id === placement.target.machineId) ?? null : null;
     const unseen = placement === undefined || selectedMachine || selectedPresetTitle ? null : t(
         placement.kind === 'preset' ? 'teams.settings.memberDefaults.preset' : 'teams.settings.memberDefaults.unavailableMachine');
     const note = props.conflict ? state.conflictNote : null;
@@ -90,7 +88,7 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             presentation="dropdown"
             dropdownInCallerSection
             serverId={state.serverId}
-            machines={memberUsableMachines}
+            machines={machines}
             selectedMachine={selectedMachine}
             managedMachines={offers}
             managedPlacementPreset={placement?.kind === 'preset' ? placement : null}

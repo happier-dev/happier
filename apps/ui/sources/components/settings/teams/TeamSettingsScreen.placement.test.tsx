@@ -111,7 +111,7 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
 });
 
 
-it('renders the typed member Machine refusal with a recovery step in mounted Team defaults', async () => {
+it('offers owned and foreign-shared Machines and renders the typed refusal for an unusable default', async () => {
     const serverId = await harness.addHome({ name: 'Team Home', serverUrl: 'https://defaults-refused.example',
         accountId: 'admin', currentAccount: true, teamsEnabled: true });
     await harness.selectHomes([serverId]);
@@ -123,17 +123,26 @@ it('renders the typed member Machine refusal with a recovery step in mounted Tea
     const { createMachineFixture } = await import('@/dev/testkit');
     const { createPlainSharedMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const shared = createPlainSharedMachineRowFixture({ id: 'admin-shared-machine', custodianAccountId: 'custodian' });
+    // TH ruling: the whole accessible inventory is a candidate; only the server
+    // decides whether every member can use the selection when policy is saved.
+    const owned = createMachineFixture({ id: 'admin-owned-machine', isShared: false,
+        active: true, activeAt: Date.now(), storageMode: 'plain' });
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     await publishMachineInventoryForTest({ serverId, accountId: 'admin' }, [createMachineFixture({
         id: shared.id, isShared: true, active: true, activeAt: Date.now(), storageMode: 'plain', access: shared.access,
-    })]);
+    }), owned]);
     const screen = await renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
     const menu = () => screen.findAllByType(DropdownMenu).find(node =>
         node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-machine');
     await waitForHomeGovernance(() => expect(menu()).toBeDefined());
     await act(async () => menu()!.props.onOpenChange(true));
     await waitForHomeGovernance(() => expect(menu()!.props.items.some((item: { id: string }) => item.id === 'admin-shared-machine')).toBe(true));
-    await act(async () => menu()!.props.onSelect('admin-shared-machine'));
+    expect(menu()!.props.items.map((item: { id: string }) => item.id)).toContain(owned.id);
+    await act(async () => menu()!.props.onSelect(owned.id));
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/teams/policy/set')).toHaveLength(1));
+    expect(harness.requestsFor('/v1/teams/policy/set')[0]!.input).toMatchObject({ managedDefaults: {
+        team: { placement: { kind: 'machine', target: { serverId, machineId: owned.id } } }, groups: {},
+    } });
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain("Members can't use this Machine. Share it with the Team, or pick another."));
+    expect(menu()!.props.selectedId).toBe('__none__');
 });
