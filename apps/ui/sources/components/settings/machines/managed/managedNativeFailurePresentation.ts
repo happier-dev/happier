@@ -22,6 +22,10 @@ export function describeManagedNativeCause(cause: MachineProvisionerNativeCauseV
         return [cause.command, cause.exitCode === null ? 'interrupted' : `exit ${cause.exitCode}`, cause.stderr,
             cause.stderrTruncated ? 'stderr truncated' : null].filter(Boolean).join(' · ');
     }
+    if ('localCause' in cause && cause.localCause === 'plugin_action_input_schema_invalid') {
+        return [cause.localCause, `${cause.action.pluginId}/${cause.action.localId}`,
+            ...cause.issues.map(issue => `${issue.path.join('.') || '<root>'}: ${issue.code}`)].join(' · ');
+    }
     if ('localCause' in cause) return ['httpStatus' in cause ? `HTTP ${cause.httpStatus}` : null, cause.localCause].filter(Boolean).join(' · ');
     if ('httpStatusClass' in cause) return [`HTTP ${cause.httpStatusClass}`, cause.code, cause.fields?.join(', ')].filter(Boolean).join(' · ');
     if ('grpcStatusCode' in cause) return `gRPC ${cause.grpcStatusCode}`;
