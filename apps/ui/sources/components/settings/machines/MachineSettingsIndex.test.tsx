@@ -6,6 +6,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installMachinesSettingsCommonModuleMocks } from './machinesSettingsTestHelpers';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import type { WidgetAreaPresetV1 } from '@happier-dev/protocol/widgets';
@@ -104,20 +105,23 @@ vi.mock('@/components/ui/lists/ItemList', async () => {
       React.createElement(PluginUiScrollActivityProvider, { tracker }, React.createElement('ItemList', null, children)),
   };
 });
-const surfaceRenders = vi.hoisted(() => ({ groups: 0, items: 0 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
   ItemGroup: ({
     children,
     title,
     description,
+    action,
   }: {
     children?: React.ReactNode;
     title?: React.ReactNode;
     description?: React.ReactNode;
-  }) => { surfaceRenders.groups += 1; return React.createElement('Group', { title, description }, children); },
+    action?: React.ReactNode;
+  }) => React.createElement('Group', { title, description }, action, children),
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: Record<string, unknown>) => { surfaceRenders.items += 1; return React.createElement('Item', props); },
+  // The native row's subtitle contains the real summary reader and live demand.
+  Item: (props: Record<string, unknown> & { subtitle?: React.ReactNode }) =>
+    React.createElement('Item', props, props.subtitle),
 }));
 vi.mock('@/components/ui/forms/SelectionTiles', () => ({
   SelectionTiles: (props: Record<string, unknown>) =>
@@ -238,7 +242,13 @@ async function renderPage() {
   return screen.tree;
 }
 
-afterEach(() => { standardCleanup(); clearMachineRequestReachabilityForTest(); routeState.pathname = '/settings/machines'; });
+afterEach(async () => {
+  standardCleanup();
+  // Retire real Home/Account lifetimes before the global fixture erases storage.
+  await home.reset();
+  clearMachineRequestReachabilityForTest();
+  routeState.pathname = '/settings/machines';
+});
 
 it.each(['index', 'rail'] as const)('holds the first managed answer, then keeps ready rows in a 185-Machine %s while another name is pending', async surface => {
   const fleet = Array.from({ length: 185 }, (_, index) => ({
@@ -314,6 +324,28 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
 });
 
+it('gives a phone index row no title meta while the machine has nothing to say there (offline), and its work when online', async () => {
+  const ReactNative = await import('react-native');
+  // The window is the boundary that makes this a phone.
+  const dimensions = vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
+  try {
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      machine('live', 'Live', 'live.local'),
+      { ...machine('idle', 'Idle', 'idle.local'), active: false },
+    ] }]);
+    const tree = await renderPage();
+    const row = (id: string) => tree.findAll(node => node.props.testID === `machines.index.row.machine:srv_a:${id}`);
+    await waitForHomeGovernance(() => expect(row('idle').length).toBeGreaterThan(0));
+    // The work cell is the phone row's title meta (the bundler may suffix the function's name).
+    const titleMeta = (id: string) => tree.findAll(node => typeof node.type === 'function'
+      && /^MachineWorkCell\d*$/u.test(node.type.name) && node.props.item?.key === `machine:srv_a:${id}`);
+    expect(titleMeta('live').length).toBeGreaterThan(0);
+    expect(titleMeta('idle')).toHaveLength(0);
+  } finally {
+    dimensions.mockRestore();
+  }
+});
+
 it('keeps Collection row owners quiet across unchanged Machine publications and updates the changed row', async () => {
   const alpha = machine('a', 'Alpha', 'alpha.local');
   alpha.keyBasis = { dataEncryptionKey: alpha.dataEncryptionKey ?? null,
@@ -351,29 +383,7 @@ it('keeps Collection row owners quiet across unchanged Machine publications and 
   } finally { spy.mockRestore(); }
 });
 
-it('gives a phone index row no title meta while the machine has nothing to say there (offline), and its work when online', async () => {
-  const ReactNative = await import('react-native');
-  // The window is the boundary that makes this a phone.
-  const dimensions = vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
-  try {
-    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
-      machine('live', 'Live', 'live.local'),
-      { ...machine('idle', 'Idle', 'idle.local'), active: false },
-    ] }]);
-    const tree = await renderPage();
-    const row = (id: string) => tree.findAll(node => node.props.testID === `machines.index.row.machine:srv_a:${id}`);
-    await waitForHomeGovernance(() => expect(row('idle').length).toBeGreaterThan(0));
-    // The work cell is the phone row's title meta (the bundler may suffix the function's name).
-    const titleMeta = (id: string) => tree.findAll(node => typeof node.type === 'function'
-      && /^MachineWorkCell\d*$/u.test(node.type.name) && node.props.item?.key === `machine:srv_a:${id}`);
-    expect(titleMeta('live').length).toBeGreaterThan(0);
-    expect(titleMeta('idle')).toHaveLength(0);
-  } finally {
-    dimensions.mockRestore();
-  }
-});
-
-it.each(['index', 'rail'] as const)('re-renders no %s content when its retained surface hides or shows, and computes nothing for Session churn while hidden', async surface => {
+it.each(['index', 'rail'] as const)('retains mounted %s rows across presentation changes and computes nothing for Session churn while hidden', async surface => {
   await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
     machine('a', 'Alpha', 'alpha.local'), machine('b', 'Beta', 'beta.local'),
   ] }]);
@@ -391,13 +401,18 @@ it.each(['index', 'rail'] as const)('re-renders no %s content when its retained 
   await waitForHomeGovernance(() => expect(surface === 'index' ? screen.getTextContent().includes('Beta')
     : screen.findAll(node => node.props?.title === 'Beta').length > 0).toBe(true));
   await flushHookEffects();
-  const content0 = surfaceRenders.groups + surfaceRenders.items;
+  const rows = () => ['a', 'b'].map(id => screen.findAll(node => typeof node.type === 'string'
+    && node.props.testID === (surface === 'index' ? `machines.index.row.machine:srv_a:${id}` : `settings.machines.row.srv_a.${id}`)
+    && typeof node.props.onPress === 'function')[0]);
+  const retainedRows = rows();
+  for (const row of retainedRows) expect(row).toBeDefined();
   await screen.update(surfaceAt(false));
   await flushHookEffects();
   await screen.update(surfaceAt(true));
   await flushHookEffects();
-  // The demand withdraws and returns (the live-demand suite proves it); the page's own rows, groups and dashboard stay as drawn.
-  expect(surfaceRenders.groups + surfaceRenders.items - content0).toBe(0);
+  // Presentation changes release and restore subscriptions (9cf24cafcc), while
+  // retained row instances preserve focus and local state.
+  for (const [index, row] of rows().entries()) expect(row).toBe(retainedRows[index]);
   await screen.update(surfaceAt(false));
   await flushHookEffects();
   const hiddenCommits = commits;
@@ -1208,7 +1223,7 @@ describe('the presets group in the rail', () => {
     home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] }, respondAfter: refreshReply.promise });
     const initialRequests = home.requests.filter(request => request.path === '/v1/machines/presets/list').length;
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-    await act(async () => publishHomeAccountChange('srv_a'));
+    await act(async () => publishHomeAccountChange('srv_a', [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { source: 'socket', changeKinds: ['account'] }));
     await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === '/v1/machines/presets/list').length).toBeGreaterThan(initialRequests));
     expect(sectionIds(screen.tree)).toContain('settings.machines.presets.new.srv_a');
     await act(async () => refreshReply.resolve());

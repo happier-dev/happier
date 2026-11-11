@@ -1087,8 +1087,8 @@ describe('Machines widget presentation', () => {
     await screen.unmount();
   });
 
-  it('keeps withdrawn Machine rows visible without adding them to the offline group', async () => {
-    const { withdrawMachinePresenceForScope, captureMachinePresenceObservation } =
+  it('retains known Machine presence and visible rows when the Account socket withdraws', async () => {
+    const { withdrawMachinePresenceForScope } =
       await import('@/sync/domains/machines/reachability/machineReachability');
     const serverId = getActiveServerSnapshot().serverId;
     const machines = [createMachineFixture({ id: 'edge', activeAt: Date.now() }), createMachineFixture({ id: 'studio', activeAt: Date.now() })];
@@ -1100,10 +1100,8 @@ describe('Machines widget presentation', () => {
     await act(async () => withdrawMachinePresenceForScope(scope));
     expect(screen.findByTestId('fleet.machine.edge')).not.toBeNull();
     expect(screen.findByTestId('fleet.machine.studio')).not.toBeNull();
-    expect(screen.getTextContent()).toContain('common.unknown');
-    expect(screen.getTextContent()).not.toContain('machines.widgets.body.fleet.offlineGroup');
-    await act(async () => captureMachinePresenceObservation(scope)(machines.map(machine => machine.id)));
     expect(screen.getTextContent()).not.toContain('common.unknown');
+    expect(screen.getTextContent()).not.toContain('machines.widgets.body.fleet.offlineGroup');
     await screen.unmount();
   });
 
