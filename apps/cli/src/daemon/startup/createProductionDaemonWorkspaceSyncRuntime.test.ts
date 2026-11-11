@@ -1041,6 +1041,11 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       machineId: fixture.sourceRef.machineId, expectedRelationship };
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: fixture.serverId,
       runtimeAccountId: 'owner', actionRequestId: 'offline-retirement-review',
+      // The public Action reaches this daemon through admitted Machine ingress; an
+      // unadmitted context is refused before retirement (requester custody, 3d0ffa407d4).
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
+        installationId: fixture.controller.installationId, role: 'manage' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => true,
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
         'projects.worker.copy.retire': { approvalRequiredSurfaces: lifetime === 'ask' ? ['ui'] : [] },
         'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: [] },
