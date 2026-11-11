@@ -4,7 +4,7 @@ import { usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
-import { openEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
+import { toggleEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
 import { useSessionTerminalAvailability } from './useSessionTerminalAvailability';
 import { setSessionTerminalMode } from './sessionTerminalMode';
 import { readSessionTerminalWorkspace } from './sessionTerminalWorkspace';
@@ -21,7 +21,7 @@ export function useSessionTerminalAction(params: Readonly<{
     const { dockLocation, terminalEnabled } = useSessionTerminalAvailability(serverId);
 
     const scopeState = pane.scopeState;
-    const rightTerminalActive = Boolean(scopeState?.right.isOpen) && scopeState?.right.activeTabId === 'terminal';
+    const rightTerminalActive = Boolean(scopeState?.right?.isOpen) && scopeState?.right?.activeTabId === 'terminal';
     const bottomTerminalActive = Boolean(scopeState?.bottom?.isOpen) && scopeState?.bottom?.activeTabId === 'terminal';
 
     const onPress = React.useCallback(() => {
@@ -30,22 +30,8 @@ export function useSessionTerminalAction(params: Readonly<{
             setSessionTerminalMode(params.sessionId, 'workspace_shell', serverId, pane.scopeId);
         }
 
-        if (dockLocation === 'bottom') {
-            if (bottomTerminalActive) {
-                pane.closeBottom();
-                return;
-            }
-            openEmbeddedTerminalInDockLocation({ pane, dockLocation: 'bottom' });
-            return;
-        }
-
-        // sidebar
-        if (rightTerminalActive && !rightPaneHiddenByDetails) {
-            pane.closeRight();
-            return;
-        }
-        if (rightPaneHiddenByDetails === true) pane.closeDetails();
-        openEmbeddedTerminalInDockLocation({ pane, dockLocation: 'sidebar' });
+        toggleEmbeddedTerminalInDockLocation({ pane, dockLocation, bottomTerminalActive,
+            rightTerminalActive, rightPaneHiddenByDetails: rightPaneHiddenByDetails === true });
     }, [
         bottomTerminalActive,
         dockLocation,

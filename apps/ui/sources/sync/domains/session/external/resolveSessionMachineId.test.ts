@@ -40,6 +40,19 @@ describe('resolveSessionMachineId', () => {
     } as any)).toBe('machine-legacy');
   });
 
+  it('reads the canonical workspace Machine binding when the legacy top-level field is absent', () => {
+    expect(resolveSessionMachineId({
+      path: '',
+      host: '',
+      sessionWorkspaceLocationV1: {
+        v: 1,
+        machineId: ' machine-workspace ',
+        agentPath: '/agent/project',
+        machinePath: '/machine/project',
+      },
+    } as any)).toBe('machine-workspace');
+  });
+
   it('returns null when neither machine id source is available', () => {
     expect(resolveSessionMachineId({ agent: 'claude' } as any)).toBeNull();
   });

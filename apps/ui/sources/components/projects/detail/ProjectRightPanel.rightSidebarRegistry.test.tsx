@@ -176,14 +176,15 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         await act(async () => screen.update(<runtime.Wrapper><ProjectRightPanel {...panelProps()} workspaceRef={base} activeRootPath={checkout.rootPath} /></runtime.Wrapper>));
         await flushHookEffects({ cycles: 30 });
         expect(screen.findHostByTestId('project-rightpanel-tab:terminal')).not.toBeNull();
-        expect(screen.findHostByTestId('project-terminal-workspace-root')).not.toBeNull();
-        expect(screen.tree.findByType(ProjectTerminalSurface).props.workspace).toEqual({ serverId: runtime.serverId,
-            workspaceId: checkout.id, machineId: checkout.machineId, rootPath: checkout.rootPath });
+        await screen.pressByTestIdAsync('project-rightpanel-tab:terminal');
+        expect(runtime.pane.scopeState?.bottom).toMatchObject({ isOpen: true, activeTabId: 'terminal' });
+        expect(screen.findHostByTestId('project-rightpanel-surface-terminal')).toBeNull();
+        expect(screen.findAllByType(ProjectTerminalSurface)).toHaveLength(0);
         const retainedRight = runtime.pane.scopeState?.right;
         await act(async () => screen.update(<runtime.Wrapper><ProjectRightPanel {...panelProps()} workspaceRef={base} activeRootPath="/repo/unaccepted" /></runtime.Wrapper>));
         expect(screen.findHostByTestId('project-rightpanel-tab:terminal')).toBeNull();
-        expect(screen.findHostByTestId('project-rightpanel-surface-terminal')).not.toBeNull();
-        expect(screen.findHostByTestId('project-terminal-workspace-root')).toBeNull();
+        expect(screen.findHostByTestId('project-rightpanel-surface-terminal')).toBeNull();
+        expect(runtime.pane.scopeState?.bottom).toMatchObject({ isOpen: true, activeTabId: 'terminal' });
         expect(runtime.pane.scopeState?.right).toEqual(retainedRight);
         expect(projectionTransportTrace.some(entry => entry.includes('daemon.terminal.ensure'))).toBe(false);
     });

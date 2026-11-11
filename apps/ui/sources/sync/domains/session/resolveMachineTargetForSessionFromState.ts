@@ -530,6 +530,22 @@ export function resolveDisplayMachineTargetForSessionFromState(input: Readonly<{
     return { machineId, basePath };
 }
 
+/** Terminal admission keeps the display binding while offline, but uses the machine-side path. */
+export function resolveMachineTerminalTargetForSessionFromState(input: Readonly<{
+    state: SessionMachineTargetState;
+    serverId?: string | null;
+    sessionId?: string | null;
+}>): { machineId: string; basePath: string } | null {
+    const sessionId = normalizeNonEmptyString(input.sessionId);
+    if (!sessionId) return null;
+    const displayTarget = resolveDisplayMachineTargetForSessionFromState({
+        state: input.state, sessionId, serverId: input.serverId,
+    });
+    if (!displayTarget) return null;
+    const metadata = readSessionDisplayTargetInput(input.state, sessionId, input.serverId)?.metadata;
+    return resolveWorkspaceLocationForMachineTarget(metadata, displayTarget);
+}
+
 export function resolveDisplayPathForSessionFromState(input: Readonly<{
     state: SessionMachineTargetState;
     serverId?: string | null;

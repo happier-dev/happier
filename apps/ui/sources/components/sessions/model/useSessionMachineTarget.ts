@@ -7,6 +7,7 @@ import {
     resolveMachineControlTargetForSessionFromState,
     resolveMachineControlTargetStateForSessionFromState,
     resolveMachineTargetForSessionFromState,
+    resolveMachineTerminalTargetForSessionFromState,
     resolveDisplayIdentityForSessionFromState,
     readSessionMachineTargetActivityInputs,
     type SessionMachineControlTarget,
@@ -45,6 +46,14 @@ function useSessionTargetSnapshot<T>(
 export function useSessionMachineDisplayIdentity(sessionId: string, serverId?: string | null): SessionDisplayIdentity {
     const resolvedSessionId = normalizeSessionId(sessionId);
     return getStorage()(useShallow((state) => resolveDisplayIdentityForSessionFromState({
+        state: state as SessionMachineTargetState, sessionId: resolvedSessionId, serverId,
+    })));
+}
+
+/** The canonical Session Machine binding and workspace path, retained while presence is offline. */
+export function useSessionMachineDisplayTarget(sessionId: string, serverId?: string | null): { machineId: string; basePath: string } | null {
+    const resolvedSessionId = normalizeSessionId(sessionId);
+    return getStorage()(useShallow((state) => resolveMachineTerminalTargetForSessionFromState({
         state: state as SessionMachineTargetState, sessionId: resolvedSessionId, serverId,
     })));
 }

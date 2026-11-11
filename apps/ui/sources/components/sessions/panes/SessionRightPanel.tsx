@@ -33,6 +33,7 @@ import { RightSidebarActionRail, type RightSidebarRailAction } from '@/component
 import { openRightSidebarBuiltinTab, usePublishRightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { getRightSidebarTabLabel } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import { useSessionTerminalAction } from '@/components/sessions/terminal/useSessionTerminalAction';
+import { openEmbeddedToolInDockLocation } from '@/components/sessions/terminal/embeddedTerminalDocking';
 import { toggleSessionReview } from './sessionPaneActions';
 import { SESSION_DETAILS_SCM_REVIEW_TAB_KEY } from './details/sessionDetailsTabBuilders';
 import { RightSidebarIconTabBar } from '@/components/appShell/rightSidebar/RightSidebarIconTabBar';
@@ -399,6 +400,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         }
         if (tab.id === 'review') { toggleSessionReview(pane); return; }
         if (tab.id === 'terminal') { terminal.onPress(); return; }
+        if (tab.id === 'browser') { openEmbeddedToolInDockLocation({ pane, tool: 'browser' }); return; }
         if (tab.id === 'computer') { computer?.open(); return; }
         if (tab.owner === 'plugin') {
             pane.selectRightDestination({
@@ -1063,6 +1065,10 @@ export const SessionActionRail = React.memo(() => {
                         : tab.id === 'board' ? renderSignal => <SessionBoardRailBadge sessionId={model.sessionId} serverId={model.countServerId} enabled={model.boardCountEnabled} renderSignal={renderSignal} /> : undefined,
             tooltipContent: tab.id === 'git' ? <SessionGitActionRailTooltip sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} /> : undefined,
             onPress: () => {
+                if (tab.id === 'browser') {
+                    openEmbeddedToolInDockLocation({ pane: model.pane, tool: 'browser' });
+                    return;
+                }
                 const togglesPresenter = tab.id === 'terminal' || tab.id === 'review' || tab.id === 'computer';
                 void executeNavigation('shell.column.set', { column: 'side', visible: !active,
                     ...(!active || togglesPresenter ? { tab: tab.id } : {}),

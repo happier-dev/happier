@@ -1146,6 +1146,20 @@ describe('useMachineTerminalSession', () => {
         await hook.unmount();
     });
 
+    it('reports an offline Machine when a bound target is unavailable over RPC', async () => {
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const terminalRef = { current: { write: vi.fn(), clear: vi.fn() } satisfies EmbeddedTerminalRendererHandle };
+        const hook = await renderHook(() => useMachineTerminalSession({
+            machineId: 'machine', serverId: homeIds.primary, cwd: '/repo', terminalKey: 'offline-typed-state', terminalRef,
+            machineReachable: false, machineRpcTargetAvailable: false,
+        }));
+        await act(async () => hook.getCurrent().onReady(80, 24));
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+        expect(hook.getCurrent()).toMatchObject({ status: 'error', error: 'terminal_machine_unreachable' });
+        expect(terminalOps.ensure).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('settles terminal disposal when its close RPC loses transport', async () => {
         vi.useRealTimers();
         terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'closing', reused: false });

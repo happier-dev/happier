@@ -6,10 +6,10 @@ import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/deta
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { projectPageSelectionId, resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 import type { ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
-import { createBrowserLaunchpadDetailsTab } from '@/components/browser/surfaces';
 import { buildProjectRouteHref, readProjectSelectedRouteResource, type ProjectRouteSegment, type ProjectDetailsSourceSurface } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { usePersistProjectLastMobileSurface } from '@/sync/domains/state/storage';
+import { openEmbeddedToolInDockLocation } from '@/components/sessions/terminal/embeddedTerminalDocking';
 
 export function useProjectRouteActions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -80,7 +80,7 @@ export function useProjectRouteActions(params: Readonly<{
         navigateToSegment({ segment: 'terminal', ...(input?.exitOverview ? { showWorktrees: false } : {}) }),
     [navigateToSegment]);
     const openBrowser = React.useCallback(() => {
-        params.pane?.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
+        if (params.pane) openEmbeddedToolInDockLocation({ pane: params.pane, tool: 'browser' });
     }, [params.pane]);
     return { buildHref, navigateToSegment, openBrowser, openTerminal, openWorktreesInDetails, replaceOverviewVisibility };
 }

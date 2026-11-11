@@ -3,7 +3,7 @@ import type { SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/wor
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionMachineDisplayTarget, useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
 import type { SessionTerminalMode } from './sessionTerminalMode';
@@ -20,11 +20,13 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
     terminalRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
 }>) {
     const machineTarget = useSessionMachineTarget(params.sessionId, params.serverId);
+    const machineDisplayTarget = useSessionMachineDisplayTarget(params.sessionId, params.serverId);
     const { machineReachable, machineReachability, machineRpcTargetAvailable } = useSessionMachineReachability(params.sessionId, params.serverId);
     const target = params.terminalTarget;
     const explicitMachineId = target?.kind === 'machine_shell' || target?.kind === 'terminal_view' ? target.machineId : null;
     const explicitMachinePresence = useMachinePresenceSummary(params.serverId, explicitMachineId);
     const kind = target?.kind ?? params.terminalMode;
+    const sessionTarget = machineTarget ?? machineDisplayTarget;
     const launch = React.useMemo(
         () => kind === 'session_attach'
             ? { kind: 'session_attach' as const, sessionId: params.sessionId }
@@ -34,8 +36,8 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
 
     return useMachineTerminalSession({
         serverId: params.serverId,
-        machineId: params.available === false ? null : explicitMachineId ?? machineTarget?.machineId ?? null,
-        cwd: target?.kind === 'machine_shell' || target?.kind === 'terminal_view' ? target.cwd : kind === 'workspace_shell' ? machineTarget?.basePath ?? null : null,
+        machineId: params.available === false ? null : explicitMachineId ?? sessionTarget?.machineId ?? null,
+        cwd: target?.kind === 'machine_shell' || target?.kind === 'terminal_view' ? target.cwd : kind === 'workspace_shell' ? sessionTarget?.basePath ?? null : null,
         launch,
         attachedTerminalId: target?.kind === 'terminal_view' ? target.terminalId : undefined,
         readOnly: target?.kind === 'terminal_view',

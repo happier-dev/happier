@@ -46,6 +46,8 @@ import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBan
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { Text } from '@/components/ui/text/Text';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { resolveSessionTerminalDockLocation } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { toggleEmbeddedTerminalInDockLocation } from '@/components/sessions/terminal/embeddedTerminalDocking';
 
 const PROJECT_BUILTIN_DESTINATION_IDS = RIGHT_SIDEBAR_BUILTIN_TABS
     .filter((tab) => tab.scopes.includes('project'))
@@ -79,6 +81,13 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const destinationScopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId, workspaceRef?.serverId ?? props.serverId));
     const scopeId = props.paneScopeId ?? destinationScopeId;
     const pane = useAppPaneScope(scopeId, () => null);
+    const dockLocation = resolveSessionTerminalDockLocation(deviceType);
+    const bottomTerminalActive = Boolean(pane.scopeState?.bottom?.isOpen) && pane.scopeState?.bottom?.activeTabId === 'terminal';
+    const rightTerminalActive = Boolean(pane.scopeState?.right?.isOpen) && pane.scopeState?.right?.activeTabId === 'terminal';
+    const openProjectTerminal = React.useCallback(() => {
+        toggleEmbeddedTerminalInDockLocation({ pane, dockLocation, bottomTerminalActive, rightTerminalActive,
+            rightPaneHiddenByDetails: false });
+    }, [bottomTerminalActive, dockLocation, pane, rightTerminalActive]);
     // The page's menus and Add surfaces float inside its own column (header and body), never over the sidebar.
     const pageColumnRef = React.useRef<View>(null);
     const workspaceRefs = useWorkspaceRefs();
@@ -347,8 +356,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                         onSelectPage={handleSelectPage}
                                         onSelectWorkspace={handleSelectWorkspace}
                                         pageActionsKey={projectPageActionsKey(scopeId)}
-                                        menuActions={[{ id: 'terminal', title: t('settings.terminal'),
-                                            onSelect: () => pane.openBottom({ tabId: 'terminal' }) }]}
+                                        menuActions={[{ id: 'terminal', title: t('settings.terminal'), onSelect: openProjectTerminal }]}
                                     />
                                     </PageColumnProvider>
                                 ) : props.surface === undefined || props.surface === props.page ? (

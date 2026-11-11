@@ -1,4 +1,5 @@
 import { readExternalSessionLink } from './readExternalSessionLink';
+import { readSessionWorkspaceLocationFromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 function normalizeMachineId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -14,5 +15,7 @@ function readTopLevelMachineId(metadata: unknown): string | null {
 export function resolveSessionMachineId(metadata: unknown): string | null {
   const topLevelMachineId = readTopLevelMachineId(metadata);
   if (topLevelMachineId) return topLevelMachineId;
+  const workspaceMachineId = readSessionWorkspaceLocationFromMetadata({ metadata })?.machineId;
+  if (workspaceMachineId) return normalizeMachineId(workspaceMachineId);
   return normalizeMachineId(readExternalSessionLink(metadata)?.machineId);
 }

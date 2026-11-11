@@ -532,14 +532,14 @@ export function useMachineTerminalSession(params: Readonly<{
                 setError('terminal_missing_machine_target');
                 return;
             }
-            if (attemptRpcTargetAvailable === false) {
-                setStatus('error');
-                setError('terminal_rpc_target_unavailable');
-                return;
-            }
             if (attemptMachineReachable === false) {
                 setStatus('error');
                 setError('terminal_machine_unreachable');
+                return;
+            }
+            if (attemptRpcTargetAvailable === false) {
+                setStatus('error');
+                setError('terminal_rpc_target_unavailable');
                 return;
             }
             if (attemptMachineReachable === null) {

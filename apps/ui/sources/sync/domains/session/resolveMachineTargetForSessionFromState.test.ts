@@ -7,6 +7,8 @@ import { publishMachineActivity } from '@/sync/domains/machines/machineActivity'
 import {
     resolveMachineControlTargetForSessionFromState,
     resolveMachineControlTargetStateForSessionFromState,
+    resolveDisplayMachineTargetForSessionFromState,
+    resolveMachineTerminalTargetForSessionFromState,
     resolveMachineTargetForSessionFromState,
 } from './resolveMachineTargetForSessionFromState';
 
@@ -20,6 +22,27 @@ function activeMachine(id: string, host: string) {
 }
 
 describe('resolveMachineTargetForSessionFromState', () => {
+    it('retains the canonical workspace Machine target for an offline Session', () => {
+        const session = createSessionFixture({ id: 'offline-bound-session', active: true, metadata: {
+            path: '', host: '',
+            sessionWorkspaceLocationV1: {
+                v: 1,
+                machineId: 'machine-nldw',
+                agentPath: '/agent/project',
+                machinePath: '/machine/project',
+            },
+        } as any, serverId: 'home-a' });
+        const machine = createMachineFixture({ id: 'machine-nldw', active: false });
+        const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine },
+            sessionListRowsByServerId: { 'home-a': { [session.id]: buildSessionListRenderableFromSession(session) } } };
+
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveDisplayMachineTargetForSessionFromState({ state, sessionId: session.id }))
+            .toEqual({ machineId: 'machine-nldw', basePath: '/agent/project' });
+        expect(resolveMachineTerminalTargetForSessionFromState({ state, sessionId: session.id }))
+            .toEqual({ machineId: 'machine-nldw', basePath: '/machine/project', agentBasePath: '/agent/project' });
+    });
+
     it.each(['retained', 'missing'] as const)('keeps an explicit guest identity while it boots (%s)', (origin) => {
         const metadata = { ...createMachineFixture().metadata!, host: 'lume.local', homeDir: '/Users/lume' };
         const guest = createMachineFixture({ id: 'guest', active: false, metadata });

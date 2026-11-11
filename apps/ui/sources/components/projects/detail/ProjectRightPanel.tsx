@@ -74,6 +74,8 @@ import { useRightSidebarContentFacts } from '@/components/appShell/rightSidebar/
 import { useLocalServiceInventoryHasRunningServices } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryRunningCount';
 import { useProjectContext } from '@/components/projects/useProjectContext';
 import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
+import { resolveSessionTerminalDockLocation } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { openEmbeddedToolInDockLocation, toggleEmbeddedTerminalInDockLocation } from '@/components/sessions/terminal/embeddedTerminalDocking';
 
 type ProjectRightTabId = string;
 
@@ -125,11 +127,24 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     const catalog = useOptionalProjectPageCatalog();
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId, scope => ({
-        isOpen: scope?.right.isOpen,
-        activeTabId: scope?.right.activeTabId,
-        selectedDestination: scope?.right.selectedDestination,
+        isOpen: scope?.right?.isOpen,
+        activeTabId: scope?.right?.activeTabId,
+        selectedDestination: scope?.right?.selectedDestination,
     }));
     const scopeState = pane.scopeState;
+    const dockLocation = resolveSessionTerminalDockLocation(deviceType);
+    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
+    const bottomTerminalActive = Boolean(scopeState?.bottom?.isOpen) && scopeState?.bottom?.activeTabId === 'terminal';
+    const rightTerminalActive = Boolean(scopeState?.right?.isOpen) && scopeState?.right?.activeTabId === 'terminal';
+    const terminal = React.useMemo(() => ({
+        available: true,
+        dockLocation,
+        active: dockLocation === 'bottom' ? bottomTerminalActive : rightTerminalActive && !rightPaneHiddenByDetails,
+        onPress: () => {
+            toggleEmbeddedTerminalInDockLocation({ pane, dockLocation, bottomTerminalActive, rightTerminalActive,
+                rightPaneHiddenByDetails: rightPaneHiddenByDetails === true });
+        },
+    }), [bottomTerminalActive, dockLocation, pane, rightPaneHiddenByDetails, rightTerminalActive]);
     const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
         serverId: props.workspaceRef.serverId,
         machineId: props.workspaceRef.machineId,
@@ -145,9 +160,10 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     const projectContext = useProjectContext({ serverId: props.workspaceRef.serverId, projectRef: props.workspaceRef, activeCheckout });
     const viewerScope = useActiveServerAccountScope(props.workspaceRef.serverId);
     const projectRowsStatus = useProjectAccountRows()?.status;
-    const terminalTabAvailable = React.useMemo(() => controller.checkoutWorkspace !== null
+    const checkoutTerminalAvailable = React.useMemo(() => controller.checkoutWorkspace !== null
         && resolveProjectTerminalScope(props.scopeId, controller.checkoutWorkspace) !== null,
     [controller.checkoutWorkspace, projectRowsStatus, props.scopeId, viewerScope]);
+    const terminalTabAvailable = terminal.available && checkoutTerminalAvailable;
 
     const pluginProjection = useScopedPluginUiProjection({
         machineId: props.workspaceRef.machineId,
@@ -243,6 +259,10 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         if (!tab || tab.disabledReason) {
             return;
         }
+        if (tab.id === 'terminal') {
+            terminal.onPress();
+            return;
+        }
         if (tab.owner === 'plugin') {
             pane.selectRightDestination({
                 kind: 'plugin',
@@ -253,7 +273,7 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         }
         setActiveTab(tabId);
         paneLaunchStore.retire();
-    }, [pane, paneLaunchStore, rightPanelTabs, setActiveTab]);
+    }, [pane, paneLaunchStore, rightPanelTabs, setActiveTab, terminal]);
     React.useEffect(() => {
         const retirement = accountLifetime?.onRetire(() => {
             paneLaunchStore.retire();
@@ -296,7 +316,7 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     return {
         pane, catalog, scopeId: props.scopeId, projectId: projectContext.target?.checkout?.id, projectContext, workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs, launcherTabs,
         availableTabIds, rightTabSelection, activeTab, activeInstanceKey,
-        activePaneLaunch, pluginBinding, selectTab, setActiveTab, checkoutWorkspace: controller.checkoutWorkspace,
+        activePaneLaunch, pluginBinding, selectTab, terminal, setActiveTab, checkoutWorkspace: controller.checkoutWorkspace,
     };
 }
 
@@ -362,9 +382,18 @@ export function ProjectRightSidebarRail(): React.ReactElement | null {
                 badge: tab.id === 'git' ? <ProjectGitActionRailBadge scope={model.workspaceScope} /> : undefined,
                 renderBadgeSignal: tab.id === 'git' ? (renderSignal: RailBadgeSignalRenderer) => <ProjectGitActionRailBadge scope={model.workspaceScope} renderSignal={renderSignal} /> : undefined,
                 tooltipContent: tab.id === 'git' ? <ProjectGitActionRailTooltip scope={model.workspaceScope} /> : undefined,
-                active: !hiddenByDetails && model.pane.scopeState.isOpen === true && model.activeTab === tab.id,
+                active: tab.id === 'terminal' ? model.terminal.active
+                    : !hiddenByDetails && model.pane.scopeState.isOpen === true && model.activeTab === tab.id,
                 disabled: Boolean(tab.disabledReason),
                 onPress: () => {
+                    if (tab.id === 'terminal') {
+                        model.terminal.onPress();
+                        return;
+                    }
+                    if (tab.id === 'browser') {
+                        openEmbeddedToolInDockLocation({ pane: model.pane, tool: 'browser' });
+                        return;
+                    }
                     const visible = Boolean(hiddenByDetails) || model.pane.scopeState.isOpen !== true || model.activeTab !== tab.id;
                     void executeNavigation('shell.column.set', { column: 'side', visible, ...(visible ? { tab: tab.id } : {}) },
                         { kind: 'shell.column', column: 'side', read: readSide });
@@ -536,7 +565,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                             </React.Suspense>
                         </RetainedPanelSurface>
                     ) : null}
-                    {availableTabIds.has('terminal') ? (
+                    {availableTabIds.has('terminal') && props.model.terminal.dockLocation === 'sidebar' ? (
                         <RetainedPanelSurface isActive={activeTab === 'terminal'} testID="project-rightpanel-surface-terminal">
                             <React.Suspense fallback={<PaneLoadingFallback />}>
                                 <ProjectTerminalSurface scopeId={props.scopeId} workspaceRefId={props.workspaceRef.id}
