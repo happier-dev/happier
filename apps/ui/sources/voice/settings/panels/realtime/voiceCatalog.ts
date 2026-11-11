@@ -13,10 +13,13 @@ export const VoiceCatalogRowsSchema = z.array(z.strictObject({
 export type VoiceCatalogRow = Readonly<z.infer<typeof VoiceCatalogRowsSchema>[number]>;
 export type VoiceCatalogClient = Pick<BundledConversationProviderClient, 'fetchVoiceCatalog'>;
 export function readVoiceCatalogSettingsActionResult(result: ActionExecuteResult): readonly VoiceCatalogRow[] {
-    if (!result.ok) throw new Error('voice_catalog_unavailable');
+    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
     const receipt = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(result.result);
     const value = record(receipt.value);
-    if (receipt.status !== 'completed' || !value) throw new Error('voice_catalog_unavailable');
+    if (receipt.status !== 'completed' || !value) {
+        const code = receipt.reason ?? 'voice_catalog_unavailable';
+        throw Object.assign(new Error(code), { code });
+    }
     return VoiceCatalogRowsSchema.parse(value.rows);
 }
 /** Catalog inspection exposes preview capability, while playback keeps provider URLs private. */

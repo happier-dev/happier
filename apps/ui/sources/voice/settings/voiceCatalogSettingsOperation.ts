@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
 import { storage } from '@/sync/domains/state/storage';
 import { readLocalConversationVoiceSettings, readLocalDirectVoiceSettings, readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
@@ -62,7 +63,9 @@ export async function invokeVoiceCatalogSettingsOperation(entry: VoiceProviderRe
                 return () => { unsubscribeSettings(); unsubscribeRegistration(); };
             },
         });
-    } catch {
-        return current() ? { status: 'unavailable', reason: 'voice_catalog_unavailable' } : { status: 'cancelled' };
+    } catch (error) {
+        if (!current()) return { status: 'cancelled' };
+        if (readActionErrorCodeV1(error)) throw error;
+        return { status: 'unavailable', reason: 'voice_catalog_unavailable' };
     }
 }
