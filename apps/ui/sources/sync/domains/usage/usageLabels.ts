@@ -100,6 +100,7 @@ export function usageDimensionLabel(dimension: UsageAnalyticsBreakdownDimension,
     if (dimension === 'backendMode' && (AGENT_IDS as readonly string[]).includes(key)) return usageAgentTitle(key, label);
     if (dimension === 'model') {
         const modelId = canonicalUsageModelPriceId(key);
+        if (modelId === null) return t('usage.board.page.unattributed');
         for (const agentId of AGENT_IDS) {
             const model = getAgentStaticModels(agentId, { catalogOnly: true }).find(model => model.id === modelId || model.extendedContextModelId === modelId);
             if (model) return model.name;

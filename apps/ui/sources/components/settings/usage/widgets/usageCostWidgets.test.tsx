@@ -92,6 +92,14 @@ describe('one selected money basis across Usage bodies', () => {
     expect(rows.map((row: { id: string; value: number | null }) => ({ id: row.id, value: row.value }))).toEqual([
       { id: 'measured-model', value: 10 }, { id: 'measured-zero', value: 0 },
     ]);
+    const measuredUnknown = { ...slice, accounting: { ...slice.accounting, breakdowns: { model: [
+      { ...entries[0]!, tokens: { ...tokens, input: 0, total: 0 } }, entries[2]!,
+    ] } } };
+    await screen.update(<UsageBreakdownsWidget {...base} query={query} slice={measuredUnknown}
+      model={{ ...base.model, slice: measuredUnknown }} id="usage_breakdowns" testID="model-measurements" />);
+    expect(screen.findByType(RankedRows).props.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'unknown', value: 0 }), expect.objectContaining({ id: 'measured-model', value: 10 }),
+    ]));
   });
 
   it('keeps unknown token figures as dashes in the period summary and unpriced fact widgets', async () => {

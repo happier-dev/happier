@@ -8,6 +8,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 export function canonicalUsageModelPriceId(modelId: string | null | undefined): string | null {
   if (!modelId?.trim()) return null;
   const current = modelId.trim();
+  // Claude emits transcript bookkeeping under this sentinel, never a priced model.
+  if (current === '<synthetic>') return null;
   return current === 'claude-haiku-4-5-20251001' ? 'claude-haiku-4-5' : current;
 }
 

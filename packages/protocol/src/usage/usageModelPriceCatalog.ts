@@ -69,9 +69,9 @@ export function readUsageModelPriceOverride(modelId: string | null | undefined, 
 /** Explicit user mappings win; all readers consume the same exact model identity. */
 export function resolveUsageModelPrice(modelId: string | null | undefined, catalog: UsageModelPriceCatalog = bundledUsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}): ResolvedUsageModelPrice | null {
-  if (!modelId?.trim()) return null;
-  const original = modelId.trim();
-  let current = canonicalUsageModelPriceId(original)!;
+  let current = canonicalUsageModelPriceId(modelId);
+  if (current === null) return null;
+  const original = modelId!.trim();
   const seen = new Set<string>();
   let mapped = false;
   while (true) {
@@ -80,7 +80,11 @@ export function resolveUsageModelPrice(modelId: string | null | undefined, catal
     const override = readUsageModelPriceOverride(current, overrides);
     if (override?.kind === 'rates') return { modelId: current, rates: override, source: mapped ? 'mapping' : 'override',
       ...(mapped ? { mappedFrom: original } : {}) };
-    if (override?.kind === 'map') { current = canonicalUsageModelPriceId(override.modelId)!; mapped = true; continue; }
+    if (override?.kind === 'map') {
+      const target = canonicalUsageModelPriceId(override.modelId);
+      if (target === null) return null;
+      current = target; mapped = true; continue;
+    }
     // A fetched catalog can retain only the vendor snapshot spelling.
     const catalogId = !Object.hasOwn(catalog.models, current) && current === 'claude-haiku-4-5'
       ? 'claude-haiku-4-5-20251001' : current;

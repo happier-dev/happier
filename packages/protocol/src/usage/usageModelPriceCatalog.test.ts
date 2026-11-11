@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { bundledUsageModelPriceCatalog, parseLiteLlmModelPriceCatalog, resolveUsageModelPrice, UsageModelPriceOverridesV1Schema } from './usageModelPriceCatalog.js';
+import { bundledUsageModelPriceCatalog, canonicalUsageModelPriceId, parseLiteLlmModelPriceCatalog, resolveUsageModelPrice, UsageModelPriceOverridesV1Schema } from './usageModelPriceCatalog.js';
 import { estimateUsageModelCost, repriceUsageAnalyticsResponse } from './usageCost.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 
 describe('canonical model price catalog', () => {
+  it('treats synthetic transcript sentinels as no model while preserving exact real model ids', () => {
+    expect(canonicalUsageModelPriceId(' <synthetic> ')).toBeNull();
+    expect(canonicalUsageModelPriceId('third-party/MODEL-snapshot')).toBe('third-party/MODEL-snapshot');
+    const rates = { kind: 'rates' as const, inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+    expect(resolveUsageModelPrice('<synthetic>', bundledUsageModelPriceCatalog, { '<synthetic>': rates })).toBeNull();
+    expect(resolveUsageModelPrice('custom', bundledUsageModelPriceCatalog,
+      { custom: { kind: 'map', modelId: '<synthetic>' } })).toBeNull();
+    expect(resolveUsageModelPrice('custom', bundledUsageModelPriceCatalog, { custom: rates })?.rates).toEqual(rates);
+  });
+
   it('retains exact vendor and extended-context tariffs before legacy fallback aliases', () => {
     const base = { inputUsdPerMillion: 3, outputUsdPerMillion: 15, provider: 'anthropic' };
     const extended = { ...base, inputUsdPerMillion: 6 };

@@ -105,6 +105,7 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(isUsageReadOutstanding(unbounded, ['comparison'])).toBe(false);
     });
     it('preserves unknown model ids exactly instead of inventing names or casing', () => {
+        expect(usageDimensionLabel('model', '<synthetic>')).toBe(t('usage.board.page.unattributed'));
         for (const id of ['claude-haiku-6-1', 'gpt-6.1-sol', 'third-party/MODEL-snapshot']) {
             expect(usageDimensionLabel('model', id)).toBe(id);
             expect(usageDimensionLabel('model', id, id)).toBe(id);

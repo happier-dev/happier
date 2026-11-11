@@ -102,6 +102,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
     const rows = [...entries]
+      .filter((entry) => dimension !== 'model' || valueOf(entry) !== null)
       .sort((left, right) => (valueOf(right) ?? -1) - (valueOf(left) ?? -1))
       .map((entry) => ({
         id: entry.key,
@@ -111,6 +112,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
           // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
           metric === 'cost' ? [entry.tokens.total === null ? null : formatTokenCount(entry.tokens.total), usagePageCostRow(entry.cost, selection)?.label].filter(Boolean).join(' · ') : undefined,
       }));
+    if (rows.length === 0) return [];
     const ranked = accounting?.coverage?.ranked.find(
       (row) => row.dimension === dimension,
     );
@@ -120,7 +122,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
         rows,
         truncated:
           ranked && !ranked.complete
-            ? Math.max(0, ranked.totalEntries - rows.length)
+            ? Math.max(0, ranked.totalEntries - entries.length)
             : 0,
       },
     ];

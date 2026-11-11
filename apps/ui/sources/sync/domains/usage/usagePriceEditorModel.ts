@@ -43,7 +43,7 @@ export function buildUsagePriceEditorModel(slice: UsageQueryResultSlice, overrid
     });
     return { provenance: catalog.provenance, rows,
         mappingTargets: [...new Set([...Object.keys(catalog.models), ...Object.keys(overrides)]
-            .map(id => canonicalUsageModelPriceId(id)!))].sort() };
+            .map(id => canonicalUsageModelPriceId(id)).filter(id => id !== null))].sort() };
 }
 
 export interface UsageModelPriceSettingsIntent {
