@@ -1276,7 +1276,7 @@ export async function bootstrapMachineSyncRuntime(
       featureGate: providerFeatureGate,
       readForAccount: async (request, context) => {
         if (request.actionId === 'providers.models.list' || request.actionId === 'providers.models.refresh') {
-          return await providerRuntimeServices.models({ connectionId: request.input.connectionId, machineId: params.machineId }, context.signal,
+          return await providerRuntimeServices.models({ ...request.input, machineId: params.machineId }, context.signal,
             { ...createProviderAccountOperationScope(context), ...(request.actionId === 'providers.models.refresh' ? { forceRefresh: true } : {}) });
         }
         const services = createConnectionRuntimeServices(context);

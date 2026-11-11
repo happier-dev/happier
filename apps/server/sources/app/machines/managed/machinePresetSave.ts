@@ -1,4 +1,4 @@
-import { createManagedMachinePresetV1Schema, type ManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { createManagedMachinePresetV1Schema, ManagedMachinePresetV1Schema, type ManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
@@ -25,7 +25,9 @@ export function validateManagedPresetLaunchChoices(preset: PresetCreation, decla
     const validated = schema.safeParse({ ...preset, id: 'validation', name: 'validation', revision: 0,
         owner: { kind: 'account', accountId: 'validation' } });
     if (!validated.success || !validated.data.launch) throw new ManagedMachineError('invalid_request');
-    return validated.data.launch;
+    const typed = ManagedMachinePresetV1Schema.parse(validated.data);
+    if (!typed.launch) throw new ManagedMachineError('invalid_request');
+    return typed.launch;
 }
 
 /** Saving configuration needs its owner's authority; availability is decided by acquisition. */

@@ -206,7 +206,8 @@ export async function admitManagedControl(params: Readonly<{
         // during review. This revision is only the atomic row-write operand.
         const expected = request.action === MANAGED_RESIZE_ACTION_ID_V1 ? row.intentRevision
             : 'when' in input ? input.when === 'now' ? input.expectedRevision : row.intentRevision
-            : 'expectedRevision' in input ? input.expectedRevision : input.expectedIntentRevision;
+            : 'expectedRevision' in input ? input.expectedRevision
+            : 'expectedIntentRevision' in input ? input.expectedIntentRevision : row.intentRevision;
         if (row.intentRevision !== expected) throw new ManagedMachineError("intent_changed");
         const data: Prisma.ManagedMachineUpdateManyMutationInput = {
             intentRevision: { increment: 1 }, admittedInput: { ...admitted, currentAdmission },

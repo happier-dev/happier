@@ -1,5 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineSetupAppChildV1, MachineSetupAppReviewV1, MachineSetupPlanInputV1,
   MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentTemplateInstantiationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -104,7 +104,8 @@ async function prepareApp(input: MachineSetupPlanInputV1, plan: MachineSetupPlan
   const loaded = await host.deploymentAction('deployments.environments.get', {
     serverId: selected.serverId, environmentId: selected.environmentId,
   }, context);
-  if ('errorCode' in loaded) return loaded;
+  const loadedFailure = ActionExecuteFailureSchema.safeParse(loaded);
+  if (loadedFailure.success) return loadedFailure.data;
   const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
   if (!parsed.success || !parsed.data.ok) return failure('deployment_content_unavailable');
   const { environment, targetLinks } = parsed.data;

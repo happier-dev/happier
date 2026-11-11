@@ -674,7 +674,7 @@ export function createStorageScanIndex(deps: Readonly<{ activeServerDir: string;
             logger.infoFile('[storage-scan] index-finish-end', { scanId: state.scanId, atMs: Date.now(), elapsedMs: performance.now() - finishStarted });
         },
         state(scanId?: string) { return selected(scanId)?.state ?? null; },
-        states(): readonly DiskScanStateV1[] { return [...databases.values()].map(readState).filter((state): state is DiskScanStateV1 => state !== null); },
+        states(): DiskScanStateV1[] { return [...databases.values()].map(readState).filter((state): state is DiskScanStateV1 => state !== null); },
         volumeId(scanId: string): string | undefined { return selected(scanId)?.volumeId; },
         readView(input: Readonly<{ scanId?: string; view?: DiskScanViewV1 }> = {}): MachineStorageScanGetResultV1 {
             const selection = selected(input.scanId); if (!selection) return { state: null, nodes: [], coverage: [] };

@@ -1,5 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService, PluginExecSpawnRequest, PluginProcessHandle } from '@happier-dev/plugin-sdk/exec';
+import type { Disposable } from '@happier-dev/plugin-sdk';
 import { LUME_DEFAULT_LOGIN } from './schemas.js';
 
 function quote(value: string) { return `'${value.replace(/'/gu, "'\\''")}'`; }

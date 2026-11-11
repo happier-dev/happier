@@ -26,6 +26,7 @@ import { retryHomeOperation, isRetryableHomeOperationError, type HomeOperationRe
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdentity, readManagedIssuedNativeFact,
     type CapturedManagedNativeIdentity } from '@happier-dev/cli-common/machines/managed/reconcile';
@@ -696,7 +697,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         if (!list) throw new ManagedMachineControllerError('credential_unavailable');
                         const choices = await list({ purpose: authorization.purpose, serviceRefs: authorization.serviceRefs, signal });
                         signal.throwIfAborted();
-                        return { purpose: { consumer: provider.contribution, purpose: authorization.purpose.purpose }, options: [...choices] };
+                        const options = choices.flatMap(choice => 'accountId' in choice.value
+                            ? [{ value: choice.value, label: choice.label }] : []);
+                        return { purpose: { consumer: provider.contribution, purpose: authorization.purpose.purpose }, options };
                     }));
                 } });
             }
@@ -905,9 +908,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             if (action in ManagedMachineActionOutputSchemasV1) {
                 const output = ManagedMachineActionOutputSchemasV1[action as keyof typeof ManagedMachineActionOutputSchemasV1];
-                return await client.post<ManagedMachineActionOutputV1<keyof typeof ManagedMachineActionOutputSchemasV1>>(
+                return projectNativeJsonValueForTransport(await client.post<ManagedMachineActionOutputV1<keyof typeof ManagedMachineActionOutputSchemasV1>>(
                     managedMachineActionEndpointPathV1(action), parsed, output,
-                );
+                ));
             }
             throw new ManagedMachineControllerError('invalid_request');
         },

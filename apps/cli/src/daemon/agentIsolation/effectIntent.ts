@@ -9,7 +9,7 @@ import { buildAgentIsolationBootstrapRetirementObservations, buildUnobservedAgen
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
 
 type UnavailableStatus = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
-function unavailable(requiredFact: NonNullable<UnavailableStatus['prerequisite']>['requiredFact'], remedy: string) {
+function unavailable(requiredFact: NonNullable<UnavailableStatus['prerequisite']>['requiredFact'], remedy: string): Extract<import('@happier-dev/protocol').MachineAgentIsolationPreviewResultV1, { kind: 'unavailable' }> {
   return { kind: 'unavailable' as const, status: { kind: 'unavailable', code: 'provisioning_unavailable',
     prerequisite: { reason: 'required_fact_unavailable', requiredFact, remedy } } satisfies UnavailableStatus };
 }

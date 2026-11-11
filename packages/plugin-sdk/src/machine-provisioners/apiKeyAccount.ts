@@ -11,6 +11,7 @@ import { createMachineProvisionerFetch } from './http.js';
 type ProbeResult = Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' | 'rejected' | 'unavailable' }>;
 type ProbeContext = Pick<ConnectedAccountAuthenticationContext, 'configuration'>;
 type HeaderBinding = Readonly<{ origin: string; headerName: string; scheme: 'raw' | 'bearer' | ((token: string) => string) }>;
+type ProbeRequest = Omit<HttpRequest, 'redirect'> & Partial<Pick<HttpRequest, 'redirect'>>;
 
 /** Vendor facts only; the SDK owns verification, staging, health and materialization. */
 export type MachineProvisionerApiKeyAccountDefinition = Readonly<{
@@ -21,7 +22,7 @@ export type MachineProvisionerApiKeyAccountDefinition = Readonly<{
   methods?: readonly HttpMethod[];
   headers: readonly HeaderBinding[];
   probe: Readonly<{
-    request: HttpRequest | ((context: ProbeContext) => HttpRequest | Extract<ProbeResult, { status: 'rejected' }>);
+    request: ProbeRequest | ((context: ProbeContext) => ProbeRequest | Extract<ProbeResult, { status: 'rejected' }>);
     read: (value: unknown, context: ProbeContext) => ProbeResult | undefined;
     /** For documented vendor refusals such as Boat key permissions. Never echo response text. */
     rejection?: (status: number, value: unknown) => Extract<ProbeResult, { status: 'rejected' }> | undefined;

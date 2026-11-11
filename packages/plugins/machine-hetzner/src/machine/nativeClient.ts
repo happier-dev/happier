@@ -221,7 +221,7 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
           consistency: observed.power === 'running' || observed.power === 'stopped' ? observed.power : 'unknown' };
       } catch (error) {
         const cause = error instanceof HetznerNativeError ? error.nativeCause : undefined;
-        return { kind: !submitted || !acknowledged && cause?.httpStatusClass === '4xx' ? 'refused' : 'unknown', code: codeOf(error),
+        return { kind: !submitted || !acknowledged && cause !== undefined && 'httpStatusClass' in cause && cause.httpStatusClass === '4xx' ? 'refused' : 'unknown', code: codeOf(error),
           ...(cause ? { nativeCause: cause } : {}) };
       }
     },

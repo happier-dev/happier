@@ -155,6 +155,10 @@ function settledOutcome(row: WorkflowInvocationDetailV1, reference: MachineSetup
     const template = DeploymentTemplateInstantiateResultV1Schema.safeParse(result);
     if (!template.success || template.data.kind === 'preview') return observation(lifecycleOutcome);
     const applied = template.data;
+    if (applied.kind === 'pullRequest') {
+      environmentId = applied.environmentId;
+      return observation(lifecycleOutcome);
+    }
     if (applied.kind === 'partial' && applied.phase !== 'deploy') return observation(lifecycleOutcome);
     if (applied.environmentId === undefined || boundEnvironmentId !== undefined && applied.environmentId !== boundEnvironmentId
       || applied.deployment !== undefined && applied.deployment.environmentId !== applied.environmentId) return observation('unknown');
