@@ -124,7 +124,9 @@ export function createMuseInteractions(options: Readonly<{
         map.set(id, occurrence);
         const signal = AbortSignal.any([options.context.signal, occurrence.controller.signal]);
         let catalogGrant: { choiceId: string; nativeChoiceId: string } | undefined;
-        void permissions!.requestDecision({ requestId: id,
+        // The host occurrence shares the transcript call identity; MSP commands
+        // still route by the distinct native approval/user-input identity.
+        void permissions!.requestDecision({ requestId: requiredString(merged, 'toolCallId'),
             toolName: kind === 'approval' && typeof merged.toolName === 'string' ? merged.toolName : kind === 'question' ? 'AskUserQuestion' : 'native_tool',
             source: kind === 'approval' ? NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE : QUESTION_SOURCE,
             input: kind === 'approval' ? toolInput(merged) : questionInput(merged),
@@ -183,7 +185,7 @@ export function createMuseInteractions(options: Readonly<{
                     ...(typeof answer.note === 'string' ? { note: answer.note } : {}) };
             }
         }
-        void permissions!.settleObservedDecision!({ requestId: id,
+        void permissions!.settleObservedDecision!({ requestId: requiredString(occurrence.params, 'toolCallId'),
             source: kind === 'approval' ? NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE : QUESTION_SOURCE,
             decision: decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment' ? 'approved' : decision,
             ...(kind === 'question' ? { answers, answerDetails } : {}),

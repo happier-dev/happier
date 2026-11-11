@@ -48,7 +48,7 @@ it('receipts a native approval without applying it, then applies the exact offer
         const before = await fixture.waitForAudit(audit => audit.nativeResponseCount > 0);
         expect(before).toMatchObject({ receiptCount: 1, decisionCount: 0, released: false });
         expect(events.canonicalEvents().filter(event => event.kind === 'tool-result' || event.kind === 'turn-complete')).toEqual([]);
-        const requestId = '01a1bf8b-74ca-78e3-94e2-94aec04f85de';
+        const requestId = 'call_01a1bf8b6e2c72b8bdfdca70e4c64263';
         await vi.waitFor(() => {
             expect(events.canonicalEvents().filter(event => event.kind === 'tool-progress'
                 && JSON.stringify(event.progress).includes('"nativeInteraction"'))).toEqual([]);
@@ -148,7 +148,7 @@ it('uses the canonical user-action answer for a native question and keeps the la
             delivery: { kind: 'newTurn', turnId: 'question-turn' } });
         const before = await fixture.waitForAudit(audit => audit.nativeResponseCount > 0);
         expect(before).toMatchObject({ receiptCount: 1, decisionCount: 0, released: false });
-        const requestId = '01a1bf8b-bc54-7a10-a15f-b5d8c6dec069';
+        const requestId = 'call_01a1bf8bb96d71deb3bfccc8c3c8e273';
         await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId])
             .toMatchObject({ kind: 'user_action', tool: 'AskUserQuestion', arguments: { questions: [
                 { id: 'color', question: 'Which color do you prefer?', selection: 'single',
@@ -191,7 +191,7 @@ it.each([
     const nativeNotificationPath = join(scratch, 'native-notification.json');
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'question-single-choice', nativeNotificationPath } });
     const events = createAgentSessionRuntimeHarness();
-    const requestId = '01a1bf8b-bc54-7a10-a15f-b5d8c6dec069';
+    const requestId = 'call_01a1bf8bb96d71deb3bfccc8c3c8e273';
     const toolCallId = 'call_01a1bf8bb96d71deb3bfccc8c3c8e273';
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
@@ -242,7 +242,7 @@ it('applies an updated native requirement through the same pending owner and rej
     const nativeNotificationPath = join(scratch, 'native-notification.json');
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-abort', nativeNotificationPath } });
     const events = createAgentSessionRuntimeHarness();
-    const requestId = '01a1bf8b-74ca-78e3-94e2-94aec04f85de';
+    const requestId = 'call_01a1bf8b6e2c72b8bdfdca70e4c64263';
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
         session.watch(events.recordRuntimeEvent);
@@ -310,7 +310,7 @@ it('leaves a localPersistent rule in the synthetic native policy file across pro
                     delivery: { kind: 'newTurn', turnId: sessionId + '-turn' } });
                 if (!restarted) {
                     await fixture.waitForAudit(audit => audit.receiptCount === 1);
-                    const requestId = lifecycle.rows[22].message.params.approvalId;
+                    const requestId = lifecycle.rows[22].message.params.toolCallId;
                     await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]?.nativeChoices)
                         .toMatchObject({ choices: expect.arrayContaining([{
                             id: 'allow_local_prefix', label: 'Always allow in this workspace: printf NORMAL ...',
@@ -320,7 +320,8 @@ it('leaves a localPersistent rule in the synthetic native policy file across pro
                         }]) }));
                     const requirementId = fixture.host.getAgentStateSnapshot()!.requests![requestId]!.nativeChoices!.requirementId;
                     expect(await invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, {
-                        id: requestId, approved: true, decision: 'approved_execpolicy_amendment',
+                        id: requestId, turnId: fixture.host.getAgentStateSnapshot()!.requests![requestId]!.turnId,
+                        approved: true, decision: 'approved_execpolicy_amendment',
                         nativeChoice: { requirementId, choiceId: 'allow_local_prefix' },
                     })).toBeUndefined();
                     await fixture.waitForAudit(audit => audit.decisionCount === 1);
@@ -370,7 +371,7 @@ it.each([
     await writeFile(recordingPath, JSON.stringify(recording));
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'question-single-choice', recordingPath } });
     const events = createAgentSessionRuntimeHarness();
-    const requestId = '01a1bf8b-bc54-7a10-a15f-b5d8c6dec069';
+    const requestId = 'call_01a1bf8bb96d71deb3bfccc8c3c8e273';
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
         session.watch(events.recordRuntimeEvent);
@@ -404,7 +405,7 @@ it('keeps a captured child approval actionable after its parent turn completes a
     const fixture = await createAdmittedMuseSessionFixture({ systemRecords: true,
         sessionId: 'host-muse-late-child-approval', native: { scenario: 'approval-late-child' } });
     const events = createAgentSessionRuntimeHarness();
-    const requestId = '01a1bf90-618d-7ca0-94b7-523128d553c2';
+    const requestId = 'call_01a1bf90601e7207b75b60382afaabc2';
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-muse-late-child-approval', cwd: process.cwd() });
         session.watch(events.recordRuntimeEvent);
@@ -445,12 +446,12 @@ it('preserves opaque native approval arguments on the canonical generic card', a
     const scratch = await mkdtemp(join(tmpdir(), 'muse-opaque-approval-'));
     const recordingPath = join(scratch, 'opaque-approval.json');
     const recording = JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8'));
-    const requestId = '01a1bf8b-74ca-78e3-94e2-94aec04f85de';
+    const requestId = 'call_01a1bf8b6e2c72b8bdfdca70e4c64263';
     const rawArgs = '["opaque",null,17]';
     const subject = { kind: 'futureApprovalSubject', toolName: 'future_native_tool' };
     for (const row of recording.rows) {
         const params = row.message?.params;
-        if (params?.approvalId === requestId && ['approval/request', 'approval/requested', 'approval/updated'].includes(row.message.method)) {
+        if (params?.toolCallId === requestId && ['approval/request', 'approval/requested', 'approval/updated'].includes(row.message.method)) {
             params.rawArgs = rawArgs;
             params.subject = subject;
             params.toolName = 'future_native_tool';
