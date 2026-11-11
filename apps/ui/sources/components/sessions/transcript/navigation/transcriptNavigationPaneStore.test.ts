@@ -4,10 +4,22 @@ import {
     awaitTranscriptNavigationJumpHandler,
     createEmptyTranscriptNavigationPaneSnapshot,
     createTranscriptNavigationPaneStore,
+    MAX_EMPTY_TRANSCRIPT_NAVIGATION_PANE_SNAPSHOTS,
     transcriptNavigationPaneStore,
 } from './transcriptNavigationPaneStore';
 
 describe('transcript navigation pane store', () => {
+    it('bounds the empty-snapshot identity cache instead of retaining every session ever opened', () => {
+        const first = createEmptyTranscriptNavigationPaneSnapshot('empty-cache-s0');
+        for (let index = 1; index <= MAX_EMPTY_TRANSCRIPT_NAVIGATION_PANE_SNAPSHOTS; index += 1) {
+            createEmptyTranscriptNavigationPaneSnapshot(`empty-cache-s${index}`);
+        }
+
+        const recent = createEmptyTranscriptNavigationPaneSnapshot(`empty-cache-s${MAX_EMPTY_TRANSCRIPT_NAVIGATION_PANE_SNAPSHOTS}`);
+        expect(recent).toBe(createEmptyTranscriptNavigationPaneSnapshot(`empty-cache-s${MAX_EMPTY_TRANSCRIPT_NAVIGATION_PANE_SNAPSHOTS}`));
+        // The earliest snapshot was evicted; re-requesting it mints a fresh identity.
+        expect(createEmptyTranscriptNavigationPaneSnapshot('empty-cache-s0')).not.toBe(first);
+    });
     it('starts with an empty per-session snapshot', () => {
         const store = createTranscriptNavigationPaneStore();
 
