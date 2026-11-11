@@ -46,6 +46,8 @@ import type { ManagedServiceSpec } from "@happier-dev/plugin-sdk/managed-service
 import type { TrackedSession } from "@/daemon/types";
 import { ConnectedServiceRuntimeRegistry } from "@/daemon/connectedServices/runtimeRegistry/registry";
 
+import { readRunnerConnectedAccountBinding } from './runnerConnectedAccountBinding';
+
 export function createDaemonRunnerInvocationServices({
   params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry,
 }: Readonly<{
@@ -1216,23 +1218,16 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               message: 'Retained Runner Agent PluginServices are unavailable',
             });
           }
-          // Run materialization owns the admitted profile. SDK services must
-          // read that exact subject from its Account owner, not the parent Session.
-          const runTarget = runSnapshot
-            ? connectedServiceRuntimeRegistry.getRunTargetByRunKey(invocationId)
-            : null;
           const invocationProjection = await createRetained({
             binding: retainedAgent,
             runnerSnapshotIdentity: runner.snapshotIdentity,
             sessionId,
-            ...(runTarget?.exactPurposeBindingSubjectId
-              ? {
-                  exactPurposeBindingSubjectId: runTarget.exactPurposeBindingSubjectId,
-                  ...(tracked.requesterSessionRuntimeContext
-                    ? { connectedAccountsOwner: tracked.requesterSessionRuntimeContext.connectedAccountsOwner }
-                    : {}),
-                }
-              : {}),
+            ...readRunnerConnectedAccountBinding({
+              sessionId,
+              ...(runSnapshot ? { runKey: invocationId } : {}),
+              connectedServiceRuntimeRegistry,
+              requester: tracked.requesterSessionRuntimeContext,
+            }),
             managedDependencyRetention:
               tracked.runnerManagedDependencyRetentionV1 ?? {
                 v: 1 as const,

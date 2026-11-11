@@ -518,6 +518,10 @@ export interface ConnectedAccountRuntime {
 
 /** The host-owned selection and materialization service exposed to a plugin. */
 export interface ConnectedAccountsService {
+    /**
+     * Session and Run services read the request's admitted selection for this
+     * purpose. Plugins consume this binding rather than copying request selections.
+     */
     getBinding(
         purpose: string,
         options?: Readonly<{ signal?: AbortSignal; observation?: true }>,
