@@ -89,6 +89,64 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
     failRules: (value: boolean, error?: Error) => { failRules = value; rulesError = error; }, failSession: (value: boolean) => { failSession = value; } };
 }
 describe('skill library Actions', () => {
+  it.each([false, true])('offers each source folder once across marketplace plugins (different repositories: %s)', async differentRepositories => {
+    const url = 'https://github.com/anthropics/skills';
+    const commit = '4'.repeat(40);
+    const path = 'skills/academy-guide';
+    const bytes = new TextEncoder().encode('---\nname: academy-guide\n---\nInstructions' + (differentRepositories ? '\nSee [sibling](../sibling/SKILL.md)' : ''));
+    const siblingBytes = new TextEncoder().encode('---\nname: sibling\n---\nInstructions');
+    const bundle = [{ path: 'SKILL.md', bytes, unixMode: 0o644 as const }];
+    const siblingBundle = [{ path: 'SKILL.md', bytes: siblingBytes, unixMode: 0o644 as const }];
+    const treeFiles = [...bundle.map(file => ({ ...file, path: `${path}/${file.path}` })),
+      ...(differentRepositories ? siblingBundle.map(file => ({ ...file, path: `skills/sibling/${file.path}` })) : [])];
+    const http: RegistryHttpV1 = {
+      getJson: async target => {
+        if (target.endsWith('/marketplace.json')) return { ok: true, fetchedAt: 1,
+          value: { plugins: [{ name: 'examples', source: './' }, { name: 'documents',
+            source: differentRepositories ? { source: 'github', repo: 'anthropics/other-skills' } : './' }] } };
+        if (target.includes('/commits/')) return { ok: true, fetchedAt: 1, value: { sha: commit } };
+        if (target.includes('/git/trees/')) return { ok: true, fetchedAt: 1, value: {
+          sha: computeGitTreeShaV1(treeFiles), tree: [
+            { path, mode: '040000', type: 'tree', sha: computeGitTreeShaV1(bundle) },
+            { path: `${path}/SKILL.md`, mode: '100644', type: 'blob', sha: computeGitBlobShaV1(bytes), size: bytes.length },
+            ...(differentRepositories ? [
+              { path: 'skills/sibling', mode: '040000', type: 'tree', sha: computeGitTreeShaV1(siblingBundle) },
+              { path: 'skills/sibling/SKILL.md', mode: '100644', type: 'blob', sha: computeGitBlobShaV1(siblingBytes), size: siblingBytes.length },
+            ] : []),
+          ],
+        } };
+        return { ok: false, status: { state: 'invalid_source' } };
+      },
+      getText: async target => ({ ok: true, fetchedAt: 1, value: new TextDecoder().decode(target.includes('/sibling/') ? siblingBytes : bytes) }),
+      getBytes: async target => ({ ok: true, fetchedAt: 1, value: target.includes('/sibling/') ? siblingBytes : bytes }),
+    };
+    // Only HTTP and the existing Artifact/row stores are boundaries; discovery, preview and installation stay real.
+    const registry = createRegistryHostV1({ host: 'node', http, readSources: async () => [] });
+    const h = harness(registry);
+    const source = { kind: 'link' as const, url };
+    const preview = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.install'].parse(
+      await h.execute('skills.install', { source, dryRun: true }, { surface: 'ui' }));
+    if (!('items' in preview)) throw new Error('Expected skill preview');
+    expect(preview.items.map(item => item.path)).toEqual(differentRepositories ? [path, 'skills/sibling', path, 'skills/sibling'] : [path]);
+    // Choosing A's primary and B's sibling must not silently admit A's unticked sibling at the same path.
+    const chosen = differentRepositories ? [preview.items[0]!, preview.items[3]!] : [];
+    const refs = chosen.map(item => {
+      if (item.provenance.kind !== 'link') throw new Error('Expected link provenance');
+      return item.provenance.ref;
+    });
+    if (differentRepositories) {
+      const selectedPreview = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.install'].parse(await h.execute('skills.install', {
+        source: { ...source, refs }, selectPaths: chosen.map(item => item.path), dryRun: true,
+      }, { surface: 'ui' }));
+      if (!('items' in selectedPreview)) throw new Error('Expected selected preview');
+      expect(selectedPreview.items).toHaveLength(2);
+      expect(selectedPreview.items[0]!.siblingSkills).toBeUndefined();
+    }
+    await h.execute('skills.install', { source: differentRepositories ? { ...source, refs } : source,
+      ...(differentRepositories ? { selectPaths: chosen.map(item => item.path) } : {}) }, { surface: 'ui' });
+    expect(h.creates()).toBe(differentRepositories ? 2 : 1);
+  });
+
   it('keeps the typed session transport failure after content was materialised', async () => {
     const h = harness();
     const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules, randomId: () => 'rule', nowMs: () => 1,

@@ -194,11 +194,16 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 return { ...checked, results: checked.results.map(item => item.kind === 'browserExtension'
                     ? { ...item, machineId: target } : item) };
             };
-            // Account-owned kinds need one carrier; browser profiles belong to each Machine.
+            // Account-owned catalog kinds use one carrier; native plugins are local to each
+            // Machine and browser profiles already follow the same per-carrier path.
             const includeExtensions = filter?.kind === undefined || filter.kind === 'browserExtension';
+            const includePlugins = filter?.kind === undefined || filter.kind === 'plugin';
             const checks = await Promise.all([
                 checkOnMachine(machineId, filter),
-                ...(includeExtensions ? [...carriers].map(target => checkOnMachine(target, { ...filter, kind: 'browserExtension' })) : []),
+                ...[...carriers].flatMap(target => [
+                    ...(includeExtensions ? [checkOnMachine(target, { ...filter, kind: 'browserExtension' })] : []),
+                    ...(includePlugins ? [checkOnMachine(target, { ...filter, kind: 'plugin' })] : []),
+                ]),
             ]);
             return { checkedAt: checks.reduce((oldest, check) => Math.min(oldest, check.checkedAt), checks[0].checkedAt),
                 results: checks.flatMap(check => check.results) };

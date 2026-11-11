@@ -42,6 +42,15 @@ export const SkillProvenanceV1Schema = lazyZodSchema(() => z.discriminatedUnion(
 ]));
 export type SkillProvenanceV1 = z.infer<typeof SkillProvenanceV1Schema>;
 
+/** A source folder keeps its identity across catalog aliases and upstream revisions. */
+export function skillSourceIdentityV1(provenance: SkillProvenanceV1, siblingPath?: string): string | null {
+  if (provenance.kind === 'wellKnown') return JSON.stringify(['wellKnown', provenance.indexUrl, siblingPath ?? provenance.name]);
+  const ref = provenance.kind === 'registry' ? provenance.registry.ref : provenance.kind === 'link' ? provenance.ref : null;
+  if (ref?.kind === 'gitTree') return JSON.stringify(['gitTree', ref.repo, siblingPath ?? ref.path]);
+  if (ref?.kind === 'wellKnown') return JSON.stringify(['wellKnown', ref.indexUrl, siblingPath ?? ref.name]);
+  return null;
+}
+
 /** Shared Add identity: registry listings know their key; resolved imports also know their source/content. */
 export function findHeldSkillV1<T extends Readonly<{ skillId: string; provenance: SkillProvenanceV1; name?: string; digest?: string }>>(
   items: readonly T[],
@@ -50,14 +59,11 @@ export function findHeldSkillV1<T extends Readonly<{ skillId: string; provenance
 ): T | null {
   const provenance = 'provenance' in candidate ? candidate.provenance : null;
   const registry = 'registry' in candidate ? candidate.registry : provenance?.kind === 'registry' ? provenance.registry : null;
-  const ref = provenance?.kind === 'registry' ? provenance.registry.ref : provenance?.kind === 'link' ? provenance.ref : null;
+  const sourceIdentity = provenance ? skillSourceIdentityV1(provenance) : null;
   return items.find(item => {
-    if (provenance?.kind === 'wellKnown' && item.provenance.kind === 'wellKnown')
-      return provenance.indexUrl === item.provenance.indexUrl && provenance.name === item.provenance.name;
     if (registry && item.provenance.kind === 'registry'
       && item.provenance.registry.sourceId === registry.sourceId && item.provenance.registry.itemId === registry.itemId) return true;
-    const heldRef = item.provenance.kind === 'registry' ? item.provenance.registry.ref : item.provenance.kind === 'link' ? item.provenance.ref : null;
-    if (ref?.kind === 'gitTree' && heldRef?.kind === 'gitTree') return ref.repo === heldRef.repo && ref.path === heldRef.path;
+    if (sourceIdentity !== null && sourceIdentity === skillSourceIdentityV1(item.provenance)) return true;
     // Uploads have no stable source key. Compare current content, never the historical imported digest.
     return 'provenance' in candidate && provenance?.kind === 'upload'
       && item.name === candidate.name && item.digest === candidate.digest;

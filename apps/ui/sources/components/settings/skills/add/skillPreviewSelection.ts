@@ -1,10 +1,16 @@
 import type { SkillInstallPreviewV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
+import { skillSourceIdentityV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
-type Previewed = Pick<SkillInstallPreviewV1, 'path' | 'siblingSkills' | 'inLibrary'>;
+type Previewed = Pick<SkillInstallPreviewV1, 'path' | 'siblingSkills' | 'inLibrary'> & Partial<Pick<SkillInstallPreviewV1, 'provenance'>>;
+
+/** Upload folders use their path; linked folders use the library owner's source identity. */
+export function skillPreviewKey(item: Pick<Previewed, 'path' | 'provenance'>, siblingPath = item.path): string {
+  return (item.provenance ? skillSourceIdentityV1(item.provenance, siblingPath) : null) ?? siblingPath;
+}
 
 /** Everything previewed that is new starts ticked: the person unticks what they do not want. A held skill is never added again. */
 export function tickAllSkillPreviews(items: readonly Previewed[]): ReadonlySet<string> {
-  return new Set(items.filter((item) => item.inLibrary === undefined).map((item) => item.path));
+  return new Set(items.filter((item) => item.inLibrary === undefined).map(item => skillPreviewKey(item)));
 }
 
 /**
@@ -14,14 +20,17 @@ export function tickAllSkillPreviews(items: readonly Previewed[]): ReadonlySet<s
 export function toggleSkillPreview(
   items: readonly Previewed[],
   ticked: ReadonlySet<string>,
-  path: string,
+  key: string,
 ): ReadonlySet<string> {
   const next = new Set(ticked);
-  if (next.delete(path)) return next;
-  next.add(path);
-  const listed = new Set(items.filter((item) => item.inLibrary === undefined).map((item) => item.path));
-  for (const sibling of items.find((item) => item.path === path)?.siblingSkills ?? [])
-    if (listed.has(sibling.path)) next.add(sibling.path);
+  if (next.delete(key)) return next;
+  next.add(key);
+  const listed = tickAllSkillPreviews(items);
+  const item = items.find(item => skillPreviewKey(item) === key);
+  if (item) for (const sibling of item.siblingSkills ?? []) {
+    const siblingKey = skillPreviewKey(item, sibling.path);
+    if (listed.has(siblingKey)) next.add(siblingKey);
+  }
   return next;
 }
 

@@ -16,7 +16,7 @@ import type { RegistryItemPointerV1, RegistryItemV1, RegistrySkillContentRefV1 }
 import type { RegistryFormatV1, RegistrySourceDescriptorV1 } from '../../../registries/registrySourcesV1.js';
 import { RegistryUpstreamV1Schema, registryUpstreamEqualV1, type RegistryUpstreamV1 } from '../../../registries/registryUpstreamV1.js';
 import type { RegistryProvenanceV1 } from '../../../registries/registryItemsV1.js';
-import { encodeSkillRevisionV1, findHeldSkillV1, readSkillLockV1, readSkillUploadRootsV1, isSkillModifiedV1, readSkillFrontmatterV1, writeSkillFrontmatterV1, isPluginSkillIdV1, SkillSourceFolderNameV1Schema,
+import { encodeSkillRevisionV1, findHeldSkillV1, skillSourceIdentityV1, readSkillLockV1, readSkillUploadRootsV1, isSkillModifiedV1, readSkillFrontmatterV1, writeSkillFrontmatterV1, isPluginSkillIdV1, SkillSourceFolderNameV1Schema,
   type SkillListItemV1, type SkillUnavailableItemV1, type SkillLockV1, type SkillProvenanceV1 } from './skillLibraryItemV1.js';
 import { deriveSkillTrustV1 } from './skillTrustV1.js';
 import { estimateSkillCostV1 } from './skillCostV1.js';
@@ -107,14 +107,14 @@ function importedGitRef(provenance: SkillProvenanceV1) {
  * Marks, on each previewed skill, the other previewed skills of the same source tree its instructions refer to
  * (`../b/SKILL.md` with `b` in the set) and the outside references each one covers.
  */
-function withSiblingSkills<T extends Readonly<{ path: string; outsideReferences?: string[] }>>(previews: readonly T[]):
+function withSiblingSkills<T extends Readonly<{ path: string; provenance: SkillProvenanceV1; outsideReferences?: string[] }>>(previews: readonly T[]):
   (T & Readonly<{ siblingSkills?: { path: string; references: string[] }[] }>)[] {
-  const paths = new Set(previews.map(item => item.path));
+  const paths = new Set(previews.map(item => skillSourceIdentityV1(item.provenance) ?? item.path));
   return previews.map(item => {
     const covered = new Map<string, string[]>();
     for (const reference of item.outsideReferences ?? [])
       for (const sibling of readSiblingSkillPathsV1(item.path, [reference]))
-        if (paths.has(sibling)) covered.set(sibling, [...covered.get(sibling) ?? [], reference]);
+        if (paths.has(skillSourceIdentityV1(item.provenance, sibling) ?? sibling)) covered.set(sibling, [...covered.get(sibling) ?? [], reference]);
     return covered.size ? { ...item, siblingSkills: [...covered].map(([path, references]) => ({ path, references })) } : item;
   });
 }
@@ -415,11 +415,18 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
    * A registry item or folder-specific link lists one skill, but its instructions may refer to sibling folders. Each is
    * read at the commit the item is pinned to and previewed as an imported link; the shared Add identity marks held ones.
    */
-  async function withSourceSiblingPreviews(primaries: readonly Awaited<ReturnType<typeof preview>>[], wanted: readonly string[] | undefined, signal?: AbortSignal) {
+  async function withSourceSiblingPreviews(primaries: readonly Awaited<ReturnType<typeof preview>>[], wanted: readonly string[] | undefined, signal?: AbortSignal, discoverSiblings = true) {
     const readLinkSkills = port.readLinkSkills;
-    const previews = [...primaries];
-    if (!readLinkSkills) return previews;
-    for (const primary of primaries) {
+    const seen = new Set<string>();
+    const previews = primaries.filter(item => {
+      const identity = skillSourceIdentityV1(item.provenance);
+      if (identity === null) return true;
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    });
+    if (!readLinkSkills || !discoverSiblings) return previews;
+    for (const primary of [...previews]) {
       const ref = importedGitRef(primary.provenance);
       if (!ref || !primary.outsideReferences) continue;
       const knownPaths = new Set(previews.filter(item => {
@@ -636,7 +643,8 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
             previews = await withSourceSiblingPreviews(await Promise.all(items.map(item => {
               if (item.payload.kind !== 'skill') return fail('unsupported_source');
               return preview(item, item.payload.skill.ref.kind === 'wellKnown' ? item.payload.skill.ref : { kind: 'link', url, ref: item.payload.skill.ref }, url);
-            })), input.selectPaths, signal); }
+            // Reviewed refs already name the exact selected source trees; paths alone cannot distinguish repositories.
+            })), input.selectPaths, signal, input.source.refs === undefined); }
           const held = await heldSkills(input.source.kind === 'upload', signal);
           const heldNames = new Set(held.map(item => item.name));
           const selected = withSiblingSkills(previews.filter(item => !input.selectPaths || input.selectPaths.includes(item.path))).map((item): SkillInstallPreviewV1 => {
@@ -645,9 +653,9 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
               : heldNames.has(item.name) ? { sameNameInLibrary: true as const } : {}) };
           });
           if (input.dryRun) {
-            const heldPaths = new Set(selected.filter(item => item.inLibrary).map(item => item.path));
+            const heldPaths = new Set(selected.filter(item => item.inLibrary).map(item => skillSourceIdentityV1(item.provenance) ?? item.path));
             result = { items: selected.map(({ siblingSkills, ...item }) => {
-              const offered = siblingSkills?.filter(sibling => !heldPaths.has(sibling.path));
+              const offered = siblingSkills?.filter(sibling => !heldPaths.has(skillSourceIdentityV1(item.provenance, sibling.path) ?? sibling.path));
               return offered?.length ? { ...item, siblingSkills: offered } : item;
             }) }; break;
           }

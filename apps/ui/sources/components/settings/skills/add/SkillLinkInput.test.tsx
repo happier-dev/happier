@@ -7,6 +7,7 @@ import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 import { CapabilityAddModalBody, type CapabilityAddInputContext } from '@/components/capabilities/add/CapabilityAddModal';
 import { SkillLinkInput } from './SkillLinkInput';
+import { skillPreviewKey } from './skillPreviewSelection';
 import { t } from '@/text';
 
 (
@@ -124,8 +125,11 @@ async function renderLink(answer: MountedAuthoringActionExecute, callbacks: Call
       (node) => node.props?.testID === 'skills.add:collection' && typeof node.props?.model?.actions?.open === 'function',
     )[0];
     if (!collection) throw new Error('collection not rendered');
+    const found = screen.find(node => typeof node.props.itemKey === 'function'
+      && node.props.items?.some((item: { path?: string }) => item.path === path));
+    const item = found.props.items.find((item: { path?: string }) => item.path === path);
     await act(async () => {
-      collection.props.model.actions.open(path);
+      collection.props.model.actions.open(found.props.itemKey(item));
     });
   };
   const pressPrimary = async () => {
@@ -201,7 +205,7 @@ describe('SkillLinkInput footer', () => {
     await closeDetail();
     // The footer uses the same multi-skill selection owner: the held item is never selected again.
     await screen.pressByTestIdAsync('link.add');
-    expect(installs).toEqual([{ source: { kind: 'link', url: indexUrl, refs: [held.provenance, fresh.provenance] }, selectPaths: ['to-prd'] }]);
+    expect(installs).toEqual([{ source: { kind: 'link', url: indexUrl, refs: [fresh.provenance] }, selectPaths: ['to-prd'] }]);
   });
 
   it('treats a pasted skills add command as link text for both preview and install', async () => {
@@ -264,6 +268,24 @@ describe('SkillLinkInput footer', () => {
 });
 
 describe('SkillLinkInput one found skill', () => {
+  it('keeps same-path skills from different repositories independently selectable and installs only the chosen ref', async () => {
+    const other = { ...PREVIEW, provenance: { ...PREVIEW.provenance,
+      ref: { ...PREVIEW.provenance.ref, repo: 'acme/other-skills' } } };
+    const { createSkillFoundDraft, commitSkillFoundDraft } = await import('./SkillFoundAdd');
+    const draft = createSkillFoundDraft([PREVIEW, other]);
+    expect(draft.getState().ticks.ticked.size).toBe(2);
+    const keys = [...draft.getState().ticks.ticked];
+    draft.setState({ ticks: { items: draft.getState().ticks.items, ticked: new Set([keys[1]!]) } });
+    const installs: unknown[] = [];
+    const answer: MountedAuthoringActionExecute = async (_id, input) => {
+      installs.push(input);
+      return { ok: true, result: { skillIds: ['other'], includedInSessionId: null } };
+    };
+    const source = { kind: 'link', url: PREVIEW.provenance.url,
+      refs: [PREVIEW.provenance.ref, other.provenance.ref] } as const;
+    await commitSkillFoundDraft(draft, answer, source, draft.getState().ticks.items);
+    expect(installs).toEqual([{ source: { ...source, refs: [other.provenance.ref] }, selectPaths: [other.path] }]);
+  });
   it('opens it straight in its details, whose Add is the one primary and carries the Where picked there', async () => {
     const installs: Record<string, unknown>[] = [];
     const answer: MountedAuthoringActionExecute = async (_actionId, input) => {
@@ -273,7 +295,7 @@ describe('SkillLinkInput one found skill', () => {
     };
     const selected: string[] = [];
     const { screen, pressPrimary } = await renderLink(answer, { onSelectAdded: (id) => selected.push(id) });
-    expect(screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model).props.model.openKey).toBe(PREVIEW.path);
+    expect(screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model).props.model.openKey).toBe(skillPreviewKey(PREVIEW));
     expect(screen.findByTestId('link.add')).toBeNull();
     expect(screen.findByTestId('link.footer')).toBeNull();
     expect(screen.find(node => node.props.testID === 'skills.add:primary' && typeof node.props.display === 'string').props.display).toBe('primary');
@@ -294,7 +316,7 @@ describe('SkillLinkInput one found skill', () => {
     const { createSkillFoundDraft, commitSkillFoundDraft } = await import('./SkillFoundAdd');
     const draft = createSkillFoundDraft([PREVIEW] as never);
     const narrowed = { kind: 'write', write: { place: { t: 'machine', machineId: 'machine-1' }, state: 'off' } } as const;
-    draft.getState().wheres.set(PREVIEW.path, narrowed);
+    draft.getState().wheres.set(skillPreviewKey(PREVIEW), narrowed);
     const source = { kind: 'link', url: PREVIEW.provenance.url, refs: [PREVIEW.provenance.ref] } as const;
     expect(await commitSkillFoundDraft(draft, answer, source as never, [PREVIEW] as never)).toBe('skill-new');
     expect(installs).toEqual([{ source, where: narrowed }]);
@@ -338,7 +360,7 @@ describe('SkillLinkInput details (G8)', () => {
     });
     expect(onClose).not.toHaveBeenCalled();
     expect(onSelectAdded).not.toHaveBeenCalled();
-    expect(screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model).props.model.openKey).toBe(second.path);
+    expect(screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model).props.model.openKey).toBe(skillPreviewKey(second));
     await open(PREVIEW.path);
     await screen.pressByTestIdAsync('skills.add:open-added');
     expect(onSelectAdded).toHaveBeenCalledExactlyOnceWith('added-a');
@@ -387,9 +409,9 @@ describe('SkillLinkInput details (G8)', () => {
     expect(reads).toBe(3);
     await act(async () => newer.resolve({ ok: true, result: { items: [second] } }));
     const keys = () => screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model?.keys).props.model.keys;
-    expect(keys()).toContain('skills/to-prd');
+    expect(keys()).toContain(skillPreviewKey(second));
     await act(async () => older.resolve({ ok: true, result: { items: [PREVIEW] } }));
-    expect(keys()).toEqual(['skills/to-prd']);
+    expect(keys()).toEqual([skillPreviewKey(second)]);
   });
 
   it('opens a found row in the same details, with Where it\'s on, and adds only that skill with the Where picked', async () => {
@@ -405,7 +427,7 @@ describe('SkillLinkInput details (G8)', () => {
     });
     await pressPrimary();
     expect(installs).toEqual([
-      { source, selectPaths: ['skills/to-prd'], where: narrowed },
+      { source: { ...source, refs: [second.provenance.ref] }, selectPaths: ['skills/to-prd'], where: narrowed },
     ]);
     expect(onClose).toHaveBeenCalled();
     expect(selected).toEqual(['skill-new']);
@@ -415,7 +437,7 @@ describe('SkillLinkInput details (G8)', () => {
     const { open, pressPrimary, installs } = await renderPair();
     await open('skills/grill-me');
     await pressPrimary();
-    expect(installs).toEqual([{ source, selectPaths: ['skills/grill-me'] }]);
+    expect(installs).toEqual([{ source: { ...source, refs: [PREVIEW.provenance.ref] }, selectPaths: ['skills/grill-me'] }]);
   });
 
   it('retains the individual Where after visiting another result without applying it to batch Add', async () => {
@@ -427,7 +449,7 @@ describe('SkillLinkInput details (G8)', () => {
     await open('skills/grill-me');
     await open('skills/to-prd');
     await pressPrimary();
-    expect(installs).toEqual([{ source, selectPaths: ['skills/to-prd'], where: narrowed }]);
+    expect(installs).toEqual([{ source: { ...source, refs: [second.provenance.ref] }, selectPaths: ['skills/to-prd'], where: narrowed }]);
   });
 
   it('ticks with the box, not the row, and the checklist footer adds the ticked set without a Where', async () => {
@@ -435,7 +457,7 @@ describe('SkillLinkInput details (G8)', () => {
     await (await row(PREVIEW)).pressByTestIdAsync('link.item.grill-me.tick');
     expect(screen.findByTestId('link.detail.title')).toBeNull();
     await screen.pressByTestIdAsync('link.add');
-    expect(installs).toEqual([{ source, selectPaths: ['skills/to-prd'] }]);
+    expect(installs).toEqual([{ source: { ...source, refs: [second.provenance.ref] }, selectPaths: ['skills/to-prd'] }]);
   });
 
   it('offers the found group a Select all that ticks every new skill again, then Select none', async () => {
@@ -483,11 +505,13 @@ describe('SkillLinkInput outside references', () => {
 });
 
 describe('SkillLinkInput referenced siblings', () => {
-  const sibling = { ...PREVIEW, path: 'skills/orm-setup', name: 'orm-setup', description: 'Set up the ORM.' };
+  const sibling = { ...SECOND, path: 'skills/orm-setup', name: 'orm-setup', description: 'Set up the ORM.',
+    provenance: { ...PREVIEW.provenance, ref: { ...PREVIEW.provenance.ref, path: 'skills/orm-setup' } } };
   const referrer = {
     ...PREVIEW,
     path: 'skills/prisma-cli',
     name: 'prisma-cli',
+    provenance: { ...PREVIEW.provenance, ref: { ...PREVIEW.provenance.ref, path: 'skills/prisma-cli' } },
     outsideReferences: ['../orm-setup/SKILL.md', '../README.md'],
     siblingSkills: [{ path: 'skills/orm-setup', references: ['../orm-setup/SKILL.md'] }],
   };
@@ -542,7 +566,8 @@ describe('SkillLinkInput referenced siblings', () => {
 
 describe('SkillLinkInput skills the library already holds', () => {
   const held = { ...PREVIEW, inLibrary: 'skill-held' };
-  const fresh = { ...PREVIEW, path: 'skills/orm-setup', name: 'orm-setup', description: 'Set up the ORM.' };
+  const fresh = { ...PREVIEW, path: 'skills/orm-setup', name: 'orm-setup', description: 'Set up the ORM.',
+    provenance: { ...PREVIEW.provenance, ref: { ...PREVIEW.provenance.ref, path: 'skills/orm-setup' } } };
   const heldSibling = { ...fresh, inLibrary: 'skill-orm' };
   // The Action drops a held sibling from `siblingSkills`, so its reference reads as outside unless the row covers it.
   const referrer = {

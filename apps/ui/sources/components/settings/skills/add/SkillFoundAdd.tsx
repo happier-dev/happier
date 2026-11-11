@@ -33,9 +33,11 @@ import {
   readAllHeldFooter,
   tickAllSkillPreviews,
   toggleSkillPreview,
+  skillPreviewKey,
 } from './skillPreviewSelection';
 import {
   installSkills,
+  selectSkillInstallSource,
   retrySkillInstall,
   describeSkillInstallIncomplete,
   type SkillInstallAcknowledgment,
@@ -43,7 +45,7 @@ import {
 } from './skillInstall';
 
 type Preview = SkillInstallPreviewV1;
-const keyOf = (item: Preview) => item.path;
+const keyOf = skillPreviewKey;
 
 /** A detail's own Add: in flight, or acknowledged (the content landed; its rules may still be missing). */
 type DetailAdd =
@@ -74,7 +76,7 @@ type SkillFoundDraft = ReturnType<typeof createSkillFoundDraft>;
 function readFoundSelection(state: ReturnType<SkillFoundDraft['getState']>, items: readonly Preview[]) {
   return state.ticks.items === items ? state.ticks.ticked
     : state.recoveryItems
-      ? new Set(items.filter(item => item.inLibrary === undefined && state.ticks.ticked.has(item.path)).map(item => item.path))
+      ? new Set(items.filter(item => item.inLibrary === undefined && state.ticks.ticked.has(keyOf(item))).map(item => keyOf(item)))
       : tickAllSkillPreviews(items);
 }
 
@@ -91,13 +93,13 @@ export async function commitSkillFoundDraft(
   const ticked = readFoundSelection(state, items);
   if (!state.acknowledged && ticked.size === 0) return null;
   // One found skill has one Add, its details': Save commits what that Add would, with the Where picked there.
-  const where = items.length === 1 ? state.wheres.get(items[0]!.path) : undefined;
+  const where = items.length === 1 ? state.wheres.get(keyOf(items[0]!)) : undefined;
   draft.setState({ adding: true, addError: null });
   try {
     const outcome = state.acknowledged
       ? await retrySkillInstall(execute, state.acknowledged, where)
-      : await installSkills(execute, { source,
-          ...(items.length > 1 ? { selectPaths: items.filter(item => ticked.has(item.path)).map(item => item.path) } : {}),
+      : await installSkills(execute, { source: selectSkillInstallSource(source, items.filter(item => ticked.has(keyOf(item)))),
+          ...(items.length > 1 ? { selectPaths: items.filter(item => ticked.has(keyOf(item))).map(item => item.path) } : {}),
           ...(where ? { where } : {}) });
     if (!outcome.ok && outcome.skillIds.length === 0) {
       draft.setState({ addError: outcome.status ? describeRegistrySourceStatus(outcome.status) : t('capabilities.add.addFailed') });
@@ -246,7 +248,7 @@ export function SkillFoundAdd(
   }, [draft, execute, props.items, props.onAdded, props.isCurrentInput, source]);
 
   const nameByPath = React.useMemo(
-    () => new Map(items.map((item) => [item.path, item.name])),
+    () => new Map(items.map((item) => [keyOf(item), item.name])),
     [items],
   );
   const anatomy = React.useMemo(
@@ -266,11 +268,11 @@ export function SkillFoundAdd(
           const factsSource = props.factsSource(item);
           // A ticked skill names the siblings it brings along, so the reference holds once it is added.
           const alsoAdds =
-            several && ticked.has(item.path)
+            several && ticked.has(keyOf(item))
               ? (item.siblingSkills ?? [])
-                  .filter((sibling) => ticked.has(sibling.path))
+                  .filter((sibling) => ticked.has(keyOf(item, sibling.path)))
                   .map(
-                    (sibling) => nameByPath.get(sibling.path) ?? sibling.path,
+                    (sibling) => nameByPath.get(keyOf(item, sibling.path)) ?? sibling.path,
                   )
               : [];
           return {
@@ -291,7 +293,7 @@ export function SkillFoundAdd(
         ? {
             leadingControl: (item: Preview) => {
               const held = item.inLibrary !== undefined;
-              const checked = !held && ticked.has(item.path);
+              const checked = !held && ticked.has(keyOf(item));
               return (
                 <IconButton
                   testID={`${props.testID}.item.${item.name}.tick`}
@@ -307,7 +309,7 @@ export function SkillFoundAdd(
                       state={checked ? 'checked' : 'unchecked'}
                     />
                   }
-                  onPress={() => toggle(item.path)}
+                  onPress={() => toggle(keyOf(item))}
                 />
               );
             },
@@ -320,17 +322,17 @@ export function SkillFoundAdd(
   const renderDetail = React.useCallback(
     (item: Preview) => (
       <SkillFoundDetail
-        key={item.path}
+        key={keyOf(item)}
         item={item}
         items={items}
         factsSource={props.factsSource(item)}
         factsExtra={props.factsExtra?.(item)}
         installsSource={props.installsSource?.(item)}
         onOpenHeld={props.onSelectAdded}
-        initialWhere={wheres.current.get(item.path)}
-        initialSelectPaths={selections.current.get(item.path)}
-        onWhereChange={(where) => wheres.current.set(item.path, where)}
-        onSelectionChange={(paths) => selections.current.set(item.path, paths)}
+        initialWhere={wheres.current.get(keyOf(item))}
+        initialSelectPaths={selections.current.get(keyOf(item))}
+        onWhereChange={(where) => wheres.current.set(keyOf(item), where)}
+        onSelectionChange={(paths) => selections.current.set(keyOf(item), paths)}
         testID={`${props.testID}.detail`}
       />
     ),
@@ -340,7 +342,7 @@ export function SkillFoundAdd(
   const detailFooter = React.useCallback<NonNullable<CapabilityAddFound<Preview>['detailFooter']>>(
     (item: Preview) => {
       const note = <View style={styles.note}>{props.detailNote ?? props.note}</View>;
-      const state = detailAdds.get(item.path);
+      const state = detailAdds.get(keyOf(item));
       if (item.inLibrary !== undefined && state?.status !== 'added') {
         const held = item.inLibrary;
         return {
@@ -352,7 +354,7 @@ export function SkillFoundAdd(
         };
       }
       const setState = (next: DetailAdd) =>
-        setDetailAdds((previous) => new Map(previous).set(item.path, next));
+        setDetailAdds((previous) => new Map(previous).set(keyOf(item), next));
       if (state?.status === 'added' && (!state.outcome.ok || state.outcome.incomplete.length > 0)) {
         const acknowledgedAdd = state;
         return {
@@ -399,15 +401,15 @@ export function SkillFoundAdd(
             : {}),
           onPress: async () => {
             if (source === null) return null;
-            const where = wheres.current.get(item.path);
+            const where = wheres.current.get(keyOf(item));
+            const selectPaths = selections.current.get(keyOf(item)) ?? [item.path];
             setState({ status: 'adding' });
             const outcome = await installSkills(execute, {
-              source,
+              source: selectSkillInstallSource(source, items.filter(candidate => selectPaths.includes(candidate.path)
+                && keyOf(candidate) === keyOf(item, candidate.path))),
               ...(several
                 ? {
-                    selectPaths: selections.current.get(item.path) ?? [
-                      item.path,
-                    ],
+                    selectPaths,
                   }
                 : {}),
               ...(where ? { where } : {}),
@@ -415,7 +417,7 @@ export function SkillFoundAdd(
             if (!outcome.ok && outcome.skillIds.length === 0) {
               setDetailAdds((previous) => {
                 const next = new Map(previous);
-                next.delete(item.path);
+                next.delete(keyOf(item));
                 return next;
               });
               throw new Error(
@@ -437,6 +439,7 @@ export function SkillFoundAdd(
       adding,
       detailAdds,
       execute,
+      items,
       locked,
       props.detailNote,
       props.note,
@@ -513,7 +516,7 @@ export function SkillFoundAdd(
     items,
     itemKey: keyOf,
     // Nothing left to choose, so no "Choose which to add" heading over rows that are all held.
-    ...(items.length > 0 && !allHeld ? { groups: [{ key: 'found', title: props.groupTitle, ...(groupAction === undefined ? {} : { action: groupAction }), itemKeys: items.map(keyOf) }] } : {}),
+    ...(items.length > 0 && !allHeld ? { groups: [{ key: 'found', title: props.groupTitle, ...(groupAction === undefined ? {} : { action: groupAction }), itemKeys: items.map(item => keyOf(item)) }] } : {}),
     anatomy,
     empty: props.empty,
     ...(footer === undefined ? {} : { footer }),
@@ -546,8 +549,8 @@ function SkillFoundDetail(
     const referenced = new Set(
       (item.siblingSkills ?? []).map((sibling) => sibling.path),
     );
-    return items.filter((candidate) => referenced.has(candidate.path));
-  }, [item.siblingSkills, items]);
+    return items.filter((candidate) => referenced.has(candidate.path) && keyOf(candidate) === keyOf(item, candidate.path));
+  }, [item, items]);
   const choice = useSkillSiblingChoice({
     primary: item,
     siblings,

@@ -19,7 +19,15 @@ export type StorePluginUpdateEntry = Readonly<{
 export function useStorePluginUpdates(input: Readonly<{ rows: readonly Subject[]; check: RegistryUpdateCheckState }>) {
     const { rows, check } = input;
     return React.useMemo(() => {
-        const observations = new Map(check.results.filter(result => result.kind === 'plugin').map(result => [result.key, result.upstream]));
+        // A plugin can be current on one Machine while another still needs review.
+        // Keep actionable or incomplete coverage ahead of a current sibling reply.
+        const priority = { current: 0, unchecked: 1, removed_from_source: 2, update_available: 3 };
+        const observations = new Map<string, RegistryUpstreamCheckV1>();
+        for (const result of check.results) {
+            if (result.kind !== 'plugin') continue;
+            const previous = observations.get(result.key);
+            if (!previous || priority[result.upstream.state] > priority[previous.state]) observations.set(result.key, result.upstream);
+        }
         const entries = rows.map((row): StorePluginUpdateEntry => {
             const pluginId = row.native.pluginId;
             const observation = observations.get(pluginId) ?? null;

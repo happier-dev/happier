@@ -4,6 +4,16 @@ import { createInstalledPluginCapabilityFixture } from '@/dev/testkit/fixtures/p
 import { useStorePluginUpdates } from './useStorePluginUpdates';
 
 afterEach(standardCleanup);
+it.each([false, true])('keeps an update when another Machine is already current (current first=%s)', async currentFirst => {
+    const available = { kind: 'plugin' as const, key: 'pl50.fixture', machineId: 'installed-1',
+        upstream: { state: 'update_available' as const, latest: { kind: 'version' as const, version: '1.1.0' } } };
+    const current = { ...available, machineId: 'installed-2', upstream: { ...available.upstream, state: 'current' as const } };
+    const results = currentFirst ? [current, available] : [available, current];
+    const hook = await renderHook(() => useStorePluginUpdates({ rows: [{ key: 'pl50', native: { pluginId: 'pl50.fixture' } }],
+        check: { checking: false, checkedAt: 10, failed: false, code: null, results } }));
+    expect(hook.getCurrent().entries[0]).toMatchObject({ state: 'available', observation: available.upstream });
+    expect(hook.getCurrent().count).toBe(1);
+});
 it('retains unknown coverage, supplies native update review props, and performs zero reads on open or idle', async () => {
     const detail = createInstalledPluginCapabilityFixture({ pluginId: 'acme.tools', source: { kind: 'npm', locator: '@acme/tools', trustPolicy: 'trusted' } });
     // The Account projection is not a daemon lifecycle authority: only detail can offer review.

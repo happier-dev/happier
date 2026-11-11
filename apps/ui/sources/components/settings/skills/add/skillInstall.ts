@@ -10,6 +10,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { SessionCapabilitiesSetOutputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { DEFAULT_CREATE_REACH_CHANGE_V1, type ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import type { RegistrySkillContentRefV1 } from '@happier-dev/protocol/registries';
+import { skillSourceIdentityV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 import { readRegistryFailureStatus, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
@@ -32,6 +33,13 @@ export type SkillInstallRequest = Readonly<{
   selectPaths?: readonly string[];
   where?: ReachRulesChangeV1;
 }>;
+
+/** Reviewed links can contain equal paths in different repositories; commit only the selected source trees. */
+export function selectSkillInstallSource(source: SkillInstallSource, items: readonly SkillInstallPreviewV1[]): SkillInstallSource {
+  if (source.kind !== 'link' || source.refs === undefined) return source;
+  const selected = new Set(items.map(item => skillSourceIdentityV1(item.provenance)));
+  return { ...source, refs: source.refs.filter(ref => selected.has(skillSourceIdentityV1({ kind: 'link', url: source.url, ref }))) };
+}
 
 /** Content acknowledgments and later failed steps are independent of the batch's terminal content result. */
 type SkillInstallEffects = Readonly<{
