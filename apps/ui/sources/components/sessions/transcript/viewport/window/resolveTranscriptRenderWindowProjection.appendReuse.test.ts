@@ -108,26 +108,29 @@ describe('resolveTranscriptRenderWindowProjection append-only reuse', () => {
     });
 
     it('falls back to a full rebuild when the previous items are not a strict prefix', () => {
-        const first = project({ items: [1, 2, 3].map(item) });
-        // Middle replacement: not append-only.
-        const edited = [item(1), { ...item(2), id: 'row-2-edited', messageId: 'msg-2-edited' }, item(3), item(4)];
+        const baseItems = [item(1), item(2), item(3)];
+        const first = project({ items: baseItems });
+        // Middle replacement with the prefix otherwise shared by reference: the fallback must
+        // come from the prefix violation, not from incidental reference inequality.
+        const edited = [baseItems[0]!, { ...item(2), id: 'row-2-edited', messageId: 'msg-2-edited' }, baseItems[2]!, item(4)];
         const rebuilt = project({ items: edited, previousProjection: first });
         expect(rebuilt.reusedAppendOnlyBaseline).toBe(false);
         expectProjectionsEqual(rebuilt, project({ items: edited }));
     });
 
     it('falls back while a target window is active or a tail boundary is present', () => {
-        const first = project({ items: [1, 2, 3].map(item) });
+        const baseItems = [1, 2, 3].map(item);
+        const first = project({ items: baseItems });
 
         const windowed = project({
-            items: [1, 2, 3, 4].map(item),
+            items: [...baseItems, item(4)],
             previousProjection: first,
             targetWindowState: { ...inactiveWindow, isWindowMode: true, windowId: 'w', targetSeq: 2 },
         });
         expect(windowed.reusedAppendOnlyBaseline).toBe(false);
 
         const bounded = project({
-            items: [1, 2, 3, 4].map(item),
+            items: [...baseItems, item(4)],
             previousProjection: first,
             tailContiguousBoundary: { kind: 'seq', seq: 2 },
         });
@@ -135,10 +138,14 @@ describe('resolveTranscriptRenderWindowProjection append-only reuse', () => {
     });
 
     it('preserves first-wins duplicate-id semantics for appended duplicates', () => {
-        const first = project({ items: [1, 2, 3].map(item) });
+        const baseItems = [item(1), item(2), item(3)];
+        const first = project({ items: baseItems });
         const duplicate = { ...item(1) } as TestItem;
-        const fast = project({ items: [item(1), item(2), item(3), duplicate, item(4)], previousProjection: first });
-        const fresh = project({ items: [item(1), item(2), item(3), duplicate, item(4)] });
+        const appended = [...baseItems, duplicate, item(4)];
+        const fast = project({ items: appended, previousProjection: first });
+        // The duplicate rides a genuine append-only extension of the shared prefix.
+        expect(fast.reusedAppendOnlyBaseline).toBe(true);
+        const fresh = project({ items: appended });
         expectProjectionsEqual(fast, fresh);
     });
 });
