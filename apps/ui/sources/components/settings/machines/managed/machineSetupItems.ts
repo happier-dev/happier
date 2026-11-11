@@ -74,7 +74,8 @@ export function renameMachineSetupApp<T extends Items>(
 export type MachineSetupRecipeOffer = Readonly<{ value: InputOptionValue; label: string; description?: string | null; icon?: string }>;
 
 const sameRecipe = (value: InputOptionValue, ref: MachineRecipeReferenceV1) => !!value && typeof value === 'object'
-  && !Array.isArray(value) && typeof value.pluginId === 'string' && typeof value.recipeId === 'string'
+  && !Array.isArray(value) && 'pluginId' in value && 'recipeId' in value
+  && typeof value.pluginId === 'string' && typeof value.recipeId === 'string'
   && readMachineSetupRecipeIdentityV1({ pluginId: value.pluginId, recipeId: value.recipeId }) === readMachineSetupRecipeIdentityV1(ref);
 
 /**
