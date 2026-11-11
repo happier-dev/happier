@@ -59,9 +59,12 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    // The folded More stands one gap from the contents, not that gap plus their own leading inset: it reaches into
+    // that inset, so a phone's primary keeps its whole label beside it (360, owner 2026-11-11).
     folded: {
         paddingTop: theme.space.s12,
         paddingLeft: theme.space.s8,
+        marginRight: -theme.space.s8,
     },
     // The bar's own insets sit with its contents, where a consumer's `style` can change them.
     content: {
