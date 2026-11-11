@@ -159,6 +159,9 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
     protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     connectedAccount: Object.freeze({
       service: Object.freeze({ pluginId: 'happier.agent.muse', localId: 'muse-account' }),
+      // Native Muse owns account-specific observation through `model/list`,
+      // rather than the managed gateway compatibility catalog.
+      catalogObservation: Object.freeze({ agent: Object.freeze({ pluginId: 'happier.agent.muse', localId: 'muse' }) }),
       required: false,
       materializationKinds: Object.freeze(['httpHeaders'] as const),
     }),

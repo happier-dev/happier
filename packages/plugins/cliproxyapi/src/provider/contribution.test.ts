@@ -30,6 +30,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
       expect.objectContaining({
         purpose: 'meta-upstream',
         service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+        catalogObservation: { agent: { pluginId: 'happier.agent.muse', localId: 'muse' } },
         staticModels: expect.arrayContaining([expect.objectContaining({ id: 'muse-spark-1.3' })]),
       }),
     ]));
