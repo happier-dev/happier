@@ -55,7 +55,8 @@ describe('managed enrollment isolation refusal', () => {
                 // Simulate malformed boundary data without bypassing the public projector's real schema.
                 details: { kind: 'managedAgentIsolation', phase: 'machines.agentIsolation.preview', status } }),
             'machines.managed.bootstrap.retry');
-            expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: { phase: 'machines.managed.bootstrap.retry' } });
+            // The typed code survives; only the invalid diagnostic details are withheld.
+            expect(failure).toMatchObject({ errorCode: 'provisioning_unavailable', failureCause: { phase: 'machines.managed.bootstrap.retry' } });
             expect(failure).not.toHaveProperty('details');
             expect(JSON.stringify(failure)).not.toContain('private-native-output');
         }
