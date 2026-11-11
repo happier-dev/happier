@@ -249,6 +249,11 @@ describe('keyholding Artifact public-link Actions', () => {
     const result = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } });
     const link = issued[0]!;
     expect(result).toEqual({ publicShare, url: link.url });
+    const observation = getActionSpec('artifact.public_link.create').projectObservationOutput?.(result);
+    expect(observation).toMatchObject({ status: 'public_link_created', nextStep: 'artifact_share_sheet', publicShare });
+    expect(observation).not.toHaveProperty('url');
+    expect(JSON.stringify(observation)).not.toContain(link.secret);
+    expect(JSON.stringify(observation)).not.toContain(link.lookupId);
     expect(link.lookupId).not.toBe(link.secret);
     expect(link.url).toBe(`https://public.example.test/s/${link.lookupId}#k=${link.secret}`);
     expect(JSON.stringify(bodies)).not.toContain(link.secret);

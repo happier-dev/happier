@@ -1,3 +1,12 @@
+/** Recognizes placeholders emitted by this redactor, including URL-encoded segments. */
+export function isRedactedPublicShareCapabilityUrl(rawUrl: string): boolean {
+  try {
+    return /(?:^|\/):(?:lookup|artifact|token)(?:\/|$)/.test(decodeURIComponent(new URL(rawUrl).pathname));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Returns a log-safe representation of a URL that may contain a public-share,
  * invitation, native-auth, webhook, or browser Artifact bearer capability.

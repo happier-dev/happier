@@ -1,7 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { redactPublicShareCapabilityUrl } from '../../crypto/publicShareCapabilityUrl.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -26,12 +25,21 @@ export const ARTIFACT_ACCESS_ACTION_SPECS: readonly (PreNormalizedActionSpec & R
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
 })));
 
+export type PublicLinkCreationObservation = Readonly<{
+  status: 'public_link_created';
+  nextStep: 'artifact_share_sheet';
+  message: string;
+}>;
+
 export function projectPublicLinkCreationObservation(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const result = value as Record<string, unknown>;
-  return { ...result,
-    ...(typeof result.url === 'string' ? { url: redactPublicShareCapabilityUrl(result.url) } : {}),
-  };
+  if (typeof result.url !== 'string') return result;
+  // Issued capability material stays with the person, never as an agent-openable template.
+  const { url: _url, ...rest } = result;
+  return { ...rest, status: 'public_link_created', nextStep: 'artifact_share_sheet',
+    message: 'Public link created. Copy or Open it from the Artifact Share sheet.',
+  } satisfies PublicLinkCreationObservation;
 }
 
 // What a person reads in Settings, approvals and the form. Agents read `description`.

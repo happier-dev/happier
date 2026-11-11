@@ -22,6 +22,22 @@ describe('answering-client external links', () => {
     expect(opened).toEqual([]);
   });
 
+  it('refuses redacted capability templates before opening and accepts an issued link', async () => {
+    const opened: string[] = [];
+    const executor = createActionExecutor({ externalUrlOpen: async ({ url }) => {
+      opened.push(url); return { status: 'opened' as const };
+    } });
+    const person = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    for (const url of ['https://viewer.test/s/:lookup', 'https://viewer.test/s/%3Alookup',
+      'https://viewer.test/share/:token', 'https://viewer.test/a/:artifact']) {
+      expect(await executor.execute('links.openExternal', { url }, person)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    }
+    expect(opened).toEqual([]);
+    const url = 'https://viewer.test/s/issued-lookup#k=private-fragment';
+    expect(await executor.execute('links.openExternal', { url }, person)).toEqual({ ok: true, result: { status: 'opened' } });
+    expect(opened).toEqual([url]);
+  });
+
   it.each(['reject', 'canceled'] as const)('does not open a link after an approval %s', async decision => {
     const id = ActionIdSchema.parse('links.openExternal');
     const opened: string[] = [];

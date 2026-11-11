@@ -1,10 +1,12 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 export { EXTERNAL_LINK_ACTION_IDS } from './externalLinkActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
+import { isRedactedPublicShareCapabilityUrl } from '../crypto/publicShareCapabilityUrl.js';
 
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 export const ExternalUrlOpenInputSchema = z.strictObject({
-  url: z.string().check(z.regex(/^https?:\/\//i)),
+  url: z.string().check(z.regex(/^https?:\/\//i), z.refine(url => !isRedactedPublicShareCapabilityUrl(url),
+    { message: 'A redacted link cannot be opened. Copy the issued link from the Share sheet.' })),
 });
 export const ExternalUrlOpenResultSchema = z.strictObject({ status: z.literal('opened') });
 
