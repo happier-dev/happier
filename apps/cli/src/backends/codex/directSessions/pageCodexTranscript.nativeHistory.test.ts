@@ -115,6 +115,21 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     expect(items[1]?.raw).toMatchObject({ content: { data: { output: { stdout: '/project', exitCode: 0 } } } });
   });
 
+  it('returns an oversized native record alone and continues without truncating its contents', async () => {
+    const text = 'large-result'.repeat(1000);
+    const f = await fixture([message('before', 'before', 'user'), message('large', text, 'agent'), message('after', 'after', 'agent')]);
+    const pages: number[] = [];
+    const items = await loadDirectSessionTranscriptItems({ readPage: async cursor => {
+      const page = await pageCodexTranscript({ ...f.params, maxBytes: 1024, direction: 'older', cursor });
+      pages.push(page.items.length);
+      return page;
+    } });
+    expect(items).toHaveLength(3);
+    expect(new Set(items.map(item => item.id)).size).toBe(3);
+    expect(items[1]?.raw.content).toMatchObject({ data: { message: text } });
+    expect(pages).toEqual([1, 1, 1]);
+  });
+
   it('imports native web searches, image views, and sleeps as tool rows', async () => {
     const results = [{ type: 'text_result', ref_id: 'turn0search0', title: 'Fusion benchmark', url: 'https://example.invalid/bench',
       domain: 'example.invalid', snippet: 'Fused kernels compared.' }];
@@ -139,12 +154,39 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     ]);
   });
 
-  it('rejects native mixed media instead of importing only its text as complete history', async () => {
+  it('preserves native mixed user content instead of dropping image and skill parts', async () => {
+    const content = [{ type: 'text', text: 'question with image' },
+      { type: 'image', url: 'data:image/png;base64,aGVsbG8=', detail: 'original' },
+      { type: 'skill', name: 'review', path: '/skills/review/SKILL.md' }];
     const f = await fixture([{ ...message('mixed', 'question with image', 'user'), item: { id: 'mixed', type: 'userMessage',
-      content: [{ type: 'text', text: 'question with image' }, { type: 'image', url: 'https://example.invalid/image.png' }] } }]);
-    await expect(loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
+      content } }]);
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
       ...f.params, direction: 'older', cursor,
-    }) })).rejects.toBeInstanceOf(DirectSessionsProviderUnavailableError);
+    }) });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.raw).toMatchObject({ role: 'user', meta: { codexNativeContent: content } });
+    expect(items[0]?.raw.content).toMatchObject({ text: expect.stringContaining('question with image') });
+    expect(JSON.stringify(items[0]?.raw.content)).not.toContain('aGVsbG8=');
+  });
+
+  it('imports collaboration and dynamic tool records across partial pages without losing results', async () => {
+    const native = [
+      { id: 'activity', type: 'subAgentActivity', kind: 'interacted', agentThreadId: 'child', agentPath: '/root/child', completedAtMs: 20 },
+      { id: 'collab', type: 'collabAgentToolCall', tool: 'spawnAgent', senderThreadId: 'parent', receiverThreadIds: ['child'], prompt: 'inspect', status: 'completed', agentsStates: { child: { status: 'running' } } },
+      { id: 'dynamic', type: 'dynamicToolCall', namespace: 'catalog', tool: 'lookup', arguments: { query: 'fixture' }, success: true, contentItems: [{ type: 'inputText', text: 'result' }] },
+    ];
+    const f = await fixture(native.map(item => ({ turnId: 'turn', startedAtMs: 10, completedAtMs: 20, item })));
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({ ...f.params, maxItems: 1, direction: 'older', cursor }) });
+    expect(items).toHaveLength(6);
+    expect(new Set(items.map(item => item.id)).size).toBe(6);
+    expect(items.map(item => item.raw.content)).toMatchObject([
+      { data: { type: 'tool-call', name: 'subAgentActivity', input: { agentThreadId: 'child', kind: 'interacted' } } },
+      { data: { type: 'tool-call-result', output: { completedAtMs: 20 } } },
+      { data: { type: 'tool-call', name: 'spawnAgent', input: { prompt: 'inspect' } } },
+      { data: { type: 'tool-call-result', output: { agentsStates: { child: { status: 'running' } } } } },
+      { data: { type: 'tool-call', name: 'lookup', input: { namespace: 'catalog', arguments: { query: 'fixture' } } } },
+      { data: { type: 'tool-call-result', output: { success: true, contentItems: [{ type: 'inputText', text: 'result' }] } } },
+    ]);
   });
 
   it('distinguishes confirmed empty native history from unavailable history', async () => {
