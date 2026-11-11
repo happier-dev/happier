@@ -730,7 +730,7 @@ export const TeamCredentialUsageScreen = React.memo(function TeamCredentialUsage
             serverId={props.serverId}
             teamId={props.subject ? props.subject.teamId : props.teamId}
             title={t('teams.credentials.usage.title')}
-            description={t('teams.pages.credentialUsage')}
+            description={props.subject ? t('teams.pages.credentialUsageTeam') : t('teams.pages.credentialUsage')}
         >
             {(context) => props.subject
                 ? <CredentialUsage scope={context.scope} address={context.address} target={{ subject: props.subject }}

@@ -72,6 +72,7 @@ export const english = {
             credentialEdit: 'Change who can use this credential, how, and how much.',
             credentialActivity: 'Changes to this credential and who made them.',
             credentialUsage: 'How much this credential has been used, and by whom.',
+            credentialUsageTeam: 'How much this Team’s shared credentials have been used, and by whom.',
             credentialExternalApi: 'Use this credential from tools outside Happier.',
             identityProviderNew: 'Connect an identity provider members can sign in with.',
             identityProviderEdit: 'Change how this identity provider connects.',

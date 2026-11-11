@@ -255,6 +255,24 @@ describe('TeamGroupDetailScreen', () => {
             .not.toContain('team-group-candidate:candidate-account-999');
     });
 
+    it('reserves one loading row per known member while the first roster page is in flight', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ memberCount: 1, capabilities: MANAGED_GROUP_CAPABILITIES }),
+        });
+        let releaseRoster!: () => void;
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, {
+            body: { items: [], nextCursor: null },
+            respondAfter: new Promise<void>((resolve) => { releaseRoster = resolve; }),
+        });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-members-loading-skeleton:0');
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids).not.toContain('team-group-members-loading-skeleton:1');
+        releaseRoster();
+    });
+
     it('offers retry for a transient Group-detail read failure', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, { status: 503, body: { error: 'unavailable' } });

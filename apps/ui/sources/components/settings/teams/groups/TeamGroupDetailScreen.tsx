@@ -540,7 +540,9 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     <ItemLoadStateRows
                         testID="team-group-members-loading"
                         state={{ kind: 'loading' }}
-                        rows={3}
+                        // The Group already says how many members it has: reserve
+                        // their rows so the roster does not resize when it lands.
+                        rows={Math.min(Math.max(1, group.memberCount), GROUP_DETAIL_CHUNK_SIZE)}
                         accessibilityLabel={t('teams.loading')}
                     />
                 </ItemGroup>

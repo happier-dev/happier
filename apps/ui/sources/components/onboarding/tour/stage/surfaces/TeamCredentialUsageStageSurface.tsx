@@ -22,7 +22,7 @@ export function TeamCredentialUsageStageSurface(): React.ReactElement {
     })), [result]);
     return <ItemList>
         <TeamSectionPageHeader title={t('teams.credentials.usage.title')}
-            description={t('teams.pages.credentialUsage')} alwaysShowTitle={false}
+            description={t('teams.pages.credentialUsageTeam')} alwaysShowTitle={false}
             teamName={team.context.team.name} homeName={team.context.homeName} />
         <TeamCredentialUsageSummary result={result} period="7days" costMode="reported"
             showRequests completeness={t('teams.credentials.usage.recordedByHappier')}

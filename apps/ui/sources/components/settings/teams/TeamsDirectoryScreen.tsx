@@ -108,7 +108,8 @@ const TeamsEmptyState = React.memo(function TeamsEmptyState(props: Readonly<{
             // says how to start rather than repeating it.
             scene="invitePeople"
             title={t('teams.directory.emptyTitle')}
-            subtitle={t('teams.directory.emptyStart')}
+            // One message: when nobody here can start a Team, who creates them replaces the invitation.
+            subtitle={refusal ? teamsCreateRefusalText(refusal) : t('teams.directory.emptyStart')}
             primaryAction={collection.showCreateTeam ? {
                 label: t('teams.directory.newTeam'),
                 onPress: props.onCreate,
@@ -120,7 +121,6 @@ const TeamsEmptyState = React.memo(function TeamsEmptyState(props: Readonly<{
                 onPress: () => router.push(homeTeamCreationPolicyHref(openCreationPolicyServerId) as never),
                 testID: 'teams-directory-open-creation-policy',
             } : undefined}
-            actionUnavailableReason={refusal ? teamsCreateRefusalText(refusal) : undefined}
         />
     );
 });
