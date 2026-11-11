@@ -67,6 +67,7 @@ export type AccountDetailUsageFacts = Readonly<{
     refreshing: boolean;
     /** Null when the account's service reports no usage (Refresh is not offered). */
     refresh: (() => void) | null;
+    usageState?: 'not_loaded' | 'observed';
 }>;
 
 /**
@@ -153,7 +154,9 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                     testID={`${testID}:none`}
                     size="line"
                     kind="empty"
-                    title={t('common.unavailable')}
+                    title={facts.usageState === 'not_loaded'
+                        ? t('connectedServicesSettings.usageAppearsAfterSession')
+                        : t('common.unavailable')}
                 />
             )}
             {failure ? (
@@ -358,6 +361,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         error: quota.error,
         refreshing: quota.refreshing,
         refresh: props.machineId === null || quota.supported === false ? null : retry,
+        ...(snapshot ? { usageState: snapshot.state === 'not_loaded' ? 'not_loaded' as const : 'observed' as const } : {}),
     };
     return (
         <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut && props.machineId !== null ? (

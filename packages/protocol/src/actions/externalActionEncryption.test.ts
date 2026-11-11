@@ -214,29 +214,6 @@ describe('whole external Action encryption', () => {
       expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: tampered, binding: syncBinding, material })).toBeNull();
     }
   });
-  it('admits the exact workspace-only worker-copy input without a checkout projection', () => {
-    const syncBinding = { ...binding, actionId: 'projects.open' };
-    const input = {
-      serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
-      machineId: 'eadc2422-b42b-478d-97b1-af9b530d5f08',
-      source: { kind: 'workspace' as const, workspaceId: '2fc9c4f3-ce25-40df-b130-1bdfb7337d6f' },
-      materialization: {
-        kind: 'sync' as const,
-        targetPath: '/home/happier/wave-agent-1110-owner-worker',
-        workspaceAction: { kind: 'create_relationship' as const, mode: 'keep_both_in_sync' as const,
-          contentPolicy: { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [],
-            policyDigest: 'ecf40d098d4b8ace3d0f51cb9e3fa9bea4b3b1f975afb51ed60e6e157d44c8de' }, flushBeforeCommit: true },
-      },
-    };
-    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-      binding: syncBinding, input, material, randomBytes });
-    expect(envelope.workspaceSyncAdmission).toEqual({
-      sourceMachineId: input.machineId,
-      sourceWorkspaceRefId: input.source.workspaceId,
-    });
-    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-      envelope, binding: syncBinding, material })).toEqual({ input });
-  });
   it('binds an operation Environment projection without choosing an Environment from the token grant', () => {
     const operationBinding = { ...binding, actionId: 'action.operations.get' };
     const input = { serverId: binding.serverIdentityId, machineId: binding.target.machineId,

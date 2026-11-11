@@ -93,7 +93,7 @@ export type ConnectedServiceAccountWithoutUsage = Readonly<{
     key: string;
     serviceLabel: string;
     legacyServiceId: ConnectedServiceId | null;
-    state: 'loading' | 'unavailable';
+    state: 'loading' | 'unavailable' | 'no_usage_observed';
 } & ConnectedServiceQuotaAccountIdentity>;
 
 export type ConnectedServiceQuotaAccountPresentation = ConnectedServiceQuotaAccountIdentity & Pick<ConnectedServiceQuotaSummary,
@@ -361,8 +361,10 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
             const snapshot = snapshotsByKey[entry.key];
             if (!snapshot || snapshot.meters.length === 0) {
                 // In flight (or not started yet) reads as loading; a finished read without usage is
-                // unavailable. A cache-only reader says nothing about an account it did not read.
+                // unavailable unless the canonical snapshot says no observation exists yet. A
+                // cache-only reader says nothing about an account it did not read.
                 const read = readByKey[entry.key] === true && loadingByKey[entry.key] !== true;
+                const noUsageObserved = snapshot?.state === 'not_loaded';
                 // A key that answered without limits reports none by design: counted, not "unavailable".
                 if (read && isApiKey) {
                     keysWithoutLimits += 1;
@@ -373,7 +375,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                         key: entry.key,
                         serviceLabel: summaryService.serviceLabel,
                         legacyServiceId: summaryService.legacyServiceId,
-                        state: read ? 'unavailable' : 'loading',
+                        state: noUsageObserved ? 'no_usage_observed' : read ? 'unavailable' : 'loading',
                         ...identity,
                     });
                 }

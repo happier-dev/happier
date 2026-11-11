@@ -314,7 +314,7 @@ async function runLoad(
             // Manual refresh still goes through the canonical runtime admission.
             if (snapshot) entry.supported = true;
             entry.error = null;
-            if (read?.status === 'error') {
+            if (read?.status === 'error' && snapshot?.state !== 'not_loaded') {
                 // Provider messages, headers and status codes stay diagnostic-only, never user-facing copy.
                 const error = t('connectedServices.errors.quotaRefreshFailed');
                 // A retry time already past is no guidance; the next read says what is true then.

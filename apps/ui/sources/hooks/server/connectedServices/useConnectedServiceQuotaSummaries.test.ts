@@ -265,7 +265,7 @@ describe('useConnectedServiceQuotaSummaries', () => {
         setQualifiedResponse(null);
         const settled = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
         expect(settled.at(-1)?.accountsWithoutUsage).toEqual([
-            expect.objectContaining({ accountLabel: null, accountId: 'work', serviceGroupKey: 'acme.connected.accounts/gateway', state: 'unavailable' }),
+            expect.objectContaining({ accountLabel: null, accountId: 'work', serviceGroupKey: 'acme.connected.accounts/gateway', state: 'no_usage_observed' }),
         ]);
 
         // A read still in flight is loading, never "unavailable".

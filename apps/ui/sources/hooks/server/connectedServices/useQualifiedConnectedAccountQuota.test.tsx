@@ -224,9 +224,9 @@ describe('useQualifiedConnectedAccountQuota', () => {
         const hook = await renderHook(() => useQualifiedConnectedAccountQuota(ref), { wrapper: Wrapper });
         await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent()).toMatchObject({
-            snapshot: null, usageRecordId: response.sourceResolution.recordId, supported: null, refreshing: false,
-            // The fixture's retry time (10) has passed, so only the failure itself is said.
-            error: failedRefresh ? t('connectedServices.errors.quotaRefreshFailed') : null,
+            snapshot: { state: 'not_loaded', fetchedAt: 0 }, usageRecordId: response.sourceResolution.recordId,
+            supported: true, refreshing: false,
+            error: null,
         });
 
         // A real observation with no quota windows still has an honest read time.
@@ -288,14 +288,18 @@ describe('useQualifiedConnectedAccountQuota', () => {
         },
     );
 
-    it('keeps an absent first snapshot refreshable until the real quota leaf refuses', async () => {
+    it('keeps an absent first observation typed and refreshable until the real quota leaf refuses', async () => {
         boundary.read.mockImplementation(async () => missing());
         const hook = await renderHook(() => useQualifiedConnectedAccountQuota(ref), { wrapper: Wrapper });
         await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
-        expect(hook.getCurrent()).toMatchObject({ supported: null, snapshot: null, error: null });
+        expect(hook.getCurrent()).toMatchObject({
+            supported: true,
+            snapshot: { state: 'not_loaded', fetchedAt: 0, meters: [] },
+            error: null,
+        });
         boundary.control.mockResolvedValue({ status: 'unavailable', code: 'connected_account_v4_operation_unsupported' });
         await act(async () => { await hook.getCurrent().refresh(); });
-        expect(hook.getCurrent().supported).toBe(false);
+        expect(hook.getCurrent().supported).toBe(true);
         expect(boundary.refresh).not.toHaveBeenCalled();
     });
 

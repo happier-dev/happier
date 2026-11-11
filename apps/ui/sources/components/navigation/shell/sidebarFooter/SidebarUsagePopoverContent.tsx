@@ -467,7 +467,9 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     const identity = accountHeaderLine(props.serviceLabel, props.name);
     const stateLabel = account.windows.length > 0
         ? null
-        : account.state === 'loading' ? t('common.loading') : t('common.unavailable');
+        : account.state === 'loading' ? t('common.loading')
+            : account.state === 'no_usage_observed' ? t('connectedServicesSettings.usageAppearsAfterSession')
+            : t('common.unavailable');
     return (
         <View testID={`sidebar-usage-account-${account.key}`} style={styles.group}>
             <AccountHeader

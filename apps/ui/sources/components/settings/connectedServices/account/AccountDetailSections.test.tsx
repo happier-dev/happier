@@ -59,6 +59,15 @@ describe('AccountDetailUsageSectionView', () => {
         expect(retry).toHaveBeenCalledOnce();
     });
 
+    it('explains that observation-only usage appears after a Session without showing an error', async () => {
+        const screen = await renderScreen(<AccountDetailUsageSectionView
+            facts={{ ...FACTS, meters: [], fetchedAt: 0, usageState: 'not_loaded', refresh: vi.fn() }}
+            signedOut={false} now={2_000}
+        />);
+        expect(screen.getTextContent()).toContain('Usage appears after a Session reports it.');
+        expect(screen.findByTestId('account-detail-usage:error')).toBeNull();
+    });
+
     // Orchestrator decision F2 (VIS-P8-STATES, 2026-11-03): a signed-out account says one thing, its signed-out
     // state and Sign in action. A refresh failure from before the sign-out is stale, so it is dropped.
     it('drops a stale refresh failure on a signed-out account and keeps its retained usage', async () => {

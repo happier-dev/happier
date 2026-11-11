@@ -14,6 +14,8 @@ import {
   ConnectedServiceQuotaRecoveryCreditDetailsByIdV1Schema,
 } from './connectedServiceSchemas.js';
 import { ProviderAccountUsageDiagnosticV1Schema } from './providerAccountUsageDiagnostic.js';
+import { ProviderAccountUsageStateV1Schema, type ProviderAccountUsageStateV1 } from './providerAccountUsageState.js';
+export { ProviderAccountUsageStateV1Schema, type ProviderAccountUsageStateV1 } from './providerAccountUsageState.js';
 export type { ProviderAccountUsageDiagnosticV1 } from './providerAccountUsageDiagnostic.js';
 
 export {
@@ -90,14 +92,6 @@ export type ProviderAccountUsageSourceV1 = z.infer<typeof ProviderAccountUsageSo
 export const ProviderAccountUsageConfidenceV1Schema = lazyZodSchema(() => z.enum(['confirmed', 'estimated', 'unknown']));
 export type ProviderAccountUsageConfidenceV1 = z.infer<typeof ProviderAccountUsageConfidenceV1Schema>;
 
-export const ProviderAccountUsageStateV1Schema = lazyZodSchema(() => z.enum([
-  'not_loaded',
-  'loaded_empty',
-  'loaded_data',
-  'stale_data',
-  'error_last_known_good',
-]));
-export type ProviderAccountUsageStateV1 = z.infer<typeof ProviderAccountUsageStateV1Schema>;
 
 function canonicalRecordKeyJson(key: ProviderAccountUsageRecordKeyV1): string {
   return JSON.stringify({

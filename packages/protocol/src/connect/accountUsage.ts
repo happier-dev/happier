@@ -228,6 +228,7 @@ export function projectProviderAccountUsageSnapshotToQuotaFieldsV1(
         ...(parsed.subscription ? { subscription: parsed.subscription } : {}),
         meters: parsed.meters,
         ...(parsed.diagnostics ? { diagnostics: parsed.diagnostics } : {}),
+        ...(parsed.state ? { state: parsed.state } : {}),
     };
 }
 

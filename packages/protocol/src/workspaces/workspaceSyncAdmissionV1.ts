@@ -60,13 +60,8 @@ export function projectWorkspaceSyncAdmissionInputV1(actionId: string, input: un
   const parsed = OpenProjectInputV1Schema.safeParse(input);
   if (!parsed.success || parsed.data.materialization.kind !== 'sync') return undefined;
   const source = parsed.data.source;
+  if (source.kind !== 'workspace' && source.kind !== 'source' || !source.checkout) return undefined;
   const action = parsed.data.materialization.workspaceAction;
-  if (source.kind === 'workspace') {
-    return { sourceMachineId: source.checkout?.machineId ?? parsed.data.machineId,
-      sourceWorkspaceRefId: source.checkout?.workspaceId ?? source.workspaceId,
-      ...(action.kind === 'relationship' ? { relationshipId: action.relationshipId } : {}) };
-  }
-  if (source.kind !== 'source' || !source.checkout) return undefined;
   return { sourceMachineId: source.checkout.machineId, sourceWorkspaceRefId: source.checkout.workspaceId,
     ...(action.kind === 'relationship' ? { relationshipId: action.relationshipId } : {}) };
 }

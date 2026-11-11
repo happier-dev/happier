@@ -53,7 +53,7 @@ export async function readQualifiedConnectedAccountQuota(
     context: QualifiedConnectedAccountQuotaTransportContext,
 ): Promise<Readonly<{
     snapshot: QualifiedConnectedAccountQuotaSnapshotV4 | null;
-    recordId: ProviderAccountUsageRecordId;
+    recordId: ProviderAccountUsageRecordId | null;
     status: QualifiedConnectedAccountQuotaResponseV4['metadata']['status'];
     diagnostics?: QualifiedConnectedAccountQuotaSnapshotV4['diagnostics'];
     refreshRequestedAt?: number;
@@ -64,7 +64,26 @@ export async function readQualifiedConnectedAccountQuota(
         context.ref,
         { expectedActiveServer: context.serverBasis },
     );
-    if (!response) return null;
+    if (!response) {
+        // A connected account can have no provider usage record until its first
+        // Session reports usage. Keep that absence typed at the quota owner so
+        // every consumer renders "usage appears after a Session" instead of a
+        // quota acquisition failure.
+        return {
+            snapshot: {
+                v: 1,
+                ref: context.ref,
+                fetchedAt: 0,
+                staleAfterMs: 1,
+                planLabel: null,
+                accountLabel: null,
+                meters: [],
+                state: 'not_loaded',
+            },
+            recordId: null,
+            status: 'unavailable',
+        };
+    }
     const material = isTokenOnlyAuthCredentials(context.credentials)
         ? null
         : resolveAccountScopedCryptoMaterialFromCredentials(
@@ -82,11 +101,11 @@ export async function readQualifiedConnectedAccountQuota(
         );
     }
     // V4's numeric quota projection uses zero before any provider observation.
-    // Keep its record binding and failures, but do not publish an epoch-dated
-    // snapshot or infer quota support from that placeholder.
+    // Preserve the canonical `not_loaded` snapshot and its record binding: an
+    // observation-only provider has answered successfully with no sample yet.
     const planLabel = resolveConnectedServicePlanLabel(context.ref.service, opened.planLabel);
     const snapshot = planLabel === opened.planLabel ? opened : { ...opened, planLabel };
-    return { snapshot: opened.fetchedAt === 0 ? null : snapshot, recordId: response.sourceResolution.recordId, status: response.metadata.status,
+    return { snapshot, recordId: response.sourceResolution.recordId, status: response.metadata.status,
         ...(opened.diagnostics ? { diagnostics: opened.diagnostics } : {}),
         ...(response.metadata.refreshRequestedAt === undefined ? {} : { refreshRequestedAt: response.metadata.refreshRequestedAt }) };
 }

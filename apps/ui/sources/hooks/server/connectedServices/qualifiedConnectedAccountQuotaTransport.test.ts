@@ -38,6 +38,7 @@ const snapshot = {
     planLabel: null,
     accountLabel: null,
     meters: [],
+    state: 'not_loaded' as const,
 };
 const response = {
     ref,
@@ -86,6 +87,24 @@ describe('qualifiedConnectedAccountQuotaTransport', () => {
             ref,
             serverBasis,
         })).resolves.toEqual({ snapshot, recordId: 'paug_v1_testrecord', status: 'ok' });
+    });
+
+    it('keeps the typed not_loaded snapshot so observation-only accounts are not treated as missing', async () => {
+        const unobserved = { ...response, content: { t: 'plain' as const, v: { ...snapshot, fetchedAt: 0 } },
+            sourceResolution: { ...response.sourceResolution, fetchedAt: 0 }, metadata: { ...response.metadata, fetchedAt: 0, status: 'unavailable' as const } };
+        getQuotaMock.mockResolvedValue(unobserved);
+        await expect(readQualifiedConnectedAccountQuota({ credentials: tokenOnlyCredentials, ref, serverBasis }))
+            .resolves.toMatchObject({ snapshot: { state: 'not_loaded', fetchedAt: 0 }, status: 'unavailable' });
+    });
+
+    it('projects a missing first observation into the typed not_loaded state', async () => {
+        getQuotaMock.mockResolvedValue(null);
+        await expect(readQualifiedConnectedAccountQuota({ credentials: tokenOnlyCredentials, ref, serverBasis }))
+            .resolves.toMatchObject({
+                snapshot: { ref, state: 'not_loaded', fetchedAt: 0, meters: [] },
+                recordId: null,
+                status: 'unavailable',
+            });
     });
 
     it('rejects a quota response attributed to a different provider account', async () => {

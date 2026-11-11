@@ -168,6 +168,7 @@ export const en = {
     detailRemovePooledConfirmNamed: ({ pool }: { pool: string }) => `This account is in the pool “${pool}”. Do you still want to remove it?`,
     detailUsageSignedOut: 'Last known · can’t refresh while signed out',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `Last known at ${time} · can’t refresh while signed out`,
+    usageAppearsAfterSession: 'Usage appears after a Session reports it.',
     detailResetsIn: ({ countdown }: { countdown: string }) => `in ${countdown}`,
     detailUsedByTitle: 'Used by',
     detailUsedByDefault: 'Its default account',

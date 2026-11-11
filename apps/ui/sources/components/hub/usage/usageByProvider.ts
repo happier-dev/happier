@@ -35,7 +35,8 @@ export type UsageAccountInput = Readonly<{
     /** This account's reading time, never another account's or a combined timestamp. */
     fetchedAt?: number | null;
     /** `ready`: windows read; `loading`: being read; `unavailable`: the provider reported nothing. */
-    state: 'ready' | 'loading' | 'unavailable';
+    /** `no_usage_observed` is a valid observation-only state before the first Session. */
+    state: 'ready' | 'loading' | 'unavailable' | 'no_usage_observed';
     meters: readonly UsageWindowInput[];
 }>;
 

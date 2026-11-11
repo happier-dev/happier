@@ -17,6 +17,8 @@ import {
 } from './connectedServiceBindings.js';
 import { ConnectedServiceCredentialKindSchema } from './connectedServiceCredentialKind.js';
 import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
+import { ProviderAccountUsageStateV1Schema } from './providerAccountUsageState.js';
+export { ProviderAccountUsageStateV1Schema, type ProviderAccountUsageStateV1 } from './providerAccountUsageState.js';
 import { ProviderAccountUsageDiagnosticV1Schema } from './providerAccountUsageDiagnostic.js';
 import {
     ConnectedServiceLimitCategoryV1Schema,
@@ -544,6 +546,8 @@ export const ConnectedServiceQuotaSnapshotV1Schema = lazyZodSchema(() => z.objec
     subscription: z.optional(ProviderAccountSubscriptionV1Schema),
     meters: z.array(ConnectedServiceQuotaMeterV1Schema),
     diagnostics: z.optional(z.array(ProviderAccountUsageDiagnosticV1Schema)),
+    /** Canonical PAU lifecycle; `not_loaded` means no Session has supplied a usage sample yet. */
+    state: z.optional(ProviderAccountUsageStateV1Schema),
 }));
 
 export type ConnectedServiceQuotaSnapshotV1 = z.infer<typeof ConnectedServiceQuotaSnapshotV1Schema>;
