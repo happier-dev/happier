@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
     createDeploymentReceiptDetailV1,
+    createDeploymentEnvironmentHeaderV1,
     createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import {
@@ -50,5 +51,21 @@ describe.each([
         expect(protocol.readDeploymentTargetLinkArtifactV1(reference, { ...artifact,
             body: JSON.stringify({ ...content, credentialId: 'private-credential' }) }))
             .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+    });
+
+    it('accepts the producer-owned Environment secret scope through both public SDK projections', () => {
+        const environment = createDeploymentEnvironmentHeaderV1();
+        const targetLink = createDeploymentTargetLinkHeaderV1({ environmentId: environment.id });
+        const parsed = protocol.ProtocolDeploymentEnvironmentGetResultV1Schema.safeParse({
+            ok: true,
+            environment,
+            secretScope: { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 0, missingGrantCount: 0 },
+            targetLinks: [targetLink],
+        });
+        expect(parsed.success).toBe(true);
+        if (parsed.success) expect(parsed.data.secretScope?.status).toBe('ready');
+        expect(protocol.ProtocolDeploymentEnvironmentGetResultV1Schema.safeParse({
+            ok: true, environment, targetLinks: [targetLink], unexpected: true,
+        }).success).toBe(false);
     });
 });
