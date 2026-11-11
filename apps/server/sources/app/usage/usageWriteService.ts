@@ -9,6 +9,7 @@ import { usageReportWritesCounter } from "@/app/monitoring/metrics/index";
 import { afterTx, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import { requireDbProviderFromEnv } from "@/storage/prisma";
+import { jsonPathEquals } from "@/storage/jsonPathFilter";
 import { AsyncLock } from "@/utils/runtime/lock";
 import { LegacyUsageReportDataSchema, legacyUsageReportCanonicalOrder, readLegacyUsageReportKey } from "./legacyUsageReportSchema";
 import {
@@ -564,14 +565,24 @@ async function ensureNativeSubjectOwnedInTx(tx: Tx, accountId: string, subject: 
 async function hasNativeSessionLinkWitnessInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
     if (!subject.linkedSessionId) return true;
     if (!(await ensureSessionOwnedByAccount(tx, { accountId, sessionId: subject.linkedSessionId }))) return false;
-    const candidates = await tx.usageEvent.findMany({
-        where: { accountId, sessionId: subject.linkedSessionId, machineId: subject.machineId },
-        select: { metadata: true },
+    const candidate = await tx.usageEvent.findFirst({
+        where: {
+            accountId,
+            sessionId: subject.linkedSessionId,
+            machineId: subject.machineId,
+            AND: [
+                { metadata: jsonPathEquals(['captureOrigin'], 'runtime') },
+                { metadata: jsonPathEquals(['accountingSubject', 'kind'], 'native') },
+                { metadata: jsonPathEquals(['accountingSubject', 'machineId'], subject.machineId) },
+                { metadata: jsonPathEquals(['accountingSubject', 'agent', 'pluginId'], subject.agent.pluginId) },
+                { metadata: jsonPathEquals(['accountingSubject', 'agent', 'localId'], subject.agent.localId) },
+                { metadata: jsonPathEquals(['accountingSubject', 'sourceRootKey'], subject.sourceRootKey) },
+                { metadata: jsonPathEquals(['accountingSubject', 'nativeSessionKey'], subject.nativeSessionKey) },
+            ],
+        },
+        select: { id: true },
     });
-    return candidates.some(({ metadata }) => {
-        const witness = readStoredNativeSubject(metadata);
-        return witness && metadata && typeof metadata === 'object' && Reflect.get(metadata, 'captureOrigin') === 'runtime' && nativeSubjectKey(witness) === nativeSubjectKey(subject);
-    });
+    return candidate !== null;
 }
 
 export async function deleteNativeUsageHistory(accountId: string, request: UsageNativeHistoryDeleteRequest): Promise<Readonly<{ ok: true; deletedEventCount: number } | { ok: false; error: 'machine-not-found' }>> {
