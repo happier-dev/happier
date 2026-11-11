@@ -89,7 +89,7 @@ import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Sche
 import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { ActionExecuteFailureSchema, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 export type AccountServerActionDeps = Pick<
@@ -588,7 +588,10 @@ export function createAccountServerActionDeps(input: Readonly<{
             return { query, period, status: 'error', errorCode: 'denied' };
           }
           if ([404, 405, 501].includes(dispatched.response.status)) return { query, period, status: 'unsupported', errorCode: 'unsupported' };
-          if (dispatched.response.status >= 400) return { query, period, status: 'error', errorCode: 'usage_query_failed' };
+          if (dispatched.response.status >= 400) {
+            const typedErrorCode = readUnexpectedActionErrorDiagnosticV1({ response: dispatched.response }).errorCode;
+            return { query, period, status: 'error', errorCode: typedErrorCode ?? 'usage_query_failed' };
+          }
           const parsed = UsageAnalyticsQueryResponseSchema.safeParse(dispatched.response.data);
           return parsed.success ? { query, period, status: 'available', value: parsed.data, asOfMs: resolveUsageAccountingAsOfMs(parsed.data) }
             : { query, period, status: 'error', errorCode: 'usage_query_result_invalid' };

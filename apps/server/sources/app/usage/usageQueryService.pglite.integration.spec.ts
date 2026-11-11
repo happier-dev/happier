@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { applyPostgresMigrations } from '../../../scripts/prismaMigrations';
 import { openPgliteMigrationSession, type PgliteMigrationSession } from '../../../scripts/pgliteMigrationSession';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { prismaRuntime } from '@/storage/prisma';
 import { inTx, type Tx } from '@/storage/inTx';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from './usageSourceClassifier';
@@ -208,6 +209,56 @@ describe('Usage analytics PostgreSQL event transport', () => {
             rawEvidenceRows: undefined, evidenceRows: undefined, replayContext: undefined, normalizedEvidenceById: undefined };
         expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics(control, request));
         expect(projectUsageAnalytics(captured, request).totals.tokens.total).toBe(15);
+    });
+
+    it('keeps candidate work proportional to unique histories when window and subject branches overlap', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const subject = { kind: 'native', machineId: 'machine',
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            sourceRootKey: 'root', nativeSessionKey: 'native' };
+        const rows = Array.from({ length: 16 }, (_, index) => ({
+            id: `candidate-overlap-${index}`,
+            accountId: account.id,
+            observedAt: new Date(200 + index),
+            createdAt: new Date(200 + index),
+            agentId: 'codex', machineId: 'machine', source: 'native', metadata: { accountingSubject: subject },
+            scope: 'session_cumulative', isCumulative: true,
+            inputTokens: index + 1, totalTokens: index + 1,
+        }));
+        await db.usageEvent.createMany({ data: [
+            { id: 'candidate-overlap-baseline', accountId: account.id, observedAt: new Date(100), createdAt: new Date(100),
+                agentId: 'codex', machineId: 'machine', source: 'native', metadata: { accountingSubject: subject },
+                scope: 'session_cumulative', isCumulative: true, inputTokens: 1, totalTokens: 1 },
+            ...rows,
+        ] });
+        let candidateSql: Prisma.Sql | undefined;
+        try {
+            const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 200, endMs: 300 } });
+            const captured = await inTx(tx => captureUsageAnalyticsInTx(new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property !== '$queryRaw') return Reflect.get(target, property, receiver);
+                    return async (...args: unknown[]) => {
+                        const input = args[0] as { strings?: readonly string[]; raw?: readonly string[] } | undefined;
+                        const statement = input?.strings ?? input?.raw ?? [];
+                        if (statement.some(part => part.includes('WITH history AS MATERIALIZED'))) candidateSql = args[0] as Prisma.Sql;
+                        return Reflect.apply(target.$queryRaw, target, args);
+                    };
+                },
+            }), account.id, request),
+                { readOnly: true, isolationLevel: 'Serializable' });
+            expect(captured.rows).toHaveLength(17);
+            expect(candidateSql).toBeDefined();
+            if (!candidateSql) return;
+            type PlanNode = { 'Node Type'?: string; 'Actual Rows'?: number; Plans?: PlanNode[] };
+            const [plan] = await db.$queryRaw<Array<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>>(
+                prismaRuntime.sql`EXPLAIN (ANALYZE, FORMAT JSON) ${candidateSql}`);
+            const find = (node: PlanNode, type: string): PlanNode | undefined =>
+                node['Node Type'] === type ? node : node.Plans?.map(child => find(child, type)).find(Boolean);
+            const append = find(plan?.['QUERY PLAN']?.[0]?.Plan ?? {}, 'Append');
+            expect(append?.['Actual Rows'], 'candidate branches must not re-emit admitted window rows').toBeLessThanOrEqual(17);
+        } finally {
+            await db.account.delete({ where: { id: account.id } });
+        }
     });
 
     it('reads full bodies only for demanded histories while retaining thin historical coverage', async () => {

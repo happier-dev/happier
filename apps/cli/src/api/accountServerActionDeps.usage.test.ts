@@ -89,6 +89,25 @@ describe('CLI and MCP personal usage Account transport', () => {
       }
     } finally { await app.close(); }
   });
+  it('surfaces a typed scalar Usage server failure instead of collapsing it to usage_query_failed', async () => {
+    const app = fastify();
+    app.post('/v2/usage/query', async (_request, reply) => reply.code(503).send({
+      error: 'database_transaction_timeout', statusCode: 503,
+    }));
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-typed-failure.test' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: 'owner-token', serverId: 'home', serverHttpBaseUrl: 'http://usage-typed-failure.test' }) });
+    try {
+      const result = await executor.execute('usage.query', { queries: [{ session: ['owned-session'],
+        includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false }] },
+      { surface: 'cli', serverId: 'home' });
+      expect(result.ok).toBe(true);
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      expect(slice.sources.find(source => source.source === 'accounting')).toMatchObject({
+        status: 'error', errorCode: 'database_transaction_timeout',
+      });
+    } finally { await app.close(); }
+  });
   it('settles the QA-ACCT exact empty model/Machine filter shape as zero through the canonical query Action', async () => {
     // Exact clauses from qa-usage-acct-1030/fixture-query-input.json; the
     // authenticated HTTP owner returns its valid empty accounting projection.

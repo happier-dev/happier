@@ -39,6 +39,7 @@ export async function loadUsageEventCandidatesForQuery(tx: Tx, accountId: string
     // The captured evidence owns metadata admission for every hydrated body.
     const columns = prismaRuntime.join(Object.keys(usageEventSelect).filter(key => key !== 'metadata')
         .map(key => prismaRuntime.raw(`e."${key}"`)));
+    const windowIds = windowRows.map(row => row.id);
     return await tx.$queryRaw<UsageQueryEvent[]>(prismaRuntime.sql`
         WITH history AS MATERIALIZED (
             SELECT "id", "sessionId", "agentId", "machineId",
@@ -56,17 +57,22 @@ export async function loadUsageEventCandidatesForQuery(tx: Tx, accountId: string
         ), producers AS (
             SELECT * FROM jsonb_to_recordset(CAST(${JSON.stringify([...producers.values()])} AS jsonb))
                 AS p("machineId" text, "agentId" text, "nativeKey" text)
+        ), window_ids AS (
+            SELECT "id" FROM history WHERE "id" = ANY(CAST(${windowIds} AS text[]))
         ), candidates AS (
-            SELECT "id" FROM history WHERE "id" = ANY(CAST(${windowRows.map(row => row.id)} AS text[]))
+            SELECT "id" FROM window_ids
             UNION SELECT h."id" FROM history h JOIN sessions s ON h."sessionId" = s."sessionId"
                 AND h."agentId" IS NOT DISTINCT FROM s."agentId"
+                WHERE NOT EXISTS (SELECT 1 FROM window_ids windowed WHERE windowed."id" = h."id")
             UNION SELECT h."id" FROM history h JOIN native_subjects n
                 ON h.hints #>> '{accountingSubject,sourceRootKey}' = n."sourceRootKey"
                 AND h.hints #>> '{accountingSubject,nativeSessionKey}' = n."nativeSessionKey"
+                WHERE NOT EXISTS (SELECT 1 FROM window_ids windowed WHERE windowed."id" = h."id")
             UNION SELECT h."id" FROM history h JOIN producers p
                 ON h."machineId" IS NOT DISTINCT FROM p."machineId" AND h."agentId" IS NOT DISTINCT FROM p."agentId"
                 AND regexp_replace(h.hints #>> '{usageAccounting,nativeSessionId}', '[^a-zA-Z0-9]', '', 'g') = p."nativeKey"
                 WHERE h."sessionId" IS NULL
+                AND NOT EXISTS (SELECT 1 FROM window_ids windowed WHERE windowed."id" = h."id")
         )
         SELECT ${columns} FROM "UsageEvent" e WHERE e."accountId" = ${accountId}
             AND e."id" IN (SELECT "id" FROM candidates) ORDER BY e."observedAt" ASC`);
