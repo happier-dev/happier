@@ -649,13 +649,13 @@ describe('WidgetFrame', () => {
         expect(card.findAllByProps({ name: 'timer' }).length).toBeGreaterThan(0);
     });
 
-    it('reveals a plain widget\'s controls on hover or keyboard focus with a pointer, keeping their room; a card and touch keep them shown', async () => {
+    it('reveals a plain widget\'s controls on hover or keyboard focus with a pointer; a card and touch keep them shown', async () => {
         const menu = <Text testID="frame-menu">menu</Text>;
         const resting = (screen: Awaited<ReturnType<typeof renderFrame>>) =>
             StyleSheet.flatten(screen.findByTestId('frame.controls')!.props.style)?.opacity === 0;
         pointer.hoverCapable = true;
         const plain = await renderFrame({ frameStyle: 'plain', placement: 'board', menu });
-        // At rest the controls are drawn transparent: still laid out (no shift when they appear) and still focusable.
+        // At rest the controls are drawn transparent and stay focusable.
         expect(plain.findByTestId('frame-menu')).not.toBeNull();
         expect(resting(plain)).toBe(true);
         act(() => { plain.findByTestId('frame.hover')!.props.onPointerEnter(); });
@@ -672,6 +672,31 @@ describe('WidgetFrame', () => {
         const touch = await renderFrame({ frameStyle: 'plain', placement: 'companion', menu });
         expect(resting(touch)).toBe(false);
         expect(touch.findByTestId('frame-menu')).not.toBeNull();
+    });
+
+    it('rests a plain widget\'s meta on the header\'s end while its hover controls are out of sight, and moves it aside when they show', async () => {
+        const menu = <Text testID="frame-menu">menu</Text>;
+        pointer.hoverCapable = true;
+        const plain = await renderFrame({ frameStyle: 'plain', placement: 'home', menu, meta: '7 needs you' });
+        // The resting controls take no room in the header row (their slot is out of its flow): the count ends where
+        // the rows' trailing words end. They keep their place in the tree, so switching Card and Plain keeps the menu.
+        let slot = plain.findByTestId('frame.controls')!.parent;
+        while (slot && StyleSheet.flatten(slot.props.style)?.position === undefined) slot = slot.parent;
+        expect(StyleSheet.flatten(slot?.props.style)?.position).toBe('absolute');
+        expect(plain.findByTestId('frame-menu')).not.toBeNull();
+        const shift = () => {
+            const transform = StyleSheet.flatten(plain.findByTestId('frame.metaShift')!.props.style)?.transform as
+                ReadonlyArray<Readonly<{ translateX?: number }>> | undefined;
+            return transform?.[0]?.translateX ?? 0;
+        };
+        expect(shift()).toBe(0);
+        act(() => { plain.findByTestId('frame.controls')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 40, height: 32 } } }); });
+        act(() => { plain.findByTestId('frame.hover')!.props.onPointerEnter(); });
+        // Shown, the controls stand at the end and the count steps aside by their width and the header gap, by a
+        // transform: nothing in the header re-lays out.
+        expect(shift()).toBe(-48);
+        act(() => { plain.findByTestId('frame.hover')!.props.onPointerLeave(); });
+        expect(shift()).toBe(0);
     });
 
     it('keeps the same header, body and footer when drawn plain', async () => {

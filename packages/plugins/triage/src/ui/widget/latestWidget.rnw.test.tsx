@@ -57,7 +57,9 @@ const INSTANCE = '11111111-1111-4111-8111-111111111111';
 const TITLE = 'Replace the duplicated normalizer';
 
 function createListHarness(withTasks = false, mineFacts: Readonly<Record<string, unknown>> = {}, withPersonal = false,
-    failing: Readonly<{ now: boolean }> = { now: false }, morePullRequests = 0) {
+    failing: Readonly<{ now: boolean }> = { now: false }, morePullRequests = 0,
+    /** The first pull request's own facts, as its source reports them. */
+    pullRequest: Readonly<{ snapshot?: Record<string, unknown>; sourceUpdatedAtMs?: number }> = {}) {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue({
         instanceTag: `a${'0'.repeat(42)}`,
@@ -111,9 +113,9 @@ function createListHarness(withTasks = false, mineFacts: Readonly<Record<string,
             kind: 'present',
             localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
             locator: testkitLocator(),
-            snapshot: testkitSnapshot({ title: TITLE }),
+            snapshot: testkitSnapshot({ title: TITLE, ...pullRequest.snapshot }),
             viewer: testkitViewer(),
-            sourceUpdatedAtMs: 3_000,
+            sourceUpdatedAtMs: pullRequest.sourceUpdatedAtMs ?? 3_000,
         }, ...Array.from({ length: morePullRequests }, (_, index) => ({
             kind: 'present' as const,
             localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: `${20 + index}` },
@@ -162,7 +164,9 @@ async function mountWidget(
     scope: ReturnType<typeof createTriageEphemeralSharedScopeOriginFixture>,
     executeAction: (input: unknown) => Promise<unknown>,
     publishCurrentUiContext?: (enrichment: unknown) => void,
-    options: Readonly<{ surface?: RenderSurface; targetedContributions?: PluginUiTargetedContributionsV1; frameHeader?: boolean }> = {},
+    options: Readonly<{ surface?: RenderSurface; targetedContributions?: PluginUiTargetedContributionsV1; frameHeader?: boolean;
+        /** The host's own facts about this mount's Run on Machine (its offline band speaks when it cannot answer). */
+        machine?: Readonly<{ machineExecutionReady: boolean; machineConnectionPending?: boolean }> }> = {},
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -170,8 +174,9 @@ async function mountWidget(
             identity: { instanceId: 'fixture-latest-widget', mountNonce: `mount-${mounted.length}` },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: options.surface ?? renderLatestWidget,
-            surfaceContext: createSurfaceContextFixture(options.targetedContributions === undefined ? {} : {
-                targetedContributions: options.targetedContributions,
+            surfaceContext: createSurfaceContextFixture({
+                ...(options.targetedContributions === undefined ? {} : { targetedContributions: options.targetedContributions }),
+                ...options.machine,
             }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope.forExecutionOrigin('fixture'),
                 ...(options.frameHeader === true ? { paneHeader: true } : {}) }),
@@ -254,6 +259,57 @@ describe('the New for you widget', () => {
         const second = await mountWidget(scope, input => harness.executeAction(input));
         await vi.waitFor(() => second.getByText('Example forge · example/repository could not be read'));
         await expect(second.getByText(TITLE)).resolves.toBeDefined();
+    });
+    it('leaves the outage to the host\'s line while its Machine cannot answer: the last rows, no second cause line', async () => {
+        const scope = createTriageEphemeralSharedScopeOriginFixture();
+        const failing = { now: false };
+        const harness = createListHarness(false, {}, false, failing);
+        const first = await mountWidget(scope, input => harness.executeAction(input));
+        await vi.waitFor(() => first.getByText(TITLE));
+        await first.dispose();
+        mounted.splice(mounted.indexOf(first), 1);
+        failing.now = true;
+        let settled = 0;
+        const second = await mountWidget(scope, async input => { try { return await harness.executeAction(input); } finally { settled += 1; } },
+            undefined, { machine: { machineExecutionReady: false } });
+        await vi.waitFor(() => second.getByText(TITLE));
+        // Same read failure as the test above, but the host already says its Machine is out: one voice for one cause.
+        await vi.waitFor(() => expect(settled).toBeGreaterThan(0));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        await expect(second.queryByText('Example forge · example/repository could not be read')).resolves.toBeUndefined();
+        await expect(second.queryByText('Some sources could not be read')).resolves.toBeUndefined();
+    });
+    it('says no second failure under the host\'s outage line when no rows could be read', async () => {
+        const harness = createListHarness(false, {}, false, { now: true });
+        let settled = 0;
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(),
+            async input => { try { return await harness.executeAction(input); } finally { settled += 1; } },
+            undefined, { machine: { machineExecutionReady: false } });
+        await vi.waitFor(() => expect(settled).toBeGreaterThan(0));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+        await expect(widget.queryByText('Example forge · example/repository could not be read')).resolves.toBeUndefined();
+        await expect(widget.queryByText('Nothing new right now')).resolves.toBeUndefined();
+    });
+    it('draws no loading rows under the host\'s outage line when nothing loaded, but keeps them while it connects', async () => {
+        const never = new Promise<never>(() => {});
+        const out = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), async () => await never, undefined,
+            { machine: { machineExecutionReady: false } });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+        await expect(out.queryByRole('progressbar', { name: 'Loading the latest entries' })).resolves.toBeUndefined();
+        const connecting = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), async () => await never, undefined,
+            { machine: { machineExecutionReady: false, machineConnectionPending: true } });
+        await vi.waitFor(() => connecting.getByRole('progressbar', { name: 'Loading the latest entries' }));
+    });
+    it('says a pull request with the Triage row\'s facts: where and its number, its age and its checks', async () => {
+        const harness = createListHarness(false, {}, false, { now: false }, 0, {
+            snapshot: { designation: '#17',
+                facts: [{ id: 'checks', label: 'Checks', importance: 'primary', value: { kind: 'status', value: '2 failing', tone: 'danger' } }] },
+            sourceUpdatedAtMs: Date.now() - 2 * 60 * 60 * 1000,
+        });
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => harness.executeAction(input));
+        await vi.waitFor(() => widget.getByText(TITLE));
+        await expect(widget.getByText('example/repository #17 · 2h')).resolves.toBeDefined();
+        await expect(widget.getByText('2 failing')).resolves.toBeDefined();
     });
     it('uses the shared window for My tasks without showing PRs or uninvolved tasks', async () => {
         const harness = createListHarness(true);

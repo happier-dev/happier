@@ -7,7 +7,7 @@ import { useActiveServerAccountScope, useIsDataReady } from '@/sync/domains/stat
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
-import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
+import { AppLaunchState } from './AppLaunchState';
 
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
 export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode }>) {
@@ -36,8 +36,8 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // Web retains its initial navigator gate so a transient first scope cannot consume its deep link.
     // While it waits, the person sees the startup state, or the Home's Retry once it is unreachable.
     if (pendingFirstAccount && Platform.OS === 'web') {
-        // The same loading page the destination's own fallback draws next, so startup reads as one state.
-        return <HomeReachabilityGate variant="pane"><PageLoadingRows testID="workspace-account-restoring" header /></HomeReachabilityGate>;
+        // Nothing yet says which page opens, so startup is the app's launch state, not a page's loading rows.
+        return <HomeReachabilityGate variant="pane"><AppLaunchState testID="workspace-account-restoring" /></HomeReachabilityGate>;
     }
     if ((presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
         || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)))) return null;

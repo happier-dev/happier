@@ -191,6 +191,7 @@ import {
 import { useTriagePaneMinimumWidthsV1 } from './usePaneMinimumWidths.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import {
+  readTriageHostOutageV1,
   readTriageListReadFailureNotice,
   readTriageRefreshPacingNotice,
   readTriageSourceFailureRowV1,
@@ -397,7 +398,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const retryLabel = text('happier.plugin-ui.state.retry', 'Retry');
   // While the host says its Run on Machine cannot answer (its offline band or Connecting line), that one voice is the
   // outage's: the list's own failure line, Refreshing and source-failure places step aside instead of repeating it.
-  const hostSpeaksForOutage = surfaceContext.machineExecutionReady === false;
+  const hostSpeaksForOutage = readTriageHostOutageV1(surfaceContext).speaks;
   const listPublication = React.useMemo(createTriageListPublicationV1, []);
   const window = useTriageListWindow(listPublication);
   const marks = useTriagePinnedEntries();

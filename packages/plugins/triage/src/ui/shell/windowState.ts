@@ -489,6 +489,22 @@ export function readTriageRefreshPacingNotice(
   });
 }
 
+/**
+ * Whether the host already speaks for this mount's outage: while its Run on Machine cannot answer, the host's band
+ * (offline, source unavailable, or Connecting) is the one voice for that cause. Every Triage surface (the page, the
+ * Home glances) reads this one rule and steps its own failure line, Refreshing and loading rows aside instead of
+ * repeating the cause a second way.
+ */
+export function readTriageHostOutageV1(context: Readonly<{ machineExecutionReady?: boolean; machineConnectionPending?: boolean }>): Readonly<{
+  /** The host's band names the cause; the surface's own failure words step aside. */
+  speaks: boolean;
+  /** Nothing will load until the Machine answers and the host is not connecting to it: no loading rows promise it. */
+  settled: boolean;
+}> {
+  const speaks = context.machineExecutionReady === false;
+  return { speaks, settled: speaks && context.machineConnectionPending !== true };
+}
+
 export function resolveTriageListShellState(
   snapshot: TriageListWindowSnapshotV1,
   options: Readonly<{

@@ -23,13 +23,13 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
-import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, formatTriageCompactAgeV1, triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
 import { bindTriageMountedUiActions } from '../mountedActions.js';
 import { useTriageCurrentUiContextPublication } from '../currentContextPublication.js';
 import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1, TRIAGE_TASK_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
 import { TRIAGE_LIST_DEFAULT_LENS_V1, triageEntryRowKey } from '../../projection/listWindow.js';
 import { readTriageSourceDescriptorV1 } from '../detail/sourceSurface.js';
-import { readTriageRowBylinePlaceV1, readTriageRowDetailToneV1, readTriageRowMarkV1, readTriageTaskDueV1 } from '../list/rows.js';
+import { readTriageRowBylinePlaceV1, readTriageRowDetailToneV1, readTriageRowMarkV1, readTriageSignalCellMarkV1, readTriageTaskDueV1 } from '../list/rows.js';
 import { openTriageLinkedEntry } from '../navigation/openLinkedEntry.js';
 import { projectTriageEntryDisplay } from '../window/entryDisplay.js';
 import { projectTriageListWindow } from '../window/mountedWindow.js';
@@ -38,7 +38,7 @@ import { useTriageListWindowViewDemand } from '../window/useTriageListWindowView
 import { planTriageListItemsV1 } from '../list/sections.js';
 import { planTriageTaskViewInventoryV1 } from '../list/viewInventory.js';
 import { TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
-import { readTriageListFailureNotice, resolveTriageListShellState } from '../shell/windowState.js';
+import { readTriageHostOutageV1, readTriageListFailureNotice, resolveTriageListShellState } from '../shell/windowState.js';
 import { readTriageListEmptyScene, readTriageListEmptyState, readTriageListEmptyStateKeys } from '../shell/emptyState.js';
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import { stageTriageTaskDraft } from '../taskDraftHandoff.js';
@@ -89,7 +89,9 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   // The page's one rule (`ui/shell/windowState.ts`): an old list that read cleanly stays quiet; only a failed or
   // unreachable read says the rows are the last known ones.
   const shellState = resolveTriageListShellState(snapshot, { tasks: tasksOnly });
-  const degraded = shellState.kind === 'window'
+  // While the host's band speaks for its Machine's outage, that is the widget's one notice (the page's rule).
+  const hostOutage = readTriageHostOutageV1(surfaceContext);
+  const degraded = shellState.kind === 'window' && !hostOutage.speaks
     && (shellState.showReadWarning || tasksOnly && snapshot.window?.coverage === 'partial');
   // A glance shows only the whole rows its frame has room for (two per grid row), never a row cut at the card foot;
   // its one degraded line takes a row's room, so the line naming the failed source is never the part cut off.
@@ -108,8 +110,10 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
       // The most pressing open work, in the page's band order (In progress, To do, Backlog); Done and Canceled stay
       // on the page behind their collapsed bands (lab `tasks-widget`).
       const byKey = new Map(projected.map((row) => [triageEntryRowKey(row.entryRef), row] as const));
-      return { rows: items.filter((item) => !tasksOnly || item.group !== 'completed' && item.group !== 'canceled')
-        .slice(0, shownRows).flatMap((item) => byKey.get(item.key) ?? []),
+      const shown = items.filter((item) => !tasksOnly || item.group !== 'completed' && item.group !== 'canceled').slice(0, shownRows);
+      return { rows: shown.flatMap((item) => byKey.get(item.key) ?? []),
+        // Each row's status fact (checks), as the page's Signal cell has it.
+        signalOf: new Map(shown.map((item) => [item.key, item.signal] as const)),
         inProgress: items.filter((item) => item.group === 'started').length,
         needsYou: items.filter((item) => item.group === 'needsYou').length };
     },
@@ -145,12 +149,13 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
     {...(headerActions === null ? {} : { actions: headerActions })}
     // The frame's one footer link, "Open Tasks": the way to every row this glance leaves out.
     onOpen={openPage} />;
-  // A glance says a degraded read in one quiet line under its rows, never a card above them: the page beside it owns
+  // A glance says a degraded read in one quiet line above its rows, where the host's own notice stands, never a card:
+  // a widget has one notice place (owner 2026-11-11). The page beside it owns
   // the source notice and its repair (one cause, said once, at the owner that can fix it). The line names the source
   // that failed when there is one; its words stay quiet and only the dot carries the warning (owner tone ruling
   // 2026-10-31). Unfinished coverage is said only on My tasks, whose "most pressing first" it would falsify; the
   // newest entries read so far are still the newest.
-  const degradedLine = shellState.kind !== 'window' ? null : shellState.showReadWarning
+  const degradedLine = shellState.kind !== 'window' || hostOutage.speaks ? null : shellState.showReadWarning
     ? <Status testID="triage-latest-widget.degraded" tone="warning" presentation="inline" label={shellState.failure === null
       ? text('plugins.triage.surface.lastKnown', 'Showing the last known list')
       : readTriageListFailureNotice(shellState.failure, text).title} />
@@ -179,6 +184,9 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         /></>
       );
     }
+    // Under the host's outage band nothing will load until its Machine answers: loading rows would promise rows
+    // that cannot come, so the band stands alone over the frame's held room.
+    if (hostOutage.settled) return header;
     return (
       <>{header}<LoadingState
         testID="triage-latest-widget.loading"
@@ -212,6 +220,8 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
     // What an empty list may claim is the page's one decision (`ui/shell/emptyState.ts`): "nothing new" only when
     // every source answered; a failed or unfinished read says so instead, in the same words the page uses.
     const empty = readTriageListEmptyState(shellState, 0, { narrowing: NOT_NARROWED, text });
+    // The host's outage band already says why nothing could be read: the frame keeps its room under that one notice.
+    if (empty !== null && empty.kind !== 'healthy' && hostOutage.speaks) return header;
     if (empty !== null && empty.kind !== 'healthy') {
       const keys = readTriageListEmptyStateKeys(empty.kind);
       return (<>{header}
@@ -235,6 +245,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   return (
     <>
     {header}
+    {degradedLine}
     <ItemGroup testID="triage-latest-widget.rows">
       {rows.map((row) => {
         const display = projectTriageEntryDisplay(row, text);
@@ -270,15 +281,22 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
             />
           );
         }
+        // The page row's facts in a glance's room (lab `merged-list`): where and its number, then its compact age, the
+        // reason as the one loud word, and the checks' dot when they need the reader (the page's Signal cell).
+        const signal = view?.signalOf.get(triageEntryRowKey(row.entryRef)) ?? null;
+        const signalMark = signal === null ? null : readTriageSignalCellMarkV1(signal.tone);
+        const age = display.activityAtMs === null ? null : formatTriageCompactAgeV1(surfaceContext.locale, display.activityAtMs, Date.now());
         return (
           <Item
             key={display.key}
             testID={`triage-latest-widget.row.${display.key}`}
             title={display.title}
             titleNumberOfLines={1}
-            subtitle={readTriageRowBylinePlaceV1(display)}
+            subtitle={age === null ? readTriageRowBylinePlaceV1(display) : `${readTriageRowBylinePlaceV1(display)} · ${age}`}
             subtitleNumberOfLines={1}
             icon={<Icon name={mark.name} size="small" tone={mark.tone} />}
+            {...(signal === null || signalMark === null || !signalMark.marked ? {} : { accessory: <Status presentation="inline"
+              tone={signalMark.tone} indicator label={signal.label} testID={`triage-latest-widget.signal.${display.key}`} /> })}
             {...(display.detail === null ? {} : { detail: display.detail, detailNumberOfLines: 1 })}
             {...(detailTone === undefined ? {} : { detailTone })}
             density="compact"
@@ -288,7 +306,6 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         );
       })}
     </ItemGroup>
-    {degradedLine}
     </>
   );
 }

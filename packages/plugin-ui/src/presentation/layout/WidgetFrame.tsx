@@ -114,6 +114,9 @@ const DISCLOSURE_BOX_STYLE = Object.freeze({
 /** Only an unthemed, unhosted frame (a bare test mount) falls back to a neutral mid-grey caret. */
 const DISCLOSURE_FALLBACK_INK = 'rgb(128, 128, 128)';
 
+/** Out of the header's flow (no room, no gap), centred on the header's line at its end. */
+const ACCESSORY_OVERLAY_STYLE = { position: 'absolute', right: 0, top: 0, bottom: 0, justifyContent: 'center' } as const;
+
 /** The frame's one narrowing rule: the source line leaves before the title truncates. */
 export function isHappierWidgetFrameSourceShown(
   widthPx: number | null,
@@ -268,6 +271,12 @@ export type HappierWidgetFrameProps = Readonly<{
   compactMeta?: ReactNode;
   /** The widget's own controls at the end of the header: its ⋯ menu, a move handle. */
   accessory?: ReactNode;
+  /**
+   * `overlay`: the controls stand over the header's end and take no room in it, so the meta ends on the content
+   * edge. For controls a host shows only while the widget is hovered or focused; the host moves the meta aside
+   * while they show. `inline` (default): they share the header line beside the meta.
+   */
+  accessoryPlacement?: 'inline' | 'overlay';
   /** Quiet facts supplied by the domain, without a footer band or divider. */
   facts?: ReactNode;
   /** Independent card-open target beneath content and native controls. */
@@ -624,7 +633,8 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                 style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, flexShrink: 1, minWidth: 0 }}>
                 {meta ? <View pointerEvents="auto" style={{ flexShrink: 0 }}>{meta}</View> : null}
                 {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on. */}
-                {!plain || props.accessory ? <View pointerEvents="box-none" style={{ flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View> : null}
+                {!plain || props.accessory ? <View pointerEvents="box-none" style={props.accessoryPlacement === 'overlay'
+                  ? ACCESSORY_OVERLAY_STYLE : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View> : null}
               </View>
             </View> : null}
           </View>

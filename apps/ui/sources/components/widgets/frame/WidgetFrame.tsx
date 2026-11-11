@@ -450,15 +450,22 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
 
     const controls = props.grip ? <View style={styles.chrome}>{props.menu}{props.grip}</View> : props.menu;
     // A plain widget is a section of its column (lab crows B): with a mouse or trackpad its controls rest out of
-    // sight and appear while the pointer is over it or focus is inside it, keeping their room so nothing moves.
-    // A finger cannot hover, so on touch they stay shown; a card always shows them.
+    // sight and appear while the pointer is over it or focus is inside it. A finger cannot hover, so on touch they
+    // stay shown; a card always shows them.
     const hoverCapable = useHoverCapablePrimaryPointer();
     const revealOnHover = props.frameStyle === 'plain' && hoverCapable && Boolean(props.menu || props.grip);
     const [engagement] = React.useState(createPlainControlsEngagement);
     // One element topology for every style: switching Card and Plain never remounts the menu that made the switch.
-    const accessory = controls
+    const plainControls = controls
         ? <PlainControls engagement={engagement} revealOnHover={revealOnHover} testID={props.testID}>{controls}</PlainControls>
-        : controls;
+        : null;
+    // Resting out of sight, the controls take no room in the header: they stand over its end, so the meta (a count,
+    // "7 needs you") ends on the content edge where the rows' trailing words end. Shown, they keep that place and the
+    // meta steps aside by their width (owner 2026-11-11).
+    const accessory = plainControls ?? controls;
+    const shiftedMeta = revealOnHover && meta ? <PlainMetaShift engagement={engagement} testID={props.testID}>{meta}</PlainMetaShift> : meta;
+    const shiftedCompactMeta = revealOnHover && refreshingMark
+        ? <PlainMetaShift engagement={engagement} testID={`${props.testID}.compact`}>{refreshingMark}</PlainMetaShift> : refreshingMark;
     const body = props.body;
     if (props.presentation === 'body') {
         return <>{authoredMeta}{body ? <SurfaceStateSizeProvider size={stateSize} actions="quiet">
@@ -490,9 +497,10 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             {...(props.source && !sourceRepeatsTitle(props.source, props.title) ? { source: props.source } : {})}
             renderSourceGlyph={renderSourceGlyph}
             sourcePlacement={props.sourcePlacement ?? (phone || props.titleMeta ? 'below' : 'inline')}
-            meta={meta}
-            {...(refreshingMark ? { compactMeta: refreshingMark } : {})}
+            meta={shiftedMeta}
+            {...(shiftedCompactMeta ? { compactMeta: shiftedCompactMeta } : {})}
             {...(props.leading ? { leading: props.leading } : {})}
+            {...(revealOnHover ? { accessoryPlacement: 'overlay' as const } : {})}
             accessory={props.livePicture && accessory
                 ? <GlassLivePictureBackdropContext.Provider value>{accessory}</GlassLivePictureBackdropContext.Provider>
                 : accessory}
@@ -579,26 +587,51 @@ type PlainControlsEngagement = Readonly<{
     release: () => void;
     subscribe: (listener: () => void) => () => void;
     read: () => boolean;
+    /** How far the meta steps aside while the controls show: their measured width and the header gap. */
+    readMetaShift: () => number;
+    measureControls: (width: number) => void;
 }>;
 
 function createPlainControlsEngagement(): PlainControlsEngagement {
     let engaged = false;
+    let controlsWidth = 0;
     const listeners = new Set<() => void>();
+    const notify = () => { for (const listener of listeners) listener(); };
     const set = (next: boolean) => {
         if (engaged === next) return;
         engaged = next;
-        for (const listener of listeners) listener();
+        notify();
     };
     return {
         engage: () => set(true),
         release: () => set(false),
         subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         read: () => engaged,
+        readMetaShift: () => engaged && controlsWidth > 0 ? -(controlsWidth + HAPPIER_WIDGET_FRAME_METRICS.headerGapPx) : 0,
+        measureControls: (width) => {
+            const next = Math.round(width);
+            if (next === controlsWidth) return;
+            controlsWidth = next;
+            if (engaged) notify();
+        },
     };
 }
 
-/** At rest the controls are transparent, not removed: they keep their width and stay reachable by keyboard. */
+/** At rest the controls are transparent, not removed: they stay reachable by keyboard. */
 const PLAIN_CONTROLS_AT_REST = { opacity: 0 } as const;
+
+/**
+ * The meta of a plain widget whose controls rest out of sight: it stays on the header's end and steps aside by a
+ * transform while the controls show, so nothing in the header re-lays out. Only this leaf reads the engagement.
+ */
+const PlainMetaShift = React.memo(function PlainMetaShift(props: Readonly<{
+    engagement: PlainControlsEngagement;
+    testID: string;
+    children: React.ReactNode;
+}>) {
+    const shift = React.useSyncExternalStore(props.engagement.subscribe, props.engagement.readMetaShift, props.engagement.readMetaShift);
+    return <View testID={`${props.testID}.metaShift`} pointerEvents="box-none" style={{ transform: [{ translateX: shift }] }}>{props.children}</View>;
+});
 
 const PlainControls = React.memo(function PlainControls(props: Readonly<{
     engagement: PlainControlsEngagement;
@@ -608,7 +641,12 @@ const PlainControls = React.memo(function PlainControls(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const engaged = React.useSyncExternalStore(props.engagement.subscribe, props.engagement.read, props.engagement.read);
-    return <View testID={`${props.testID}.controls`} style={!props.revealOnHover || engaged ? null : PLAIN_CONTROLS_AT_REST}>{props.children}</View>;
+    const measure = props.engagement.measureControls;
+    const onLayout = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ width: number }> }> }>) => {
+        measure(event.nativeEvent.layout.width);
+    }, [measure]);
+    return <View testID={`${props.testID}.controls`} {...(props.revealOnHover ? { onLayout } : {})}
+        style={!props.revealOnHover || engaged ? null : PLAIN_CONTROLS_AT_REST}>{props.children}</View>;
 });
 
 /**
