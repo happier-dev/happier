@@ -273,7 +273,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                         && machine.installationId === visibleCreation.controller?.installationId) return;
                     edit({ controller: { machineId: machine.id, installationId: machine.installationId }, controllerPoolId: null });
                 },
-            } : { title: knownControllerName ?? t('common.unknown') } },
+            } : { title: controllerName } },
         // Under "Made from this preset" a row is the machine, who made it and its state (lab m-presets); an
         // older revision says so, since edits apply only to machines made after them.
         machines: detail.history.map(row => ({ id: row.managedId, title: row.title,

@@ -1432,6 +1432,7 @@ describe('reachable preset detail', () => {
       id: 'controller', value: t('managedMachines.receipt.managingComputer'),
     }));
     expect(model.receipt?.facts).not.toContainEqual(expect.objectContaining({ id: 'controller', value: t('common.unknown') }));
+    expect(model.controller?.row.title).toBe(t('managedMachines.receipt.managingComputer'));
     expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
     const unavailableCard = screen.tree.findAll((node) => node.props.testID === 'machine-preset.configuration-unavailable')[0];
     expect(unavailableCard?.props.diagnosticCode).toBe('credential_unavailable');
