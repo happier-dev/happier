@@ -415,6 +415,29 @@ it.each(['typed failure', 'malformed descriptor', 'mismatched Action', 'Account 
     }
 });
 
+it('preserves Machine placement when the Account selection read is unavailable', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-placement-unavailable-'));
+    const app = fastify();
+    const endpoint = 'http://account-placement-unavailable.test';
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'placement-owner' })).toString('base64url')}.signature`;
+    const host = { token, credentials: { token, encryption: null, credentialProvenance: 'stored_session' as const },
+        happyHomeDir, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
+        serverId: 'placement-home', serverHttpBaseUrl: endpoint };
+    try {
+        const { deps } = createCliActionExecutorHarness(host);
+        const result = await executeAccountPluginAction({ host, deps, actionId: 'action.invoke',
+            input: { action: { pluginId: 'happier.triage', localId: 'sessions/start-entry-v1' }, input: {} },
+            context: { surface: 'cli' } });
+        expect(result).toEqual({ matched: false, accountSelectionUnavailable: true, executionPlacement: 'machine' });
+    } finally {
+        restore();
+        await app.close();
+        await rm(happyHomeDir, { recursive: true, force: true });
+    }
+});
+
 it('places the reload-18 flower options request on the same admitted Machine runtime as invocation', async () => {
     const pluginId = 'qa.qar90s-r8';
     const machineId = 'ffd72b3e-40ca-4644-9bd2-46753a01d8cb';

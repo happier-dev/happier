@@ -71,7 +71,15 @@ export async function executeAccountPluginAction(params: Readonly<{
         .catch(unavailableSource);
       if (!isCurrent()) return { matched: true, result: { ok: false,
         errorCode: 'plugin_action_generation_retired', error: 'plugin_action_generation_retired' } };
-      if (!selection) return { matched: false, accountSelectionUnavailable: true };
+      if (!selection) {
+        const resolvedAction = identity
+          ? readResolvedActionContribution(await resolveMergedContributionRegistry(), identity)
+          : null;
+        const execution = resolvedAction?.admittedTarget?.declaration?.execution;
+        return { matched: false, accountSelectionUnavailable: true,
+          ...(execution?.target === 'daemon' ? { executionPlacement: 'machine' as const }
+            : execution?.target === 'client' ? { executionPlacement: 'client' as const } : {}) };
+      }
       if (selection.kind === 'unavailable' && selection.code !== 'plugin_account_execution_unavailable') return {
         matched: true, result: { ok: false, errorCode: selection.code, error: selection.code } };
       // Only a positive Machine/client declaration supplies non-Account placement
