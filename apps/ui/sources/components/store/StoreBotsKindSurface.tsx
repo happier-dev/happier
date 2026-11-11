@@ -79,6 +79,8 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
         const { source: _source, ...rest } = current;
         return id ? { ...rest, source: { include: [id], exclude: [] } } : rest;
     }), [directory.setFilters]);
+    // A search that finds nothing shared leaves the Store's own answer to speak for it.
+    const showShared = !(query && !received.loading && !received.error && received.items.length === 0);
     if (directory.state === null) return <StoreDirectoryUnavailable view="kind" kind="bot" />;
     return <StoreKindFrame kind="bot" query={query} onQueryChange={directory.setQuery} sourceId={sourceId}
         onSourceChange={setSource} presented={presented}>
@@ -89,23 +91,20 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
                 : <Directory kind="bot" rows={templateRows} groups={[{ key: 'templates', title: read.item?.summary.title ?? '' }]}
                     list={{ loading: read.loading, hasNextPage: false }} query="" sourceTitle={null} />}
         </> : <>
-            {/* A search that finds nothing shared leaves the Store's own answer to speak for it. */}
-            {query && !received.loading && !received.error && received.items.length === 0 ? null :
-            <ItemGroup surface="none" title={t('botTemplates.sharedWithYou')} description={t('botTemplates.sharedWithYouDescription')}
+            {showShared ? <ItemGroup surface="none" title={t('botTemplates.sharedWithYou')} description={t('botTemplates.sharedWithYouDescription')}
                 // A healthy section asks its reader again; a failed read already offers Try again on its own line.
                 action={received.error ? undefined : <SectionActionButton testID="store.kind.bot.shared.refresh"
                     title={t('common.refresh')} icon="arrow-clockwise" loading={received.loading} disabled={received.loading}
-                    onPress={() => { void received.refresh(); }} />}>
-                <Directory kind="bot" label={t('botTemplates.sharedWithYou')} rows={receivedRows} groups={NO_GROUPS}
-                    list={received} query={query} sourceTitle={null}
-                    emptyState={<EmptyState testID="store.kind.bot.shared.empty" layout="inline" iconName={BOTS_GLYPH}
-                        title={t('botTemplates.sharedEmptyTitle')} subtitle={t('botTemplates.sharedEmptyBody')} />} />
-            </ItemGroup>}
-            <ItemGroup surface="none" title={t('botTemplates.fromStore')} description={t('botTemplates.fromStoreDescription')}>
-                <Directory kind="bot" label={t('botTemplates.fromStore')} rows={storeRows} groups={NO_GROUPS}
-                    list={list} query={query} sourceTitle={sourceTitle}
-                    emptyState={<EmptyState testID="store.kind.bot.store.empty" layout="line" title={t('capabilities.store.emptyBody')} />} />
-            </ItemGroup>
+                    onPress={() => { void received.refresh(); }} />}>{null}</ItemGroup> : null}
+            {/* The section header alone: its rows stand on the page's directory inset, as every other kind page's do. */}
+            {showShared ? <Directory kind="bot" label={t('botTemplates.sharedWithYou')} rows={receivedRows} groups={NO_GROUPS}
+                list={received} query={query} sourceTitle={null}
+                emptyState={<EmptyState testID="store.kind.bot.shared.empty" layout="inline" iconName={BOTS_GLYPH}
+                    title={t('botTemplates.sharedEmptyTitle')} subtitle={t('botTemplates.sharedEmptyBody')} />} /> : null}
+            <ItemGroup surface="none" title={t('botTemplates.fromStore')} description={t('botTemplates.fromStoreDescription')}>{null}</ItemGroup>
+            <Directory kind="bot" label={t('botTemplates.fromStore')} rows={storeRows} groups={NO_GROUPS}
+                list={list} query={query} sourceTitle={sourceTitle}
+                emptyState={<EmptyState testID="store.kind.bot.store.empty" layout="line" title={t('capabilities.store.emptyBody')} />} />
         </>}
     </StoreKindFrame>;
 }

@@ -44,6 +44,7 @@ export function homeGovernanceProjectionFixture(
             authentication: { status: 'inherited' },
             teamProviders: { status: 'inherited' },
             identityNetwork: { status: 'inherited' },
+            sessionDefaults: null,
         },
         setupState: 'owned',
         activeOwnerCount: 2,

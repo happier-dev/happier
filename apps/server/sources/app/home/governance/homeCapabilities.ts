@@ -213,6 +213,7 @@ export async function assertHomeOwnershipSurvivesTransitionInTx(
 export type HomeGovernanceMutationRequest =
     | Readonly<{ operation: "view" }>
     | Readonly<{ operation: "set_team_creation_policy" }>
+    | Readonly<{ operation: "set_session_defaults" }>
     | Readonly<{ operation: "set_authentication_policy" }>
     | Readonly<{ operation: "manage_home_settings" }>
     | Readonly<{ operation: "set_home_role"; targetAccountId: string; nextHomeRole: HomeRoleV1 }>
@@ -253,6 +254,8 @@ function isAuthorizedRequest(input: Readonly<{
         case "view":
             return authority.viewAdministration;
         case "set_team_creation_policy":
+            return authority.manageTeamCreationPolicy;
+        case "set_session_defaults":
             return authority.manageTeamCreationPolicy;
         case "set_authentication_policy":
             return authority.manageAuthentication;
