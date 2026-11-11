@@ -2465,7 +2465,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(notifyActivityReadyMock).toHaveBeenCalledWith(sessionId, expect.any(Array));
+        expect(notifyActivityReadyMock).toHaveBeenCalledWith(sessionId, expect.any(Array), null);
     });
 
     it('emits activity notifications for pushed direct-session agent replies without requiring a ready event', async () => {

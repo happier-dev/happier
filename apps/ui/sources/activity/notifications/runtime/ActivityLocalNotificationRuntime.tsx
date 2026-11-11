@@ -13,6 +13,7 @@ import { isHostActivelyViewed } from '@/utils/runtime/isRuntimeActive';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { buildActivityLocalNotificationContent } from '../buildActivityLocalNotificationContent';
+import { resolveForegroundNotificationBehavior, type ForegroundNotificationBehavior } from '../resolveForegroundNotificationBehavior';
 import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification';
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
 import { sendWebLocalNotification } from '../channels/sendWebLocalNotification';
@@ -97,8 +98,26 @@ function resolveWebNotificationTag(event: ActivityLocalNotificationEvent): strin
         return `happier:${event.sessionId}:request:${event.occurrenceId ?? event.requestId}`;
     }
 
+    if (event.readyEventSeq !== undefined) {
+        return `happier:${event.sessionId}:ready:seq:${event.readyEventSeq}`;
+    }
     const lastMessageId = event.messages?.at(-1)?.id;
     return lastMessageId ? `happier:${event.sessionId}:ready:${lastMessageId}` : undefined;
+}
+
+/**
+ * The in-app choice applies while someone is using this browser tab or desktop window. Native
+ * applies the same choice from its Expo foreground handler.
+ */
+function resolveDocumentHostForegroundBehavior(): ForegroundNotificationBehavior {
+    if (!isHostActivelyViewed()) {
+        return 'full';
+    }
+    const state = storage.getState();
+    return resolveForegroundNotificationBehavior({
+        localSettings: state.localSettings,
+        accountSettings: state.settings,
+    });
 }
 
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
@@ -112,6 +131,11 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
             }
 
             if (shouldSuppressSameSessionNotification(event)) {
+                return;
+            }
+
+            const foregroundBehavior = Platform.OS === 'web' ? resolveDocumentHostForegroundBehavior() : 'full';
+            if (foregroundBehavior === 'off') {
                 return;
             }
 
@@ -139,6 +163,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                     title: notification.title,
                     body: notification.body,
                     tag: resolveWebNotificationTag(event),
+                    silent: foregroundBehavior === 'silent',
                     onClick: () => navigateToSessionRoute({ router, sessionId }),
                 }), { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
                 return;

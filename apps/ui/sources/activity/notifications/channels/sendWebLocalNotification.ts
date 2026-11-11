@@ -17,6 +17,7 @@ export async function sendWebLocalNotification(params: Readonly<{
     title: string;
     body: string;
     tag?: string;
+    silent?: boolean;
     onClick?: () => void;
 }>): Promise<boolean> {
     const BrowserNotification = readBrowserNotificationApi();
@@ -27,6 +28,7 @@ export async function sendWebLocalNotification(params: Readonly<{
     const notification = new BrowserNotification(params.title, {
         body: params.body,
         ...(params.tag ? { tag: params.tag } : {}),
+        ...(params.silent ? { silent: true } : {}),
     });
     notification.onclick = () => {
         (globalThis as { focus?: () => void }).focus?.();

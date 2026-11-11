@@ -349,4 +349,88 @@ describe('ActivityLocalNotificationRuntime', () => {
             tree.unmount();
         });
     });
+
+    it('gives a ready event without messages the same tag in every browser tab', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const firstTab = await renderScreen(<ActivityLocalNotificationRuntime />);
+        const secondTab = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady('session-1', [], 42);
+            notifyActivityReady('session-1', [], 43);
+        });
+
+        const tags = browser.shown.map(({ options }) => options?.tag);
+        expect(tags).toHaveLength(4);
+        expect(tags[0]).toBeTruthy();
+        expect(tags[1]).toBe(tags[0]);
+        expect(tags[3]).toBe(tags[2]);
+        expect(tags[2]).not.toBe(tags[0]);
+
+        await act(async () => {
+            firstTab.tree.unmount();
+            secondTab.tree.unmount();
+        });
+    });
+
+    it('applies the in-app notification choice while the web window is in use', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        const hostDocument = { visibilityState: 'visible', hasFocus: () => true };
+        vi.stubGlobal('document', hostDocument);
+        setActiveViewingSessionId('session-1');
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const { tree } = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        storage.getState().applyLocalSettings({ localNotificationsForegroundBehavior: 'off' });
+        await act(async () => {
+            notifyActivityReady('session-2', [], 1);
+        });
+        expect(browser.shown).toHaveLength(0);
+
+        hostDocument.hasFocus = () => false;
+        await act(async () => {
+            notifyActivityReady('session-2', [], 2);
+        });
+        expect(browser.shown).toHaveLength(1);
+        expect(browser.shown[0].options?.silent).toBeUndefined();
+
+        hostDocument.hasFocus = () => true;
+        storage.getState().applyLocalSettings({ localNotificationsForegroundBehavior: 'silent' });
+        await act(async () => {
+            notifyActivityReady('session-2', [], 3);
+        });
+        expect(browser.shown).toHaveLength(2);
+        expect(browser.shown[1].options?.silent).toBe(true);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('applies the off in-app notification choice while the desktop window is in use', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        reactNativeRuntime.isTauri = true;
+        vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+        storage.getState().applyLocalSettings({ localNotificationsForegroundBehavior: 'off' });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const { tree } = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady('session-2', [], 1);
+        });
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
 });
