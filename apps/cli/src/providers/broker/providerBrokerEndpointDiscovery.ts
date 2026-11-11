@@ -1,4 +1,4 @@
-import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { logger } from '@/ui/logger';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';

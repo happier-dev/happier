@@ -4,7 +4,7 @@ import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol
 import type { ProviderCredentialTransportV1, ProviderWireProtocol } from '@happier-dev/protocol';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
-import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { logger } from '@/ui/logger';
 import {
   PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER,
