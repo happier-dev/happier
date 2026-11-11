@@ -345,6 +345,8 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
 
   if (res?.ok === false && emitResult) process.exitCode = 1;
 
+  if (!emitResult) return res;
+
   if (json && emitResult) {
     printResult({ json, data: { stackName, ...res } });
     return;
