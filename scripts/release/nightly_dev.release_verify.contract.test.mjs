@@ -138,6 +138,24 @@ test('nightly-dev propagates generic unattended copy and terminal status', async
   );
 });
 
+test('nightly-dev publishes the promoted CLI candidate to npm dev after verification', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
+  const npmBlock = raw.slice(raw.indexOf('\n  publish_npm:'), raw.indexOf('\n  docker:'));
+  assert.match(
+    npmBlock,
+    /publish_npm:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, promote_cli, release_verify\]/,
+    'npm publication must wait for candidate verification and CLI promotion',
+  );
+  assert.match(npmBlock, /uses:\s*\.\/\.github\/workflows\/release-npm\.yml/);
+  assert.match(npmBlock, /channel:\s*dev/);
+  assert.match(npmBlock, /npm_tag:\s*dev/);
+  assert.match(npmBlock, /publish_cli:\s*true/);
+  assert.match(npmBlock, /publish_stack:\s*false/);
+  assert.match(npmBlock, /publish_server:\s*false/);
+  assert.match(npmBlock, /cli_version:\s*\$\{\{ needs\.cli\.outputs\.version \}\}/);
+  assert.match(npmBlock, /authorized_sha:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
+});
+
 test('ordinary nightlies advance the pre-bound source issue snapshot only after dev promotion is verified', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
 
@@ -179,6 +197,7 @@ test('nightly status projector emits the strict summarizer contract', () => {
       MOBILE_RESULT: 'success',
       DESKTOP_RESULT: 'success',
       DOCKER_RESULT: 'success',
+      NPM_RESULT: 'success',
       POST_PROMOTION_RESULT: 'success',
       VERIFY_RESULT: 'success',
       PROMOTE_SERVER_RESULT: 'success',

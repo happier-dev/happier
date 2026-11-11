@@ -51,6 +51,16 @@ test('npm candidate packing is permission-minimized and secret-free', async () =
   assert.match(JSON.stringify(candidate), /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs/);
 });
 
+test('npm release accepts the dev channel with the dev dist-tag', async () => {
+  const workflow = await loadWorkflow();
+  assert.deepEqual(workflow.on?.workflow_dispatch?.inputs?.channel?.options, ['production', 'preview', 'dev']);
+  assert.deepEqual(workflow.on?.workflow_dispatch?.inputs?.npm_tag?.options, ['latest', 'next', 'dev']);
+  const validation = String(workflow.jobs?.release?.steps?.find((step) => step.name === 'Validate inputs')?.run ?? '');
+  assert.match(validation, /if \[ "\$\{INPUT_CHANNEL\}" = "dev" \]/);
+  const metadata = String(workflow.jobs?.release?.steps?.find((step) => step.name === 'Release metadata')?.run ?? '');
+  assert.match(metadata, /if \[ "\$\{INPUT_CHANNEL\}" = "dev" \]/);
+});
+
 test('an authorized npm candidate is verified against its admitted promotion source before packing', async () => {
   const workflow = await loadWorkflow();
   const candidate = workflow.jobs?.release;

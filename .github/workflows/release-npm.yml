@@ -10,8 +10,9 @@ on:
         options:
           - production
           - preview
+          - dev
       source_ref:
-        description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
+        description: "Promotion — Source ref to release from (auto: dev→dev, preview→preview, production→main)"
         required: true
         default: auto
         type: string
@@ -31,13 +32,14 @@ on:
         default: true
         type: boolean
       npm_tag:
-        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
+        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next, dev: dev)"
         required: true
         default: latest
         type: choice
         options:
           - latest
           - next
+          - dev
       publish_stack:
         description: "Compatibility (Stack) — Publish hstack dev-helper package to npm (not release signoff)"
         required: true
@@ -64,7 +66,7 @@ on:
         required: true
         type: string
       source_ref:
-        description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
+        description: "Promotion — Source ref to release from (auto: dev→dev, preview→preview, production→main)"
         required: false
         default: auto
         type: string
@@ -88,7 +90,7 @@ on:
         default: true
         type: boolean
       npm_tag:
-        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
+        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next, dev: dev)"
         required: false
         default: latest
         type: string
@@ -255,6 +257,8 @@ jobs:
           expected_tag="latest"
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
             expected_tag="next"
+          elif [ "${INPUT_CHANNEL}" = "dev" ]; then
+            expected_tag="dev"
           fi
           if [ "${INPUT_NPM_TAG}" != "${expected_tag}" ]; then
             echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
@@ -278,6 +282,8 @@ jobs:
           if [ "$src" = "auto" ]; then
             if [ "$channel" = "preview" ]; then
               src="preview"
+            elif [ "$channel" = "dev" ]; then
+              src="dev"
             else
               src="main"
             fi
@@ -286,6 +292,8 @@ jobs:
           canonical_ref="preview"
           if [ "$channel" = "production" ]; then
             canonical_ref="main"
+          elif [ "$channel" = "dev" ]; then
+            canonical_ref="dev"
           fi
 
           if [ -n "$INPUT_AUTHORIZED_SHA" ]; then
@@ -423,6 +431,7 @@ jobs:
           const canonicalVersionPatterns = {
             production: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/,
             preview: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-preview\.(?:[1-9]\d*)(?:\.(?:[1-9]\d*))?$/,
+            dev: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-dev\.(?:[1-9]\d*)(?:\.(?:[1-9]\d*))?$/,
           };
           const versionPattern = canonicalVersionPatterns[process.env.RELEASE_CHANNEL ?? ''];
           if (rawVersion.includes('\n') || rawVersion.includes('\r') || !versionPattern?.test(rawVersion)) {
@@ -438,6 +447,8 @@ jobs:
           echo "channel=${INPUT_CHANNEL}" >> "$GITHUB_OUTPUT"
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+          elif [ "${INPUT_CHANNEL}" = "dev" ]; then
+            echo "npm_tag=dev" >> "$GITHUB_OUTPUT"
           else
             echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
           fi
@@ -501,7 +512,7 @@ jobs:
         env:
           AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           PROMOTION_SOURCE_REF: ${{ inputs.promotion_source_ref }}
-          CANONICAL_REF: ${{ inputs.channel == 'production' && 'main' || 'preview' }}
+          CANONICAL_REF: ${{ inputs.channel == 'production' && 'main' || inputs.channel == 'dev' && 'dev' || 'preview' }}
         run: |
           set -euo pipefail
           source_ref="$CANONICAL_REF"

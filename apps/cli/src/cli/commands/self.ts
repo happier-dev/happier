@@ -58,7 +58,7 @@ function usage(): string {
     `${chalk.bold('Channels:')}`,
     `  stable  → npm dist-tag ${cmd('latest')}`,
     `  preview → npm dist-tag ${cmd('next')}`,
-    `  dev     → npm dist-tag ${cmd('next')} (${chalk.gray('dev rolling binaries')})`,
+    `  dev     → npm dist-tag ${cmd('dev')} (${chalk.gray('dev rolling binaries')})`,
     '',
     `${chalk.bold('Environment:')}`,
     `  HAPPIER_CLI_UPDATE_CHECK=0                 Disable update notice + background check`,
@@ -110,8 +110,10 @@ function readPackageJsonVersion(path: string): string | null {
   }
 }
 
-function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
-  return channel === 'stable' ? 'latest' : 'next';
+function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' | 'dev' {
+  if (channel === 'stable') return 'latest';
+  if (channel === 'publicdev') return 'dev';
+  return 'next';
 }
 
 function resolveSelfReleaseChannel(params: Readonly<{
@@ -233,7 +235,7 @@ async function cmdCheck(argv: string[], rawArgv: readonly string[] = process.arg
   const invokerVersion = configuration.currentCliVersion;
   const current = runtimeVersion || invokerVersion || null;
 
-  // Rejects cross-channel results itself (preview/dev share the `next` dist-tag).
+  // Rejects cross-channel results itself; preview and dev use separate npm dist-tags.
   recordCliUpdateCheck({
     homeDir: configuration.happyHomeDir,
     publicReleaseRing: channel,

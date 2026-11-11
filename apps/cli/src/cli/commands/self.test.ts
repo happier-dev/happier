@@ -53,7 +53,7 @@ describe('self command helpers', () => {
   it('builds npm spec from channel and override', () => {
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'stable', to: '' })).toBe('@happier-dev/cli@latest');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'preview', to: '' })).toBe('@happier-dev/cli@next');
-    expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'publicdev', to: '' })).toBe('@happier-dev/cli@next');
+    expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'publicdev', to: '' })).toBe('@happier-dev/cli@dev');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'preview', to: '1.2.3' })).toBe('@happier-dev/cli@1.2.3');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'stable', to: '  latest  ' })).toBe('@happier-dev/cli@latest');
   });

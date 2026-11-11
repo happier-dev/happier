@@ -485,6 +485,28 @@ jobs:
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
+  publish_npm:
+    name: Publish CLI npm package (dev)
+    needs: [prepare_release_candidate, cli, promote_cli, release_verify]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' && needs.release_verify.result == 'success' && needs.promote_cli.result == 'success' }}
+    # A called workflow cannot exceed its caller's permissions; npm provenance needs the OIDC token.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release-npm.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: dev
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      run_tests: false
+      publish_cli: true
+      publish_stack: false
+      publish_server: false
+      npm_tag: dev
+      cli_version: ${{ needs.cli.outputs.version }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
   promote_ui_web:
     name: Promote verified UI web candidate
     needs: [prepare_release_candidate, ui_web, release_verify, verify_source_ci]
@@ -648,7 +670,7 @@ jobs:
   release_status:
     name: Project terminal nightly release status
     if: ${{ always() }}
-    needs: [prepare_release_candidate, nightly_waiting_for_ci, nightly_noop, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
+    needs: [prepare_release_candidate, nightly_waiting_for_ci, nightly_noop, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, publish_npm, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -697,6 +719,7 @@ jobs:
           DESKTOP_RESULT: ${{ needs.ui_desktop.result }}
           DESKTOP_ORIGIN_RUN_ID: ${{ inputs.resume_run_id || github.run_id }}
           DOCKER_RESULT: ${{ needs.docker.result }}
+          NPM_RESULT: ${{ needs.publish_npm.result }}
           POST_PROMOTION_RESULT: ${{ needs.verify_promoted.result }}
         run: |
           set -euo pipefail

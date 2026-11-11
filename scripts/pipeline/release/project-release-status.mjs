@@ -116,6 +116,7 @@ export function projectReleaseStatus(mode, env) {
       item('ui_mobile', false, 'accepted', 'MOBILE_RESULT', false, { job: 'ui_mobile' }),
       item('ui_desktop', false, 'accepted', 'DESKTOP_RESULT', false, { job: 'ui_desktop' }, { candidateOriginRunId: desktopOriginRunId }),
       item('docker', false, 'accepted', 'DOCKER_RESULT', false, { job: 'docker' }),
+      item('npm', false, 'accepted', 'NPM_RESULT', false, { job: 'publish_npm' }),
       item('post_promotion_identity', false, 'verified', 'POST_PROMOTION_RESULT', exact('POST_PROMOTION_RESULT'), { job: 'verify_promoted' }),
     ];
     return summarizeReleaseStatus({
