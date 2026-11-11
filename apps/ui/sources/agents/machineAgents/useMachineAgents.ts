@@ -29,6 +29,7 @@ import { createMachineAgentInventoryPersistence } from './machineAgentInventoryP
 import { projectMachineAgentCapabilityObservation } from './machineAgentCapabilityObservation';
 import { machineAgentInventoryStore, EMPTY_MACHINE_AGENTS, type MachineAgentsSnapshot } from './machineAgentInventoryStore';
 import { useMachineAgentAuthentication } from './useMachineAgentAuthentication';
+import { loadMachineAgentAuthentication, readMachineAgentAuthentication } from './machineAgentAuthentication';
 import type { MachineAgent } from './machineAgentTypes';
 import { ensureMachineAgentInstallJobs, subscribeAgentInstallJob, subscribeMachineAgentInstallJobs } from './installJobs/installJobStore';
 
@@ -147,7 +148,9 @@ function observe(input: Readonly<{ lifetime: ServerAccountScopeLifetime; machine
         installedAgentIds: machine?.metadata?.agentInventory?.installedAgentIds,
         installedAgentsCheckedAt: machine?.metadata?.agentInventory?.checkedAt,
         ...(unavailableDefinitions.length ? { unavailable: [...('unavailable' in observation ? observation.unavailable ?? [] : []), ...unavailableDefinitions] } : {}),
-        dependencyTitlesByKey, ...input.authentication?.(input.projection) });
+        dependencyTitlesByKey, ...(input.authentication
+            ? input.authentication(input.projection)
+            : readMachineAgentAuthentication({ scope: input.lifetime.scope, machineId: input.machineId, projection: input.projection })) });
     if (observation.status === 'ready' && observation.lastCheckedAt !== null) {
         const items = machineAgentInventoryStore.readObservedItems(key, observation.items);
         createMachineAgentInventoryPersistence(getPersistenceStorage()).write(input.lifetime.scope, input.machineId, { items: [...items], lastCheckedAt: observation.lastCheckedAt });
@@ -205,6 +208,8 @@ export async function refreshMachineAgents(input: Readonly<{ serverId: string; m
             : prefetchMachineCapabilitiesIfStale({ ...args, staleMs: AUTH_PROBE_STALE_MS });
     };
     await Promise.all([
+        loadMachineAgentAuthentication({ scope: lifetime.scope, machineId: input.machineId,
+            projection: { phase: 'ready', inputs }, signal: input.signal }),
         // Older daemons can still report inventory facts when install jobs are unavailable.
         hasAdmittedInventory ? refreshInstallJobs() : Promise.resolve(),
         (async () => {

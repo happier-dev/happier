@@ -386,7 +386,7 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
   // An inventory Action is demand even when Home has no mounted Agent picker.
   // The inventory owner reuses its projection/probe caches and readiness policy.
   if (lifetime) await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId, accountLifetime: lifetime });
-  const machineAgents = machineId ? lifetime ? readMachineAgentsForScope(lifetime, machineId).agents : [] : undefined;
+  const machineAgents = machineId && lifetime ? readMachineAgentsForScope(lifetime, machineId).agents : [];
   const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets, machineAgents });
   const defaultTargetKey = preferred ? buildBackendTargetKeyV2(preferred) : undefined;
 

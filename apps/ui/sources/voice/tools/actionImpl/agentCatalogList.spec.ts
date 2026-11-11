@@ -287,13 +287,13 @@ describe('agent catalog voice tools', () => {
     expect(result).not.toHaveProperty('defaultTargetKey');
   });
 
-  it('projects the Account-scoped New Session default as an exact inventory key', async () => {
+  it('does not advertise a remembered Agent as a ready default without a Machine', async () => {
     const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
     const target = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
     rememberLastUsedBackendSelection(state.settingsScope, { lastUsedBackendTarget: target, lastUsedAgent: 'codex' });
     const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
     const result = await listAgentBackendsForVoiceTool({});
-    expect(result).toMatchObject({ defaultTargetKey: buildBackendTargetKeyV2(target) });
+    expect(result).not.toHaveProperty('defaultTargetKey');
     expect(AgentsBackendsListOutputSchema.parse(result)).toEqual(result);
   });
 

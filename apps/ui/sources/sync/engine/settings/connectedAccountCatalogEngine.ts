@@ -51,7 +51,8 @@ export function observeConnectedAccountCatalog(scope: ServerAccountScope, key: C
     }
     return loader.observe(target);
 }
-export function refreshConnectedAccountCatalog(scope: ServerAccountScope, key: ConnectedAccountCatalogKeyV1): Promise<void> { return loader.refresh(targetFor(scope, key)); }
+export function refreshConnectedAccountCatalog(scope: ServerAccountScope, key: ConnectedAccountCatalogKeyV1,
+    sourceAdmission?: ConnectedAccountCatalogSourceAdmission): Promise<void> { return loader.refresh(targetFor(scope, key, sourceAdmission)); }
 export function invalidateConnectedAccountCatalogProjection(scope: ServerAccountScope, key: ConnectedAccountCatalogKeyV1): Promise<void> { return loader.invalidate(targetFor(scope, key)); }
 export function invalidateConnectedAccountCatalogAfterAcknowledgedMutation(scope: ServerAccountScope, key: ConnectedAccountCatalogKeyV1,
     assertCapturedAccountCurrent: () => void): Promise<void> {

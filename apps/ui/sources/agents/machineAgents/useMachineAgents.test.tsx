@@ -10,6 +10,7 @@ import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/fe
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRecordV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -18,9 +19,12 @@ import { resolveMachineAgentPickerPlacement, resolveMachineAgentStatus } from '@
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import * as serverProfiles from '@/sync/domains/server/serverProfiles';
 import { countStoreNotifications } from '@/dev/testkit/performance/counts';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 
 // Install physical HTTP/Socket.IO before loading the real scoped-RPC owner.
 const network = await installSessionOpsNetworkBoundary();
+const { resolvePreferredBackendTarget } = await import('@/agents/backendCatalog/resolvePreferredBackendTarget');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { isAgentSelectableForNewSession } = await import('@/components/sessions/new/modules/newSessionAgentSelection');
 // This responder supplies daemon ACK bodies; it never replaces internal RPC logic.
 const rpc = vi.fn();
@@ -31,7 +35,7 @@ const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await
 const { installConnectedAccountDescriptorProjection, retireConnectedAccountDescriptorProjection } = await import('@/sync/domains/connectedServices/connectedServiceRegistry');
 const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
-const { refreshMachineAgents, useMachineAgents, useMachineAgent, useMachineAgentsByMachine, useRefreshMachineAgents, selectMachineAgentUpdateFacts } = await import('./useMachineAgents');
+const { refreshMachineAgents, readMachineAgentsForScope, useMachineAgents, useMachineAgent, useMachineAgentsByMachine, useRefreshMachineAgents, selectMachineAgentUpdateFacts } = await import('./useMachineAgents');
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
@@ -971,6 +975,103 @@ describe('machine inventory lifecycle boundary', () => {
         } finally { pending.resolve(); await hook.unmount(); }
     });
 
+    it.each(['retained', 'cold'] as const)('selects a ready Codex pool over remembered signed-out Claude after a headless inventory refresh (%s purposes)', async purposes => {
+        const server = await network.addHome(`https://headless-codex-pool-readiness-${purposes}.test`, 'inventory-account');
+        const scope = { serverId: server.id, accountId: 'inventory-account' };
+        const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const machine = createMachineFixture({ id: `headless-codex-pool-machine-${purposes}`, active: true, activeAt: Date.now() });
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const identity = BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex;
+        const descriptor = {
+            id: service.localId, serviceId: service.localId, pluginId: service.pluginId, title: 'ChatGPT',
+            provenance: 'external', sourceKind: 'installed', capabilities: [], diagnostics: [],
+            availability: { state: 'available', reason: 'resolved' },
+            authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode',
+                callbackUrl: 'http://127.0.0.1:4000/auth/callback', pkce: 'required', outcomeReconciliation: 'providerCheck' }] },
+        } satisfies NonNullable<PluginProjectionV2['familiesById']['connectedAccounts']>['entriesById'][string];
+        const projection = PluginProjectionV2Schema.parse({ ...emptyProjection,
+            familiesById: { connectedAccounts: { family: 'connectedAccounts', entriesById: { 'happier.agent.codex/openai-codex': descriptor } } },
+            agentsById: {
+                claude: { id: 'claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude, title: 'Claude',
+                    capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+                codex: { id: 'codex', identity, title: 'Codex', connectedAccounts: [{ purpose: 'primary', service, credentialKinds: ['oauth'] }],
+                    capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+            },
+        });
+        const deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'd'.repeat(64), projection,
+        }));
+        const account = { ref: { service, accountId: 'work' }, revisionSemantics: 'revisioned' as const,
+            credentialRevision: 'revision-1', status: 'connected' as const, kind: 'oauth' as const,
+            authenticationModeId: 'oauth', configurationReady: true, configurationRevision: null, displayName: 'Work account', scopes: [] };
+        const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'pool' },
+            incarnation: 'pool:1', displayName: 'Codex pool', generation: 1, runtimeStateRevision: 1, policy: {},
+            activeConnectedAccountId: 'work', state: {}, members: [{ v: 1, connectedAccountId: 'work', state: {}, createdAt: 0, updatedAt: 0 }],
+            createdAt: 0, updatedAt: 0 });
+        storage.setState({ profileScope: scope,
+            profile: { ...storage.getState().profile, connectedAccountsV4: [account], connectedAccountGroupsV4: [group] } });
+        await publishMachineInventoryForTest(scope, [machine]);
+        primeServerFeaturesSnapshot({ serverId: server.id, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
+            features: {}, capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
+        }) } });
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+        const purposeRecord = ConnectedAccountCatalogRecordV1Schema.parse({ key: 'purposes', value: { v: 1, bindings: [{
+            purpose: { consumer: identity, purpose: 'primary' }, target: { kind: 'group', service, groupId: 'pool' },
+        }] } });
+        const purposeRead = createDeferred<void>();
+        const purposeReply = createDeferred<void>();
+        let purposeReads = 0;
+        if (purposes === 'retained') applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'ready', revision: 1, record: purposeRecord,
+        }, true);
+        network.setHttpResponder(async request => {
+            const path = new URL(String(request)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) {
+                purposeReads++;
+                purposeRead.resolve();
+                await purposeReply.promise;
+                return Response.json({ status: 'present', revision: 1, content: { t: 'plain', v: purposeRecord } });
+            }
+            return null;
+        });
+        rpc.mockImplementation(async ({ method, payload }: { method: string; payload?: {
+            sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] };
+        } }) => {
+            if (method.includes('contributionRegistryProjection.describe')) return payload?.sectionRead
+                ? deferred.read(payload.sectionRead.digest, payload.sectionRead.offset, payload.sectionRead.includeDigests)
+                : deferred.manifest;
+            if (method === 'capabilities.detect') return { protocolVersion: 1, results: Object.fromEntries(['claude', 'codex'].map(agentId => [
+                `cli.${agentId}`, { ok: true, checkedAt: 12, data: { ...item, agentId, title: agentId, available: true,
+                    signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, isLoggedIn: false,
+                    authStatus: { state: 'logged_out', reason: 'missing_credentials', checkedAt: 12 } } },
+            ])) };
+            return { jobs: [] };
+        });
+        try {
+            let settled = false;
+            const refreshing = refreshMachineAgents({ serverId: server.id, machineId: machine.id, accountLifetime: lifetime })
+                .then(() => { settled = true; });
+            if (purposes === 'cold') {
+                await purposeRead.promise;
+                await vi.waitFor(() => expect(readMachineAgentsForScope(lifetime, machine.id).status).toBe('ready'));
+                expect(settled).toBe(false);
+                purposeReply.resolve();
+            }
+            await refreshing;
+            const machineAgents = readMachineAgentsForScope(lifetime, machine.id).agents;
+            expect(machineAgents.find(agent => agent.agentId === 'claude')).toMatchObject({ state: 'needsSignIn', stale: false });
+            expect(machineAgents.find(agent => agent.agentId === 'codex')).toMatchObject({ state: 'ready', stale: false,
+                signIn: { status: 'signedIn', native: { status: 'signedOut' }, via: { kind: 'connected', profileLabel: 'Work account' } } });
+            const codexTarget = { kind: 'agent' as const, identity };
+            expect(resolvePreferredBackendTarget({ lastUsedAgent: 'claude',
+                lastUsedBackendTarget: { kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude }, availableBackendTargets: [
+                { kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude }, codexTarget,
+            ], machineAgents })).toEqual(codexTarget);
+            expect(purposeReads).toBe(purposes === 'cold' ? 1 : 0);
+        } finally { purposeReply.resolve(); resetServerFeaturesClientForTests(); }
+    });
+
     it('hydrates the selected Codex pool credential beside a successful signed-out native probe', async () => {
         const server = await network.addHome('https://codex-pool-readiness.test', 'inventory-account');
         const scope = { serverId: server.id, accountId: 'inventory-account' };
@@ -999,8 +1100,9 @@ describe('machine inventory lifecycle boundary', () => {
             incarnation: 'pool:1', displayName: 'Codex pool', generation: 1, runtimeStateRevision: 1, policy: {},
             activeConnectedAccountId: 'work', state: {}, members: [{ v: 1, connectedAccountId: 'work', state: {}, createdAt: 0, updatedAt: 0 }],
             createdAt: 0, updatedAt: 0 });
-        storage.setState({ machineListByServerId: { [server.id]: [machine] }, profileScope: scope,
+        storage.setState({ profileScope: scope,
             profile: { ...storage.getState().profile, connectedAccountsV4: [account], connectedAccountGroupsV4: [group] } });
+        await publishMachineInventoryForTest(scope, [machine]);
         primeServerFeaturesSnapshot({ serverId: server.id, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
             features: {}, capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
         }) } });
@@ -1080,12 +1182,13 @@ describe('machine inventory lifecycle boundary', () => {
             agentsById: { review: { id: 'review', identity, title: 'Review', connectedAccounts: [{ purpose: 'primary', service, credentialKinds: ['oauth'] }],
                 capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } },
         });
-        storage.setState({ machineListByServerId: { [server.id]: [machine] }, profileScope: scope, profile: {
+        storage.setState({ profileScope: scope, profile: {
             ...storage.getState().profile,
             connectedAccountsV4: [{ ref: { service, accountId: 'work' }, revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
                 status: 'connected', kind: 'oauth', authenticationModeId: 'oauth', configurationReady: true, configurationRevision: null,
                 displayName: 'Work account', scopes: [] }],
         } });
+        await publishMachineInventoryForTest(scope, [machine]);
         primeServerFeaturesSnapshot({ serverId: server.id, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
             features: {}, capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
         }) } });

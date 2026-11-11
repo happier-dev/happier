@@ -1954,9 +1954,12 @@ Projection RPCs retain the shared connection/setup budget without imposing an
 operation deadline on daemon projection work.
 
 Machine and Agent rows describe the Account's default authentication for a new
-Session. `useMachineAgentAuthentication` reads the admitted purpose-default catalog
-through the same Protocol default-binding reader as the composer and feeds those
-bindings into `machineAgentModel#projectMachineAgentForCredential`. An empty admitted
+Session. `machineAgentAuthentication#projectMachineAgentAuthentication` projects the
+admitted purpose-default catalog through the same Protocol default-binding reader
+as the composer and feeds those bindings into `machineAgentModel#projectMachineAgentForCredential`.
+Mounted inventory hooks and finite `refreshMachineAgents` reads share that projection;
+finite reads acquire missing defaults through the existing catalog loader with the
+exact Machine's source admission. An empty admitted
 catalog uses native authentication; an unread catalog remains unknown. A healthy
 Connected Account satisfies sign-in only when that account, or a pool with that
 active account, is selected by the default. Other healthy accounts remain available
