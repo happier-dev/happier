@@ -1,7 +1,7 @@
 import { normalizeTeamAuthenticationPolicyV1, type TeamAuthenticationPolicyV1, type TeamRestrictedAuthenticationPolicyV1, TeamAuthenticationPolicyV1Schema } from '@happier-dev/protocol/auth/entry';
 import { type TeamAuthenticationPolicyComparisonBasisV1, type TeamAuthenticationPolicyUnavailableDetailsV1 } from '@happier-dev/protocol/teams';
 import type { TeamCapabilitiesV1 } from "@happier-dev/protocol/teams";
-import { readManagedDefaultsV1, type ManagedDefaultsV1, type ManagedSessionDefaultsV1, type ManagedSessionPlacementV1 } from "@happier-dev/protocol/teams";
+import { isTeamPrincipalRoleV1, readManagedDefaultsV1, type ManagedDefaultsV1, type ManagedSessionDefaultsV1, type ManagedSessionPlacementV1 } from "@happier-dev/protocol/teams";
 import type { TeamSummaryV1 } from '@happier-dev/protocol/teams/projections';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -129,13 +129,16 @@ async function managedPlacementAudienceInTx(tx: Tx, teamId: string, placement: M
         ? await tx.teamGroupMembership.findMany({
             where: { teamGroupId: groupId, teamMembership: { status: TeamMembershipStatus.active,
                 account: { status: AccountStatus.active } } },
-            select: { teamMembership: { select: { accountId: true } } },
+            select: { teamMembership: { select: { accountId: true, role: true } } },
         })
         : await tx.teamMembership.findMany({
             where: { teamId, status: TeamMembershipStatus.active, account: { status: AccountStatus.active } },
-            select: { accountId: true },
+            select: { accountId: true, role: true },
         });
-    const accountIds = memberships.map(member => "teamMembership" in member ? member.teamMembership.accountId : member.accountId);
+    const accountIds = memberships
+        .map(member => "teamMembership" in member ? member.teamMembership : member)
+        .filter(member => isTeamPrincipalRoleV1(member.role))
+        .map(member => member.accountId);
     if (accountIds.length === 0) return true;
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
         machineIds: [placement.target.machineId], accountIds,

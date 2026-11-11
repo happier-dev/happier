@@ -110,6 +110,35 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         expect((await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults }))).ok).toBe(true);
     });
 
+    it.each(["team", "group"] as const)("allows a %s Machine default when only a guest lacks Use access", async (layer) => {
+        const { owner, teamId } = await ownedTeam();
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const guest = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const membership = await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
+        const guestMembership = await db.teamMembership.create({ data: { teamId, accountId: guest.id, role: "guest" } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
+        // Team grants give the member Use access, but intentionally exclude guests.
+        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
+        const group = await db.teamGroup.create({ data: { teamId, name: "Default audience", nameKey: "default-audience" } });
+        for (const teamMembershipId of [membership.id, guestMembership.id]) {
+            await db.teamGroupMembership.create({ data: {
+                teamId, teamGroupId: group.id, teamMembershipId,
+                nativeContribution: true, sessionAccessStartsAt: new Date(),
+            } });
+        }
+        const defaults = { placement: { kind: "machine" as const,
+            target: { serverId: "server-a", machineId: machine.id } } };
+        const result = await inTx(tx => setTeamPolicyInTx(tx, {
+            actorAccountId: owner.id, teamId,
+            ...(layer === "team"
+                ? { managedDefaults: { team: defaults, groups: {} } }
+                : { managedGroupDefaults: { teamGroupId: group.id, defaults } }),
+        }));
+        expect(result.ok).toBe(true);
+        expect((await db.team.findUniqueOrThrow({ where: { id: teamId } })).managedDefaults)
+            .toEqual(layer === "team" ? { team: defaults, groups: {} } : { team: {}, groups: { [group.id]: defaults } });
+    });
+
     it("refuses member writes and foreign or archived Group targets without changing defaults", async () => {
         const { owner, teamId } = await ownedTeam();
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
