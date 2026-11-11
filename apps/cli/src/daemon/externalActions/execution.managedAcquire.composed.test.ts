@@ -26,8 +26,11 @@ import { ManagedAcquireInputV1Schema, MachineSetupApplyResultV1Schema, MachineSe
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import type { MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
-  ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+  ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema,
+  projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -162,7 +165,13 @@ it.each([false, true])('continues one confirmed acquire through the installed da
   const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'enrolled', choices: {} };
   const acquisition = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
     ...(withSetup ? { selection: { kind: 'preset', homeId, id: 'preset', revision: 1 },
-      controller: { machineId: 'machine', installationId: h.f.installation.installationId }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }
+      controller: { machineId: 'machine', installationId: h.f.installation.installationId }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+      // The original confirmation must review the same saved Setup the guest will apply.
+      reviewedFacts: buildManagedConfigurationFactsV1({ choicesSchema: PluginJsonValueV2Schema, launch,
+        controller: { machineId: 'machine', installationId: h.f.installation.installationId },
+        optionStatus: 'current', billing: { location: 'unknown', stoppedBilling: 'unknown' }, prerequisites: [],
+        retentionCapabilities: { supportedIntents: ['start', 'delete'] }, setup,
+        preset: { id: 'preset', revision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }) }
       : { selection: { kind: 'one-off', homeId, controller: { machineId: 'machine', installationId: h.f.installation.installationId },
       launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'enrolled', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }),
@@ -230,6 +239,8 @@ it.each([false, true])('continues one confirmed acquire through the installed da
       const child = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'guest-child', binding: { ...root.binding,
         actionId: childAction, target: request.envelope.target, machineId: 'guest', installationId: 'guest-installation',
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+          actionId: childAction, envelope: request.envelope }),
         managedContinuation: { ...request.managedContinuation, controller: enrolled.controller,
           acquireRequestEnvelopeDigest: root.binding.requestEnvelopeDigest } } });
       const result = await installation.run(guestInstallation, () => executeExternalAction({ actionId: childAction, envelope: request.envelope, executionAuthorization: child,
