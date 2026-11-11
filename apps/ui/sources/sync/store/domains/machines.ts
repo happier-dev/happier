@@ -30,7 +30,7 @@ import { retainMachineRecord, readMachineContributionRegistryProjectionInvalidat
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { applyWorkspaceSyncRuntimeEvent } from '../../domains/sessionHandoff/applyWorkspaceSyncRuntimeEvent';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { buildMachineActivityPlaceholder, publishMachineActivities, readMachineActivity, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
+import { buildMachineActivityPlaceholder, publishMachineActivities, readMachineActivity, readMachinePresenceAnswer, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { indexMachineInventory, mergeMachineInventory } from './machines/machineInventory';
@@ -623,7 +623,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const admittedIds = new Set(machines.map(machine => machine.id));
                 activityUpdates.push(...options.activityUpdates.filter(update => admittedIds.has(update.id)));
             }
-            // Full rows and their captured hydration clocks are one arrival.
+            // Full rows and their captured hydration clocks are one arrival. A fetched row is the server's own
+            // presence answer, so its first arrival answers a retained (warm) bit even when the values match.
             publishMachineActivities((function* (): Generator<MachineActivityPublication> {
                 for (const machine of changedMachines) {
                     const projections = [
@@ -632,7 +633,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         published.machinePresenceByServerId[sourceServerId]?.[machine.id],
                     ];
                     const activity = readMachineActivity(machine);
-                    if (projections.some(projection => {
+                    if (readMachinePresenceAnswer(machine) !== true || projections.some(projection => {
                         const current = projection ? readMachineActivity(projection) : null;
                         return current && (current.active !== activity.active || current.activeAt !== activity.activeAt);
                     })) yield { machine, activity: { active: activity.active, activeAt: activity.activeAt }, projections };
