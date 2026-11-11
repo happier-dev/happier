@@ -5004,6 +5004,7 @@ localTailscale: {
       browserSignInMachineUpdateRequired: "このサインインに使うマシンの Happier を更新するか、スマートフォンまたはデスクトップの Happier アプリでサインインしてください。",
       browserSignInMachineCustodianRequired: "このマシンでサインインできるのは、その所有者だけです",
       accountAuthenticationUnavailable: "サインインサービスを一時的に利用できません。しばらくしてからもう一度お試しください。",
+      accountAppServiceUnavailable: "アプリでこのサインインサービスを利用できません。プラグインの設定を確認し、このページを更新してください。",
       accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
       accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
       accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',

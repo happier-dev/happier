@@ -177,9 +177,13 @@ generic error: each is a user-recoverable state with one useful next action. `jo
 `already_member` return the Team so the client can offer **Open Team** without a second
 lookup.
 
-Unauthenticated preview deliberately collapses unknown, malformed, terminal, and
-archived-Team cases into one `unavailable` outcome so a caller cannot enumerate which
-bearers exist.
+In unreleased 0.3, unauthenticated preview keeps unknown and malformed bearers generic.
+For a known bearer, its existing `unavailable` outcome may carry an optional typed
+`reason`: `expired`, `revoked`, `used`, `team_archived`, or `teams_disabled`. The join
+surface reuses acceptance’s terminal copy and fresh-link repair, or the Home’s Teams
+settings repair when disabled. It discloses no additional invitation or Account identity.
+Matching Protocol, server, and UI source reload together; older strict development
+readers reject the additional field. There is no released compatibility adapter.
 
 ## Preview
 

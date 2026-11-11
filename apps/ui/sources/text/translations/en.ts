@@ -4945,6 +4945,7 @@ const enConnectedServices = {
     browserSignInMachineUpdateRequired: "Update Happier on the Machine you want to use for this sign-in, or sign in using the Happier phone or desktop app.",
     browserSignInMachineCustodianRequired: "Only the Machine's owner can sign in on it",
     accountAuthenticationUnavailable: "The sign-in service is temporarily unavailable. Try again in a moment.",
+    accountAppServiceUnavailable: "This sign-in service is unavailable in the app. Check its plugin settings, then refresh this page.",
     accountServiceUnavailable:
       'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
     accountOperationUnsupported:

@@ -25,6 +25,15 @@ const preview: TeamInvitationPreviewV1 = {
 };
 
 describe('useTeamInvitationPreview', () => {
+    it('keeps the decoded bearer reason for the join presenter', async () => {
+        request.mockResolvedValueOnce(Response.json({ outcome: 'unavailable', reason: 'expired' }));
+        const target = { kind: 'descriptor', authority: 'trusted_enrollment', descriptor: {
+            v: 1, homeServerIdentityId: 'srv_acme', canonicalServerUrl: 'https://acme.example.test', revision: 1,
+            endpoints: [{ kind: 'https', url: 'https://acme.example.test' }],
+        }} satisfies HomeTargetInput;
+        const hook = await renderHook(useTeamInvitationPreview, { initialProps: { target, token: 'a'.repeat(43) } });
+        expect(hook.getCurrent()).toEqual({ kind: 'unavailable', reason: 'expired' });
+    });
     afterEach(async () => {
         await standardCleanup();
         request.mockReset();

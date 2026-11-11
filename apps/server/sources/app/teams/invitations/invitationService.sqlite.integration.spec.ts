@@ -579,7 +579,17 @@ describe("Team invitation service authority (SQLite integration)", () => {
         }
     });
 
-    it("collapses unknown, malformed, revoked, and archived-Team previews to one unavailable outcome", async () => {
+    it.each(['expired', 'used'] as const)("retains the %s bearer reason", async reason => {
+        const f = await teamWith("owner");
+        const created = await create(f.team.id, f.actor.id);
+        if (!created.ok) throw new Error("expected success");
+        await db.teamInvitation.update({ where: { id: created.value.invitation.id }, data: reason === 'expired'
+            ? { expiresAt: new Date(0) } : { acceptedAt: new Date() } });
+        expect(await inTx(tx => previewTeamInvitationByTokenInTx(tx, { token: created.value.token, home: HOME })))
+            .toEqual({ outcome: 'unavailable', reason });
+    });
+
+    it("keeps unknown and malformed previews generic while retaining known bearer reasons", async () => {
         const f = await teamWith("owner");
         const created = await create(f.team.id, f.actor.id);
         if (!created.ok) throw new Error("expected success");
@@ -594,7 +604,7 @@ describe("Team invitation service authority (SQLite integration)", () => {
         }));
         expect(await inTx(async (tx) => previewTeamInvitationByTokenInTx(tx, {
             token: created.value.token, home: HOME,
-        }))).toEqual({ outcome: "unavailable" });
+        }))).toEqual({ outcome: "unavailable", reason: "revoked" });
 
         const live = await teamWith("owner");
         const liveInvitation = await create(live.team.id, live.actor.id);
@@ -602,6 +612,6 @@ describe("Team invitation service authority (SQLite integration)", () => {
         await db.team.update({ where: { id: live.team.id }, data: { archivedAt: new Date() } });
         expect(await inTx(async (tx) => previewTeamInvitationByTokenInTx(tx, {
             token: liveInvitation.value.token, home: HOME,
-        }))).toEqual({ outcome: "unavailable" });
+        }))).toEqual({ outcome: "unavailable", reason: "team_archived" });
     });
 });

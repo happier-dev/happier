@@ -70,12 +70,14 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
     }
 
     if (state.kind === 'unavailable') {
+        const presentation = state.reason === 'teams_disabled' ? presentTeamsDisabledOnHome()
+            : resolveTeamJoinPresentation({ outcome: state.reason ?? 'not_found' });
         return (
             <SurfaceStateCard
                 testID="team-join-preview-unavailable"
                 kind="warning"
-                title={t('teams.join.invalidTitle')}
-                reason={t('teams.join.askForNew')}
+                title={presentation.title}
+                reason={presentation.body ?? undefined}
                 accessibilitySemantics="status"
             />
         );

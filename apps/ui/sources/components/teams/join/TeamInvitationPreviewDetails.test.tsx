@@ -13,7 +13,7 @@ vi.mock('@/voice/registry/generatedBundledVoiceEntries', () => ({
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { setPreferredLanguageFromSettings } from '@/text';
+import { t, preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text';
 
 import { TeamInvitationPreviewDetails } from './TeamInvitationPreviewDetails';
 
@@ -32,6 +32,21 @@ function activePreview(overrides: Partial<TeamInvitationPreviewV1> = {}): TeamIn
 }
 
 describe('TeamInvitationPreviewDetails', () => {
+    it.each(['expired', 'revoked', 'used', 'team_archived'] as const)('renders the known %s reason and a fresh-link repair', async reason => {
+        const { resolveTeamJoinPresentation } = await import('./teamJoinOutcome');
+        const expected = resolveTeamJoinPresentation({ outcome: reason });
+        const rendered = await renderScreen(<TeamInvitationPreviewDetails state={{ kind: 'unavailable', reason }} />);
+        expect(rendered.findByTestId('team-join-preview-unavailable')).not.toBeNull();
+        expect(rendered.getTextContent()).toContain(expected.title);
+        expect(rendered.getTextContent()).toContain(t('teams.join.askForNew'));
+    });
+    it('keeps unknown bearers generic and names the Home repair for disabled Teams', async () => {
+        const rendered = await renderScreen(<TeamInvitationPreviewDetails state={{ kind: 'unavailable' }} />);
+        expect(rendered.getTextContent()).toContain(t('teams.join.invalidTitle'));
+        await act(async () => { rendered.tree.update(<TeamInvitationPreviewDetails state={{ kind: 'unavailable', reason: 'teams_disabled' }} />); });
+        expect(rendered.getTextContent()).toContain(t('teams.unavailable.disabled'));
+        expect(rendered.getTextContent()).not.toContain(t('teams.join.askForNew'));
+    });
     afterEach(async () => {
         setPreferredLanguageFromSettings(null);
         await standardCleanup();
@@ -82,6 +97,7 @@ describe('TeamInvitationPreviewDetails', () => {
     });
 
     it('formats invitation expiry in the selected app language', async () => {
+        await preloadTranslationsForSettings('de');
         setPreferredLanguageFromSettings('de');
         const rendered = await renderScreen(
             <TeamInvitationPreviewDetails state={{ kind: 'ready', preview: activePreview() }} />,

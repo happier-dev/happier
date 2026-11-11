@@ -428,12 +428,12 @@ export const TeamInvitationAcceptResultV1Schema = lazyZodSchema(() => z.discrimi
 export type TeamInvitationAcceptResultV1 = z.infer<typeof TeamInvitationAcceptResultV1Schema>;
 
 /**
- * The unauthenticated preview may intentionally collapse unknown and terminal states
- * when enumeration analysis requires it, so it has its own narrower result.
+ * Unknown and malformed bearers stay generic. Known bearers may retain the terminal
+ * reason already disclosed by acceptance, without invitation or Account identity.
  */
 export const TeamInvitationPreviewResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.literal('ok'), preview: TeamInvitationPreviewV1Schema }),
-  z.strictObject({ outcome: z.literal('unavailable') }),
+  z.strictObject({ outcome: z.literal('unavailable'), reason: z.optional(z.enum(['expired', 'revoked', 'used', 'team_archived', 'teams_disabled'])) }),
   z.strictObject({ outcome: z.literal('feature_unavailable') }),
 ]));
 export type TeamInvitationPreviewResultV1 = z.infer<typeof TeamInvitationPreviewResultV1Schema>;

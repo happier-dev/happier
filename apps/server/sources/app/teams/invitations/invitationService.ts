@@ -576,13 +576,13 @@ function projectTeamInvitationAuthEntryContext(
 async function readActiveTeamInvitationContextInTx(
     tx: Tx,
     token: unknown,
-): Promise<ActiveTeamInvitationContext | null> {
-    if (!await isTeamMembershipAdmissionEnabled({ tx })) return null;
+): Promise<Readonly<{ outcome: 'ok'; context: ActiveTeamInvitationContext }> | Extract<TeamInvitationPreviewResultV1, { outcome: 'unavailable' }>> {
+    if (!await isTeamMembershipAdmissionEnabled({ tx })) return { outcome: 'unavailable', reason: 'teams_disabled' };
     const tokenHash = tryDigestTeamInvitationToken(token);
-    if (tokenHash === null) return null;
+    if (tokenHash === null) return { outcome: 'unavailable' };
 
     const record = await readTeamInvitationByTokenHashInTx(tx, tokenHash);
-    if (record === null) return null;
+    if (record === null) return { outcome: 'unavailable' };
 
     const now = await readTransactionDatabaseTime(tx);
     const state = deriveTeamInvitationStateV1({
@@ -590,14 +590,15 @@ async function readActiveTeamInvitationContextInTx(
         revokedAt: record.revokedAt?.getTime() ?? null,
         expiresAt: record.expiresAt.getTime(),
     }, now.getTime());
-    if (state !== "active") return null;
+    if (state !== 'active') return { outcome: 'unavailable', reason: state === 'accepted' ? 'used' : state };
 
     const team = await tx.team.findUnique({
         where: { id: record.teamId },
         select: { id: true, name: true, logo: true, authenticationPolicy: true, archivedAt: true },
     });
-    if (!team || team.archivedAt !== null) return null;
-    return { record, now, team };
+    if (!team) return { outcome: 'unavailable' };
+    if (team.archivedAt !== null) return { outcome: 'unavailable', reason: 'team_archived' };
+    return { outcome: 'ok', context: { record, now, team } };
 }
 
 /**
@@ -608,9 +609,9 @@ export async function resolveTeamInvitationAuthEntryContextInTx(
     tx: Tx,
     input: Readonly<{ token: unknown }>,
 ): Promise<TeamInvitationAuthEntryContext | null> {
-    const context = await readActiveTeamInvitationContextInTx(tx, input.token);
-    if (context === null) return null;
-    return projectTeamInvitationAuthEntryContext(context.record, context.team);
+    const result = await readActiveTeamInvitationContextInTx(tx, input.token);
+    if (result.outcome !== 'ok') return null;
+    return projectTeamInvitationAuthEntryContext(result.context.record, result.context.team);
 }
 
 /**
@@ -637,18 +638,16 @@ export async function resolveTeamInvitationAuthEntryReferenceContextInTx(
  *
  * It never consumes, never mutates, and never widens: no roster, no provider bindings,
  * no actor identifier, no digest. The inviter appears only as the short display label
- * the invitation email already shows the same person. Unknown and terminal invitations
- * collapse to one `unavailable` outcome so an unauthenticated caller cannot enumerate
- * which bearers exist or learn why a specific one failed.
+ * the invitation email already shows the same person. Unknown and malformed bearers
+ * stay generic; known bearers retain the same terminal reason accept discloses.
  */
 export async function previewTeamInvitationByTokenInTx(
     tx: Tx,
     input: Readonly<{ token: unknown; home: JoinScreenHomeIdentity }>,
 ): Promise<TeamInvitationPreviewResultV1> {
-    const prepared = await resolveTeamInvitationApprovalPreparationInTx(tx, input);
-    return prepared === null
-        ? { outcome: "unavailable" }
-        : { outcome: "ok", preview: prepared.preview };
+    const result = await readActiveTeamInvitationContextInTx(tx, input.token);
+    return result.outcome === 'unavailable' ? result
+        : { outcome: 'ok', preview: await projectTeamInvitationPreviewInTx(tx, result.context, input.home) };
 }
 
 /**
@@ -660,8 +659,9 @@ export async function resolveTeamInvitationApprovalPreparationInTx(
     tx: Tx,
     input: Readonly<{ token: unknown; home: JoinScreenHomeIdentity }>,
 ): Promise<TeamInvitationApprovalPreparation | null> {
-    const context = await readActiveTeamInvitationContextInTx(tx, input.token);
-    if (context === null) return null;
+    const result = await readActiveTeamInvitationContextInTx(tx, input.token);
+    if (result.outcome !== 'ok') return null;
+    const context = result.context;
     const { record, team } = context;
     return {
         invitationId: record.id,

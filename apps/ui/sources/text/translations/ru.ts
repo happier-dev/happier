@@ -4403,6 +4403,7 @@ export const ru: TranslationStructure = {
       browserSignInMachineUpdateRequired: "Обновите Happier на Машине, которую хотите использовать для этого входа, или войдите через приложение Happier на телефоне или компьютере.",
       browserSignInMachineCustodianRequired: "Только владелец Машины может войти в аккаунт на ней",
       accountAuthenticationUnavailable: "Сервис входа временно недоступен. Повторите попытку через некоторое время.",
+      accountAppServiceUnavailable: "Этот сервис входа недоступен в приложении. Проверьте настройки плагина и обновите страницу.",
       accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
       accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
       accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',

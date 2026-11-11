@@ -18,6 +18,10 @@ const neonConfigurationValues: ConnectedAccountAuthenticationContext['configurat
 const supabaseConfigurationValues: ConnectedAccountAuthenticationContext['configuration']['values'] = { organizationSlug: 'org-example' };
 
 describe('connected-service settings errors', () => {
+  it('names app-side artifact failure without blaming the selected Machine', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ code: 'connected_account_app_service_unavailable' }))
+      .toBe(t('connectedServices.errors.accountAppServiceUnavailable'));
+  });
   it.each([
     { runtime: neonPortableRuntime, pluginId: 'happier.deploy.neon', localId: 'neon', values: neonConfigurationValues,
       status: 503, code: 'neon_unavailable', key: 'connectedServices.errors.accountAuthenticationUnavailable', recovery: 'retry' },

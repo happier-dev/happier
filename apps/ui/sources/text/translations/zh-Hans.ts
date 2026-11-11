@@ -4436,6 +4436,7 @@ export const zhHans: TranslationStructure = {
       browserSignInMachineUpdateRequired: "请更新要用于此次登录的机器上的 Happier，或使用 Happier 手机或桌面应用登录。",
       browserSignInMachineCustodianRequired: "只有机器的所有者才能在这台机器上登录",
       accountAuthenticationUnavailable: "登录服务暂时不可用。请稍后重试。",
+      accountAppServiceUnavailable: "应用中暂时无法使用此登录服务。请检查插件设置，然后刷新此页面。",
       accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
       accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
       accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',

@@ -2756,6 +2756,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             browserSignInMachineUpdateRequired: "請更新要用於此次登入的機器上的 Happier，或使用 Happier 手機或桌面應用程式登入。",
             browserSignInMachineCustodianRequired: "只有機器的擁有者才能在這台機器上登入",
             accountAuthenticationUnavailable: "登入服務暫時無法使用。請稍後再試。",
+            accountAppServiceUnavailable: "應用程式中暫時無法使用此登入服務。請檢查外掛設定，然後重新整理此頁面。",
             accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
             accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
             accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',

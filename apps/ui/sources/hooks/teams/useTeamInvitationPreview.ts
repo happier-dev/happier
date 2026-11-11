@@ -3,6 +3,7 @@ import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions
 import {
     TeamInvitationPreviewResultV1Schema,
     type TeamInvitationPreviewV1,
+    type TeamInvitationPreviewResultV1,
 } from '@happier-dev/protocol/teams';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 
@@ -20,10 +21,9 @@ import { createServerFetchAtEndpoint } from '@/sync/http/client';
  * deliberately carries only the Team lockup, so reading consequences off it
  * would be a second, weaker answer to a question this owner already answers.
  *
- * `unavailable` is the preview owner's intentionally coarse response for a
- * syntactically valid bearer it will not describe. It is not an error and not
- * proof the invitation never existed, so callers present it as "this link is not
- * usable" rather than inventing a terminal reason.
+ * `unavailable` stays generic when the Home supplies no reason. A known bearer's
+ * typed terminal reason is retained for the join presenter; the client never
+ * infers that reason or treats an unknown bearer as proof of a specific state.
  *
  * `feature_unavailable` is a different answer and stays distinct: the Home is
  * reachable and current, and has Teams administratively turned off. Collapsing
@@ -40,7 +40,7 @@ export type TeamInvitationPreviewState =
         refreshing?: true;
         refreshFailure?: Readonly<{ retryable: boolean }>;
     }>
-    | Readonly<{ kind: 'unavailable' }>
+    | Readonly<{ kind: 'unavailable'; reason?: Extract<TeamInvitationPreviewResultV1, { outcome: 'unavailable' }>['reason'] }>
     | Readonly<{ kind: 'feature_unavailable' }>
     | Readonly<{ kind: 'failed'; retryable: boolean }>;
 
@@ -129,9 +129,9 @@ export function useTeamInvitationPreview(params: Readonly<{
                 // through instead of being folded into `unavailable`.
                 setState({
                     scopeKey,
-                    value: { kind: outcome.data.outcome === 'feature_unavailable'
-                        ? 'feature_unavailable'
-                        : 'unavailable' },
+                    value: outcome.data.outcome === 'feature_unavailable'
+                        ? { kind: 'feature_unavailable' }
+                        : { kind: 'unavailable', ...(outcome.data.reason ? { reason: outcome.data.reason } : {}) },
                 });
             } catch {
                 // An approval-pending or transport throw is not a description of
