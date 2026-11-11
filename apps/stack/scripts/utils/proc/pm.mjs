@@ -811,14 +811,15 @@ async function runStackWorkspacePackageScript(packageDir, script, { env, quiet, 
   const pm = await getComponentPm(packageDir, env);
   const stdio = quiet ? 'ignore' : 'inherit';
   if (pm.name === 'pnpm') await ensurePnpmReady({ dir: packageDir, env, quiet, pm });
-  await runPm(pm, ['run', '--silent', script, ...args], {
+  const { withWorkspaceOutputScriptArgs } = await loadSourceWorkspaceModule('workspaceOutputScriptArgs.mjs');
+  await withWorkspaceOutputScriptArgs({ packageDir, scriptName: script, env }, (scriptArgs, childEnv) => runPm(pm, [...scriptArgs, ...args], {
     ownedProcessGroup: true,
     cwd: packageDir,
     stdio,
-    env,
+    env: childEnv,
     timeoutMs,
     captureFailureDiagnostic,
-  });
+  }));
 }
 
 export const stackWorkspaceBuildBoundary = {
