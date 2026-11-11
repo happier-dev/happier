@@ -26,6 +26,7 @@ export type DetailsTabStripProps = Readonly<{
     group: DetailsWorkspaceGroupView;
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
     resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
+    presentedTitles?: ReadonlyMap<string, string>;
     unsavedTabKeys?: ReadonlySet<string>;
     testIds?: DetailsTabStripTestIds;
 }>;
@@ -78,7 +79,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
     const tabs = React.useMemo(() => {
         const nextTitleRows = new Map<DetailsTabState, DetailsTabState>();
         const rows = props.group.tabs.map(tab => {
-            const title = titles.get(tab.key);
+            const title = props.presentedTitles?.get(tab.key) ?? titles.get(tab.key);
             if (!title || title === tab.title) return tab;
             // Another title changing must not replace an unchanged derived row.
             // Exact source identity keeps every other visual field current.
@@ -89,7 +90,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
         });
         previousTitleRows.current = nextTitleRows;
         return rows;
-    }, [props.group.tabs, titles]);
+    }, [props.group.tabs, props.presentedTitles, titles]);
     const primaryColor = theme.colors.text.primary;
     const secondaryColor = theme.colors.text.secondary;
     const renderLeadingIcon = React.useCallback((tab: DetailsTabState, active: boolean) => {

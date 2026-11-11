@@ -10,6 +10,8 @@ type NavigationTitleChromePublisher = Readonly<{
     setTitle?: (title: string | null | undefined) => void;
     /** Page identity can name its tab while phone chrome deliberately names only its kind. */
     setPageTitle?: (title: string | null | undefined) => void;
+    /** A details tab consumes its presented detail heading without renaming the enclosing page. */
+    setDetailTitle?: (title: string | null | undefined) => void;
     setBack?: (back: React.ReactNode) => void;
 }>;
 const NavigationTitleChromePublisherContext = React.createContext<NavigationTitleChromePublisher | null>(null);

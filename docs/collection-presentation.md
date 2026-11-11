@@ -819,3 +819,12 @@ existing owners.
 ## Related
 
 [Plugin platform](plugin-platform.md), [surface states](surface-states.md), [DESIGN.md](../DESIGN.md), [UI instructions](../apps/ui/AGENTS.md).
+
+### Details-tab titles (unreleased 0.3)
+
+The details-pane host consumes the presented detail heading through its scoped
+page-title publisher. The shared detail header publishes its already-localized
+title: a draft supplies New task, an existing item supplies its title. The
+Details tab group owns this ephemeral title and restores the resource title when
+the detail withdraws it. The wide tab strip and phone overflow menu consume that
+same value; no surface-specific title override or persisted setting is needed.

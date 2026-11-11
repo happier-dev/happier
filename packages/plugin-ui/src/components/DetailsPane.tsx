@@ -109,6 +109,7 @@ function useNoPane(): boolean {
  * ```
  */
 export function DetailsPane(props: DetailsPaneProps): ReactElement | null {
+  useDetailPageTitle(props.open ? props.title : undefined);
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const binding = useOptionalPluginUiPresentationHost()?.detailsPane ?? NO_PANE_HOST;
   const { inPane, beside } = useBindingPlacement(binding, props.open);
@@ -304,6 +305,8 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
     /** The page the way back returns to, by name ("‹ PRs & Issues"); without it the way back is the Back glyph. */
     backLabel?: string;
   }>): ReactElement {
+  // The story mirrors the band's identity; the band remains the single publisher.
+  useDetailPageTitle(props.title, props.placement !== 'story');
   const placement = props.placement ?? 'band';
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();

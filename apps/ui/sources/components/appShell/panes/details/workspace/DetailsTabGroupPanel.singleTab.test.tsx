@@ -18,6 +18,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import { renderPluginNavigationActions } from '@/components/plugins/surfaces/pluginPageHeaderActions';
+import { DocumentTabStrip } from '@/components/ui/navigation/DocumentTabStrip';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 
 import { DetailsTabGroupPanel } from './DetailsTabGroupPanel';
@@ -94,7 +95,30 @@ describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
         />
       </NavigationTitleChromeProvider>,
     );
-    expect(seen.at(-1)).toEqual({ showsTitle: false, publisher: false });
+    expect(seen.at(-1)).toEqual({ showsTitle: false, publisher: true });
+  });
+
+  it('names each retained tab from its presented detail and restores its resource title on withdrawal', async () => {
+    const { useNavigationTitleChromePublisher } = await import('@/components/ui/layout/navigationTitleChrome');
+    let publish: ((title: string | undefined) => void) | undefined;
+    function Detail() {
+      publish = useNavigationTitleChromePublisher()?.setDetailTitle;
+      return <View />;
+    }
+    const screen = await renderScreen(<DetailsTabGroupPanel pane={pane}
+      group={group([tab('draft', 'Resource'), tab('other', 'Other resource')])} testIds={testIds}
+      renderTabContent={entry => entry.key === 'draft' ? <Detail /> : <View />} />);
+    const { act } = await import('react-test-renderer');
+    const titles = () => screen.root.findByType(DocumentTabStrip).props.tabs.map((entry: DetailsTabState) => entry.title);
+    try {
+      expect(publish).toBeTypeOf('function');
+      await act(async () => publish?.('New task'));
+      expect(titles()).toEqual(['New task', 'Other resource']);
+      await act(async () => publish?.('Repair the failing build'));
+      expect(titles()).toEqual(['Repair the failing build', 'Other resource']);
+      await act(async () => publish?.(undefined));
+      expect(titles()).toEqual(['Resource', 'Other resource']);
+    } finally { await screen.unmount(); }
   });
 
   it("drops its tab strip and lends the pane controls to the tab's own header", async () => {

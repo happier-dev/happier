@@ -63,6 +63,8 @@ export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
    * `PageHeader` does; the page header then omits its title. `undefined` withdraws it.
    */
   publishTitle?: (title: string | undefined) => void;
+  /** The presented detail names its containing tab independently of navigation chrome. */
+  publishPageTitle?: (title: string | undefined) => void;
   /**
    * The navigation chrome leaves the page's name to the page, drawn as its large title under the navigation row:
    * a phone's top-level collection page, as core's Inbox tab (lab `phone-P4`). A `Collection` that is the page

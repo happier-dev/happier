@@ -1252,6 +1252,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     const largeTitle = useNavigationLeavesLargeTitle();
     const chromePublisher = useNavigationTitleChromePublisher();
     const setChromeTitle = chromePublisher?.setTitle;
+    const publishPageTitle = chromePublisher?.setDetailTitle;
     const setChromeBack = chromePublisher?.setBack;
     // A phone's band draws the page's pushed detail's way back, beside the Machine (one row, never two).
     const publishChromeBack = React.useMemo(() => !chromeShowsTitle || setChromeBack === undefined ? undefined
@@ -1265,6 +1266,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     const navigationBackSpendsStep = navigationShowsBack && pageBackStepArmed;
     const hostPageChrome = React.useMemo(() => ({
         showsTitle: chromeShowsTitle,
+        ...(publishPageTitle === undefined ? {} : { publishPageTitle }),
         renderBack: BackControl ? (style: StyleProp<ViewStyle>) => <BackControl style={style} /> : null,
         columnMaxWidthPx,
         renderNavigationActions: renderPluginNavigationActions,
@@ -1272,7 +1274,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         ...(publishChromeBack === undefined ? {} : { publishBack: publishChromeBack }),
         ...(setChromeTitle === undefined ? {} : { publishTitle: setChromeTitle }),
         ...(largeTitle ? { largeTitle } : {}),
-    }), [BackControl, chromeShowsTitle, columnMaxWidthPx, largeTitle, navigationBackSpendsStep, publishChromeBack, setChromeTitle]);
+    }), [BackControl, chromeShowsTitle, columnMaxWidthPx, largeTitle, navigationBackSpendsStep, publishChromeBack, publishPageTitle, setChromeTitle]);
     // The page's app details pane, when this mount sits in a page that has one: a plugin `DetailsPane` (and a
     // `Collection` opening its items) renders there.
     const detailsPaneBinding = useDetailsPaneSlotBinding();

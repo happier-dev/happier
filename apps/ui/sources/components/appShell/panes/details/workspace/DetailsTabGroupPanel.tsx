@@ -74,11 +74,15 @@ const stylesheet = StyleSheet.create((theme) => ({
 const DetailsTabSurface = React.memo((props: Readonly<{
     groupId: string;
     tabKey: string;
+    publishTitle: (key: string, title: string | null | undefined) => void;
     isActive: boolean;
     /** Mounted in place of a tab that just left this group (`replaceTab`): it fades in. */
     replacing?: boolean;
     children: React.ReactNode;
 }>) => {
+    const publisher = React.useMemo(() => ({
+        setDetailTitle: (title: string | null | undefined) => props.publishTitle(props.tabKey, title),
+    }), [props.publishTitle, props.tabKey]);
     const a11yHiddenProps =
         Platform.OS === 'web'
             ? null
@@ -115,7 +119,7 @@ const DetailsTabSurface = React.memo((props: Readonly<{
             <PluginSurfaceFocusEligibilityProvider active={props.isActive}>
                 {/* A tab is not the page its pane sits in: it draws its own title and way back under its strip,
                     never in that page's navigation band (a second header over a Session's). */}
-                <NavigationTitleChromeProvider showsTitle={false}>
+                <NavigationTitleChromeProvider showsTitle={false} publisher={publisher}>
                     {/* Each retained tab is its own header/body pair: its scroll drives only its header's shade. */}
                     <PaneHeaderScrollScope>{props.children}</PaneHeaderScrollScope>
                 </NavigationTitleChromeProvider>
@@ -207,6 +211,17 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
         }
     }, []);
 
+    // Content publishes its already-localized heading; every tab title consumer reads this one projection.
+    const [presentedTitles, setPresentedTitles] = React.useState<ReadonlyMap<string, string>>(() => new Map());
+    const publishTitle = React.useCallback((key: string, title: string | null | undefined) => {
+        setPresentedTitles(current => {
+            const nextTitle = title || undefined;
+            if (current.get(key) === nextTitle) return current;
+            const next = new Map(current);
+            if (nextTitle === undefined) next.delete(key); else next.set(key, nextTitle);
+            return next;
+        });
+    }, []);
     const activeTab = React.useMemo(() => {
         return props.group.tabs.find((tab) => tab.key === props.group.activeTabKey) ?? props.group.tabs.at(-1) ?? null;
     }, [props.group.activeTabKey, props.group.tabs]);
@@ -269,7 +284,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
         [foldedTabKey, groupTabs]);
     const stripMenuRows = React.useMemo((): readonly LentHeaderMenuRow[] | null => {
         if (foldedTabKey === null) return null;
-        const show = (otherTabs ?? []).map((tab): LentHeaderMenuRow => ({ id: `details-tab-show:${tab.key}`, title: tab.title,
+        const show = (otherTabs ?? []).map((tab): LentHeaderMenuRow => ({ id: `details-tab-show:${tab.key}`, title: presentedTitles.get(tab.key) ?? tab.title,
             testID: `details-tab-menu-show-${toTestIdSafeValue(tab.key)}`, iconName: resolveDetailsTabGlyph(tab, resolveTabIconName),
             onSelect: () => setActiveDetailsTab(tab.key) }));
         const pin: LentHeaderMenuRow | null = foldedTabPin === 'pin'
@@ -283,7 +298,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 ? () => { void runGuardedTabNavigation([detailsTabNavigationKey(props.pane.scopeId, foldedTabKey)], closeLastTab); }
                 : () => closeTab(foldedTabKey) };
         return [...show, ...(pin ? [pin] : []), ...(paneLendsClose ? [] : [close])];
-    }, [closeLastTab, closeTab, foldedTabKey, foldedTabPin, otherTabs, paneLendsClose, pinDetailsTab, resolveTabIconName, setActiveDetailsTab, unpinDetailsTab]);
+    }, [closeLastTab, closeTab, foldedTabKey, foldedTabPin, otherTabs, presentedTitles, paneLendsClose, pinDetailsTab, resolveTabIconName, setActiveDetailsTab, unpinDetailsTab]);
     // The rows travel with the lent controls, so whichever header draws those controls offers them too (a Details
     // header in its own `⋯`; a plugin or core page header in a `⋯` beside them).
     useStackHeaderActionsPublisher(headerActionsScopeKey, lendsControls ? renderLentControls : null, stripMenuRows);
@@ -321,6 +336,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                         serverId={props.serverId}
                         pane={props.pane}
                         group={props.group}
+                        presentedTitles={presentedTitles}
                         resolveTabIconName={props.resolveTabIconName}
                         resolveTabPresentation={props.resolveTabPresentation}
                         resolveTabHref={props.resolveTabHref}
@@ -360,6 +376,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 key={tab.key}
                                 groupId={props.group.id}
                                 tabKey={tab.key}
+                                publishTitle={publishTitle}
                                 isActive={isActive}
                                 replacing={tab.key === replacingKey}
                             >

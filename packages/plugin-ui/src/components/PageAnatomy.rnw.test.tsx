@@ -11,6 +11,7 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { Button } from './Button.js';
 import { Item, ItemGroup, List } from './List.js';
+import { PushedDetailHeader } from './DetailsPane.js';
 import { PageHeader } from './PageHeader.js';
 import { PluginUiProviderInternal } from './PluginUiProvider.js';
 import { EmptyState } from './State.js';
@@ -333,6 +334,15 @@ describe('plugin page anatomy through the shared page owners', () => {
     expect(textOf(ownHeader.querySelector('[role="heading"]'))).toBe('Sentry');
     expect(ownHeader.querySelector('[data-testid="host-back"]')).not.toBeNull();
     own.unmount();
+  });
+
+  it.each(['band', 'backOnly'] as const)('publishes the presented detail title in %s placement independently of phone chrome', (placement) => {
+    const published: Array<string | undefined> = [];
+    const mount = mountPage(<PushedDetailHeader title="New task" placement={placement} onClose={() => {}} />,
+      { pageChrome: { showsTitle: false, publishPageTitle: (title: string | undefined) => { published.push(title); } } });
+    expect(published).toEqual(['New task']);
+    mount.unmount();
+    expect(published.at(-1)).toBeUndefined();
   });
 
   it('hands its title to host chrome that hides it, and withdraws it on leaving', () => {
