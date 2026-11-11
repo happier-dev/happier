@@ -4215,14 +4215,15 @@ export async function runHostSessionRuntime(
     let preparationFailurePublished = false;
     if (!lifecycleOwnsConstructionResources) {
       if (hostOwnsSessionConstructionCleanup) {
+        const startupIssue = !runtimeStopRequested ? classifyPrimarySessionRuntimeIssue({
+          cause: 'session_error', error: startupInputRefusal ?? error, provider: policyAgentId, startupPhase: 'client_start',
+        }) : null;
         if (!runtimeStopRequested) logger.infoFile(`${config.uiLogPrefix} Session construction failed`, {
           sessionId: session.sessionId,
           phase: startupPhase,
           ...readSessionPreparationFailureDiagnostic(error),
+          ...(startupIssue?.failureCause ? { failureCause: startupIssue.failureCause } : {}),
         });
-        const startupIssue = !runtimeStopRequested ? classifyPrimarySessionRuntimeIssue({
-          cause: 'session_error', error: startupInputRefusal ?? error, provider: policyAgentId, startupPhase: 'client_start',
-        }) : null;
         // Typed Home admission refusals happen before a provider turn exists.
         // A synthetic failed turn here would replay on a later admitted start.
         const startupAdmissionRefusal = error instanceof SessionRuntimeActivitySnapshotRejectedError;

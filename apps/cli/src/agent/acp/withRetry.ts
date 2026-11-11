@@ -1,4 +1,4 @@
-import { formatErrorForUi } from '@/ui/formatErrorForUi';
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { logger } from '@/ui/logger';
 import { createBackoff, isRetryableError } from '@/utils/time';
 
@@ -46,15 +46,13 @@ export function createAcpRequestFailureLogRecord(params: Readonly<{
   requestErrorMessage: string;
   authenticationSetupFailure?: true;
 }> {
-  // Never serialize arbitrary provider data. The shared UI formatter owns redaction and its preview budget.
+  // Never serialize arbitrary provider data. The shared native projection owns redaction and its preview budget.
   const code = readAcpRequestErrorCode(params.error);
-  const message = params.error && typeof params.error === 'object' && 'message' in params.error
-    && typeof params.error.message === 'string' ? params.error.message
-    : typeof params.error === 'string' ? params.error : 'ACP request failed';
+  const detail = readNativeStartupFailureDetail(params.error);
   return Object.freeze({
     operation: params.operation,
     failureKind: classifyAcpRequestFailureForLog(params.error),
-    requestErrorMessage: formatErrorForUi(message),
+    requestErrorMessage: detail.providerErrorMessage ?? 'ACP request failed',
     ...(params.error && typeof params.error === 'object'
       && 'authenticationSetupFailure' in params.error
       && params.error.authenticationSetupFailure === true ? { authenticationSetupFailure: true as const } : {}),
@@ -93,7 +91,7 @@ export async function withRetry<T>(
       const error =
         e instanceof Error
           ? e
-          : new Error(formatErrorForUi(e, { maxChars: 10_000 }), { cause: e });
+          : normalizeAcpRequestError(e);
 
       const attempt = failuresCount;
       logger.debug('[AcpBackend] Retrying ACP request after failure', {
@@ -117,6 +115,12 @@ export async function withRetry<T>(
     if (rawError instanceof Error) {
       throw rawError;
     }
-    throw new Error(formatErrorForUi(rawError, { maxChars: 10_000 }), { cause: rawError });
+    throw normalizeAcpRequestError(rawError);
   }
+}
+
+function normalizeAcpRequestError(error: unknown): Error {
+  const detail = readNativeStartupFailureDetail(error);
+  return Object.assign(new Error(detail.providerErrorMessage ?? 'ACP request failed'),
+    detail.providerErrorCode === undefined ? {} : { code: detail.providerErrorCode });
 }

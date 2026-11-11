@@ -26,6 +26,7 @@ import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtim
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import axios from 'axios';
+import { readNativeStartupFailureDetail } from './nativeStartupFailureDetail';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { readStructuredInputPreparationFailure } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
@@ -609,6 +610,8 @@ export function classifyPrimarySessionRuntimeIssue(
   const teamCredential = teamCredentialDenial?.details ?? null;
   const providerCode = !teamCredentialDenial && input.cause === 'session_error' && errorCode.kind === 'string'
     ? ProviderErrorCodeV1Schema.safeParse(errorCode.value) : null;
+  const nativeStartupDetail = input.startupPhase === 'client_start' && !teamCredentialDenial
+    ? readNativeStartupFailureDetail(input.error) : {};
   const nativeConstructionFailure = input.startupPhase === 'client_start' && !teamCredentialDenial
     && !providerCode?.success && !(errorCode.kind === 'string' && readAgentStartupFailureCode(errorCode.value))
     && (!failureCause.success || failureCause.data.failureReason === 'unclassified_provider_error')
@@ -723,10 +726,14 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(nativeConstructionFailure ? { failureCause: { phase: 'client_start' as const,
       failureReason: nativeConstructionFailure.failureReason,
       ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) } }
-      : failureCause.success ? { failureCause: { ...failureCause.data,
+      : failureCause.success ? { failureCause: {
+      ...(failureCause.data.failureReason === 'unclassified_provider_error' && source === 'agent_session_error'
+        && !startupFailureCode ? nativeStartupDetail : {}),
+      ...failureCause.data,
       ...(nativeFailureMessage === undefined ? {} : { providerErrorMessage: nativeFailureMessage }) } } : input.startupPhase ? {
       failureCause: { phase: input.startupPhase,
         failureReason: source === 'dependency_failure' ? 'unknown' : 'unclassified_provider_error',
+        ...(source === 'agent_session_error' && (!startupFailureCode || (input.error instanceof Error && input.error.cause !== undefined)) ? nativeStartupDetail : {}),
         ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) },
     } : {}),
     ...(agentProcessExitAfterSwitch === undefined ? {} : { agentProcessExitAfterSwitch }),

@@ -1,3 +1,4 @@
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
 import { resolveProviderAccountUsageAuthoritativeSource } from '../connectedServices/accountUsage/runtimeSource';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
@@ -5209,6 +5210,13 @@ export async function startDaemonSessionControlRuntime(
         await assertSessionAccountCurrent(sessionId, context, attribution);
         const issue = rawSession?.id === sessionId && rawSession.latestTurnStatus === 'failed'
           ? rawSession.lastRuntimeIssue ?? null : null;
+        if (issue?.failureCause?.phase === 'client_start') {
+          logger.infoFile('[DAEMON RUN] Session construction failure', {
+            sessionId, failureCode: issue.code,
+            ...readNativeStartupFailureDetail({ code: issue.failureCause.providerErrorCode,
+              message: issue.failureCause.providerErrorMessage }),
+          });
+        }
         const execution = tracked.spawnOptions?.executionAuthorization;
         const pending = rawSession?.pendingActivationAuthorization;
         const target = pending?.admittedTarget;

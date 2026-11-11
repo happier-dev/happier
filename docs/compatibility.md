@@ -10806,3 +10806,15 @@ protocol-epoch change.
 ## Chrome Web Store registry format (unreleased 0.3)
 
 `chrome-web-store` is a new registry format id for the built-in browser-extension source. It uses the store's private batchexecute listing and detail reads and the existing update2 content digest check; acquisition remains the daemon browser-extension owner. Older strict development clients reject the unknown format id at source admission, so the source is omitted until the client is upgraded. Paste-link/ID installation remains available.
+
+## Native startup failure diagnostics (unreleased 0.3)
+
+The existing optional `SessionRuntimeFailureCauseV1.providerErrorCode` accepts
+redacted native string codes alongside integers. Existing enum strings remain
+valid. This is presentation evidence in the existing closed diagnostic envelope,
+never authority or retry policy. Matching development Protocol, CLI, Home and UI
+readers load together; older development readers reject unfamiliar string codes.
+No new epoch, adapter or persisted format is introduced. The inspected `../0.2`
+frontier at `52d077ee67fdcf7b5f6dfb64be5af9e9893887e4` has no
+`failureCause` or native-code fields in the corresponding runtime issue schema;
+that path has no local diff against its HEAD.

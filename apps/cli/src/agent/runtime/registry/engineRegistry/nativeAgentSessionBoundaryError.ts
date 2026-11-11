@@ -1,3 +1,4 @@
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -161,8 +162,11 @@ export function sanitizeNativeAgentSessionBoundaryError(
     error: unknown,
     forceSafeShape: boolean,
 ): unknown {
+    if (!error || typeof error !== 'object') return new Error(projectPluginFailureText(error));
+    const nativeDetail = readNativeStartupFailureDetail(error);
     if (!(error instanceof Error)) {
-        return new Error(projectPluginFailureText(error));
+        return Object.assign(new Error(nativeDetail.providerErrorMessage ?? projectPluginFailureText(error)),
+            nativeDetail.providerErrorCode === undefined ? {} : { code: nativeDetail.providerErrorCode });
     }
     const name =
         redactBugReportSensitiveText(error.name).trim()
@@ -210,9 +214,16 @@ export function sanitizeNativeAgentSessionBoundaryError(
             ...(pluginError.remediation === undefined ? {} : { remediation: pluginError.remediation }),
             ...(pluginError.diagnostics === undefined ? {} : { diagnostics: pluginError.diagnostics }),
         })
-        : Object.assign(new Error(message), { name, ...(code === undefined ? {} : { code }) });
+        : Object.assign(new Error(message), { name, ...(code !== undefined ? { code }
+            : typeof readOwnDataProperty(error, 'code') === 'number' && nativeDetail.providerErrorCode !== undefined
+                ? { code: nativeDetail.providerErrorCode } : {}) });
     if (stack !== undefined) {
         sanitized.stack = stack;
+    }
+    // Preserve only the native diagnostic projection, never the original cause graph.
+    if (hasCause && (nativeDetail.providerErrorMessage || nativeDetail.providerErrorCode !== undefined)) {
+        Object.assign(sanitized, { cause: Object.assign(new Error(nativeDetail.providerErrorMessage ?? 'Native startup failed'),
+            nativeDetail.providerErrorCode === undefined ? {} : { code: nativeDetail.providerErrorCode }) });
     }
     if (diagnostic.success) Object.assign(sanitized, { diagnostic: diagnostic.data });
     return sanitized;

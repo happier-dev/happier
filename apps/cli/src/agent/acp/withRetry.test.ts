@@ -40,7 +40,7 @@ describe('withRetry', () => {
     })).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection', requestErrorMessage: 'Rejected' });
   });
 
-  it('wraps non-Error thrown values with useful details', async () => {
+  it('wraps non-Error thrown values without serializing arbitrary native data', async () => {
     const thrown = { code: 'E_FAIL', detail: { nested: 'boom' } };
 
     const outcome = await withRetry(
@@ -63,9 +63,10 @@ describe('withRetry', () => {
     expect(outcome.error).toBeInstanceOf(Error);
     const message = (outcome.error as Error).message;
     expect(message).not.toBe('[object Object]');
-    expect(message).toContain('E_FAIL');
-    expect(message).toContain('nested');
-    expect(message).toContain('boom');
+    expect(outcome.error).toMatchObject({ code: 'E_FAIL' });
+    expect(outcome.error).not.toHaveProperty('cause');
+    expect(message).not.toContain('nested');
+    expect(message).not.toContain('boom');
   });
 
   it('preserves Error instances as-is', async () => {

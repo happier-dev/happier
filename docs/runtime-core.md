@@ -68,6 +68,13 @@ cause to the Session issue and Pending input settlement. Preparing input before
 dispatch does not turn an identified native configuration refusal into a
 document or Home dependency failure.
 
+Native startup failures retain a redacted native code and the first message line
+through the shared startup diagnostic projection. The classifier publishes these
+as `failureCause.providerErrorCode` and `providerErrorMessage`; the construction
+file log uses that same cause. Native data, stderr and stacks are excluded from
+this projection, which reuses the Session issue preview budget. Daemon open
+attestation continues to omit provider prose.
+
 Native startup authentication reasons and safe recovery text are projected by
 the Agent plugin before host classification. The host consumes their typed source
 and sanitized failure cause. The shared unstructured-output classifier recognizes

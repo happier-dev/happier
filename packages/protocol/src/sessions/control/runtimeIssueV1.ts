@@ -365,7 +365,8 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
     'auth_account_changed', 'unclassified_provider_error', 'model_selection_required',
   ]),
   providerErrorCode: z.optional(z.union([
-    z.enum(['ContextWindowExceeded', 'UsageLimitExceeded', 'Unauthorized', 'Other', 'HttpConnectionFailed', 'model_not_found']),
+    // Native codes are presentation evidence, never an authority or retry decision.
+    z.string().check(z.trim(), z.minLength(1)),
     z.number().check(z.int()),
   ])),
   httpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
