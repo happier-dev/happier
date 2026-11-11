@@ -111,3 +111,5 @@ export function deriveArtifactCoarseKindV1(header: Readonly<Record<string, unkno
   if (header.kind === 'widget-layout-fragment.v1') return 'widget_layout_fragment';
   return 'other';
 }
+/** Shared terminal vocabulary for artifact admission consumers. */
+export type InboxArtifactAdmissionDispositionV1 = 'presented' | 'not_presented' | 'unreadable';

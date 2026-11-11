@@ -5,6 +5,7 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
 import { TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from '../tasks/entryRefV1.js';
 import { ArtifactRevisionV1Schema } from '../artifacts/artifactRevisionV1.js';
+import type { InboxArtifactAdmissionDispositionV1 } from '../artifacts/artifactKindV1.js';
 import { AccountNoticeRecoveryChoicesV1Schema } from './accountNoticeRecoveryV1.js';
 export { AccountNoticeRecoveryChoiceV1Schema, AccountNoticeRecoveryChoicesV1Schema,
   AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema,
@@ -267,9 +268,9 @@ export function readUsageNoticeArtifactV1(input: Readonly<{ header: unknown; bod
 }
 
 export type OwnedNoticeArtifactAdmissionV1 =
-  | Readonly<{ kind: 'presented'; notice: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 }>
-  | Readonly<{ kind: 'retired' }>
-  | Readonly<{ kind: 'unreadable' }>;
+  | Readonly<{ disposition: Extract<InboxArtifactAdmissionDispositionV1, 'presented'>; notice: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 }>
+  | Readonly<{ disposition: Extract<InboxArtifactAdmissionDispositionV1, 'not_presented'>; reason: 'retired_source' }>
+  | Readonly<{ disposition: Extract<InboxArtifactAdmissionDispositionV1, 'unreadable'> }>;
 
 // Only identify the closed source; do not restore its former Follow payload or routing contract.
 const RetiredNoticeContentSchema = lazyZodSchema(() => z.object({
@@ -287,26 +288,26 @@ export function readOwnedNoticeArtifactAdmissionV1(artifact: Readonly<{
   artifactId?: string; id?: string;
   ownerAccountId?: string; access?: string; publicAudience?: string; header?: unknown; body?: unknown;
 }>, accountId: string | null | undefined): OwnedNoticeArtifactAdmissionV1 {
-  if (!accountId || artifact.ownerAccountId !== accountId || artifact.access !== 'owner' || artifact.publicAudience !== 'none') return { kind: 'unreadable' };
+  if (!accountId || artifact.ownerAccountId !== accountId || artifact.access !== 'owner' || artifact.publicAudience !== 'none') return { disposition: 'unreadable' };
   const content = { header: artifact.header, body: artifact.body };
   const notice = readAccountNoticeArtifactV1(content) ?? readUsageNoticeArtifactV1(content);
   if (notice) return notice.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 && notice.recoveryChoices?.some(choice =>
     choice.actionId === 'inbox.notice.dismiss' && choice.input.artifactId !== (artifact.artifactId ?? artifact.id))
-    ? { kind: 'unreadable' } : { kind: 'presented', notice };
+    ? { disposition: 'unreadable' } : { disposition: 'presented', notice };
   if (typeof content.body === 'string') try {
     const header = RetiredNoticeHeaderSchema.safeParse(content.header);
     const body = RetiredNoticeContentSchema.safeParse(JSON.parse(content.body));
     if (header.success && body.success
-      && sameStrictJsonValue(RetiredNoticeContentSchema.parse(header.data), body.data)) return { kind: 'retired' };
+      && sameStrictJsonValue(RetiredNoticeContentSchema.parse(header.data), body.data)) return { disposition: 'not_presented', reason: 'retired_source' };
   } catch { /* Unparseable content remains incomplete, including bodies claiming a retired source. */ }
-  return { kind: 'unreadable' };
+  return { disposition: 'unreadable' };
 }
 
 /** Detail and mutation consumers only receive presentable current notices. */
 export function readOwnedNoticeArtifactV1(artifact: Parameters<typeof readOwnedNoticeArtifactAdmissionV1>[0],
   accountId: string | null | undefined): AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null {
   const result = readOwnedNoticeArtifactAdmissionV1(artifact, accountId);
-  return result.kind === 'presented' ? result.notice : null;
+  return result.disposition === 'presented' ? result.notice : null;
 }
 
 /** Retained usage notices enter the same Inbox row model without rewriting storage. */

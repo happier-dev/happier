@@ -475,12 +475,12 @@ describe('approval Artifact header correspondence', () => {
       actionId: 'discussion.post', actionArgs: { discussionId: 'discussion-1', content: 'Hello' }, summary: 'Post' });
     const currentHeader = buildApprovalRequestArtifactHeaderV1(legacy);
     expect(currentHeader.approvalListFacts).toEqual({});
-    expect(readApprovalArtifactAdmissionV1(currentHeader, JSON.stringify(legacy))).toMatchObject({ kind: 'presented' });
+    expect(readApprovalArtifactAdmissionV1(currentHeader, JSON.stringify(legacy))).toMatchObject({ disposition: 'presented' });
     const header = { ...buildApprovalRequestArtifactHeaderV1(legacy), approvalListFacts: { discussionId: 'discussion-1' } };
     expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(legacy))).toBeNull();
-    expect(readApprovalArtifactAdmissionV1(header, JSON.stringify(legacy))).toMatchObject({ kind: 'not_presented', reason: 'superseded_header_facts' });
-    expect(readApprovalArtifactAdmissionV1(header, '{"v":9}')).toEqual({ kind: 'unreadable' });
-    expect(readApprovalArtifactAdmissionV1(header, null)).toEqual({ kind: 'unreadable' });
+    expect(readApprovalArtifactAdmissionV1(header, JSON.stringify(legacy))).toMatchObject({ disposition: 'not_presented', reason: 'superseded_header_facts' });
+    expect(readApprovalArtifactAdmissionV1(header, '{"v":9}')).toEqual({ disposition: 'unreadable' });
+    expect(readApprovalArtifactAdmissionV1(header, null)).toEqual({ disposition: 'unreadable' });
   });
 
   it('rejects an unhydrated or wrong-family body instead of trusting the index header', () => {

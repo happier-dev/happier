@@ -59,8 +59,8 @@ export function createCliInboxReadAction(params: Readonly<{
       if (!await current()) return { ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' };
       for (const artifact of opened) {
         const admission = readOwnedNoticeArtifactAdmissionV1(artifact, params.accountId);
-        if (admission.kind === 'retired') continue;
-        if (admission.kind === 'unreadable') { noticeCoverage = 'partial'; continue; }
+        if (admission.disposition === 'not_presented') continue;
+        if (admission.disposition === 'unreadable') { noticeCoverage = 'partial'; continue; }
         // The Inbox deep link asks the app's existing detail registry to open the owning page.
         const header = normalizeAccountNoticeArtifactV1(admission.notice);
         const focus = inboxNoticeFocusKeyV1(params.serverId, artifact.artifactId);

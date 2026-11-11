@@ -24,13 +24,13 @@ export function readAccountNoticeArtifactHeader(
     accountId: string | null | undefined,
 ): AccountNoticeArtifactHeaderV1 | null {
     const result = readAccountNoticeArtifactAdmission(artifact, accountId);
-    return result.kind === 'presented' ? normalizeAccountNoticeArtifactV1(result.notice) : null;
+    return result.disposition === 'presented' ? normalizeAccountNoticeArtifactV1(result.notice) : null;
 }
 
 export function readAccountNoticeArtifactAdmission(
     artifact: Parameters<typeof readOpenUsageNoticeArtifactHeader>[0], accountId: string | null | undefined,
 ): OwnedNoticeArtifactAdmissionV1 {
-    if (!artifact.isDecrypted || artifact.draft === true) return { kind: 'unreadable' };
+    if (!artifact.isDecrypted || artifact.draft === true) return { disposition: 'unreadable' };
     return readOwnedNoticeArtifactAdmissionV1({ ...artifact, header: artifact.rawHeader ?? artifact.header }, accountId);
 }
 

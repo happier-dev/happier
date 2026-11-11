@@ -162,39 +162,39 @@ export function readAdmittedApprovalArtifactBody(artifact: DecryptedArtifact): A
     if (admitted?.body === body && (!admitted.sessionEntry || admitted.sessionEntry.artifact.id === artifact.id)) return admitted;
     const strict = admitted?.body === body ? admitted.parsed : approvalArtifactBodyMatchesHeaderV1(header, body);
     const admission = admitted?.body === body ? null : strict
-        ? { kind: 'presented' as const, parsed: strict }
+        ? { disposition: 'presented' as const, parsed: strict }
         : readApprovalArtifactAdmissionV1(header, body);
-    const parsed = strict ?? (admission?.kind === 'presented' ? admission.parsed : null);
+    const parsed = strict ?? (admission?.disposition === 'presented' ? admission.parsed : null);
     const subjectKey = admitted?.parsed === parsed ? admitted.subjectKey
         : parsed?.family === 'built_in' ? readApprovalRequestArtifactSubjectKeyV1(parsed.request) : null;
     const sessionEntry = parsed?.family === 'built_in' || parsed?.family === 'target_action'
         ? { artifact: { id: artifact.id, header }, approval: parsed.request } : null;
-    const value = { body, parsed, disposition: admission?.kind ?? admitted?.disposition ?? 'unreadable', subjectKey, sessionEntry };
+    const value = { body, parsed, disposition: admission?.disposition ?? admitted?.disposition ?? 'unreadable', subjectKey, sessionEntry };
     admittedApprovalBodies.set(header, value);
     return value;
 }
 
 export type OpenApprovalInboxAdmission = Readonly<
-    | { kind: 'presented'; parsed: ParsedApprovalArtifactBodyV1 }
-    | { kind: 'not_presented'; reason: 'superseded_header_facts' }
-    | { kind: 'unreadable' }
+    | { disposition: 'presented'; parsed: ParsedApprovalArtifactBodyV1 }
+    | { disposition: 'not_presented'; reason: 'superseded_header_facts' }
+    | { disposition: 'unreadable' }
 >;
 
 export function readOpenApprovalInboxAdmission(artifact: DecryptedArtifact): OpenApprovalInboxAdmission {
     if (artifact.draft === true || artifact.header?.approvalStatus !== 'open'
         || !Object.values(APPROVAL_ARTIFACT_KINDS_V1).some(kind => kind === artifact.header?.kind)) {
-        return { kind: 'unreadable' };
+        return { disposition: 'unreadable' };
     }
     const admitted = readAdmittedApprovalArtifactBody(artifact);
-    if (admitted?.disposition === 'not_presented') return { kind: 'not_presented', reason: 'superseded_header_facts' };
+    if (admitted?.disposition === 'not_presented') return { disposition: 'not_presented', reason: 'superseded_header_facts' };
     return admitted?.parsed?.request.status === 'open'
-        ? { kind: 'presented', parsed: admitted.parsed }
-        : { kind: 'unreadable' };
+        ? { disposition: 'presented', parsed: admitted.parsed }
+        : { disposition: 'unreadable' };
 }
 
 export function readOpenApprovalInboxArtifact(artifact: DecryptedArtifact): ParsedApprovalArtifactBodyV1 | null {
     const admission = readOpenApprovalInboxAdmission(artifact);
-    return admission.kind === 'presented' ? admission.parsed : null;
+    return admission.disposition === 'presented' ? admission.parsed : null;
 }
 
 export function isOpenApprovalInboxArtifact(artifact: DecryptedArtifact): boolean {

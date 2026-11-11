@@ -18,16 +18,16 @@ describe('private Account notices', () => {
         event: { kind: 'update_posted' } } } };
     const header = { ...content, kind: 'account_notice.v1', title: 'Run updated', status: 'open' };
     const artifact = { ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', header, body: JSON.stringify(content) };
-    expect(readOwnedNoticeArtifactAdmissionV1(artifact, 'owner')).toEqual({ kind: 'retired' });
+    expect(readOwnedNoticeArtifactAdmissionV1(artifact, 'owner')).toEqual({ disposition: 'not_presented', reason: 'retired_source' });
     expect(readOwnedNoticeArtifactV1(artifact, 'owner')).toBeNull();
     for (const body of [undefined, '{', '{}', JSON.stringify({ ...content, resolved: true }),
       JSON.stringify({ ...content, source: { kind: 'host', topic: 'unknown' } })]) {
-      expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, body }, 'owner')).toEqual({ kind: 'unreadable' });
+      expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, body }, 'owner')).toEqual({ disposition: 'unreadable' });
     }
-    expect(readOwnedNoticeArtifactAdmissionV1(artifact, 'foreign')).toEqual({ kind: 'unreadable' });
-    expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, publicAudience: 'retained' }, 'owner')).toEqual({ kind: 'unreadable' });
+    expect(readOwnedNoticeArtifactAdmissionV1(artifact, 'foreign')).toEqual({ disposition: 'unreadable' });
+    expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, publicAudience: 'retained' }, 'owner')).toEqual({ disposition: 'unreadable' });
     expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, header: { ...header,
-      source: { kind: 'host', topic: 'unknown' } } }, 'owner')).toEqual({ kind: 'unreadable' });
+      source: { kind: 'host', topic: 'unknown' } } }, 'owner')).toEqual({ disposition: 'unreadable' });
   });
   it('round-trips adopted Machine service C1 operands from the canonical list/detail facts', () => {
     const row = MachineServiceRowV1Schema.parse({ authority: 'machine', serviceId: 'watch-a', name: 'Ingress',

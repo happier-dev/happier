@@ -9,6 +9,7 @@ import { ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
 import { isApiTokenGrantTargetMemberV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ExternalActionTargetV1 } from '../actions/externalActionApi.js';
 import { isDiscussionActionIdV1 } from '../discussions/actionIds.js';
+import type { InboxArtifactAdmissionDispositionV1 } from '../artifacts/artifactKindV1.js';
 export { APPROVAL_ARTIFACT_KINDS_V1 } from './approvalArtifactKindV1.js';
 import {
   StoredExecutionRunHostActionApprovalRequestV1Schema,
@@ -39,9 +40,9 @@ export type ParsedApprovalArtifactBodyV1 =
   | Readonly<{ family: 'execution_run_host_action'; request: ExecutionRunHostActionApprovalRequestV1 }>;
 
 export type ApprovalArtifactAdmissionV1 =
-  | Readonly<{ kind: 'presented'; parsed: ParsedApprovalArtifactBodyV1 }>
-  | Readonly<{ kind: 'not_presented'; reason: 'superseded_header_facts' }>
-  | Readonly<{ kind: 'unreadable' }>;
+  | Readonly<{ disposition: Extract<InboxArtifactAdmissionDispositionV1, 'presented'>; parsed: ParsedApprovalArtifactBodyV1 }>
+  | Readonly<{ disposition: Extract<InboxArtifactAdmissionDispositionV1, 'not_presented'>; reason: 'superseded_header_facts' }>
+  | Readonly<{ disposition: Extract<InboxArtifactAdmissionDispositionV1, 'unreadable'> }>;
 
 function optionalExactStringMatches(actual: unknown, expected: string | null): boolean {
   return expected === null
@@ -398,36 +399,36 @@ export function readApprovalArtifactAdmissionV1(
   header: ApprovalArtifactHeaderCandidateV1,
   body: string | null | undefined,
 ): ApprovalArtifactAdmissionV1 {
-  if (typeof body !== 'string') return { kind: 'unreadable' };
+  if (typeof body !== 'string') return { disposition: 'unreadable' };
   let value: unknown;
-  try { value = JSON.parse(body); } catch { return { kind: 'unreadable' }; }
+  try { value = JSON.parse(body); } catch { return { disposition: 'unreadable' }; }
   if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn) {
     const parsed = StoredApprovalRequestSchema.safeParse(value);
-    if (!parsed.success) return { kind: 'unreadable' };
+    if (!parsed.success) return { disposition: 'unreadable' };
     const candidate = { family: 'built_in' as const, request: parsed.data };
-    if (approvalRequestArtifactHeaderMatches(header, parsed.data)) return { kind: 'presented', parsed: candidate };
+    if (approvalRequestArtifactHeaderMatches(header, parsed.data)) return { disposition: 'presented', parsed: candidate };
     const facts = header.approvalListFacts;
     if (parsed.data.v === 1 && facts && typeof facts === 'object' && !Array.isArray(facts)
-      && Object.keys(facts).length > 0 && approvalRequestArtifactHeaderMatches(header, parsed.data, { ignoreListFacts: true })) {
-      return { kind: 'not_presented', reason: 'superseded_header_facts' };
+      && approvalRequestArtifactHeaderMatches(header, parsed.data, { ignoreListFacts: true })) {
+      return { disposition: 'not_presented', reason: 'superseded_header_facts' };
     }
-    return { kind: 'unreadable' };
+    return { disposition: 'unreadable' };
   }
   if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction) {
     const parsed = StoredTargetActionApprovalRequestV1Schema.safeParse(value);
-    if (!parsed.success) return { kind: 'unreadable' };
+    if (!parsed.success) return { disposition: 'unreadable' };
     const candidate = { family: 'target_action' as const, request: parsed.data };
     return targetActionApprovalArtifactHeaderMatches(header, parsed.data)
-      ? { kind: 'presented', parsed: candidate } : { kind: 'unreadable' };
+      ? { disposition: 'presented', parsed: candidate } : { disposition: 'unreadable' };
   }
   if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.executionRunHostAction) {
     const parsed = StoredExecutionRunHostActionApprovalRequestV1Schema.safeParse(value);
-    if (!parsed.success) return { kind: 'unreadable' };
+    if (!parsed.success) return { disposition: 'unreadable' };
     const candidate = { family: 'execution_run_host_action' as const, request: parsed.data };
     return executionRunHostActionApprovalArtifactHeaderMatches(header, parsed.data)
-      ? { kind: 'presented', parsed: candidate } : { kind: 'unreadable' };
+      ? { disposition: 'presented', parsed: candidate } : { disposition: 'unreadable' };
   }
-  return { kind: 'unreadable' };
+  return { disposition: 'unreadable' };
 }
 
 type ApprovalListArtifactV1 = Readonly<{

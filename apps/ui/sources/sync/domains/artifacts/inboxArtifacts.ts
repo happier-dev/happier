@@ -50,7 +50,7 @@ export function readInboxArtifactEntry(artifact: DecryptedArtifact): InboxArtifa
     // source selects its own Account below, so switching scope cannot reuse a
     // notice admitted for a different owner.
     const noticeAdmission = readAccountNoticeArtifactAdmission(artifact, artifact.ownerAccountId);
-    const header = noticeAdmission.kind === 'presented' ? normalizeAccountNoticeArtifactV1(noticeAdmission.notice) : null;
+    const header = noticeAdmission.disposition === 'presented' ? normalizeAccountNoticeArtifactV1(noticeAdmission.notice) : null;
     const notice = header ? { artifact, header } : null;
     const usageHeader = header ? projectOpenUsageNoticeHeaderV1(header) : null;
     const complete = isInboxArtifactAdmissionComplete(artifact, artifact.ownerAccountId, noticeAdmission);
@@ -245,7 +245,7 @@ function isInboxArtifactAdmissionComplete(artifact: DecryptedArtifact, accountId
             const status = kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction ? TargetActionApprovalRequestV1Schema.shape.status
                 : kind === APPROVAL_ARTIFACT_KINDS_V1.executionRunHostAction ? ApprovalRequestStatusSchema : ApprovalRequestV2StatusSchema;
             if (!status.safeParse(artifact.header.approvalStatus).success
-                || (artifact.header.approvalStatus === 'open' && readOpenApprovalInboxAdmission(artifact).kind === 'unreadable')) return false;
+                || (artifact.header.approvalStatus === 'open' && readOpenApprovalInboxAdmission(artifact).disposition === 'unreadable')) return false;
         } else {
             // A known foreign/shared/public notice is not this Account's Inbox. Missing authority is unknown.
             if ((artifact.ownerAccountId !== undefined && artifact.ownerAccountId !== accountId)
@@ -255,7 +255,7 @@ function isInboxArtifactAdmissionComplete(artifact: DecryptedArtifact, accountId
                 : UsageNoticeArtifactHeaderV1Schema.shape.status;
             if (!status.safeParse(artifact.header.status).success
                 || (artifact.header.status === 'open'
-                    && (noticeAdmission ?? readAccountNoticeArtifactAdmission(artifact, accountId)).kind === 'unreadable')) return false;
+                    && (noticeAdmission ?? readAccountNoticeArtifactAdmission(artifact, accountId)).disposition === 'unreadable')) return false;
         }
     return true;
 }
