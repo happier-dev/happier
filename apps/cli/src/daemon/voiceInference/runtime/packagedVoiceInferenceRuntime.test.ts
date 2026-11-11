@@ -660,7 +660,7 @@ describe('packagedVoiceInferenceRuntime', () => {
                     return {
                         acceptWaveform: ({ samples }: { samples: Float32Array }) => {
                             acceptedSamples.push(samples.length);
-                            if (samples.length === 6400 && samples.every((sample) => sample === 0)) {
+                            if (samples.length === 10560 && samples.every((sample) => sample === 0)) {
                                 expect(inputFinished).toBe(false);
                                 tailPending = true;
                             }
@@ -745,12 +745,12 @@ describe('packagedVoiceInferenceRuntime', () => {
                 { type: 'final', seq: 0, text: 'hel hello', language: 'en', modelPackId: PUBLIC_ZIPFORMER_PACK_ID },
             ],
         });
-        expect(acceptedSamples).toEqual([2, 6400]);
+        expect(acceptedSamples).toEqual([2, 10560]);
         expect(decoded).toEqual(['decode:1', 'inputFinished', 'decode:3']);
         expect(resetCalls).toEqual(['reset']);
     });
 
-    it('drains the final Zipformer model chunk for whole WAV transcription', async () => {
+    it('flushes the complete Zipformer file-decoding tail before committing the transcript', async () => {
         const rootDir = await createTempDir();
         const filePath = join(rootDir, 'tail.wav');
         await mkdir(join(rootDir, 'LICENSES'));
@@ -779,7 +779,9 @@ describe('packagedVoiceInferenceRuntime', () => {
                 createStream() {
                     return {
                         acceptWaveform({ samples, sampleRate }: { samples: Float32Array; sampleRate: number }) {
-                            if (samples.length === 6400 && samples.every((sample) => sample === 0)) {
+                            // External sherpa-onnx v1.12.38 file-decoding recipe: 660 ms at 16 kHz.
+                            // The previous 400 ms tail reproduced WINDOW → WI on retained live audio.
+                            if (samples.length === 10560 && samples.every((sample) => sample === 0)) {
                                 expect(finished).toBe(false);
                                 expect(sampleRate).toBe(16000);
                                 tailAccepted = true;

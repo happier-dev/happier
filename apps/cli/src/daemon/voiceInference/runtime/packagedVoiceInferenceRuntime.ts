@@ -163,12 +163,13 @@ async function finishOnlineRecognizer(
     assertNotCancelled: () => void,
 ): Promise<boolean> {
     assertNotCancelled();
-    // sherpa-onnx-node v1.12.38's streaming-transducer example flushes the
-    // model's final chunk with 0.4 seconds of silence. All daemon STT input is
-    // normalized to 16 kHz; native v1.12.25 owns its separate 0.3-second recipe.
-    // https://github.com/k2-fsa/sherpa-onnx/blob/v1.12.38/nodejs-addon-examples/test_asr_streaming_transducer.js
+    // sherpa-onnx v1.12.38's file-decoding recipe flushes the final Zipformer
+    // chunk with 0.66 seconds of silence; 0.4 can leave trailing words pending.
+    // Daemon STT input is normalized to 16 kHz; native v1.12.25 owns its
+    // separate 0.3-second recipe.
+    // https://github.com/k2-fsa/sherpa-onnx/blob/v1.12.38/python-api-examples/online-decode-files.py
     stream.acceptWaveform({
-        samples: new Float32Array(DEFAULT_STT_SAMPLE_RATE * 0.4),
+        samples: new Float32Array(DEFAULT_STT_SAMPLE_RATE * 0.66),
         sampleRate: DEFAULT_STT_SAMPLE_RATE,
     });
     assertNotCancelled();
