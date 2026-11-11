@@ -745,10 +745,9 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
             .map(line => line.match(/"reason":"([a-z_]+)"/)?.[1] ?? 'unprojected'),
         })).toBe(true);
         expect(fileLog.includes('Owner Session voice request')).toBe(false);
-        // Voice keeps its established public wrapper. The original source's
-        // file-only record above identifies the underlying MI-1 refusal.
+        // Voice preserves the original source's canonical isolation refusal.
         expect(composition.manager?.listPublic().find(run => run.intent === 'voice_agent')?.error?.code)
-          .toBe('VOICE_AGENT_START_FAILED');
+          .toBe('agent_isolation_unavailable');
       }
       return;
     }

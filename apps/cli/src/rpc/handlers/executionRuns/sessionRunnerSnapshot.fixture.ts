@@ -152,7 +152,7 @@ export async function createSessionRunSnapshotFixture(happyHomeDir: string) {
               providerConnectionId: request.providerBinding?.connectionId ?? null,
               materializedProviderModel: request.launchEnvironment?.values?.SNAPSHOT_PROVIDER_MODEL ?? null,
             }) + '\\n');
-            return { send: async input => {
+            return { functionToolsDelivered: request.functionTools !== undefined, send: async input => {
               if (input.input.text.includes('retained-snapshot-turn-1')) {
                 nativeChild ??= await services.exec.spawn({ executable: nativeCli.executable,
                   args: ['--hold'], cwd: { root: 'workspace', relativePath: '' } });
