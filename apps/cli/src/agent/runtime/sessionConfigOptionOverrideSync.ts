@@ -69,17 +69,17 @@ function resolveUnavailableModelOptionIds(
   const source = readSessionModelSelectionIntentSourceV1({
     canonical: metadata?.modelSelectionIntentV1, legacy: metadata?.modelOverrideV1,
   });
-  const intent = source.status === 'canonical' || source.status === 'legacy' ? source.intent : null;
   const v2Intent = readSessionModelSelectionV2FromMetadata(metadata);
   const providerBound = modelSelection
     ? modelSelection.providerConnectionId !== null
     : v2Intent ? v2Intent.ref.source !== 'native'
-      : intent && 'selection' in intent && intent.selection?.providerConnectionId != null;
+      : source.status === 'canonical' && source.intent.selection?.providerConnectionId != null;
   // Provider descriptors have their own exact option authority; a native row
   // with the same id cannot decide their controls (or a retained Provider row's).
   if (providerBound || catalog?.activeSelectionV1?.selection.providerConnectionId != null) return unavailable;
   const selectedModelId = modelSelection?.modelId ?? v2Intent?.ref.modelId
-    ?? (intent && ('selection' in intent ? intent.selection?.modelId : intent.modelId))
+    ?? (source.status === 'canonical' ? source.intent.selection?.modelId
+      : source.status === 'legacy' ? source.intent.modelId : undefined)
     ?? models?.currentModelId ?? catalog?.currentModelId;
   const selected = availableModels.find(model => model.id === selectedModelId
     || model.extendedContextModelId === selectedModelId);

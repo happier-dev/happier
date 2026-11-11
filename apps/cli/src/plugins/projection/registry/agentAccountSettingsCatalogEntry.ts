@@ -1,5 +1,5 @@
 import type { AgentAccountSettingsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { ResolvedCatalogEntry } from '@/agent/catalog/types';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { logger } from '@/utils/logger';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginSettingsContributionV2 } from '@happier-dev/protocol';
@@ -35,8 +35,8 @@ export function projectAgentAccountSettingsCatalogEntry(params: Readonly<{
     declarations: readonly import('@happier-dev/protocol').PluginSettingsContributionV2[];
     isCurrent(): boolean;
     resolvePluginSettings(): Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
-}>): Pick<ResolvedCatalogEntry, 'applyAccountSettings' | 'resolveAccountSettingsApplication'> {
-    const resolveAccountSettingsApplication: NonNullable<ResolvedCatalogEntry['resolveAccountSettingsApplication']> = async context => {
+}>): Pick<AgentCatalogEntry, 'applyAccountSettings' | 'resolveAccountSettingsApplication'> {
+    const resolveAccountSettingsApplication: NonNullable<AgentCatalogEntry['resolveAccountSettingsApplication']> = async context => {
         if (!params.isCurrent()) throw new Error('Agent Account settings generation is retired');
         // An explicit custody-bound snapshot never falls back to the daemon Account.
         const pluginSettings = context ? context.pluginSettings : await params.resolvePluginSettings();

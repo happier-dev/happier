@@ -67,7 +67,7 @@ function mergeOptions(
       // Keep the producer-declared override rule with its current option contribution.
       ...(option.overridesWhenOn === undefined
         ? {}
-        : { overridesWhenOn: option.overridesWhenOn }),
+        : { overridesWhenOn: { ...option.overridesWhenOn, optionIds: [...option.overridesWhenOn.optionIds] } }),
     });
   }
   return output.length > 0 ? output : undefined;

@@ -241,9 +241,10 @@ export async function cmdSessionCreate(
       });
       return;
     }
+    const launchError = 'launchError' in created ? created.launchError : undefined;
     const message = code === 'agent_signed_out'
-      || (created.launchError?.code === 'CHILD_EXITED_BEFORE_WEBHOOK' && created.launchError.childExit)
-      ? created.launchError?.message ?? code : code;
+      || (launchError?.code === 'CHILD_EXITED_BEFORE_WEBHOOK' && launchError.childExit)
+      ? launchError?.message ?? code : code;
     throw Object.assign(new Error(message), error);
   }
   if (created.type === 'pending') {

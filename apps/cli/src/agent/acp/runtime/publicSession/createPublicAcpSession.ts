@@ -798,7 +798,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   let publicationFailureDisposePromise: Promise<void> | null = null;
   let configurationUpdateTail: Promise<void> = Promise.resolve();
   let generatedMediaPublishTail: Promise<void> = Promise.resolve();
-  let initialConfiguration = request.configuration
+  let initialConfiguration: AgentSessionConfigurationSnapshot | null = request.configuration
     ? AgentSessionConfigurationSnapshotV1Schema.parse(request.configuration)
     : null;
   let currentConfiguration: AgentSessionConfigurationSnapshot | null = null;

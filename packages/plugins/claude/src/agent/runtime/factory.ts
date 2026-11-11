@@ -6,6 +6,7 @@ export { claudeExternalSessionsContribution } from '../surfaces/sessions/externa
 export const createClaudeAgentRuntime: AgentRuntimeFactory = async context => {
   const { createClaudeAgentRuntime } = await import('./nativeRuntime.js');
   const runtime = await createClaudeAgentRuntime(context);
+  if (!runtime.sessions) return runtime;
   const runs = runtime.sessions.executionRunContextV1;
   return { ...runtime, sessions: { ...runtime.sessions,
     open: (request, openContext) => runtime.sessions.open(prepareClaudeConnectedAccountKeyRequest(request), openContext),
