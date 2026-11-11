@@ -1,3 +1,4 @@
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import {
     createDefaultTranscriptItemHeightCache,
     isTranscriptItemHeightSignatureStable,
@@ -6,6 +7,7 @@ import {
     type TranscriptItemHeightRowState,
     type TranscriptItemHeightValiditySignature,
 } from './transcriptItemHeightCache';
+import { LruMap } from '@/utils/cache/lruMap';
 
 /**
  * C1 — the committed-height reconciler for transcript rows.
@@ -156,6 +158,15 @@ export type TranscriptMeasurementReconciler = Readonly<{
 export type TranscriptMeasurementReconcilerOptions = Readonly<{
     cache?: TranscriptItemHeightCache;
     cacheOptions?: TranscriptItemHeightCacheOptions;
+    /**
+     * Bound for the per-item floor table. Defaults to the transcript item-height cache budget
+     * (`transcriptItemHeightCacheMaxEntries`): floors and exact heights reserve the same
+     * per-item geometry working set, so one budget governs both. Read access refreshes LRU
+     * recency, so an actively re-entered row keeps its floor while a long session that mounts
+     * more distinct rows than the budget evicts the stalest ones (they fall back to the exact
+     * cache or natural onLayout measurement).
+     */
+    floorMaxEntries?: number;
 }>;
 
 type FloorState = Readonly<{
@@ -330,10 +341,13 @@ export function createTranscriptMeasurementReconciler(
 ): TranscriptMeasurementReconciler {
     const cache = options.cache ?? createDefaultTranscriptItemHeightCache(options.cacheOptions);
 
-    // Per-item monotonic floor, keyed by itemId+width+font. `minHeight: null` marks reset-pending:
+    // Per-item monotonic floor, keyed by itemId+width+font, bounded LRU (see
+    // TranscriptMeasurementReconcilerOptions.floorMaxEntries). `minHeight: null` marks reset-pending:
     // the row was measured then structurally reset, so its next real onLayout re-seeds the floor
     // (taking the new, possibly smaller, height) rather than reserving the stale pre-collapse height.
-    const floorsByKey = new Map<string, FloorState>();
+    const floorsByKey = new LruMap<string, FloorState>({
+        maxEntries: options.floorMaxEntries ?? loadSyncTuning().transcriptItemHeightCacheMaxEntries,
+    });
 
     /**
      * Painted bubble heights carried across the pending→committed crossover, keyed by
