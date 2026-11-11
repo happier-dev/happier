@@ -27,6 +27,7 @@ import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands, typ
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { UsageActionPorts } from '@happier-dev/protocol/actions/executor/usageActions';
 import {
   getUsagePeriodDefinition,
   type UsagePeriod,
@@ -69,6 +70,8 @@ const DEFAULT_FIELDS: readonly UsageRecapField[] = [
   'work',
   'cache',
 ];
+
+type UsageRecapRender = NonNullable<UsageActionPorts['renderRecap']>;
 
 export type UsageRecapComposerProps = Readonly<{
   /** The widget's shown scope/calendar; the composer owns period and execution-source choice. */
@@ -377,12 +380,14 @@ function UsageRecapImageOutput(
       try {
         // The render port captures this mounted preview, so it travels with the invocation.
         const render = {
-          signal: cancellation.signal, executorOptions: { usageRecapRender: async (result, context) => {
+          signal: cancellation.signal, executorOptions: { usageRecapRender: async (
+            result: Parameters<UsageRecapRender>[0], context: Parameters<UsageRecapRender>[1],
+          ): ReturnType<UsageRecapRender> => {
             // Capture the existing preview only when its exact selected/as-of model is still current.
             if (JSON.stringify(result) !== JSON.stringify(composed) || !cardRef.current) {
               return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context, CommandBridge);
             }
-            return { kind: 'rendered', base64: await captureUsageViewPng(cardRef.current,
+            return { kind: 'rendered' as const, base64: await captureUsageViewPng(cardRef.current,
               { signal: context.signal, isCurrent: executionIsCurrent }) };
           } } };
         // The same source that composed the card delivers it: public through the public Action, never a private fallback.

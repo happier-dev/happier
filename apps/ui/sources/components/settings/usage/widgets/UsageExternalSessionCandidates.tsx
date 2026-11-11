@@ -24,6 +24,7 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { useUsageSourcesController } from './useUsageSources';
 import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 /**
  * A page that lists several Sources asks for browsing once: each Source registers while it waits for an
@@ -101,13 +102,13 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     const canContinue = listing.candidatesAuthoritative && props.online && linking === null;
     const commands = useCurrentUiContextLocalCommands([
         ...(visible && !historyAllowed && !pageBrowse && props.online ? [{ key: 'browse', title: t('externalSessions.browseTitle'),
-            invoke: (_input, context) => {
+            invoke: (_input: PluginUiJsonValueV1 | undefined, context: ActionExecutorContext) => {
                 if (current.current.browseScope !== browseScope || !props.lifetime.isCurrent()) return false;
                 setBrowseIntent({ scope: browseScope, callerContext: context });
             } }] : []),
         ...(listing.candidatesAuthoritative && props.online && target ? outside.map(candidate => ({ key: `continue:${readExternalSessionBrowseCandidateKey(candidate)}`,
             title: `${t('usage.board.sources.continueInHappier')}: ${candidate.title ?? candidate.remoteSessionId}`,
-            invoke: async (_input, context) => {
+            invoke: async (_input: PluginUiJsonValueV1 | undefined, context: ActionExecutorContext) => {
                 const outcome = await openExternalSessionCandidate({ candidate, agentId: target.agentId,
                     source: target.source, actionsAllowed: listing.candidatesAuthoritative, offline: !props.online,
                     isSelectionCurrent: () => current.current.browseScope === browseScope && current.current.historyAllowed && props.lifetime.isCurrent(),
@@ -121,7 +122,7 @@ export function UsageExternalSessionCandidates(props: Readonly<{
                 return outcome === 'opened' ? { ok: true as const } : { ok: false as const, code: 'unavailable' as const };
             } })) : []),
         ...(outside.length && listing.nextCursor && !listing.loadingMore ? [{ key: 'next',
-            title: `${t('externalSessions.settingsTitle')}: ${t('common.next')}`, invoke: async (_input, context) => { await listing.loadMore(context); } }] : []),
+            title: `${t('externalSessions.settingsTitle')}: ${t('common.next')}`, invoke: async (_input: PluginUiJsonValueV1 | undefined, context: ActionExecutorContext) => { await listing.loadMore(context); } }] : []),
     ], { contextKey: JSON.stringify([props.source.machineId, props.source.sourceId, props.source.root, props.source.consent]) });
     // The page's explicit Browse still reaches offscreen Sources; only their drawn controls defer.
     const render = (candidates: React.ReactNode) => props.children ? props.children(candidates) : candidates;
@@ -189,7 +190,7 @@ export function OutsideBrowsePage(props: Readonly<{ testID: string; children: Re
     }, []);
     const requests = React.useMemo(() => ({ request, register, expect }), [request, register, expect]);
     const commands = useCurrentUiContextLocalCommands(waiting.size > 0 ? [{ key: 'browse',
-        title: t('externalSessions.browseTitle'), invoke: (_input, context) => setRequest(previous => ({ revision: previous.revision + 1,
+        title: t('externalSessions.browseTitle'), invoke: (_input: PluginUiJsonValueV1 | undefined, context: ActionExecutorContext) => setRequest(previous => ({ revision: previous.revision + 1,
             callerContext: context })) }] : []);
     return <View testID={props.testID}>
         {/* The row is held at the button's drawn height while a Source may still wait for Browse; never an empty control. */}

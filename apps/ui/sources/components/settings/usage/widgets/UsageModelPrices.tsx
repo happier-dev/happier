@@ -480,7 +480,7 @@ function UsageModelPriceMapChip(
             }}
             onSelect={async (id, _option, callerContext, invocation) => {
               await props.onChoose(id, invocation);
-              close(callerContext);
+              close();
             }}
             onRequestClose={close}
           />

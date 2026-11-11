@@ -34,10 +34,10 @@ export function UsageFootprintWidget(props: UsageBodyProps) {
   }
   const tokens = footprint.coverage.accountedTokens.total;
   const accountedTokens = formatTokenCount(tokens);
-  const exact = formatHappierDataValue(tokens, getPreferredLanguage());
+  const exact = tokens.total === null ? null : formatHappierDataValue(tokens.total, getPreferredLanguage());
   return (
     <UsageFootprintBody theme={chartTheme} testID={props.testID} accountedTokens={accountedTokens}
-      accountedTokensDatum={accountedTokens.includes(exact) ? undefined : { label: t('usage.board.howYouWork.footprintAccounted'),
+      accountedTokensDatum={exact === null || accountedTokens.includes(exact) ? undefined : { label: t('usage.board.howYouWork.footprintAccounted'),
         value: `${exact} ${t('usage.tokens').toLocaleLowerCase()}`, subtitle: t('usage.board.howYouWork.footprintProxyDetail') }}
       spacing={{ head: theme.space.s12, detail: theme.space.s4 }}
       badgeColor={theme.colors.text.secondary} badgeBackgroundColor={theme.colors.surface.inset}

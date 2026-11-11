@@ -1058,8 +1058,9 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         if (!phase) return;
         const { admitted, refused, sources } = phase;
         // Summary output settles at admission while this finite read continues conversion.
-        onProgress?.(admitted || refused ? project(admitted) : [], sessionReadFailure ? sources.map(source => source.status === 'partial'
-            ? { ...source, errorCode: sessionReadFailure.errorCode } : source) : sources, admitted && !query.includeTranscriptEvidence);
+        const sessionReadErrorCode = sessionReadFailure?.errorCode;
+        onProgress?.(admitted || refused ? project(admitted) : [], sessionReadErrorCode ? sources.map(source => source.status === 'partial'
+            ? { ...source, errorCode: sessionReadErrorCode } : source) : sources, admitted && !query.includeTranscriptEvidence);
     };
     publish();
     const onValue = (sessionId: string, value: SessionInputEvidence | null, complete: boolean) => {

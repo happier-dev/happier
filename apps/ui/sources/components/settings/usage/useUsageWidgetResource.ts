@@ -51,7 +51,7 @@ const acceptsEverySlice = () => true;
 const selectBodySnapshot = (snapshot: UsageWidgetBodySnapshot) => snapshot;
 
 function getPeriodAdjustedUsageQueryKey(previous: UsageQuery, query: UsageQuery): string {
-    const followsPeriodGranularity = 'relative' in previous.period && 'relative' in query.period
+    const followsPeriodGranularity = typeof previous.period.relative === 'string' && typeof query.period.relative === 'string'
         && previous.granularity === getUsagePeriodDefinition(previous.period.relative).granularity
         && query.granularity === getUsagePeriodDefinition(query.period.relative).granularity;
     return getUsageQueryKey({ ...previous, period: query.period,
