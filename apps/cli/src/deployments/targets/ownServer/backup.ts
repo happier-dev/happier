@@ -3,23 +3,24 @@ import { inventoryDeploymentBackupsV1, runDeploymentBackupV1, verifyDeploymentBa
 import type { DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { OwnServerBackupRequestForHost } from './ownServerDeploymentTarget';
-import type { OwnServerBackupRepositoryOperandsForHost, OwnServerPreMigrationBackupOperandsForHost } from './backupDestination';
+import type { OwnServerBackupRepositoryOperandsForHost, OwnServerPreMigrationBackupOperandsForHost, OwnServerBackupRunOperandsForHost } from './backupDestination';
 import { withOwnServerNativeBackup, type OwnServerNativeRestoreInput } from './nativeRestore';
 
 /** Public Actions project the one backup owner through the existing native runner. */
 export async function executeOwnServerBackupForHost(request: OwnServerBackupRequestForHost,
     input: OwnServerNativeRestoreInput,
-    operands: Pick<OwnServerBackupRepositoryOperandsForHost, 'configuration'> | OwnServerPreMigrationBackupOperandsForHost,
+    operands: Pick<OwnServerBackupRepositoryOperandsForHost, 'configuration'> | OwnServerPreMigrationBackupOperandsForHost | OwnServerBackupRunOperandsForHost,
     operationId: string): Promise<DeploymentBackupActionResultV1> {
-    const destination = 'destination' in operands ? operands.destination : undefined;
-    return withOwnServerNativeBackup<DeploymentBackupActionResultV1>(input, destination, async native => {
+    const destinations = 'destinations' in operands ? operands.destinations : 'destination' in operands ? [operands.destination] : undefined;
+    const restoreTargets = destinations?.map(({ environmentId: _environmentId, ...target }) => target);
+    return withOwnServerNativeBackup<DeploymentBackupActionResultV1>(input, destinations, async native => {
         const common = { environmentId: request.input.environmentId, configuration: operands.configuration,
             access: native.access, signal: native.signal, execute: native.executeBackup };
         switch (request.actionId) {
             case DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1: return testDeploymentBackupDestinationV1({ ...common, operationId });
             case 'deployments.backups.run': {
                 const result = await runDeploymentBackupV1({ ...common, ...('data' in operands
-                    ? { data: operands.data, restoreTarget: operands.destination } : {}), onSettled: input.onBackupSettled });
+                    ? { data: operands.data, restoreTargets } : {}), onSettled: input.onBackupSettled });
                 return { kind: 'verified', operationId, manifests: [...result.manifests],
                     ...(result.restoreCaptures ? { restoreCaptures: [...result.restoreCaptures] } : {}) };
             }
