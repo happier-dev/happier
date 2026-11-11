@@ -265,7 +265,7 @@ function estimateWrappedLineCount(text: string): number {
  * here; any future divergence in those shells has to re-derive these caps.
  *
  * Plain feed footers reserve 8px for header-only groups and the 16px message gap plus 6px body padding after visible tools.
- * Background footers retain their rounded card cap.
+ * Background footers retain their rounded card cap; a header-only group's cap has no 6px body (28).
  *
  * `cards` is deliberately NOT a key here: a tool GROUP cannot exist in that mode. Grouping is
  * gated on the same setting the variant is resolved from — `useChatListRootState` computes
@@ -582,7 +582,9 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
         return unitRowHeights?.header;
     }
     if (item.kind === 'tool-group-footer') {
-        return toolCallsGroupChromeVariant === 'feed' && item.hasVisibleTools ? 22 : unitRowHeights?.footer;
+        if (item.hasVisibleTools) return toolCallsGroupChromeVariant === 'feed' ? 22 : unitRowHeights?.footer;
+        // A header-only group's footer paints no body: background cap = cap padding 6 + group gap 22.
+        return toolCallsGroupChromeVariant === 'feed_background' ? 28 : unitRowHeights?.footer;
     }
     if (
         item.kind === 'pending-user-action'

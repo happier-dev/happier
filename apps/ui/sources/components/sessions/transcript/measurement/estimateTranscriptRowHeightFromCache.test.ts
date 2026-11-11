@@ -236,6 +236,7 @@ describe('P · a tool row is sized by the chrome it actually paints', () => {
         for (const expanded of [false, true]) {
             const footer = { ...toolUnitItem('tool-group-footer', expanded), hasVisibleTools: true };
             expect(estimateFor(footer, 'feed')).toBe(22);
+            expect(estimateFor(footer, 'feed_background')).toBe(34);
         }
     });
 
@@ -243,11 +244,12 @@ describe('P · a tool row is sized by the chrome it actually paints', () => {
     it('keeps the feed variants on their measured single-line caps', () => {
         expect(estimateFor(toolUnitItem('tool-group-tool', false), 'feed')).toBe(MEASURED_FEED_TOOL_ROW_PX);
         expect(estimateFor(toolUnitItem('tool-group-tool', false), 'feed_background')).toBe(MEASURED_FEED_TOOL_ROW_PX);
-        // Background groups retain their header padding and footer cap; plain groups keep only the compact message gap.
+        // Header-only groups: background groups close their card with the bodiless cap (padding + group gap);
+        // plain groups keep only the compact message gap.
         expect(estimateFor(toolUnitItem('tool-group-header', false), 'feed')).toBe(27);
         expect(estimateFor(toolUnitItem('tool-group-footer', false), 'feed')).toBe(8);
         expect(estimateFor(toolUnitItem('tool-group-header', false), 'feed_background')).toBe(33);
-        expect(estimateFor(toolUnitItem('tool-group-footer', false), 'feed_background')).toBe(34);
+        expect(estimateFor(toolUnitItem('tool-group-footer', false), 'feed_background')).toBe(28);
         // The "show N more" row is the same single-line cap in both (measured 28).
         expect(estimateFor(toolUnitItem('tool-group-expand', false), 'feed')).toBe(28);
         expect(estimateFor(toolUnitItem('tool-group-expand', false), 'feed_background')).toBe(28);

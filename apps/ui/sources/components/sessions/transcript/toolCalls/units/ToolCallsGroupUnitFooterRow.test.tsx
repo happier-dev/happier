@@ -80,6 +80,27 @@ describe('ToolCallsGroupUnitFooterRow', () => {
         expect(style.backgroundColor).toBeTruthy();
     });
 
+    it('closes a collapsed header-only card with the expanded card bottom cap and gap, without an empty body', async () => {
+        // Owner 11-11 (item 10): the collapsed card lost its bottom corners and gap, so the next text touched it.
+        const frameOf = (screen: Awaited<ReturnType<typeof renderFooterRow>>) => {
+            const frame = screen.findAllHostsByTestId('transcript-tool-calls-unit-footer')[0]!;
+            const body = frame.findAll((node) => typeof node.type === 'string' && node !== frame)[0]!;
+            return { frame: flattenStyleProp(frame.props.style), bodyHeight: flattenStyleProp(body.props.style).height };
+        };
+        for (const toolChromeCommon of [{ transcriptToolCallsGroupShowBackground: true }, { toolViewTimelineChromeMode: 'cards' }] as const) {
+            const chrome = createTranscriptSessionCommonPropsFixture({ toolChromeCommon });
+            const collapsed = frameOf(await renderFooterRow({ ...chrome, hasVisibleTools: false }));
+            const expanded = frameOf(await renderFooterRow({ ...chrome, hasVisibleTools: true }));
+
+            expect(collapsed.frame.borderBottomLeftRadius).toBe(37);
+            expect(collapsed.frame.borderBottomRightRadius).toBe(37);
+            expect(collapsed.frame.marginBottom).toBe(expanded.frame.marginBottom);
+            expect(collapsed.frame.paddingBottom).toBe(expanded.frame.paddingBottom);
+            expect(collapsed.bodyHeight).toBe(0);
+            expect(expanded.bodyHeight).toBeGreaterThan(0);
+        }
+    });
+
     it('does not render a gutter-line segment so the line terminates at the footer boundary', async () => {
         const screen = await renderFooterRow({});
         expect(screen.findByTestId('transcript-tool-calls-unit-gutter-line')).toBeNull();

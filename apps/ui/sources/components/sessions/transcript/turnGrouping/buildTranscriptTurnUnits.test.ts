@@ -484,7 +484,7 @@ describe('buildTranscriptTurnUnits', () => {
         expect(result[4]).toMatchObject({ kind: 'tool-group-footer', expanded: false, hasVisibleTools: true });
     });
 
-    it('emits only a header without empty footer scaffolding when collapsedPreviewCount <= 0 and truncates fractional counts', () => {
+    it('closes a header-only collapsed group with a bodiless footer when collapsedPreviewCount <= 0 and truncates fractional counts', () => {
         const messagesById = indexMessages([
             toolMessage('t1', 1, 1),
             toolMessage('t2', 2, 2),
@@ -503,8 +503,10 @@ describe('buildTranscriptTurnUnits', () => {
             isGroupExpanded: collapsedAlways,
             collapsedPreviewCount: 0,
         });
-        expect(noTail.map((item) => item.kind)).toEqual(['tool-group-header']);
+        // The footer owns the card's bottom cap and the gap to the next message (owner 11-11, item 10).
+        expect(noTail.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-footer']);
         expect(noTail[0]).toMatchObject({ hiddenCount: 3 });
+        expect(noTail[1]).toMatchObject({ id: `${groupId}#footer`, hasVisibleTools: false });
 
         const negative = buildTranscriptTurnUnits({
             items,
@@ -512,7 +514,7 @@ describe('buildTranscriptTurnUnits', () => {
             isGroupExpanded: collapsedAlways,
             collapsedPreviewCount: -4,
         });
-        expect(negative.map((item) => item.kind)).toEqual(['tool-group-header']);
+        expect(negative.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-footer']);
 
         const fractional = buildTranscriptTurnUnits({
             items,

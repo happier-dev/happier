@@ -172,7 +172,8 @@ describe('useTranscriptItemsPipeline identity stability', () => {
             items: [{ kind: 'tool-calls-group' as const, id: 'tools', toolMessageIds: messages.map((m) => m.id), createdAt: 1 }],
             getMessageById: (id: string) => messages.find((m) => m.id === id) ?? null };
         const hook = await renderHook((value: typeof deps) => useTranscriptItemsPipeline(value), { initialProps: deps, wrapper: Source });
-        expect(hook.getCurrent().decomposedItems.map((item) => item.kind)).toEqual(['tool-group-header']);
+        expect(hook.getCurrent().decomposedItems.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-footer']);
+        expect(hook.getCurrent().decomposedItems[1]).toMatchObject({ hasVisibleTools: false });
         expect(hook.getCurrent().decomposedItems[0]).toMatchObject({
             toolMessageIds: ['tool-1', 'tool-2'], hiddenCount: 2,
         });
