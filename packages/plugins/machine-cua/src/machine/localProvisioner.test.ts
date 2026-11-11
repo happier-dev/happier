@@ -140,7 +140,7 @@ describe('consumed Cua local provisioner roles', () => {
         // the disk follows the image, so only a Space is asked for one.
         expect(paths).toEqual(['size.cpu', 'size.memoryBytes', ...(prefix === 'space' ? ['size.diskBytes'] : [])]);
         expect(options?.inputHints?.fields.filter(field => field.required).map(field => [field.path, field.defaultValue]))
-            .toEqual([['size.cpu', 2], ['size.memoryBytes', 4 * 1024 ** 3]]);
+            .toEqual([['size.cpu', undefined], ['size.memoryBytes', undefined]]);
         const choices = MachineProvisionerOptionsResultV1Schema.parse(await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context));
         const selected = select(choices);
         expect(selected).toMatchObject({ kind: 'ready', launch });

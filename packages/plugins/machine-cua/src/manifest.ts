@@ -13,7 +13,6 @@ import { remoteAccounts, remoteProvisioner, remoteRoles } from './machine/remote
 import { CUA_DEPENDENCY_ID as dependencyId, resolveCuaExecutable } from './machine/nativeDependency.js';
 
 const pluginId = 'happier.machine.cua';
-const GIB = 1024 ** 3;
 const processAccess = 'cua-native-process';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
 
@@ -55,8 +54,9 @@ function roles(id: CuaLocalProvisionerId) {
             inputSchema: CuaLocalOptionsQueryV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
             inputHints: { fields: [
                 // Runtime and image are picked from the choices this read returns, never typed as filters.
-                { path: 'size.cpu', title: configurationLabel('cpu'), widget: 'integer' as const, required: true, defaultValue: 2 },
-                { path: 'size.memoryBytes', title: configurationLabel('memoryBytes'), widget: 'integer' as const, unit: 'bytes' as const, required: true, defaultValue: 4 * GIB },
+                // Cua CLI 0.17.0 documents no defaults for --cpu/--memory: https://cua.ai/docs/cua-cli/reference/cli/sandboxes
+                { path: 'size.cpu', title: configurationLabel('cpu'), widget: 'integer' as const, required: true },
+                { path: 'size.memoryBytes', title: configurationLabel('memoryBytes'), widget: 'integer' as const, unit: 'bytes' as const, required: true },
                 // The disk follows the chosen image; only a Space may be given its own.
                 ...(id === 'local-space' ? [{ path: 'size.diskBytes', title: configurationLabel('diskBytes'), widget: 'integer' as const, unit: 'bytes' as const }] : []),
             ] },
