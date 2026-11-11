@@ -281,6 +281,45 @@ describe('captured Home recovery read lifetime', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
+    it.each([true, false])('handles late timer delivery with body progress=%s', async progressing => {
+        vi.useFakeTimers();
+        // Model background timer throttling at the clock boundary. Cancellation
+        // still uses real timer handles; never invoke an already-cleared callback.
+        const schedule = globalThis.setTimeout;
+        const windowMs = SERVER_PEER_LIVENESS_WINDOW_MS;
+        const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, delay, ...args) =>
+            schedule(handler, (delay ?? 0) + 2 * windowMs, ...args));
+        let body!: ReadableStreamDefaultController<Uint8Array>;
+        let signal: AbortSignal | null | undefined;
+        setRuntimeFetch(async (_url, init) => {
+            signal = init?.signal;
+            return new StreamingResponse(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }));
+        });
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://late-timer.example.test', credentials: null });
+        const pending = request('/read', undefined, { retry: 'none' }, response => response.text())
+            .then(value => ({ value }), (error: unknown) => ({ error }));
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            if (progressing) {
+                for (const chunk of ['a', 'b', 'c', 'd']) {
+                    await vi.advanceTimersByTimeAsync(windowMs);
+                    body.enqueue(new TextEncoder().encode(chunk));
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(signal?.aborted).toBe(false);
+                }
+                body.close();
+                await expect(pending).resolves.toEqual({ value: 'abcd' });
+            } else {
+                await vi.advanceTimersByTimeAsync(3 * windowMs - 1);
+                expect(signal?.aborted).toBe(false);
+                await vi.advanceTimersByTimeAsync(1);
+                await expect(pending).resolves.toEqual({ error: expect.objectContaining({ name: 'ServerFetchReadTimeoutError' }) });
+                expect(signal?.aborted).toBe(true);
+            }
+            expect(vi.getTimerCount()).toBe(0);
+        } finally { timer.mockRestore(); abortServerFetches(); await pending; }
+    });
+
     it('manual recovery cancels GET and POST reads with native abort causes while preserving mutations', async () => {
         platform.OS = 'android';
         vi.stubGlobal('AbortController', NativeAbortController);
