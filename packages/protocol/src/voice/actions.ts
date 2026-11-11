@@ -3,6 +3,8 @@ import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from '../a
 import { resolveActionCatalogSurfaceProjection } from '../actions/actionCatalog.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
+import { actionInputValidationFailure } from '../actions/executor/actionInputValidation.js';
+import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 
 export const VOICE_ACTION_FUNCTION_NAME = 'happier_voice_action' as const;
 
@@ -167,16 +169,15 @@ function coerceVoiceActionValueForSchema(value: unknown, schema: z.core.$ZodType
   return coerceVoiceActionScalarStrings(value);
 }
 
-function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | null {
-  if (!rawAction || typeof rawAction !== 'object') return null;
-
-  const rawToolName = typeof (rawAction as { t?: unknown }).t === 'string' ? (rawAction as { t: string }).t.trim() : '';
-  if (rawToolName.length === 0) return null;
-
+function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | ActionExecuteFailure {
+  const rawToolName = rawAction && typeof rawAction === 'object' && 't' in rawAction && typeof rawAction.t === 'string'
+    ? rawAction.t.trim() : '';
   const toolName = resolveVoiceClientToolNameAlias(rawToolName);
-  if (!toolName) return null;
-  const inputSchema = getVoiceActionSchemaByToolName().get(toolName);
-  if (!inputSchema) return null;
+  const inputSchema = toolName ? getVoiceActionSchemaByToolName().get(toolName) : undefined;
+  if (!inputSchema || !toolName) {
+    const parsed = VoiceAssistantActionSchema.safeParse(rawAction);
+    return parsed.success ? parsed.data : actionInputValidationFailure(parsed.error);
+  }
 
   const rawArgs = (rawAction as { args?: unknown }).args;
   const direct = inputSchema.safeParse(rawArgs);
@@ -186,7 +187,7 @@ function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | n
 
   const coercedArgs = coerceVoiceActionValueForSchema(rawArgs, inputSchema);
   const coerced = inputSchema.safeParse(coercedArgs);
-  if (!coerced.success) return null;
+  if (!coerced.success) return actionInputValidationFailure(coerced.error);
   return { t: toolName, args: coerced.data };
 }
 
@@ -198,17 +199,19 @@ const INVALID_VOICE_ACTION_MESSAGE = "I couldn't run that action because its req
 export function decodeVoiceAssistantActions(
   rawActions: readonly unknown[],
   assistantText = '',
-): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true }> {
-  const actions = rawActions.flatMap(raw => {
-    const action = parseVoiceAssistantAction(raw);
-    return action ? [action] : [];
-  });
+  priorFailure?: ActionExecuteFailure,
+): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true; failure?: ActionExecuteFailure }> {
+  const parsed = rawActions.map(parseVoiceAssistantAction);
+  const actions = parsed.filter((entry): entry is VoiceAssistantAction => !('ok' in entry));
+  const failure = parsed.find((entry): entry is ActionExecuteFailure => 'ok' in entry)
+    ?? (actions.length === 0 ? priorFailure : undefined);
   // Preserve the existing all-or-nothing request decoding.
-  if (actions.length !== rawActions.length) {
+  if (failure) {
     return {
       assistantText: INVALID_VOICE_ACTION_MESSAGE,
       actions: [],
       invalidActionBlock: true,
+      failure,
     };
   }
   return { assistantText: assistantText.trim(), actions };

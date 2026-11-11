@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { decodeVoiceAssistantActions } from './actions.js';
 
 describe('decodeVoiceAssistantActions', () => {
+  it('retains content-free repair facts when global Voice supplies a null optional target', () => {
+    const result = decodeVoiceAssistantActions([{ t: 'sendSessionMessage', args: { sessionId: null, message: 'private content' } }]);
+    expect(result.actions).toEqual([]);
+    expect(result.failure).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: {
+      issues: expect.arrayContaining([expect.objectContaining({ path: ['sessionId'], expected: 'string' })]),
+    } });
+    expect(JSON.stringify(result.failure)).not.toContain('private content');
+  });
+
   it('returns ordinary assistant text when no native Actions were requested', () => {
     const result = decodeVoiceAssistantActions([], 'Hello.');
     expect(result).toEqual({ assistantText: 'Hello.', actions: [] });

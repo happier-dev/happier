@@ -39,11 +39,17 @@ const run111Choices = buildCodexPermissionChoices('03e65b05-e102-4526-83a8-3c960
     '/bin/bash', '-lc', "printf 'hollo.' > cold_hollo.txt",
   ] } }, 'cancel',
 ]);
+const run120Choices = buildCodexPermissionChoices('16367ecb-d8ca-463b-8155-cf0fd0994e6e', [
+  'accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: [
+    '/bin/bash', '-lc', "printf 'orange' > orange",
+  ] } }, 'cancel',
+]);
 
 describe('native Voice permission input', () => {
   registerLocalVoiceEngineHarnessHooks();
 
   it.each([
+    { label: 'RUN120 command preview with argument sharing off', enabled: true, answer: 'YES ALLOW THE COMMAND', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run120: true },
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
     { label: 'Codex offered Yes after carrier settlement', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true },
     { label: 'Codex offered No', enabled: true, answer: "NO DON'T", approved: false, end: false, replaceRequest: false, delegated: true, nativeOffer: true },
@@ -98,13 +104,14 @@ describe('native Voice permission input', () => {
     { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, readyOnly, resultPrivacyOff, stoppedReady, ordinaryQuestion, continuedQuestion, typedQuestion }) => {
-    const offeredChoices = run111 ? run111Choices : nativeStop ? run107Choices : codexChoices;
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, run120, readyOnly, resultPrivacyOff, stoppedReady, ordinaryQuestion, continuedQuestion, typedQuestion }) => {
+    const offeredChoices = run120 ? run120Choices : run111 ? run111Choices : nativeStop ? run107Choices : codexChoices;
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
     storage.__setState({ settings: { ...state.settings, voice: {
       ...state.settings.voice, providerId: 'local_conversation', canApproveRequests: enabled,
+      ...(run120 ? { privacy: { ...state.settings.voice.privacy, shareToolNames: true, shareToolArgs: false, shareFilePaths: false } } : {}),
       welcome: { ...state.settings.voice.welcome, enabled: false },
       providers: { ...state.settings.voice.providers, local_conversation: { schemaVersion: 1,
         config: { ...config, conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: false },
@@ -324,7 +331,7 @@ describe('native Voice permission input', () => {
         updatedAt: Math.max(Date.now(), carrier.updatedAt + 1),
         agentState: { requests: { 'native-write': uiAnswer === 'question'
           ? { tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ question: 'Which revision?', options: [{ label: 'Blue' }, { label: 'Red' }] }] }, createdAt: Date.now() }
-          : { ...(run111 ? { kind: 'permission' as const, tool: 'Bash', arguments: {
+          : { ...(run120 ? { kind: 'permission' as const, tool: 'Bash', arguments: null } : run111 ? { kind: 'permission' as const, tool: 'Bash', arguments: {
             command: '/bin/bash -lc "printf \'hollo.\' > cold_hollo.txt"', cwd: '/tmp/run111-codex',
           } } : { tool: 'Write', arguments: { file_path: '/tmp/native-voice-test' } }), createdAt: Date.now(),
             ...(nativeOffer ? { nativeChoices: offeredChoices } : {}) } } },
@@ -361,6 +368,11 @@ describe('native Voice permission input', () => {
         'A permission in the live target must be read aloud').toContain('permission'));
       await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
       expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
+      if (run120) {
+        const spoken = expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0];
+        expect(spoken).toContain("printf 'orange' > orange");
+        expect(spoken).not.toContain('/bin/bash');
+      }
       if (label === 'RUN111 command refusal') {
         const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
         const spoken = expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0];

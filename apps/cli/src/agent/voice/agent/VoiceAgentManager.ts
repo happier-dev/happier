@@ -295,10 +295,23 @@ export class VoiceAgentManager {
           || instance.activeTurnStream?.cancelled) {
           throw new Error('This Voice turn is no longer accepting Actions.');
         }
-        instance.chatActions.push(input);
+        const decoded = decodeVoiceAssistantActions([input]);
+        if (decoded.failure) {
+          instance.chatActionFailure = decoded.failure;
+          return decoded.failure;
+        }
+        instance.chatActions.push(...decoded.actions);
         return { status: 'queued', message: 'The UI has not executed this Action. End this turn and wait for the Voice tool-results follow-up.' };
       },
     }];
+  }
+
+  private readChatActions(instance: VoiceAgentInstance): ReturnType<typeof decodeVoiceAssistantActions> {
+    // Native admission already validated queued Actions. A rejected call can be
+    // repaired within the same model turn; an unrepaired turn keeps its refusal.
+    return instance.chatActions.length > 0
+      ? { assistantText: '', actions: instance.chatActions }
+      : decodeVoiceAssistantActions([], instance.chatBuffer, instance.chatActionFailure);
   }
 
   private resolveResponseTimeoutMs(explicitTimeoutMs?: number | null): number | null {
@@ -884,6 +897,7 @@ export class VoiceAgentManager {
         if (instanceForCleanup) {
           instanceForCleanup.chatBuffer = '';
           instanceForCleanup.chatActions = [];
+          instanceForCleanup.chatActionFailure = undefined;
         }
       };
       const clearCommitBuffer = () => {
@@ -1090,7 +1104,7 @@ export class VoiceAgentManager {
           voiceAgent.chatSessionSeeded = true;
           voiceAgent.chatInstructionsDirty = false;
           voiceAgent.welcomed = true;
-		      const extracted = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer);
+		      const extracted = this.readChatActions(voiceAgent);
 		      const assistantText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
 		      appendVoiceAgentHistoryTurn(voiceAgent.history, {
 		        userText: params.userText,
@@ -1145,7 +1159,7 @@ export class VoiceAgentManager {
             : undefined,
         ), this.resolveResponseTimeoutMs());
       ensureCurrent();
-      const assistantText = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer).assistantText;
+      const assistantText = this.readChatActions(voiceAgent).assistantText;
       voiceAgent.clearChatBuffer();
       voiceAgent.chatSessionSeeded = true;
       voiceAgent.chatInstructionsDirty = false;
@@ -1263,7 +1277,7 @@ export class VoiceAgentManager {
         voiceAgent.welcomed = true;
         if (settleCancelled()) return;
 
-        const extracted = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer);
+        const extracted = this.readChatActions(voiceAgent);
         const patchSpeech: Parameters<typeof ingestVoiceAgentStreamingDelta>[1] = (next) => {
           if (typeof next.outputSpeechBuffer === 'string') stream.outputSpeechBuffer = next.outputSpeechBuffer;
           if (typeof next.outputSpeechText === 'string') stream.outputSpeechText = next.outputSpeechText;

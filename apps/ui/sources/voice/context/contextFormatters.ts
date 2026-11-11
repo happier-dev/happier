@@ -17,6 +17,7 @@ import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/ses
 import { t } from '@/text';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 interface SessionMetadata {
     summary?: { text?: string };
     path?: string;
@@ -174,15 +175,19 @@ export function summarizeAgentRequestForVoiceHuman(
     toolArgs: unknown,
     prefs?: VoiceContextFormatterPrefs,
     sessionLabel?: string,
+    permissionReadback?: Readonly<{ nativeChoices?: NativePermissionChoicesV1 }>,
 ): string {
     const resolved = resolvePrefs(prefs);
     const sharedToolName = resolved.voiceShareToolNames ? toolName : t('voice.readiness.requestedTool');
 
     if (requestKind === 'permission') {
+        // Confirmation names what the person will approve. Ordinary context
+        // announcements continue to follow argument-sharing preferences.
+        const includeArguments = resolved.voiceShareToolArgs || permissionReadback !== undefined;
         const semantic = buildAgentRequestSemanticSummary({
             kind: 'permission',
             toolName: sharedToolName,
-            toolInput: !resolved.voiceShareToolArgs ? null
+            toolInput: !includeArguments ? null
                 : resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null),
         });
         const summary = !resolved.voiceShareToolNames ? t('voice.readiness.permissionContinueAction')
@@ -190,9 +195,14 @@ export function summarizeAgentRequestForVoiceHuman(
                 : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
                     : semantic.permissionAction === 'change_files' ? t('voice.readiness.permissionChangeFiles')
                         : t('voice.readiness.permissionContinueAction');
-        const detail = semantic.shellCommand ?? semantic.permissionTitle;
-        const describedSummary = resolved.voiceShareToolNames && resolved.voiceShareToolArgs
-            ? `${summary} (${semantic.normalizedToolLabel}${detail ? `: ${detail}` : ''})`
+        // The native owner already authored this command preview; do not
+        // reconstruct another command from the offered response payload.
+        const detail = semantic.shellCommand
+            ?? permissionReadback?.nativeChoices?.choices.find(choice => choice.rulePreview)?.rulePreview
+            ?? semantic.permissionTitle;
+        const sharedDetail = detail && (resolved.voiceShareFilePaths ? detail : redactVoicePathLikeString(detail));
+        const describedSummary = resolved.voiceShareToolNames && includeArguments
+            ? `${summary} (${semantic.normalizedToolLabel}${sharedDetail ? `: ${sharedDetail}` : ''})`
             : summary;
         const sharedSessionLabel = resolved.voiceShareSessionSummary && sessionLabel?.trim();
         const session = sharedSessionLabel

@@ -3970,6 +3970,46 @@ describe('VoiceAgentManager', () => {
     expect(backend.prompts[1]).not.toContain('Initial context:');
   });
 
+  it.each([false, true])('returns typed native repair facts and admits a corrected global request (streaming=%s)', async streaming => {
+    let turns = 0;
+    const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createDeterministicBackend('native-repair', {
+      functionTools,
+      async onSend(request, publish, tools) {
+        if (turns++ > 0) {
+          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'Paris.' });
+          publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+          return;
+        }
+        const invalid = await tools[0].call({ t: 'sendSessionMessage', args: { sessionId: null, message: 'private content' } });
+        expect(invalid).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: {
+          issues: expect.arrayContaining([expect.objectContaining({ path: ['sessionId'], expected: 'string' })]),
+        } });
+        expect(JSON.stringify(invalid)).not.toContain('private content');
+        await expect(tools[0].call({ t: 'sendSessionMessage', args: { message: 'Repaired request' } })).resolves.toMatchObject({ status: 'queued' });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      },
+    }) });
+    try {
+      const { voiceAgentId } = await manager.start({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, contextSessionId: null,
+        chatModelId: 'chat-model', commitModelId: 'commit-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 60, initialContext: 'Global Voice without a target Session',
+      });
+      if (!streaming) {
+        await expect(manager.sendTurn({ voiceAgentId, userText: 'Send my request' })).resolves.toMatchObject({
+          actions: [{ t: 'sendSessionMessage', args: { message: 'Repaired request' } }],
+        });
+      } else {
+        const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Send my request' });
+        const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId, streamId });
+        expect(events).toContainEqual(expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({
+          kind: 'side_effect', action: { t: 'sendSessionMessage', args: { message: 'Repaired request' } },
+        }) }));
+      }
+      await expect(manager.sendTurn({ voiceAgentId, userText: 'Capital of France?' })).resolves.toEqual({ assistantText: 'Paris.' });
+    } finally { await manager.dispose(); }
+  });
+
   it('reports invalid structured welcome Action fields without exposing queued narration', async () => {
     const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createPromptCaptureBackend([{
       responseText: 'Hello! I will send that now.',
