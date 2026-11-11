@@ -215,15 +215,23 @@ describe('openBrowserTargetInWorkspace', () => {
     it('Agent default Ask first admits the same deterministic target as UI without a mounted Browser view', async () => {
         const tabs: DetailsTab[] = [];
         const approvals: string[] = [];
+        let stored: ApprovalRequest | null = null;
         const { open, executor, context } = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web',
             openDetailsTab: tab => { tabs.push(tab); } }, {
-            approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'approval_1' }; },
-            approvalsWaitForDecision: async ({ request }) => ({ decision: 'approve', decisionAuthority: 'present_user', request }),
+            // Account-private Artifact storage is the boundary; admission and replay remain real.
+            approvalsCreate: async ({ request }) => { stored = request; approvals.push(request.actionId); return { artifactId: 'approval_1' }; },
+            approvalsGet: async () => stored,
+            approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
         });
         expect(await open(localServicePreviewTarget)).toMatchObject({ ok: true });
         expect(await executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'agent_open',
             target: localServicePreviewTarget }, { ...context, surface: 'agent', authority: 'account_automation' }))
-            .toMatchObject({ ok: true, result: { commandId: 'agent_open', status: 'dispatched' } });
+            .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval_1' } });
+        expect(tabs).toHaveLength(1);
+        expect(await executor.execute('approval.request.decide', { artifactId: 'approval_1', decision: 'approve' },
+            { ...context, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true });
+        expect(stored).toMatchObject({ status: 'executed', execution: { ok: true,
+            result: { commandId: 'agent_open', status: 'dispatched' } } });
         expect(approvals).toEqual(['browser.workspace.open']);
         expect(tabs).toHaveLength(2);
         expect(tabs[1]).toEqual(tabs[0]);
@@ -292,7 +300,7 @@ describe('openBrowserTargetInWorkspace', () => {
                 .toMatchObject({ ok: true, result: { commandId: 'approved_profile_open', status: 'dispatched' } });
             expect(tabs).toHaveLength(1);
             expect(await executor.execute('browser.workspace.open', { ...input, commandId: 'profile_approval_replay' }, {
-                ...approvingContext, actionsSettings: confirmOpeningSettings,
+                ...approvingContext, surface: 'agent', authority: 'account_automation',
             })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
             expect(tabs).toHaveLength(1);
             expect(await executor.execute('approval.request.decide', {
