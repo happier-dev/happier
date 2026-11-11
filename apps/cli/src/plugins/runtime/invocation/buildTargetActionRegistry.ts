@@ -116,6 +116,7 @@ function createAccountInvocationContext(context: PluginInvocationContext, accoun
     return Object.freeze({
         plugin: context.plugin, contribution: context.contribution, surface: context.surface,
         invokedAtMs: context.invokedAtMs, signal: context.signal,
+        ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
         ...(context.caller ? { caller: context.caller } : {}),
         ...(accountScope ? { accountScope } : {}),
         ...(context.sessionTargetsV1 ? { sessionTargetsV1: context.sessionTargetsV1 } : {}),

@@ -4,8 +4,9 @@ import { join, resolve } from 'node:path';
 import fastify from 'fastify';
 import * as undici from 'undici';
 import { expect, it, vi } from 'vitest';
-import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountProfileV4Schema,
+import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountProfileV4Schema,
   sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
+import { TriageGetInputV1Schema, TriageGetResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
@@ -29,11 +30,115 @@ import { registerAccountHomeHttp } from './widgetApproval.testkit';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { PLUGIN_MANIFEST as SENTRY_MANIFEST } from '../../../../../packages/plugins/sentry/src/manifest';
+import { SENTRY_ACTION_IDS, SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_FAILURE_CODES,
+  SENTRY_SCOPE_SEPARATOR } from '../../../../../packages/plugins/sentry/src/sentryContracts';
+import { encodeSentryInstanceConfiguration } from '../../../../../packages/plugins/sentry/src/instances/sentryInstanceConfiguration';
+import { SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY } from '../../../../../packages/plugins/sentry/src/auth/connectedAccountRuntime';
+import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { executeAccountPluginAction } from './executeAccountPluginAction';
 
 // Provider HTTP and the Home HTTP adapter are the only substituted boundaries.
 vi.mock('undici', async original => {
   const runtime = await original<typeof import('undici')>();
   return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
+
+it('preserves the admitted request identity on a real public Account provider read failure', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'sentry-account-source-request-'));
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
+  const serverHttpBaseUrl = 'http://sentry-account-source.test';
+  const serverId = 'sentry-account-source-home';
+  const accountId = 'sentry-source-owner';
+  const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+  const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+  const app = fastify();
+  let restore: (() => void) | undefined;
+  try {
+    env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_SERVER_URL: serverHttpBaseUrl });
+    reloadConfiguration();
+    const features = registerAccountHomeHttp(app, { accountId, serverId });
+    const projectRoot = resolve(import.meta.dirname, '../../../../../packages/plugins/sentry');
+    await registerAuthoredAccountActionRelease(app, accountId, { primary: {
+      manifest: SENTRY_MANIFEST, projectRoot, entryPath: join(projectRoot, 'src/accountRuntime.ts'),
+      artifactId: 'sentry-account-runtime', activateExport: 'activate', manifestExport: null,
+    } });
+    const recorded = { service: { pluginId: SENTRY_MANIFEST.id, localId: 'sentry-account' }, accountId: 'source-sentry' };
+    const authenticationModeId = normalizePluginManifestV2(SENTRY_MANIFEST).contributes.connectedAccountDescriptors
+      .find(descriptor => descriptor.id === recorded.service.localId)!.authentication.defaultModeId;
+    const revisions = { authenticationModeId, revisionSemantics: 'revisioned' as const,
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'sentry-us-region' };
+    app.get('/v4/connect/qualified/accounts', async () => ({ service: recorded.service,
+      accounts: [QualifiedConnectedAccountProfileV4Schema.parse({ ...revisions, ref: recorded, status: 'connected',
+        configurationReady: true, kind: 'token', expiresAt: null, displayName: 'Source Sentry', scopes: [] })] }));
+    app.get('/v4/connect/qualified/credential', async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ...revisions, ref: recorded, metadata: { scopes: [] },
+      content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
+        payload: { v: 1, values: { token: 'synthetic-source-sentry-credential',
+          [SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY]: 'https://us.sentry.io' } }, randomBytes: length => new Uint8Array(length) }),
+    }));
+    app.get('/v4/connect/qualified/configuration', async () => QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({
+      ...revisions, target: { kind: 'account', ref: recorded },
+      configurationContent: sealQualifiedConnectedAccountContentEnvelope({ kind: 'configuration', accountMode: 'plain',
+        payload: { values: { region: 'us' }, secretRefs: {}, secretValues: {} }, randomBytes: length => new Uint8Array(length) }),
+    }));
+    await app.ready();
+    restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    const providerPaths: string[] = [];
+    vi.mocked(undici.fetch).mockImplementation(async (url, init) => {
+      const target = new URL(String(url));
+      expect(target.origin).toBe('https://us.sentry.io');
+      expect(new Headers(init?.headers as HeadersInit).get('authorization')).toBe('Bearer synthetic-source-sentry-credential');
+      providerPaths.push(target.pathname);
+      return new undici.Response('{}', { status: 429, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...features,
+      features: { ...features.features, connectedServices: { enabled: true } },
+      capabilities: { ...features.capabilities, connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
+    })));
+    const configured = createTriageSourceV1Fixture().configuredInstance;
+    const input = TriageGetInputV1Schema.parse({ v: 1, instance: { ...configured,
+      instance: { source: { pluginId: SENTRY_MANIFEST.id, localId: 'sentry-issues' },
+        sourceInstanceId: configured.instance.sourceInstanceId },
+      binding: { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE, account: recorded },
+      localInstanceKey: `https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`,
+      configuration: { v: 1, token: encodeSentryInstanceConfiguration({ v: 1, organizationId: '7701',
+        projectScope: { kind: 'allAccessible' }, environmentScope: { kind: 'all' } }) },
+    }, localRef: { kindId: 'error-issue', collisionScope: `https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`, entryId: '5501001' } });
+    const actionInput = { action: { pluginId: SENTRY_MANIFEST.id, localId: SENTRY_ACTION_IDS.get }, input };
+    const host = { token, credentials, happyHomeDir: home, sessionId: '', mode: 'plain' as const, ctx: null,
+      serverId, serverHttpBaseUrl, runtimeActionMachineId: 'sentry-source-machine', accountPluginActions: true,
+      pluginActionExecutionOwner: 'current_process' as const };
+    const cli = createCliActionExecutor(host);
+    const admittedRequestId = '78d850bd-9ae8-4f14-a603-163325e24ab6';
+    const nativeRequestId = '46a9f559-ed2f-4ad2-a4f5-705f14f5ad85';
+    // The transport already admitted this identity. The public Account executor,
+    // registered provider, purpose materialization and strict result parser stay real.
+    for (const scenario of ['absent', 'public', 'native'] as const) {
+      const context = { surface: 'ui' as const, authority: 'present_user' as const,
+        serverId, runtimeAccountId: accountId,
+        ...(scenario === 'absent' ? {} : { actionRequestId: admittedRequestId }) };
+      const accountAttempt = scenario === 'native'
+        ? await executeAccountPluginAction({ host, deps: createCliActionExecutorHarness(host).deps,
+          actionId: 'action.invoke', input: actionInput, context,
+          inheritedInvocation: { operationRequestId: nativeRequestId } }) : undefined;
+      if (accountAttempt && !accountAttempt.matched) throw new Error('Expected Account execution');
+      const execution = accountAttempt?.matched ? accountAttempt.result
+        : await cli.execute('action.invoke', actionInput, context);
+      expect(execution).toMatchObject({ ok: true, result: { kind: 'unresolved',
+        failure: { class: 'rateLimit', code: SENTRY_FAILURE_CODES.rateLimitedUnhinted } } });
+      if (!execution?.ok) throw new Error('Expected the registered Sentry read to return its typed failure');
+      const result = TriageGetResultV1Schema.parse(execution.result);
+      if (result.kind !== 'unresolved') throw new Error('Expected the provider refusal');
+      expect(result.failure.requestId).toBe(scenario === 'public' ? admittedRequestId
+        : scenario === 'native' ? nativeRequestId : undefined);
+    }
+    expect(providerPaths).toContain('/api/0/organizations/7701/issues/5501001/');
+  } finally {
+    restore?.(); await app.close(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+    resetActiveAccountSettingsSnapshotForTests(); env.restore(); reloadConfiguration();
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 it.each(['ui', 'rpc'] as const)('captures Files through the source-owned Account Action from the Machine SCM %s ingress', async ingress => {
