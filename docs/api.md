@@ -2720,7 +2720,7 @@ permission; an unchanged audience retains the custodian's management authority. 
 canonical projection supplies `access.canManage`, `access.canResolve` and
 `access.canViewMembers`. The custodian retains Pool management and ordinary exact
 Machine resolution. An active member of the published Team can list and read its
-public summary, with an empty member list, unknown availability and no management,
+public summary, with an empty member list, aggregate availability and no management,
 roster or ordinary resolve permission. Team membership does not grant access to a
 controller Machine. Missing or unauthorized Pools remain indistinguishable.
 

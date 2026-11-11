@@ -832,8 +832,9 @@ The Pool wire schemas live in `packages/protocol/src/machines/pools/v1.ts`. A
 `MachinePoolViewV1` separates the saved definition from observed availability.
 Its optional audience identifies private or Team publication; its access projection
 decides management, ordinary resolution and roster visibility. The Account remains
-the custodian. Active Team members receive the public summary with no members and
-unknown availability, never a controller grant or direct Pool dispatch permission.
+the custodian. Active Team members receive the public summary with no member
+Machine identities and aggregate availability (unknown when presence cannot be
+observed), never a controller grant or direct Pool dispatch permission.
 The existing Team actor and resource audience owners decide membership and sharing.
 A custodian who leaves or loses active Team membership withdraws the Pool from
 other Team members' reads. New delegated preset acquisition, for either a Pool
