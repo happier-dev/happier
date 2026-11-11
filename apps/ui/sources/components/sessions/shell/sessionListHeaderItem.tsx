@@ -300,7 +300,6 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
             onPress={headerActionHandlers.onToggleCollapse}
             // Needs you opens the Inbox's Needs you view (R8); its chevron alone folds the group.
             onOpen={props.item.headerKind === 'attention' ? openNeedsYou : undefined}
-            headerKind={props.item.headerKind}
             detail={props.item.fromEverywhere ? t('sessionsList.spacesFromEverywhere') : undefined}
             rollup={props.item.rollup}
             count={props.item.headerKind === 'attention' || props.item.headerKind === 'working' ? props.item.eligibleCount : undefined}

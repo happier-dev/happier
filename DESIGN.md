@@ -328,8 +328,10 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   top margin equals its left margin. A column title's capitals start on the line of the rail's first
   icon's top; the row's glyphs stay centred (owner, 2026-11-11). A column's own rows (pinned views,
   its destinations) stand under its title, never above it, and the first group after them keeps the
-  same group pause as every other group. A group label's mark and title are as big as its rows' and
-  its mark stands on their icon column. A pane band's title (a Session's) keeps the row, and its facts line
+  same group pause as every other group. A group label reads as a title (Needs you as Scheduled and
+  Drafts): its title on the content edge at its rows' size, then its count and chevron, with no kind glyph;
+  only an identity mark (a Project's favicon, a section's chosen icon) leads one, on the rows' icon column
+  (owner, 2026-11-11). A pane band's title (a Session's) keeps the row, and its facts line
   hangs beneath it. Each column's text edge (title, row glyphs) continues up to
   the title strip, where the first control's glyph stands on it. Owners: `resolveHappierTitleRowInsetPx`,
   `resolveHappierTitleRowTitleLiftPx` and the rail and strip metrics; no screen adds its own offset

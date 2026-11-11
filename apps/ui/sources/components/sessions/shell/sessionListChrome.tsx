@@ -626,18 +626,11 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
 });
 
 /** The glyph a column's own groups lead with (lab `clgroups`): amber only where the person is needed. */
-const SECTION_HEADER_MARKS: Partial<Record<NonNullable<SessionListHeaderItemKind>, Readonly<{ icon: IconName; attention?: boolean }>>> = {
-    attention: { icon: 'tray', attention: true },
-    working: { icon: 'pulse' },
-    pinned: { icon: 'push-pin' },
-};
-
-type SessionListHeaderItemKind = Extract<SessionListIndexItem, { type: 'header' }>['headerKind'];
-
 /**
  * A column group's label that folds its rows (Needs you, Working, Pinned, a date or Home): the shared list
- * label on the plane — glyph, sentence-case title, quiet count and the chevron after them — 24 apart from
- * the group above it and tight to its own first row.
+ * label on the plane — sentence-case title on the content edge, quiet count and the chevron after it, as
+ * Scheduled and Drafts read; no kind glyph leads any group (owner 2026-11-11) — 24 apart from the group above
+ * it and tight to its own first row.
  */
 export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHeader(props: Readonly<{
     /** Admitted facts from the membership owner before local disclosure hides rows. */
@@ -647,7 +640,6 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     onPress: () => void;
     /** Opens what the group stands for (Needs you → Inbox); the chevron then folds it on its own. */
     onOpen?: () => void;
-    headerKind?: SessionListHeaderItemKind;
     /** How many the group holds now; omitted while unknown. */
     count?: number;
     /** A quiet fact after the title (Needs you "from everywhere"). */
@@ -662,18 +654,11 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
         style?: StyleProp<ViewStyle>;
     }>;
 }>) {
-    const { theme } = useUnistyles();
-    const markSpec = props.headerKind ? SECTION_HEADER_MARKS[props.headerKind] : undefined;
-    const mark = markSpec ? (
-        <Icon name={markSpec.icon} size={HAPPIER_COLLECTION_LIST_METRICS.groupLabelMarkGlyph}
-            color={markSpec.attention ? theme.colors.state.warning.foreground : theme.colors.text.tertiary} />
-    ) : undefined;
     const label = (
         <CollectionListGroupLabel
             title={props.title}
             count={props.count}
             first={props.first}
-            mark={mark}
             {...(props.detail ? { detail: props.detail } : {})}
             testID={props.testID}
             rollup={props.testID ? <WorkStatusRollup rollup={props.rollup} testID={`${props.testID}:rollup`} /> : undefined}
