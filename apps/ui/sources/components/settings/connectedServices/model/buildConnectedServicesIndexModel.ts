@@ -1,3 +1,5 @@
+import { applyProjectedCredentialKindRestrictions } from '@happier-dev/agents';
+import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -54,7 +56,7 @@ export type ConnectedServicesIndexAgentUse = Readonly<{
     /** The agent's catalog id (its mark); absent only in callers that name agents by title alone. */
     agentId?: string;
     title: string;
-    services: readonly PluginContributionIdentityV1[];
+    services: readonly (PluginContributionIdentityV1 & { credentialKinds?: readonly ConnectedServiceCredentialKind[] })[];
     defaults: readonly QualifiedConnectedAccountPurposeBindingTargetV1[];
 }>;
 
@@ -99,6 +101,8 @@ export type ConnectedServicesIndexSheet = Readonly<{
     usedBy: readonly string[];
     /** The same agents' catalog ids, in the same order (their marks). */
     usedByAgentIds: readonly string[];
+    /** Compatibility comes from the same declaration owner as Session account selection. */
+    usedByByAccountId?: Readonly<Record<string, Readonly<{ usedBy: readonly string[]; usedByAgentIds: readonly string[] }>>>;
     section: ConnectedServicesIndexSection;
     pools: readonly ConnectedServicesIndexPool[];
     rolesByAccountId: Readonly<Record<string, ConnectedServicesIndexAccountRoles>>;
@@ -288,7 +292,22 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
                 })
                 : null;
         const sorted = sortAccounts(accounts);
-        const usedBy = usedByOf(service);
+        const declaredAgents = agentsUsing(service);
+        const compatibleIds = new Map(declaredAgents.map(agent => [agent, new Set(applyProjectedCredentialKindRestrictions({
+            connectedAccounts: agent.services.map(candidate => ({ service: candidate, credentialKinds: candidate.credentialKinds })),
+            optionsByServiceId: { [serviceKey]: accounts.map(account => ({
+                profileId: account.accountId, status: 'connected',
+                kind: account.kind === 'qualified' ? account.profile.kind : null,
+            })) },
+        })[serviceKey].filter(option => option.status !== 'unsupported_kind').map(option => option.profileId))]));
+        const compatibleAgents = accounts.length === 0 ? declaredAgents
+            : declaredAgents.filter(agent => compatibleIds.get(agent)!.size > 0);
+        const usedBy = compatibleAgents.map(agent => agent.title);
+        const usedByByAccountId = Object.fromEntries(accounts.map(account => {
+            const consumers = declaredAgents.filter(agent => compatibleIds.get(agent)!.has(account.accountId));
+            return [account.accountId, { usedBy: consumers.map(agent => agent.title),
+                usedByAgentIds: consumers.flatMap(agent => agent.agentId ? [agent.agentId] : []) }];
+        }));
         const pools = serviceGroups.map((group): ConnectedServicesIndexPool => ({
             ...group,
             defaultFor: defaultsFor((target) => target.kind === 'group'
@@ -329,8 +348,9 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
             statusLine: diagnostics.primary,
             supportDetails: diagnostics.supportDetails,
             usedBy,
-            usedByAgentIds: usedByAgentIdsOf(service),
-            section: sectionOf(usedBy),
+            usedByAgentIds: compatibleAgents.flatMap(agent => agent.agentId ? [agent.agentId] : []),
+            usedByByAccountId,
+            section: sectionOf(usedByOf(service)),
             pools,
             rolesByAccountId,
         };

@@ -4,6 +4,7 @@ import type {
     ConnectedServiceQuotaLimitSelectionV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { summarizeConnectedServiceQuotaCredits } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
 
 import { selectConnectedServiceQuotaSummaryMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { selectComparableConnectedServiceQuotaMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
@@ -67,6 +68,8 @@ export type PoolMemberUsageState = Readonly<{
     health: AccountHealth;
     isStale: boolean;
     room: PoolMemberRoom;
+    /** Included limits spent while provider credits keep the member usable: room, never "used up". */
+    creditsOnly: boolean;
     lowestRemainingPct: number | null;
     meters: readonly ComparableReading[];
     /** Provider amounts after the pool's existing limit selection, including uncapped readings. */
@@ -109,6 +112,15 @@ type ComparableReading = Readonly<{
  * The member's comparable limits (the account's main limit family, from the one comparable-meter owner)
  * with a known "left". A window with nothing reported is not a reading: missing quota is never zero.
  */
+/**
+ * Whether an account's included limits are spent while provider credits (Codex credits, Claude extra
+ * usage) still serve it. The one UI decision for pool members and the account detail.
+ */
+export function isConnectedAccountQuotaCreditsOnly(meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>, now: number): boolean {
+    return summarizeConnectedServiceQuotaCredits(meters)?.available === true
+        && readComparable(meters, now).some((reading) => reading.exhausted);
+}
+
 function readComparable(meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>, now: number): ComparableReading[] {
     const comparable = selectComparableConnectedServiceQuotaMeters(meters);
     const selected = selectConnectedServiceQuotaSummaryMeters({
@@ -161,20 +173,23 @@ export function derivePoolUsage(input: Readonly<{
         const credentialUsable = isConnectedServiceCredentialHealthStatusUsable(
             normalizeConnectedServiceCredentialHealthStatus(member.credentialStatus),
         );
+        const creditsOnly = member.meters !== null && isConnectedAccountQuotaCreditsOnly(member.meters, input.now);
         // A freshness deadline does not withdraw a settled reading during revalidation.
         const room: PoolMemberRoom = readings.length === 0 || !credentialUsable
             ? 'unknown'
-            : readings.some((reading) => reading.exhausted) ? 'waiting' : 'room';
+            : readings.some((reading) => reading.exhausted) && !creditsOnly ? 'waiting' : 'room';
         const credentialStatus = parseDisplayableCredentialHealthStatus(member.credentialStatus);
         const state: PoolMemberUsageState = {
             credentialStatus,
             health: deriveAccountHealth({
                 status: credentialStatus,
                 capacityPct: lowestRemainingPct,
+                creditsAvailable: creditsOnly,
                 isStale: member.isStale,
             }),
             isStale: member.isStale === true,
             room,
+            creditsOnly: room === 'room' && creditsOnly,
             lowestRemainingPct: room === 'unknown' ? null : lowestRemainingPct,
             meters: readings,
             reportedMeters: member.meters ?? [],

@@ -5,6 +5,8 @@ export type ConnectedAccountQuotaTone = 'neutral' | 'success' | 'warning' | 'dan
 export type DeriveAccountHealthInput = Readonly<{
     status?: ConnectedServiceCredentialHealthStatusV1 | null;
     capacityPct: number | null;
+    /** Provider credits still serve the account once its included limits are spent. */
+    creditsAvailable?: boolean;
     isStale?: boolean;
 }>;
 const SEVERITY_RANK: Readonly<Record<AccountHealth, number>> = { healthy: 0, attention: 1, error: 2 };
@@ -39,7 +41,10 @@ export function deriveAccountHealth(input: DeriveAccountHealthInput): AccountHea
     let health: AccountHealth = input.status === 'needs_reauth' ? 'error'
         : input.status === 'refresh_failed_retryable' ? 'attention' : 'healthy';
     const tone = resolveQuotaTone(input.capacityPct);
-    health = worst(health, tone === 'danger' ? 'error' : tone === 'warning' ? 'attention' : 'healthy');
+    // Spent included limits with credit headroom still work (at a cost): attention, never error.
+    const capacityHealth: AccountHealth = tone === 'danger' ? (input.creditsAvailable === true ? 'attention' : 'error')
+        : tone === 'warning' ? 'attention' : 'healthy';
+    health = worst(health, capacityHealth);
     if (input.isStale) health = worst(health, 'attention');
     return health;
 }

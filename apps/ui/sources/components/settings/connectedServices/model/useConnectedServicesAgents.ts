@@ -82,7 +82,7 @@ export function useConnectedServicesAgentUses(options: Options) {
         return agentEntries.filter(agent => agent.connectedAccounts.length > 0).map(agent => ({
             agentId: agent.agentId,
             title: agent.title,
-            services: agent.connectedAccounts.map(declaration => declaration.service),
+            services: agent.connectedAccounts.map(declaration => ({ ...declaration.service, credentialKinds: declaration.credentialKinds })),
             defaults: agent.identity && purposeBindings ? resolveAgentConnectedAccountPurposeDefaults({
                 settings, purposeBindings, agentId: agent.agentId, consumer: agent.identity, declarations: agent.connectedAccounts,
             }).flatMap(entry => entry.target ? [entry.target] : []) : [],

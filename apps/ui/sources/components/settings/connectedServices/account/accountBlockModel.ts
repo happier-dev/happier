@@ -1,4 +1,5 @@
 import type { UnistylesThemes } from 'react-native-unistyles';
+import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
@@ -97,4 +98,24 @@ export function resolveAccountCapacityRings(
         .flatMap((row) => row.remaining === null ? [] : [{ ratio: row.remaining, tone: row.tone }])
         .sort((a, b) => a.ratio - b.ratio)
         .slice(0, MAX_CAPACITY_RINGS);
+}
+
+/**
+ * Human names for the provider limit ids a quota reset clears. The base window ids keep
+ * their localized family names; any other id the snapshot shows as a meter (matched by
+ * provider limit id or meter id) keeps that meter's name, so a reset reads in the same
+ * vocabulary as the usage list. Unknown ids stay visible verbatim rather than guessed.
+ */
+export function resolveResetLimitLabels(
+    providerLimitIds: ReadonlyArray<string>,
+    meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>,
+    familyLabels: Readonly<{ fiveHour: string; weekly: string }>,
+): string[] {
+    const labels = providerLimitIds.map((id) => {
+        if (id === 'five_hour') return familyLabels.fiveHour;
+        if (id === 'seven_day') return familyLabels.weekly;
+        const meter = meters.find((candidate) => (candidate.providerLimitId ?? candidate.meterId) === id || candidate.meterId === id);
+        return meter ? meter.label : id;
+    });
+    return [...new Set(labels)];
 }

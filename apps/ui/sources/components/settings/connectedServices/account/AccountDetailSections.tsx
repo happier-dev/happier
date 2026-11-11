@@ -5,7 +5,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { ConnectedServiceQuotaRecoveryCreditsV1, ConnectedServiceQuotaRecoveryCreditDetailsByIdV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceQuotaMeterV1, ConnectedServiceQuotaRecoveryCreditsV1, ConnectedServiceQuotaRecoveryCreditDetailsByIdV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
@@ -43,8 +43,10 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 
 import { ACCOUNT_BLOCK_RESET_COUNTDOWN_DAYS_FORMATTER } from './accountBlockFormatters';
+import { resolveResetLimitLabels } from './accountBlockModel';
 import { formatAgentNames } from '../ConnectedServiceMark';
 import { projectIndexMeters, type ConnectedAccountIndexMeter } from '../index/projectIndexMeters';
+import { isConnectedAccountQuotaCreditsOnly } from '../pools/derivePoolUsage';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import type { ConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
 import { projectConnectedAccountSubscriptionFacts } from '../model/resolveConnectedAccountAccessMode';
@@ -54,6 +56,8 @@ import { useConnectedAccountPinnedMeters } from '../usage/useConnectedAccountPin
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
 import { UsageRefreshAction } from '../usage/UsageRefreshAction';
 
+const EMPTY_LIMIT_METERS: readonly ConnectedServiceQuotaMeterV1[] = [];
+
 /** What the detail's usage sections show (read once for the three of them). */
 export type AccountDetailUsageFacts = Readonly<{
     meters: readonly ConnectedAccountIndexMeter[];
@@ -62,12 +66,16 @@ export type AccountDetailUsageFacts = Readonly<{
     subscription: ProviderAccountSubscriptionV1 | null;
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     recoveryCreditDetails?: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1;
+    /** Raw snapshot meters, so a reset can name the limits it clears. */
+    limitMeters?: readonly ConnectedServiceQuotaMeterV1[];
     loading: boolean;
     error: string | null;
     refreshing: boolean;
-    /** Null when the account's service reports no usage (Refresh is not offered). */
+    /** Null when there is no refresh target for this account. */
     refresh: (() => void) | null;
     usageState?: 'not_loaded' | 'observed';
+    /** Included limits spent while provider credits keep the account usable. */
+    creditsOnly?: boolean;
 }>;
 
 /**
@@ -105,6 +113,14 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
             ) : null}
             {facts.refreshing ? (
                 <SurfaceStateCard testID={`${testID}:refresh-status`} size="line" kind="loading" title={t('connectedServices.quota.refreshing')} />
+            ) : null}
+            {facts.creditsOnly && !props.signedOut ? (
+                <SurfaceStateCard
+                    testID={`${testID}:credits-only`}
+                    size="line"
+                    kind="warning"
+                    title={t('connectedServicesSettings.detailUsageCreditsOnly')}
+                />
             ) : null}
             {facts.meters.length > 0 ? (
                 <SectionContentRow testID={`${testID}:meters`}>
@@ -193,6 +209,8 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
     const days = presented.days ?? 0;
     const subtitle = presented.state === 'none'
         ? t('connectedServicesCollection.subscriptionNone')
+        : presented.state === 'active'
+            ? undefined
         : presented.state === 'renews'
             ? t('connectedServicesCollection.subscriptionRenewsOn', { date: ends ?? '', days })
             : presented.state === 'ends'
@@ -211,10 +229,11 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
     if (props.compact) {
         const summary = presented.state === 'none' ? t('connectedServicesCollection.subscriptionNone')
             : presented.state === 'renews' ? `${[props.serviceLabel, props.planLabel].filter(Boolean).join(' ')} · ${t('connectedServicesCollection.subscriptionRenewsIn', { days })}`
+            : presented.state === 'active' ? `${[props.serviceLabel, props.planLabel].filter(Boolean).join(' ')} · ${t('connectedServicesCollection.subscriptionActive')}`
             : presented.state === 'ends' ? t('connectedServicesCollection.subscriptionEndsIn', { days })
             : t('connectedServicesCollection.subscriptionPeriodEndsIn', { days });
         return <ItemGroup><Item testID={testID} density="compact" title={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 }}>
-            <StatusDot color={presented.state === 'ends' ? theme.colors.state.warning.foreground : presented.state === 'renews' ? theme.colors.state.success.foreground : theme.colors.text.tertiary} />
+            <StatusDot color={presented.state === 'ends' ? theme.colors.state.warning.foreground : presented.state === 'renews' || presented.state === 'active' ? theme.colors.state.success.foreground : theme.colors.text.tertiary} />
             <Text style={[styles.compactSubscription, presented.state === 'ends' ? styles.warning : null]}>{summary}</Text>
         </View>} mode="info" showChevron={false} rightElement={checked} /></ItemGroup>;
     }
@@ -230,10 +249,12 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
                 rightElement={presented.state === 'none' ? undefined : (
                     <StatusPill
                         testID={`${testID}:renewal`}
-                        variant={presented.state === 'ends' ? 'warning' : presented.state === 'renews' ? 'success' : 'neutral'}
+                        variant={presented.state === 'ends' ? 'warning' : presented.state === 'renews' || presented.state === 'active' ? 'success' : 'neutral'}
                         label={presented.state === 'ends'
                             ? t('connectedServicesCollection.renewalOff')
-                            : presented.state === 'renews' ? t('connectedServicesCollection.renewalOn') : t('connectedServicesCollection.renewalUnknown')}
+                            : presented.state === 'renews' ? t('connectedServicesCollection.renewalOn')
+                            : presented.state === 'active' ? t('connectedServicesCollection.subscriptionActive')
+                            : t('connectedServicesCollection.renewalUnknown')}
                     />
                 )}
             />
@@ -262,6 +283,7 @@ export const AccountDetailFactsSectionsView = React.memo(function AccountDetailF
     const resets = props.resetsSection ?? <AccountDetailResetsSectionView
         recoveryCredits={props.facts.recoveryCredits}
         recoveryCreditDetails={props.facts.recoveryCreditDetails}
+        limitMeters={props.facts.limitMeters}
         now={props.now}
         pending={false}
         onUse={null}
@@ -276,6 +298,8 @@ export const AccountDetailFactsSectionsView = React.memo(function AccountDetailF
 export const AccountDetailResetsSectionView = React.memo(function AccountDetailResetsSectionView(props: Readonly<{
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     recoveryCreditDetails?: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1;
+    /** Snapshot meters; names the limits a reset clears in the usage vocabulary. */
+    limitMeters?: readonly ConnectedServiceQuotaMeterV1[];
     now: number;
     pending: boolean;
     onUse: ((providerCreditId: string | null) => void) | null;
@@ -296,9 +320,10 @@ export const AccountDetailResetsSectionView = React.memo(function AccountDetailR
                     row.description,
                     row.details ? t('connectedServices.account.resets.remainingCount', { count: row.details.remainingCount }) : null,
                     row.details?.appliesToProviderLimitIds.length ? t('connectedServices.account.resets.appliesTo', {
-                        limits: row.details.appliesToProviderLimitIds.map((id) => id === 'five_hour'
-                            ? t('connectedServices.account.resets.fiveHourLimit')
-                            : id === 'seven_day' ? t('connectedServices.account.resets.weeklyLimit') : id).join(' · '),
+                        limits: resolveResetLimitLabels(row.details.appliesToProviderLimitIds, props.limitMeters ?? EMPTY_LIMIT_METERS, {
+                            fiveHour: t('connectedServices.account.resets.fiveHourLimit'),
+                            weekly: t('connectedServices.account.resets.weeklyLimit'),
+                        }).join(' · '),
                     }) : null,
                     !row.canUse ? row.details?.unavailableReason
                         ? t(`connectedServices.account.resets.unavailableReasons.${row.details.unavailableReason}`)
@@ -357,11 +382,13 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         subscription,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
         recoveryCreditDetails: snapshot?.recoveryCreditDetails,
+        limitMeters: snapshot?.meters,
         loading: quota.loading,
         error: quota.error,
         refreshing: quota.refreshing,
         refresh: props.machineId === null || quota.supported === false ? null : retry,
         ...(snapshot ? { usageState: snapshot.state === 'not_loaded' ? 'not_loaded' as const : 'observed' as const } : {}),
+        creditsOnly: snapshot ? isConnectedAccountQuotaCreditsOnly(snapshot.meters, now) : false,
     };
     return (
         <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut && props.machineId !== null ? (
@@ -371,6 +398,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
                     machineId={props.machineId}
                     recoveryCredits={facts.recoveryCredits}
                     recoveryCreditDetails={facts.recoveryCreditDetails}
+                    limitMeters={facts.limitMeters}
                     fetchedAt={facts.fetchedAt}
                     onApplied={retry}
                     now={now}
@@ -385,6 +413,7 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
     machineId?: string | null;
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     recoveryCreditDetails?: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1;
+    limitMeters?: readonly ConnectedServiceQuotaMeterV1[];
     fetchedAt: number | null;
     onApplied: () => void;
     now: number;
@@ -400,6 +429,7 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
         <AccountDetailResetsSectionView
             recoveryCredits={props.recoveryCredits}
             recoveryCreditDetails={props.recoveryCreditDetails}
+            limitMeters={props.limitMeters}
             now={props.now}
             pending={action.pending}
             onUse={(creditId) => { void action.use(creditId); }}
@@ -473,16 +503,17 @@ export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedB
     const serviceKey = buildQualifiedPluginContributionKey(props.account.service);
     const { indexModel } = useConnectedServicesIndex({ agents: 'cached', serviceKey });
     const sheet = indexModel.sheets.find((candidate) => candidate.serviceKey === serviceKey);
-    if (!sheet || sheet.usedBy.length === 0) return <AccountDetailUsedBySectionView rows={[]} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
-    const agentIdByTitle = new Map(sheet.usedBy.map((title, index) => [title, sheet.usedByAgentIds[index] ?? null]));
+    const accountUse = sheet?.usedByByAccountId?.[props.account.accountId];
+    if (!sheet || !accountUse || accountUse.usedBy.length === 0) return <AccountDetailUsedBySectionView rows={[]} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
+    const agentIdByTitle = new Map(accountUse.usedBy.map((title, index) => [title, accountUse.usedByAgentIds[index] ?? null]));
     const roles = sheet.rolesByAccountId[props.account.accountId];
-    const direct = new Set(roles?.defaultFor ?? []);
+    const direct = new Set((roles?.defaultFor ?? []).filter(agent => accountUse.usedBy.includes(agent)));
     const throughPools = (roles?.pools ?? []).flatMap((membership) => {
         const pool = sheet.pools.find((candidate) => candidate.ref.groupId === membership.groupId);
-        return (pool?.defaultFor ?? []).map((agent) => ({ agent, pool, inUse: membership.inUse }));
+        return (pool?.defaultFor ?? []).filter(agent => accountUse.usedBy.includes(agent)).map((agent) => ({ agent, pool, inUse: membership.inUse }));
     });
     const using = new Set([...direct, ...throughPools.map((entry) => entry.agent)]);
-    const others = sheet.usedBy.filter((agent) => !using.has(agent));
+    const others = accountUse.usedBy.filter((agent) => !using.has(agent));
     const openAgent = (agentId: string | null) => agentId ? () => router.push(`/settings/agents/${agentId}` as never) : undefined;
     const rows: AccountDetailUsedByRow[] = [
         ...[...direct].map((agent) => ({

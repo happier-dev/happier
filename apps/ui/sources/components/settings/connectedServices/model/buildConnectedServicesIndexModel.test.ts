@@ -78,6 +78,27 @@ const AGENTS: readonly ConnectedServicesIndexAgentUse[] = [
 ];
 
 describe('buildConnectedServicesIndexModel · who uses what', () => {
+    it('names only consumers compatible with each saved account kind, including mixed services', () => {
+        const service = { pluginId: 'external.source', localId: 'models' };
+        const declarations: readonly ConnectedServicesIndexAgentUse[] = [
+            { agentId: 'subscription', title: 'Subscription', services: [{ ...service, credentialKinds: ['oauth'] }], defaults: [] },
+            { agentId: 'key', title: 'Key', services: [{ ...service, credentialKinds: ['token'] }], defaults: [] },
+            { agentId: 'both', title: 'Both', services: [service], defaults: [] },
+        ];
+        const project = (kinds: readonly ('oauth' | 'token')[]) => buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [entry(service, 'Source')],
+            qualifiedAccounts: kinds.map(kind => ({ ...account(service, kind), kind })), qualifiedGroups: [], legacyServices: [],
+            defaultAccountByServiceKey: {}, resolveLabel: () => 'Source', resolveFallbackEntry: () => null,
+            presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading', agentUses: declarations,
+        }).sheets[0];
+        expect(project(['oauth']).usedBy).toEqual(['Subscription', 'Both']);
+        const mixed = project(['oauth', 'token']);
+        expect(mixed.usedBy).toEqual(['Subscription', 'Key', 'Both']);
+        expect(mixed.usedByByAccountId?.oauth).toEqual({ usedBy: ['Subscription', 'Both'], usedByAgentIds: ['subscription', 'both'] });
+        expect(mixed.usedByByAccountId?.token).toEqual({ usedBy: ['Key', 'Both'], usedByAgentIds: ['key', 'both'] });
+        expect(project(['token']).usedBy).toEqual(['Key', 'Both']);
+    });
+
     it.each([1, 2])('keeps declared multi-account services addable with %s saved accounts and no Machine execution', (count) => {
         const services = [CODEX, { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }];
         const model = buildConnectedServicesIndexModel({ transport: 'advertised-v4', entries: [], registryStatus: 'ready',
