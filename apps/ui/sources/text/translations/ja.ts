@@ -7743,6 +7743,7 @@ localTailscale: {
     searchFailed: "検索に失敗しました。再試行してください。",
     scmOutcomeUnknown: 'Happier は完了したかどうかを確認できませんでした。再試行する前に更新して確認してください。',
     scmMessageOutcomeUnknown: 'Happier はメッセージが送信されたことを確認できませんでした。下書きは保存されています。再送する前に会話を確認してください。',
+    scmPullRequestNotFound: 'このリポジトリにその番号のプルリクエストはありません。番号を確認して、もう一度読み取ってください。',
     workspaceFolderMissing: 'このフォルダはマシン上に存在しません。別のフォルダを選択してください。',
     failedToSendRequest: "友達リクエストの送信に失敗しました",
     failedToResumeSession: "セッションの再開に失敗しました",

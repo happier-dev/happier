@@ -6,8 +6,11 @@ export function getScmUserFacingError(input: {
     errorCode?: ScmOperationErrorCode;
     error?: string;
     fallback: string;
-    /** What the operation carried, when its copy differs: a sent message names the conversation to check. */
-    subject?: 'message';
+    /**
+     * What the operation carried, when its copy differs: a sent message names the conversation to check; a pull
+     * request read that finds nothing names the pull request, not a remote.
+     */
+    subject?: 'message' | 'pullRequest';
 }): string {
     const rawError = input.error?.toLowerCase() ?? '';
     const rawFallback = input.fallback.toLowerCase();
@@ -58,7 +61,9 @@ export function getScmUserFacingError(input: {
             }
             return 'Remote rejected the update (for example by server policy or pre-receive hook).';
         case SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND:
-            return 'The selected remote was not found in this repository.';
+            return input.subject === 'pullRequest'
+                ? t('errors.scmPullRequestNotFound')
+                : 'The selected remote was not found in this repository.';
         case SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED:
             return 'This operation is not supported by the active source control backend.';
         case SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE:

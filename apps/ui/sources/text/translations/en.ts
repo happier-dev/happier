@@ -8645,6 +8645,7 @@ const enErrors = {
   searchFailed: 'Search failed. Please try again.',
   scmOutcomeUnknown: 'Happier couldn’t confirm whether this finished. Refresh and check before trying again.',
   scmMessageOutcomeUnknown: 'Happier couldn’t confirm your message was sent. Your draft is kept. Check the conversation before sending it again.',
+  scmPullRequestNotFound: 'No pull request with that number in this repository. Check the number and read it again.',
   workspaceFolderMissing: 'This folder no longer exists on the machine. Choose another folder.',
   failedToSendRequest: 'Failed to send friend request',
   failedToResumeSession: 'Failed to resume session',

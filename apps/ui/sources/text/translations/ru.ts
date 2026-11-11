@@ -7191,6 +7191,7 @@ export const ru: TranslationStructure = {
     searchFailed: "Поиск не удался. Пожалуйста, попробуйте снова.",
     scmOutcomeUnknown: 'Happier не смог подтвердить, что операция завершилась. Обновите и проверьте, прежде чем повторять.',
     scmMessageOutcomeUnknown: 'Happier не смог подтвердить, что сообщение отправлено. Черновик сохранён. Проверьте разговор, прежде чем отправлять сообщение снова.',
+    scmPullRequestNotFound: 'В этом репозитории нет pull request с таким номером. Проверьте номер и прочитайте снова.',
     workspaceFolderMissing: 'Этой папки больше нет на машине. Выберите другую папку.',
     failedToSendRequest: "Не удалось отправить запрос в друзья",
     failedToResumeSession: "Не удалось возобновить сессию",

@@ -33,6 +33,7 @@ const { DeploymentEnvironmentDetail } = await import('./DeploymentEnvironmentDet
 const { createDeploymentActions } = await import('./deploymentActions');
 const { CodeBlockView } = await import('@/components/ui/code/blocks/CodeBlockView');
 const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { Modal } = await import('@/modal');
 
 async function waitForReceipt(screen: Awaited<ReturnType<typeof renderAccountScreen>>) {
@@ -238,6 +239,67 @@ describe('retained stored deployment source', () => {
     expect(readSignal?.aborted).toBe(false);
     await act(async () => { screen.unmount(); });
     expect(readSignal?.aborted).toBe(true);
+  });
+
+  it('preserves the typed pull-request read failure instead of showing the empty state', async () => {
+    const serverId = await homes.addHome({ name: 'PR read failure', serverUrl: 'https://pr-read-failure.test',
+      serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const receipt = createDeploymentReceiptDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner', projectSourceId: environment.environment.projectSourceId }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.SCM_PULL_REQUEST_GET
+      ? { success: false, errorCode: 'REMOTE_NOT_FOUND', error: 'GitHub pull request resource was not found' }
+      : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No status available' });
+    const screen = await renderAccountScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={environment.environment.id}
+      demand={{ mounted: true, visible: true, focused: true }} accountId="account-owner" serverId={serverId}
+      workspaceRef={{ id: 'checkout-a', serverId, machineId: 'source-machine', rootPath: '/source',
+        label: 'App checkout', createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId: environment.environment.projectSourceId, revision: 1 } }}
+      deploy={null} phone={false} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.findByTestId('project-deployments.environment.header'), screen.getTextContent()).not.toBeNull();
+    });
+    const state = (testID: string) => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === testID)?.props;
+    await act(async () => { screen.changeTextByTestId('project-deployments.pr.number', '42'); });
+    await screen.pressByTestIdAsync('project-deployments.pr.load');
+    // The SCM owner presents the typed failure; the adapter's English never reaches the screen.
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(state('project-deployments.pr.unavailable')).toMatchObject({ size: 'line', kind: 'error', title: t('errors.scmPullRequestNotFound') });
+    });
+    expect(screen.getTextContent()).not.toContain('GitHub pull request resource was not found');
+
+    // A retry that finds no PR clears the prior failure and uses the real empty state.
+    rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.SCM_PULL_REQUEST_GET
+      ? { success: true, pullRequest: null }
+      : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No status available' });
+    await act(async () => { screen.changeTextByTestId('project-deployments.pr.number', '43'); });
+    await screen.pressByTestIdAsync('project-deployments.pr.load');
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(state('project-deployments.pr.empty')).toMatchObject({ size: 'line', kind: 'empty', title: t('projects.deployments.editors.prNotFound', { number: 43 }) });
+    });
+    expect(state('project-deployments.pr.unavailable')).toBeUndefined();
+
+    // A PR without an exact head keeps its card and says how to read it again, with no deploy row.
+    rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.SCM_PULL_REQUEST_GET
+      ? { success: true, pullRequest: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        number: 44, title: 'Draft preview', url: 'https://github.com/example/app/pull/44', baseBranch: 'main', headBranch: 'preview',
+        headSha: null, state: 'open' } }
+      : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No status available' });
+    await act(async () => { screen.changeTextByTestId('project-deployments.pr.number', '44'); });
+    await screen.pressByTestIdAsync('project-deployments.pr.load');
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(state('project-deployments.pr.sourceUnavailable')).toMatchObject({ size: 'line', kind: 'unavailable', title: t('projects.deployments.editors.prUnavailable') });
+    });
+    expect(state('project-deployments.pr.empty')).toBeUndefined();
+    expect(screen.findByTestId('project-deployments.pr.deploy')).toBeNull();
   });
 
 });

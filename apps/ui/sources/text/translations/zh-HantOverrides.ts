@@ -6262,6 +6262,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         searchFailed: '搜尋失敗。請重試。',
         scmOutcomeUnknown: 'Happier 無法確認此操作是否已完成。請先重新整理並檢查，再決定是否重試。',
         scmMessageOutcomeUnknown: 'Happier 無法確認你的訊息是否已傳送。草稿已保留。請先檢查對話，再決定是否重新傳送。',
+        scmPullRequestNotFound: '此儲存庫中沒有該編號的提取要求。請檢查編號後重新讀取。',
         workspaceFolderMissing: '此資料夾已不在機器上。請選擇其他資料夾。',
         failedToSendRequest: '傳送好友請求失敗',
         failedToSwitchControl: '切換控制模式失敗',

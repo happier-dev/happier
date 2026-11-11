@@ -197,4 +197,10 @@ describe('getScmUserFacingError', () => {
         expect(message).toBe(t('errors.scmOutcomeUnknown'));
         expect(getScmUserFacingError({ errorCode: code, error: code, fallback: code, subject: 'message' })).toBe(t('errors.scmMessageOutcomeUnknown'));
     });
+    it('says a missing pull request is missing, not a missing remote, and never echoes the adapter text', () => {
+        const message = getScmUserFacingError({ errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND,
+            error: 'GitHub pull request resource was not found', fallback: 'Read failed', subject: 'pullRequest' });
+        expect(message).toBe(t('errors.scmPullRequestNotFound'));
+        expect(message).not.toBe(getScmUserFacingError({ errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND, fallback: 'Read failed' }));
+    });
 });
