@@ -38,9 +38,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readPluginSessionsSubagentObservation } from '@/session/services/pluginSessionsInventory';
 import type { McpToolPolicyContext } from '@/mcp/runtime/resolveMcpToolIdentity';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
-import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
-import { MUSE_PLUGIN } from '../../manifest.js';
 
 export const MUSE_SESSION_FIXTURE_MACHINE_ID = 'muse-fixture-machine';
 
@@ -317,14 +315,10 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       get launchCount() { return launched; },
       run<T>(operation: () => T): T { return runWithServerHttpBaseUrl(serverUrl, operation); },
       async resolveMcp() {
-        const definition = MUSE_PLUGIN.manifest.contributes.agents?.find(agent => agent.id === agentId);
-        if (!definition) throw new Error('Expected authored Muse declaration');
-        const entry = createManifestAgentCatalogEntry({ agentId, pluginId, definition, cli: null, provenance: 'first_party' });
-        if (!entry) throw new Error('Expected projected Muse catalog entry');
         return await runWithServerHttpBaseUrl(serverUrl, () => resolveRunnerMcpServers({ session: host!, credentials,
           accountCredentials: null, accountSettings: null, machineId: MUSE_SESSION_FIXTURE_MACHINE_ID, directory: cwd,
           pluginRuntimeRegistryLease: selectedRegistry.lease,
-          includeHappierMcpServer: resolveAgentToolsDelivery(agentId, { catalogEntriesById: { [agentId]: entry } }) === 'native_mcp',
+          includeHappierMcpServer: resolveAgentToolsDelivery(agentId, selectedRegistry.lease.registry.contributes) === 'native_mcp',
         }));
       },
       async open(request: AgentSessionOpenRequest) {
