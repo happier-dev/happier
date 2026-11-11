@@ -9,7 +9,6 @@ import {
     removeBrowserContextComposerAttachment,
     type BrowserAnnotationCaptureProvider,
     type BrowserContextState,
-    type BrowserContextUnavailableReason,
 } from '@/sync/domains/browser/context';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
@@ -74,7 +73,7 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
     annotationCaptureProvider?: BrowserAnnotationCaptureProvider | null;
     annotationRuntimeActionExecute?: RuntimeActionExecute | null;
     nowMs?: () => number;
-    onAttachUnavailable?: (reason: BrowserContextUnavailableReason) => void;
+    onAttachUnavailable?: BrowserShellContextState['onAttachUnavailable'];
 }>): SessionBrowserContextRuntime | null {
     const [state, setState] = React.useState(createBrowserContextState);
     const stateRef = React.useRef(state);

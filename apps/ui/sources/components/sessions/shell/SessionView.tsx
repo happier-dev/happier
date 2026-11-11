@@ -67,6 +67,7 @@ import { fireAndForget } from "@/utils/system/fireAndForget";
 import { runAfterInteractionsWithFallback } from "@/utils/timing/runAfterInteractionsWithFallback";
 import type { BrowserContextState } from "@/sync/domains/browser/context";
 import { SessionBrowserContextRuntimeProvider, type SessionBrowserContextRuntime, useSessionBrowserContextRuntime } from "@/components/sessions/browser/sessionBrowserContextRuntime";
+import { alertBrowserContextUnavailable } from "@/components/sessions/browser/alertBrowserContextUnavailable";
 import { useSessionAgentActivity } from "@/hooks/session/useSessionAgentActivity";
 import { hasSessionSubagentLaunchCards } from "@/agents/registry/sessionSubagentUiBehavior";
 import { nowServerMs } from "@/sync/runtime/time";
@@ -1240,9 +1241,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         accountScope: sessionAccountBinding?.scope,
         attachmentsUploadsEnabled: attachmentsUploadsAvailable,
         nowMs: nowServerMs,
-        onAttachUnavailable: React.useCallback(() => {
-            Modal.alert(t('common.error'), t('browserContext.composer.contextUnavailable'));
-        }, []),
+        onAttachUnavailable: alertBrowserContextUnavailable,
     });
     // The narrow width: this shell needs the numbers and the recipient list, not the transcript
     // detail the Agents pane pays for. The counts come from the ONE owner, so the header glyph and

@@ -32,8 +32,8 @@ import {
   createBrowserContextState,
   selectBrowserContextComposerAttachments,
   type BrowserContextState,
-  type BrowserContextUnavailableReason,
 } from '@/sync/domains/browser/context';
+import type { BrowserShellContextState } from './BrowserShell';
 import {
   applyBrowserDiagnosticEvents,
   createBrowserDiagnosticsUiStore,
@@ -659,7 +659,7 @@ describe('BrowserShell', () => {
       await screen.pressByTestIdAsync('browser-shell-mark-up');
       expect(captureScreenshot).not.toHaveBeenCalled();
       expect(onAttachUnavailable).toHaveBeenCalledWith(expect.objectContaining({
-        reasonCode: 'browser_context_annotation_capture_unavailable', message: 'action_disabled',
+        ok: false, errorCode: 'action_disabled',
       }));
       startEnabled = true;
       await screen.pressByTestIdAsync('browser-shell-mark-up');
@@ -2335,7 +2335,7 @@ describe('BrowserShell', () => {
     const state = await createShellState();
     const onContextStateChange = vi.fn<(state: BrowserContextState) => void>();
     const onAttachUnavailable =
-      vi.fn<(reason: BrowserContextUnavailableReason) => void>();
+      vi.fn<NonNullable<BrowserShellContextState['onAttachUnavailable']>>();
 
     const screen = await renderScreen(
       <BrowserShell

@@ -200,7 +200,6 @@ vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    useSessionStatus: () => ({ statusText: '', statusColor: '#000', statusDotColor: '#000' }),
     shouldShowAbortButtonForSessionState: () => false,
     getSessionAvatarId: () => '1',
     getSessionName: () => 'Session',
@@ -320,9 +319,9 @@ describe('SessionView composer surface focus', () => {
       const reportUnavailable = runtime.browserShellContext.onAttachUnavailable;
       if (!reportUnavailable) throw new Error('Session Browser failure presenter did not mount');
       modalAlertSpy.mockClear();
-      Reflect.apply(reportUnavailable, undefined, [{ ok: false, errorCode: 'runtime_action_disabled',
+      reportUnavailable({ ok: false, errorCode: 'runtime_action_disabled',
         error: 'private transport text', details: { reasonCode: 'browser_context_annotation_unavailable', path: '/private/path' },
-        failureCause: { phase: 'browser.context.annotation.start', errorClass: 'Error', errorCode: 'machine_socket_unavailable', httpStatus: null } }]);
+        failureCause: { phase: 'browser.context.annotation.start', errorClass: 'Error', errorCode: 'machine_socket_unavailable', httpStatus: null } });
       const initialAlert = modalAlertSpy.mock.calls.at(-1)!;
       expect(initialAlert[1]).toBe('browserContext.composer.contextUnavailable');
       const buttons = initialAlert[2] as ReadonlyArray<{ text: string; onPress?: () => void }>;
@@ -334,6 +333,18 @@ describe('SessionView composer surface focus', () => {
         errorClass: 'Error', causeCode: 'machine_socket_unavailable', reasonCode: 'browser_context_annotation_unavailable' });
       expect(revealed).not.toHaveProperty('path');
       expect(JSON.stringify(revealed)).not.toContain('private transport text');
+      modalAlertSpy.mockClear();
+      reportUnavailable({ lifecycleState: 'adapterUnavailable', reasonCode: 'browser_context_adapter_unavailable',
+        message: 'private page text' });
+      const domainAlert = modalAlertSpy.mock.calls.at(-1)!;
+      expect(domainAlert[1]).toBe('browserContext.composer.contextUnavailable');
+      const domainButtons = domainAlert[2] as ReadonlyArray<{ text: string; onPress?: () => void }>;
+      const domainDetails = domainButtons.find(button => button.text === 'approvals.technicalDetails');
+      expect(domainDetails).toBeDefined();
+      domainDetails?.onPress?.();
+      const domainRevealed = JSON.parse(modalAlertSpy.mock.calls.at(-1)![1]);
+      expect(domainRevealed).toEqual({ code: 'browser_context_adapter_unavailable', lifecycleState: 'adapterUnavailable' });
+      expect(JSON.stringify(domainRevealed)).not.toContain('private page text');
     } finally {
       await screen?.unmount();
       featureEnabledState['browser.context'] = oldContext;

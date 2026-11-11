@@ -841,6 +841,8 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 const artifactOptions = await artifactParams();
                 await updateArtifactWithHeaderViaApi({
                     ...artifactOptions, artifactId, header, body,
+                    expectedRevision: current?.bodyVersion === undefined ? undefined
+                        : { headerVersion: current.headerVersion, bodyVersion: current.bodyVersion },
                     ...(onIssued ? { request: ((path, init, options) => artifactOptions.request(path, init, {
                         ...options,
                         ...(init?.method === 'POST' ? { onIssued: () => { onIssued(); options?.onIssued?.(); } } : {}),

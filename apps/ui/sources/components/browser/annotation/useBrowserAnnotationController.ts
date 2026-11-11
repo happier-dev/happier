@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import type { BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BrowserDaemonControlCommandSender } from '@/sync/domains/browser/control/machineRpc';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
@@ -40,11 +40,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
  * publishes canvas gestures together with their browser element facts.
  */
 
-type RuntimeActionFailureResult = Readonly<{
-    ok: false;
-    errorCode?: string;
-    error?: string;
-}>;
+type RuntimeActionFailureResult = Readonly<Partial<ActionExecuteFailure> & { ok: false }>;
 
 function isRuntimeActionFailureResult(value: unknown): value is RuntimeActionFailureResult {
     return Boolean(
@@ -122,7 +118,7 @@ export type BrowserShellContextState = Readonly<{
     nowMs?: () => number;
     onStateChange: (state: BrowserContextState) => void;
     onAttachPageReferenceChange?: (handler: (() => void) | null) => void;
-    onAttachUnavailable?: (reason: BrowserContextUnavailableReason) => void;
+    onAttachUnavailable?: (reason: BrowserContextUnavailableReason | RuntimeActionFailureResult) => void;
 }>;
 
 export type BrowserAnnotationController = Readonly<{
@@ -252,11 +248,7 @@ export function useBrowserAnnotationController(input: Readonly<{
                 },
             });
             if (isRuntimeActionFailureResult(result)) {
-                context.onAttachUnavailable?.({
-                    reasonCode: 'browser_context_annotation_capture_unavailable',
-                    lifecycleState: 'adapterUnavailable',
-                    message: result.error ?? result.errorCode ?? 'browser_context_annotation_unavailable',
-                });
+                context.onAttachUnavailable?.(result);
             }
             const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result).success;
             const committed = request.kind !== 'attachDraft'
