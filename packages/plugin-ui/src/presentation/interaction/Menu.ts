@@ -46,6 +46,17 @@ export const HAPPIER_MENU_ROW_TEXT = {
   subtitle: { weight: 'regular', fontSize: 13, lineHeight: 18 },
 } as const satisfies Readonly<Record<'label' | 'subtitle', HappierPageTextStep>>;
 
+/**
+ * A menu row's trailing slot (a pin, a badge, a facepile, a check): it sits on the row's one line and never grows the
+ * row. A control taller than the line overhangs it invisibly, its finger reach unchanged, so every menu keeps one
+ * row pitch (owner 2026-11-11, phone 1544 #04: the More menu's pinned rows stood at 44 instead of 36).
+ */
+export const HAPPIER_MENU_ROW_TRAILING = Object.freeze({
+  height: HAPPIER_MENU_ROW_TEXT.label.lineHeight,
+  overflow: 'visible' as const,
+  justifyContent: 'center' as const,
+});
+
 export type HappierMenuItemDescriptor = Readonly<{
   id: string;
   label?: string;

@@ -37,7 +37,7 @@ import {
     ITEM_CHEVRON_SIZE,
     ITEM_ICON_BOX_SIZE,
     ITEM_ICON_GLYPH_SIZE,
-    MENU_ROW_METRICS, MENU_ROW_SHAPE,
+    MENU_ROW_METRICS, MENU_ROW_SHAPE, MENU_ROW_TRAILING,
     ITEM_ICON_MARGIN_RIGHT,
     ITEM_ROW_PADDING_HORIZONTAL,
     ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX,
@@ -1801,6 +1801,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 // past the sheet's trailing inset.
                 !stackContentAccessory && (adaptiveAccessory || fieldMaxWidthPx !== null || accessoryMaxWidth === 'row') ? styles.rightSectionField : null,
                 detailInlineMaxWidthPx !== null ? { maxWidth: detailInlineMaxWidthPx } : null,
+                isMenuRow && !stackContentAccessory ? MENU_ROW_TRAILING : null,
                 firstLineTrailingStyle]}>
                 {copyFeedback.isCopied() ? (
                     <CopiedPill visible testID="item-copy-feedback" />
@@ -1884,6 +1885,7 @@ export const Item = React.memo<ItemProps>((props) => {
         detailFigures,
         detailStyle,
         iconContainerStyle,
+        isMenuRow,
         isPageRow,
         isCatalogRow,
         catalogGeometry,
@@ -2163,6 +2165,7 @@ export const Item = React.memo<ItemProps>((props) => {
                             stackAccessory ? [styles.rightSectionStacked, containerPadding, styles.splitRightSectionStacked] : null,
                             // The same rule as the row's own right section: measured inline, not halved again.
                             !stackAccessory && (adaptiveAccessory || accessoryMaxWidth === 'row') ? styles.rightSectionField : null,
+                            isMenuRow && !stackAccessory ? MENU_ROW_TRAILING : null,
                             stackedLabelEdgeStyle,
                         ]}
                         pointerEvents={sharedItemBehavior.secondaryActionsEnabled ? 'auto' : 'none'}

@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleProp, ViewStyle, TextStyle, StyleSheet as RNS
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { MENU_ROW_METRICS, MENU_ROW_SHAPE } from '@/components/ui/lists/itemDensityMetrics';
+import { MENU_ROW_METRICS, MENU_ROW_SHAPE, MENU_ROW_TRAILING } from '@/components/ui/lists/itemDensityMetrics';
 import { HAPPIER_MENU_ROW_TEXT } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
@@ -359,6 +359,8 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         styles={{
             ...styles,
             left: isMenu ? [styles.left, styles.leftMenu] as HappierStyleProp : styles.left,
+            // A menu row's trailing controls sit on its one line and never grow it (MENU_ROW_TRAILING).
+            right: isMenu ? [styles.right, MENU_ROW_TRAILING] as HappierStyleProp : styles.right,
             // The native adapter retains its exact style binding (including registered RN styles).
             title: [styles.title, titleVariantStyle, titleColorStyle, props.titleStyle] as HappierStyleProp,
             titleWithAccessories: [styles.title, styles.titleText, titleVariantStyle, titleColorStyle, props.titleStyle] as HappierStyleProp,
