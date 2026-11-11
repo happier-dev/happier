@@ -44,6 +44,8 @@ export type TiptapWebViewTheme = Readonly<{
 
 export function buildTiptapWebViewHtml(params: Readonly<{
     theme: TiptapWebViewTheme;
+    /** The prose padding, from `resolveMarkdownRichProseLayout` (the hint overlay sits on it too). */
+    proseInset: Readonly<{ horizontal: number; vertical: number }>;
     readOnly: boolean;
     sharedHistory?: boolean;
     changeDebounceMs: number;
@@ -124,7 +126,7 @@ export function buildTiptapWebViewHtml(params: Readonly<{
        */
       .ProseMirror {
         min-height: 100%;
-        padding: 12px 14px;
+        padding: ${params.proseInset.vertical}px ${params.proseInset.horizontal}px;
         box-sizing: border-box;
         caret-color: ${params.theme.textColor};
       }

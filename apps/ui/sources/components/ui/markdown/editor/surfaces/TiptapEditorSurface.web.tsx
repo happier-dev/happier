@@ -21,7 +21,7 @@ import type {
     MenuTriggerKeyDownEvent,
     MenuTriggerState,
 } from '../markdownEditorTypes';
-import { resolveMarkdownEditorTheme } from '../markdownEditorTheme';
+import { resolveMarkdownEditorTheme, resolveMarkdownRichProseLayout } from '../markdownEditorTheme';
 import { buildMarkdownProseCss } from '../markdownEditorProseStyle';
 // Type-only import (erased at build time, so it never pulls the native WebView
 // surface or `react-native-webview` into the web graph). Re-uses the single
@@ -639,13 +639,15 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         // surface uses, so web + native never drift apart.
         const canvas = props.presentation === 'canvas';
         const editorTheme = resolveMarkdownEditorTheme(theme, canvas ? 'canvas' : 'framed');
+        const proseLayout = resolveMarkdownRichProseLayout(canvas ? 'canvas' : 'framed');
+        const prosePadding = { paddingHorizontal: proseLayout.prose.horizontal, paddingVertical: proseLayout.prose.vertical };
         const backgroundColor = editorTheme.backgroundColor;
         const dividerColor = editorTheme.dividerColor;
         const textColor = editorTheme.textColor;
 
         const borderStyle = {
             flex: 1,
-            borderWidth: canvas ? 0 : 1,
+            borderWidth: proseLayout.frameWidth,
             borderColor: dividerColor,
             borderRadius: canvas ? 0 : 10,
             overflow: 'hidden' as const,
@@ -661,8 +663,7 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                     style={{
                         flex: 1,
                         backgroundColor,
-                        // On the canvas the prose starts on the page's text edge, with the title above it.
-                        padding: canvas ? 0 : 10,
+                        ...prosePadding,
                     }}
                 >
                     {editor ? (
@@ -696,7 +697,7 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                             disableUiFontScaling
                             style={{
                                 flex: 1,
-                                padding: canvas ? 0 : 10,
+                                ...prosePadding,
                                 color: textColor,
                                 backgroundColor,
                                 fontSize: fontMetrics.fontSize,

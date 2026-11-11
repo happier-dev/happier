@@ -19,6 +19,7 @@ import type {
     MarkdownSelectionState,
 } from '@/components/ui/markdown/editor/markdownEditorTypes';
 import { isMutatingMarkdownEditorCommand } from '@/components/ui/markdown/editor/markdownEditorTypes';
+import { resolveMarkdownRichProseLayout } from '@/components/ui/markdown/editor/markdownEditorTheme';
 import { useMarkdownSlashMenu } from '@/components/ui/markdown/editor/slash/useMarkdownSlashMenu';
 import { MarkdownEditorToolbar } from '@/components/ui/markdown/editorChrome/MarkdownEditorToolbar';
 import { Text } from '@/components/ui/text/Text';
@@ -64,8 +65,13 @@ import { t } from '@/text';
  * (the app's standard theme hook) rather than taking a `theme` prop — keeping
  * the public surface free of an untyped `theme: any` escape hatch.
  */
-const FRAMED_PANEL_STYLE = { flex: 1, paddingHorizontal: 16, paddingVertical: 12 } as const;
-const CANVAS_PANEL_STYLE = { flex: 1 } as const;
+const FRAMED_PANEL_STYLE = panelStyle('framed');
+const CANVAS_PANEL_STYLE = panelStyle('canvas');
+
+function panelStyle(presentation: 'framed' | 'canvas') {
+    const { panel } = resolveMarkdownRichProseLayout(presentation);
+    return { flex: 1, paddingHorizontal: panel.horizontal, paddingVertical: panel.vertical } as const;
+}
 
 function RichMarkdownEditorPanelImpl(props: Readonly<{
     resetKey: string;

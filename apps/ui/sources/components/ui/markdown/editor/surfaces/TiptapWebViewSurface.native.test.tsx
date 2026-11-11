@@ -73,6 +73,7 @@ afterEach(async () => { storage.setState(initialStorage, true); await homes.rese
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { MarkdownEditorSurfaceRef } from './TiptapWebViewSurface.native';
 import { createEditorDocumentHistory } from '@/components/ui/code/editor/editorDocumentHistory';
+import { resolveMarkdownRichProseLayout } from '../markdownEditorTheme';
 
 function emitEnvelope(envelope: any) {
     if (!lastWebViewProps?.onMessage) throw new Error('WebView onMessage missing');
@@ -703,5 +704,17 @@ describe('TiptapWebViewSurface (native)', () => {
         emitEnvelope({ v: 1, type: 'openLink', payload: { href: 'tel:+123456789' } });
 
         expect(openURLSpy).toHaveBeenCalledWith('tel:+123456789');
+    });
+
+    it.each(['canvas', 'framed'] as const)('starts %s prose at the shared rich inset, where the empty-document hint sits', async (presentation) => {
+        lastWebViewProps = null;
+        const screen = await renderScreen(<TiptapWebViewSurface resetKey="inset" value="" onChange={vi.fn()} presentation={presentation} testID="surface" />);
+
+        const html: string = lastWebViewProps?.source?.html ?? '';
+        const padding = /\.ProseMirror \{[^}]*?padding: ([^;]+);/.exec(html)?.[1];
+        const { prose, frameWidth } = resolveMarkdownRichProseLayout(presentation);
+        expect(padding).toBe(`${prose.vertical}px ${prose.horizontal}px`);
+        const { StyleSheet } = await import('react-native');
+        expect(StyleSheet.flatten(screen.findHostByTestId('surface')!.props.style).borderWidth).toBe(frameWidth);
     });
 });

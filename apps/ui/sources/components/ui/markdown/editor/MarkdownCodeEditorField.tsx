@@ -24,6 +24,11 @@ import {
     type CodeEditorAccessoryBarProps,
 } from '@/components/ui/code/editor/chrome/CodeEditorAccessoryBar';
 import { EDITOR_ACCESSORY_KEY_SIZE, EditorAccessoryBar } from '@/components/ui/code/editor/chrome/EditorAccessoryBar';
+import { CODE_EDITOR_BASE_FONT_SIZE, CODE_EDITOR_BASE_LINE_HEIGHT } from '@/components/ui/code/editor/codeEditorFontMetrics';
+import { getMonoFont } from '@/constants/Typography';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { MARKDOWN_PROSE_BODY_METRICS } from './markdownEditorProseStyle';
+import { resolveMarkdownRichProseLayout, type MarkdownEditorPresentation } from './markdownEditorTheme';
 
 /**
  * Reusable drop-in replacement for `CodeEditor` on markdown-capable screens
@@ -99,7 +104,6 @@ const MODE_MENU_SLOT_STYLE = { flexShrink: 0 } as const;
 const TOOLBAR_SPACER_STYLE = { flex: 1, minHeight: EDITOR_ACCESSORY_KEY_SIZE } as const;
 
 export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
-    const { theme } = useUnistyles();
     // A standalone field owns its document lifetime. File pages pass their existing buffer's history.
     const localHistory = React.useMemo(() => createEditorDocumentHistory(), [props.resetKey]);
     const localText = React.useRef(props.value);
@@ -221,6 +225,7 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
         <View style={{ flex: 1 }} testID={props.testID}>
             {showToggle && props.sourceOnly !== true ? (
                 <View
+                    testID={props.testID ? `${props.testID}:header` : undefined}
                     style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -231,9 +236,9 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
                         // On the canvas the toggle keeps the text's edge; inside a section it keeps the box's inset.
                         paddingHorizontal: props.presentation === 'canvas' ? 0 : 12,
                         paddingTop: 8,
-                        // On the canvas the document starts a section gap below its toolbar, as it does below the
-                        // read view's actions; a framed field keeps its tight header.
-                        paddingBottom: props.presentation === 'canvas' ? theme.space.s12 : 4,
+                        // On the canvas the document starts a page section gap below its toolbar; a framed field keeps
+                        // its tight header.
+                        paddingBottom: props.presentation === 'canvas' ? HAPPIER_PAGE_METRICS.sectionGapPx : 4,
                     }}
                 >
                     {showInlineToolbar && richController ? (
@@ -311,6 +316,7 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
                 )}
                 {props.placeholder && !props.readOnly ? (
                     <MarkdownFieldPlaceholder value={seedText} liveValue={props.liveValue} active={props.active}
+                        line={showRich ? resolveMarkdownRichPlaceholderLine(props.presentation) : RAW_PLACEHOLDER_LINE}
                         placeholder={props.placeholder} accessibilityLabel={props.accessibilityLabel}
                         testID={props.testID ? `${props.testID}:placeholder` : undefined} />
                 ) : null}
@@ -320,9 +326,26 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
     );
 }
 
+type PlaceholderLine = Readonly<{ top: number; left: number; fontSize: number; lineHeight: number; fontFamily?: string }>;
+
+/** Raw source: its first line starts at the editor's origin, in the source's own face and size. */
+const RAW_PLACEHOLDER_LINE: PlaceholderLine = Object.freeze({
+    top: 0, left: 0, fontSize: CODE_EDITOR_BASE_FONT_SIZE, lineHeight: CODE_EDITOR_BASE_LINE_HEIGHT, fontFamily: getMonoFont(),
+});
+const RICH_PLACEHOLDER_LINES = {
+    framed: Object.freeze({ ...resolveMarkdownRichProseLayout('framed').firstLine, ...MARKDOWN_PROSE_BODY_METRICS }),
+    canvas: Object.freeze({ ...resolveMarkdownRichProseLayout('canvas').firstLine, ...MARKDOWN_PROSE_BODY_METRICS }),
+} satisfies Record<MarkdownEditorPresentation, PlaceholderLine>;
+
+/** Rich prose: the hint sits on the first line where the caret blinks, in the prose body's size. */
+function resolveMarkdownRichPlaceholderLine(presentation: MarkdownEditorPresentation | undefined): PlaceholderLine {
+    return RICH_PLACEHOLDER_LINES[presentation ?? 'framed'];
+}
+
 /** Only the hint reads live file-buffer updates; the host keeps the editor's existing seed lifetime. */
 function MarkdownFieldPlaceholder(props: Readonly<{
     value: string;
+    line: PlaceholderLine;
     liveValue?: MarkdownLiveValueStore;
     active?: boolean;
     placeholder: string;
@@ -335,7 +358,7 @@ function MarkdownFieldPlaceholder(props: Readonly<{
     return (
         <Text variant="body" pointerEvents="none" testID={props.testID}
             accessibilityLabel={props.accessibilityLabel} accessibilityHint={props.placeholder}
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, color: theme.colors.text.tertiary }}>
+            style={{ position: 'absolute', right: 0, ...props.line, color: theme.colors.text.tertiary }}>
             {props.placeholder}
         </Text>
     );

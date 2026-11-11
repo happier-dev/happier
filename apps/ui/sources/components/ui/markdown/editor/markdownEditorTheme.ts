@@ -53,6 +53,43 @@ export type MarkdownEditorTheme = Readonly<{
     findForegroundColor?: string;
 }>;
 
+export type MarkdownEditorPresentation = 'framed' | 'canvas';
+
+type Inset = Readonly<{ horizontal: number; vertical: number }>;
+
+/**
+ * Where rich prose sits inside the field body: the rich panel's padding, the editing surface's frame and the
+ * prose padding inside it. The one owner for the web surface, the native WebView's `.ProseMirror` and the
+ * empty-document hint, so the hint sits where the caret blinks on every platform.
+ */
+export type MarkdownRichProseLayout = Readonly<{
+    panel: Inset;
+    frameWidth: number;
+    prose: Inset;
+    /** The first line's top-left corner, from the field body's origin. */
+    firstLine: Readonly<{ top: number; left: number }>;
+}>;
+
+const FRAMED_RICH_LAYOUT = richProseLayout({ horizontal: 16, vertical: 12 }, 1, { horizontal: 10, vertical: 10 });
+// The document is the page: the prose starts on the page's text edge, under the title.
+const CANVAS_RICH_LAYOUT = richProseLayout({ horizontal: 0, vertical: 0 }, 0, { horizontal: 0, vertical: 0 });
+
+function richProseLayout(panel: Inset, frameWidth: number, prose: Inset): MarkdownRichProseLayout {
+    return Object.freeze({
+        panel,
+        frameWidth,
+        prose,
+        firstLine: Object.freeze({
+            top: panel.vertical + frameWidth + prose.vertical,
+            left: panel.horizontal + frameWidth + prose.horizontal,
+        }),
+    });
+}
+
+export function resolveMarkdownRichProseLayout(presentation: MarkdownEditorPresentation = 'framed'): MarkdownRichProseLayout {
+    return presentation === 'canvas' ? CANVAS_RICH_LAYOUT : FRAMED_RICH_LAYOUT;
+}
+
 /**
  * Minimal structural view of the Unistyles theme this resolver reads. Kept loose
  * (the live theme carries far more) but typed enough to catch a missing token.

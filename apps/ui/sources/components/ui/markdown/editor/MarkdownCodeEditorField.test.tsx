@@ -91,6 +91,11 @@ vi.mock('./useMarkdownEditMode', () => ({
 }));
 
 import { MarkdownCodeEditorField } from './MarkdownCodeEditorField';
+import { StyleSheet } from 'react-native';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { CODE_EDITOR_BASE_FONT_SIZE, CODE_EDITOR_BASE_LINE_HEIGHT } from '@/components/ui/code/editor/codeEditorFontMetrics';
+import { MARKDOWN_PROSE_BODY_METRICS } from './markdownEditorProseStyle';
+import { resolveMarkdownRichProseLayout } from './markdownEditorTheme';
 
 function setHook(overrides: Partial<MarkdownEditModeState>) {
     hookState.value = { ...hookState.value, ...overrides } as MarkdownEditModeState;
@@ -180,5 +185,34 @@ describe('MarkdownCodeEditorField', () => {
             <MarkdownCodeEditorField value="# Doc" onChange={vi.fn()} resetKey="base" language="markdown" accessory={{ save, languageIntelligence }} />,
         );
         expect(rich.findHostByTestId('markdown-editor-accessory-suggest')).toBeNull();
+    });
+    it.each(['canvas', 'framed'] as const)('puts the %s empty-document hint on the rich first line, in its prose type', async (presentation) => {
+        const screen = await renderScreen(
+            <MarkdownCodeEditorField value="" onChange={vi.fn()} resetKey="base" language="markdown"
+                placeholder="Write here" presentation={presentation} testID="field" />,
+        );
+        const style = StyleSheet.flatten(screen.findHostByTestId('field:placeholder')!.props.style);
+        const { firstLine } = resolveMarkdownRichProseLayout(presentation);
+        expect({ top: style.top, left: style.left, fontSize: style.fontSize, lineHeight: style.lineHeight })
+            .toEqual({ ...firstLine, ...MARKDOWN_PROSE_BODY_METRICS });
+    });
+
+    it('puts the raw empty-document hint on the source first line, in the source type', async () => {
+        setHook({ markdownEditMode: 'raw', resetKey: 'base:raw:0' });
+        const screen = await renderScreen(
+            <MarkdownCodeEditorField value="" onChange={vi.fn()} resetKey="base" language="markdown"
+                placeholder="Write here" presentation="canvas" testID="field" />,
+        );
+        const style = StyleSheet.flatten(screen.findHostByTestId('field:placeholder')!.props.style);
+        expect({ top: style.top, left: style.left, fontSize: style.fontSize, lineHeight: style.lineHeight })
+            .toEqual({ top: 0, left: 0, fontSize: CODE_EDITOR_BASE_FONT_SIZE, lineHeight: CODE_EDITOR_BASE_LINE_HEIGHT });
+    });
+
+    it('starts a canvas document one page section gap below its toolbar', async () => {
+        const { tree } = await renderScreen(
+            <MarkdownCodeEditorField value="# Doc" onChange={vi.fn()} resetKey="base" language="markdown" presentation="canvas" testID="field" />,
+        );
+        const header = tree.findByProps({ testID: 'field:header' });
+        expect(StyleSheet.flatten(header.props.style).paddingBottom).toBe(HAPPIER_PAGE_METRICS.sectionGapPx);
     });
 });

@@ -58,6 +58,9 @@ function round2(value: number): number {
     return Math.round(value * 100) / 100;
 }
 
+/** The body line at scale 1 (MarkdownView's base 16 / 24); text primitives that scale on their own start here. */
+export const MARKDOWN_PROSE_BODY_METRICS = Object.freeze({ fontSize: 16, lineHeight: 24 });
+
 /**
  * Builds the prose CSS, scoped to `scopeSelector` (e.g. `.happier-md-prose` on
  * web, `.ProseMirror` in the native WebView). All rules are prefixed so the
@@ -70,8 +73,8 @@ export function buildMarkdownProseCss(scopeSelector: string, input: MarkdownPros
     const { fonts, colors } = input;
 
     // Mirrors buildEnrichedMarkdownStyle: base 16 / lineHeight 24, scaled.
-    const base = round2(16 * scale);
-    const baseLh = round2(24 * scale);
+    const base = round2(MARKDOWN_PROSE_BODY_METRICS.fontSize * scale);
+    const baseLh = round2(MARKDOWN_PROSE_BODY_METRICS.lineHeight * scale);
     const inlineCode = round2(base * 0.88);
     const codeBlock = round2(14 * scale);
     const codeBlockLh = round2(20 * scale);

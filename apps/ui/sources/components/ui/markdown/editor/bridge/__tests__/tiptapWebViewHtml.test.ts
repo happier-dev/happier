@@ -28,6 +28,7 @@ function createTiptapWebViewTheme(overrides?: Partial<TiptapWebViewTheme>): Tipt
 }
 
 const BASE_PARAMS = {
+    proseInset: { horizontal: 10, vertical: 10 },
     readOnly: false,
     changeDebounceMs: 100,
     maxChunkBytes: 64_000,

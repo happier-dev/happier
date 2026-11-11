@@ -8,7 +8,6 @@ import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTyp
 import { MarkdownCodeEditorField } from '@/components/ui/markdown/editor/MarkdownCodeEditorField';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Modal } from '@/modal';
@@ -196,5 +195,5 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
 
 /** The source never draws shorter than a short note (sixteen field lines), even in a short window. */
 const MIN_BODY_HEIGHT_PX = 16 * HAPPIER_FIELD_BOX_METRICS.lineHeightPx;
-/** On the sections' text edge, like the notices above it. */
-const BODY_INSET = { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() } as const;
+/** The document starts on its title's edge: the page text inset. */
+const BODY_INSET = { paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx } as const;

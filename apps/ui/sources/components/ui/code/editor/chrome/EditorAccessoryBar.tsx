@@ -223,11 +223,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 0,
         paddingVertical: 0,
     },
+    // Exactly one key tall and as wide as its host slot. A vertical flex here took the host row's height
+    // (24 pt beside the Rich/Raw switch on iOS) and cut the keys to their side borders.
     inlineRoot: {
-        flex: 1,
+        height: EDITOR_ACCESSORY_KEY_SIZE,
         minWidth: 0,
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'stretch',
     },
     inlineScrollViewport: {
         flex: 1,

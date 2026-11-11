@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { StyleSheet } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
 import { hitAreaOverlap, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
@@ -150,5 +151,15 @@ describe('EditorAccessoryBar key hit areas', () => {
     expect(inline.insets.top + inline.insets.bottom).toBe(0);
     const panel = readHitArea((await renderScreen(keys('panel'))).findByTestId('first')!);
     expect(panel.height).toBe(44);
+  });
+
+  // iOS measured the inline viewport from its host's row (24 pt beside the Rich/Raw switch) and cut the
+  // 34 pt keys to their side borders; the row holds exactly one key instead.
+  it('holds the inline row exactly one key tall whatever its host row measures', async () => {
+    const screen = await renderScreen(keys('inline'));
+    const key = readHitArea(screen.findByTestId('first')!);
+    const row = StyleSheet.flatten(screen.findHostByTestId('row')!.props.style);
+    expect(row.height).toBe(key.drawn.height);
+    expect(row.flexGrow ?? row.flex ?? 0).toBe(0);
   });
 });

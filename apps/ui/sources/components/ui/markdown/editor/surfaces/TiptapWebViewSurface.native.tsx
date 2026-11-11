@@ -19,7 +19,7 @@ import type {
     MenuTriggerKeyDownEvent,
     MenuTriggerState,
 } from '../markdownEditorTypes';
-import { resolveMarkdownEditorTheme } from '../markdownEditorTheme';
+import { resolveMarkdownEditorTheme, resolveMarkdownRichProseLayout } from '../markdownEditorTheme';
 import { buildTiptapWebViewHtml } from '../bridge/tiptapWebViewHtml';
 import { resolveNativeOpenableMarkdownHref } from '../core/tiptap/markdownLinkOpening';
 import type { CodeEditorCommand, CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHistory } from '@/components/ui/code/editor/codeEditorTypes';
@@ -314,6 +314,7 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
             typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : DEFAULT_MAX_CHUNK_BYTES;
 
         const canvas = props.presentation === 'canvas';
+        const proseLayout = resolveMarkdownRichProseLayout(canvas ? 'canvas' : 'framed');
         const webViewTheme = React.useMemo(
             () => resolveMarkdownEditorTheme(theme, canvas ? 'canvas' : 'framed'),
             [
@@ -386,6 +387,7 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
             () =>
                 buildTiptapWebViewHtml({
                     theme: webViewTheme,
+                    proseInset: proseLayout.prose,
                     readOnly,
                     sharedHistory: Boolean(props.history),
                     changeDebounceMs,
@@ -393,7 +395,7 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                     uiFontScale,
                     osFontScale: typeof PixelRatio.getFontScale === 'function' ? PixelRatio.getFontScale() : 1,
                 }),
-            [webViewTheme, readOnly, changeDebounceMs, maxChunkBytes, uiFontScale, Boolean(props.history)],
+            [webViewTheme, proseLayout, readOnly, changeDebounceMs, maxChunkBytes, uiFontScale, Boolean(props.history)],
         );
 
         // Forward ref to `handleEnvelope` (defined below). The messenger reads its
@@ -855,7 +857,7 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                 onLayout={handleViewLayout}
                 style={{
                     flex: 1,
-                    borderWidth: canvas ? 0 : 1,
+                    borderWidth: proseLayout.frameWidth,
                     borderColor: webViewTheme.dividerColor,
                     borderRadius: canvas ? 0 : 10,
                     overflow: 'hidden',
