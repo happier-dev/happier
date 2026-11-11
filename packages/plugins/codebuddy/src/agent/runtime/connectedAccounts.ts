@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
-import type { ConnectedAccountMaterialization, ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { AgentAcpModelControls, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
@@ -22,28 +22,6 @@ function modelSelectionRequired(): never {
     message: 'Select an explicit model before starting CodeBuddy with a connected account.',
     details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
-}
-
-export function buildCodeBuddySubscriptionConfiguration(input: Readonly<{
-  modelId: string | null | undefined;
-  materialized: ConnectedAccountMaterialization;
-}>): Readonly<{ env: Readonly<Record<string, string>>; args: readonly string[];
-  settings: Readonly<{ alwaysThinkingEnabled: true; env: Readonly<{ CODEBUDDY_CUSTOM_HEADERS: string }> }>;
-  models: AgentAcpModelControls }> {
-  const modelId = input.modelId?.trim();
-  if (!modelId || modelId === 'default') modelSelectionRequired();
-  if (input.materialized.kind !== 'httpHeaders') refuse('codebuddy_subscription_materialization_invalid', 'CodeBuddy requires access-only ChatGPT HTTP headers.');
-  const headers = Object.fromEntries(Object.entries(input.materialized.headers).map(([key, value]) => [key.toLowerCase(), value]));
-  const authorization = headers.authorization;
-  if (!authorization?.startsWith('Bearer ') || !authorization.slice(7).trim() || !headers['chatgpt-account-id']
-    || Object.values(headers).some((value) => /[\r\n]/.test(value))) {
-    refuse('codebuddy_subscription_materialization_invalid', 'The selected ChatGPT account did not supply its access token and account identity.');
-  }
-  const customHeaders = Object.entries({ 'chatgpt-account-id': headers['chatgpt-account-id'],
-    'openai-beta': 'responses=experimental', originator: 'codex_cli_rs', accept: 'text/event-stream' })
-    .map(([key, value]) => `${key}: ${value}`).join('\n');
-  return buildCodeBuddyNativeConfiguration({ modelId, api: 'openai-codex-responses',
-    url: 'https://chatgpt.com/backend-api/codex', apiKey: authorization.slice(7), customHeaders, supportsReasoning: true });
 }
 
 function buildCodeBuddyNativeConfiguration(input: Readonly<{
@@ -83,7 +61,7 @@ function buildCodeBuddyNativeConfiguration(input: Readonly<{
   } satisfies AgentAcpModelControls };
 }
 
-export function createCodeBuddySubscriptionLaunch(configuration: ReturnType<typeof buildCodeBuddySubscriptionConfiguration>) {
+export function createCodeBuddySubscriptionLaunch(configuration: ReturnType<typeof buildCodeBuddyNativeConfiguration>) {
   const directory = createSecureTempDirectorySync({ prefix: 'codebuddy-subscription-settings' });
   try {
     const path = writeSecureTempTextFileSync({ prefix: 'settings', suffix: '.json',
@@ -99,13 +77,14 @@ export async function prepareCodeBuddyConnectedAccount(
 ): Promise<ReturnType<typeof createCodeBuddySubscriptionLaunch> | null> {
   const accounts = context.services.connectedAccounts;
   const binding = await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
+  if (binding) refuse('codebuddy_chatgpt_account_unsupported', 'CodeBuddy requires a CodeBuddy login or provider API key; a ChatGPT account is not supported.');
   const selectedKeys = [];
   for (const row of CODEBUDDY_KEY_ACCOUNTS) {
     const selected = await accounts.getBinding(row.purpose, { signal: context.signal });
     if (selected) selectedKeys.push({ row, binding: selected });
   }
   if (!binding && selectedKeys.length === 0) return null;
-  if (selectedKeys.length > 1 || (binding && selectedKeys.length)) refuse('codebuddy_connected_account_conflict', 'Select one connected model account for CodeBuddy.');
+  if (selectedKeys.length > 1) refuse('codebuddy_connected_account_conflict', 'Select one connected model account for CodeBuddy.');
   if (request.providerBinding) refuse('codebuddy_subscription_provider_conflict', 'Select either a connected model account or a Provider connection for CodeBuddy.');
   const modelId = request.modelId?.trim();
   if (!modelId || modelId === 'default') {
@@ -123,8 +102,6 @@ export async function prepareCodeBuddyConnectedAccount(
     return createCodeBuddySubscriptionLaunch(buildCodeBuddyNativeConfiguration({ modelId,
       api: 'openai-completions', url: `${base.replace(/\/+$/, '')}/chat/completions`, apiKey: key, customHeaders: '' }));
   }
-  const materialized = await accounts.materialize(CODEBUDDY_CODEX_PURPOSE, {
-    kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'],
-  }, { signal: context.signal, expectedAccount: binding!.account });
-  return createCodeBuddySubscriptionLaunch(buildCodeBuddySubscriptionConfiguration({ modelId, materialized }));
+  throw new PluginError({ code: 'codebuddy_chatgpt_account_unsupported', retryable: false,
+    message: 'CodeBuddy requires a CodeBuddy login or provider API key; a ChatGPT account is not supported.' });
 }

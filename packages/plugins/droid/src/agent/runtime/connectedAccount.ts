@@ -8,13 +8,10 @@ import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BA
 import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
 import { ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from '@happier-dev/plugins-claude/connected-account-service';
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
-import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
 
 import { buildDroidModelSettings, droidSettingsCommandArgs, DROID_PROVIDER_SECRET_ENV } from '../providerBinding/settings.js';
 
 export const DROID_CHATGPT_PURPOSE = 'openai-codex';
-export const DROID_CHATGPT_SERVICE = OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE;
-const REQUEST_AUTH = Object.freeze({ kind: 'httpHeaders' as const, origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'] });
 
 export const DROID_NATIVE_KEY_PURPOSES = [
   { purpose: 'anthropic-api-key', service: ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, environmentKey: ANTHROPIC_API_KEY_ENV, baseUrl: 'https://api.anthropic.com', provider: 'anthropic' },
@@ -23,7 +20,6 @@ export const DROID_NATIVE_KEY_PURPOSES = [
   { purpose: 'xai-api-key', service: GROK_CONNECTED_ACCOUNT_SERVICE, environmentKey: XAI_SELECTED_API_KEY_ENV, baseUrl: 'https://api.x.ai/v1', provider: 'generic-chat-completion-api' },
 ] as const;
 export const DROID_CONNECTED_ACCOUNT_PURPOSES = [
-  { purpose: DROID_CHATGPT_PURPOSE, service: DROID_CHATGPT_SERVICE, credentialKinds: ['oauth'] as const, materializationKinds: ['httpHeaders'] as const },
   ...DROID_NATIVE_KEY_PURPOSES.map(({ purpose, service }) => ({ purpose, service, credentialKinds: ['token'] as const, materializationKinds: ['environment'] as const })),
 ];
 
@@ -40,6 +36,10 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
   context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
   modelId?: string | null,
 ): Promise<DroidConnectedAccountLaunch<Request>> {
+  if (request.connectedAccounts?.some(selection => selection.purpose === DROID_CHATGPT_PURPOSE)) {
+    throw new PluginError({ code: 'droid_chatgpt_account_unsupported', retryable: false,
+      message: 'Droid requires a Factory login or a provider API key; a ChatGPT account is not supported.' });
+  }
   const selections = await Promise.all(DROID_CONNECTED_ACCOUNT_PURPOSES.map(async declaration => {
     const admitted = request.connectedAccounts?.find(selection => selection.purpose === declaration.purpose);
     const binding = admitted ?? await context.services.connectedAccounts.getBinding(declaration.purpose, { signal: context.signal });
@@ -70,16 +70,6 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
     if (!key?.trim() || !baseUrl) throw invalid();
     secret = key;
     settings = buildDroidModelSettings({ modelId, provider: nativeKey.provider, baseUrl, hasCredential: true, headers: {} });
-  } else {
-    const materialized = await context.services.connectedAccounts.materialize(declaration.purpose, REQUEST_AUTH, { signal: context.signal, expectedAccount: account });
-    if (materialized.kind !== 'httpHeaders') throw invalid();
-    const headers = new Headers(materialized.headers);
-    const authorization = headers.get('authorization');
-    const accountId = headers.get('chatgpt-account-id');
-    if (!authorization?.startsWith('Bearer ') || !authorization.slice(7).trim() || !accountId?.trim()) throw invalid();
-    secret = authorization.slice(7);
-    settings = buildDroidModelSettings({ modelId, provider: 'openai', baseUrl: 'https://chatgpt.com/backend-api/codex',
-      hasCredential: true, headers: { 'chatgpt-account-id': accountId, 'openai-beta': 'responses=experimental', originator: 'codex_cli_rs' } });
   }
   const directory = createSecureTempDirectorySync({ prefix: 'droid-connected-account' });
   try {

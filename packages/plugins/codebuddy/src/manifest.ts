@@ -1,11 +1,10 @@
 import { projectAgentCapabilitiesV2FromDefinition, type PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { CODEBUDDY_ACP_COMMAND } from './agent/acp/preflight.js';
 import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from './agent/acp/runtimeDeclaration.js';
 import { createCodeBuddyAgentRuntime } from './agent/runtime/factory.js';
-import { CODEBUDDY_CODEX_PURPOSE, CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './agent/runtime/connectedAccounts.js';
+import { CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './agent/runtime/connectedAccounts.js';
 import { CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH } from './agent/runtime/continuity.js';
 import { CODEBUDDY_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
@@ -27,11 +26,8 @@ export const CODEBUDDY_PLUGIN = definePlugin({
       title: { key: 'agentInput.agent.codebuddy', fallback: 'CodeBuddy' },
       description: { key: 'profiles.aiBackend.codebuddySubtitleExperimental', fallback: 'CodeBuddy Code CLI (experimental)' },
       runtime: { kind: 'custom', permissionModeMapping: CODEBUDDY_ACP_RUNTIME_DECLARATION.definition.permissionModeMapping },
-      connectedAccounts: [{ purpose: CODEBUDDY_CODEX_PURPOSE,
-        service: OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
-        materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] },
-        ...CODEBUDDY_KEY_ACCOUNTS.map(({ purpose, service }) => ({ purpose, service,
-          materializationKinds: ['environment'] as ['environment'], credentialKinds: ['token'] as ['token'] }))],
+      connectedAccounts: CODEBUDDY_KEY_ACCOUNTS.map(({ purpose, service }) => ({ purpose, service,
+          materializationKinds: ['environment'] as ['environment'], credentialKinds: ['token'] as ['token'] })),
       cli: {
         displayName: 'CodeBuddy Code CLI',
         executable: { binaryName: 'codebuddy', sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },

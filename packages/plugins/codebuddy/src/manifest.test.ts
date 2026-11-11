@@ -17,9 +17,7 @@ describe('CodeBuddy plugin', () => {
     expect(agent).toMatchObject({
       id: 'codebuddy', primary: 'sessions',
       runtime: { kind: 'custom' },
-      connectedAccounts: [{ purpose: 'openai-codex-model-request',
-        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-        materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] }],
+      connectedAccounts: expect.not.arrayContaining([expect.objectContaining({ purpose: 'openai-codex-model-request' })]),
       cli: {
         executable: { binaryName: 'codebuddy', sourcePreference: 'system-first' },
         install: { managed: { kind: 'managed_package', packageName: '@tencent-ai/codebuddy-code', binaryName: 'codebuddy' } },
