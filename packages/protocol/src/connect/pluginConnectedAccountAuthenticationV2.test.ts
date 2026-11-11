@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
+import { resolveConnectedAccountAuthenticationModeMachineRequirement, PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from './connectedAccountUiProjectionV1.js';
 
 it('preserves an explicitly declared API-key mode through the public catalog descriptor without inferring other manual modes', () => {
@@ -416,4 +416,20 @@ it('admits the declared native provider identity independently of organization r
   for (const usageIdentity of [{ providerId: '   ' }, { providerId: 'openai-codex', selectAccount: 'other' }]) {
     expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...descriptor, usageIdentity }).success).toBe(false);
   }
+});
+
+
+it('keeps native import Machine-local while portable modes and native browser exchanges stay on the Account', () => {
+  const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: 'muse-account', title: 'Muse', authentication: {
+    account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'device', modes: [
+      { id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none', scopes: [] },
+      { id: 'api-key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', fields: [] },
+      { id: 'native-import', kind: 'manual', credentialOrigin: 'native_import', outcomeReconciliation: 'none', fields: [] },
+      { id: 'browser-blocked', kind: 'manual', browserReachability: 'unreachable', outcomeReconciliation: 'none', fields: [] },
+    ],
+  } });
+  expect(descriptor.authentication.modes.map(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode)))
+    .toEqual([null, null, 'native_import', null]);
+  expect(descriptor.authentication.modes.map(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)))
+    .toEqual([null, null, 'native_import', 'browser_unreachable']);
 });

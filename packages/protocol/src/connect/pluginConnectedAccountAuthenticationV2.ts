@@ -189,6 +189,8 @@ export type PluginConnectedAccountDirectExportV2 = z.infer<
 /**
  * Presentation guidance for creating a mode's credential or client: `url` is the provider console, `checklist[0]`
  * is the sentence that opens it, `permissions` lists what it must allow per feature. Presentation only.
+ * `checklist[0]` may mark its destination in brackets ("Create a key in [Cursor Dashboard → API Keys]."): only that
+ * phrase links to `url`. An unmarked sentence stays plain and the host offers `createKeyTitle` as the link after it.
  */
 export const PluginConnectedAccountSetupGuideV2Schema = lazyZodSchema(() => z.strictObject({
   url: ConnectedAccountBillingUrlSchema,
@@ -421,4 +423,15 @@ export function resolveConnectedAccountPlanLabel(
   if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return plan;
   const label = labels[plan.toLowerCase()];
   return typeof label === 'string' && label.trim() ? label.trim() : plan;
+}
+
+
+/** Mode-local requirements take precedence over a service's portable Account artifact. */
+export function resolveConnectedAccountAuthenticationModeMachineRequirement(
+  mode: PluginConnectedAccountAuthenticationModeV2 | undefined,
+  browser = false,
+): 'native_import' | 'browser_unreachable' | null {
+  if (mode?.kind === 'manual' && mode.credentialOrigin === 'native_import') return 'native_import';
+  if (browser && mode?.browserReachability === 'unreachable') return 'browser_unreachable';
+  return null;
 }

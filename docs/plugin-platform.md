@@ -2720,7 +2720,12 @@ that lifecycle is owned by the existing Connected Accounts coordinator.
 Service description reads the current cold Connected Account declaration and
 Account profile metadata without acquiring an authentication runtime. Native-only
 modes such as Codex `native-import` remain discoverable when no portable Account
-registration exists. Selecting such a mode still uses the existing selected-Machine
+registration exists. In 0.3 development source, placement is decided per mode:
+`credentialOrigin: 'native_import'` always requires the selected Machine, including
+native apps and services that also declare an Account artifact. The shared
+Protocol mode-placement policy feeds host routing and the existing Machine
+chooser; browser sign-in support is required only for browser-unreachable modes.
+Selecting such a mode still uses the existing selected-Machine
 native authentication path and ordinary Action approval.
 GitHub's `native-import` method appears in that same Connected Services setup.
 It reads `gh auth token` locally through the shared system/managed GitHub CLI

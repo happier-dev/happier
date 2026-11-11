@@ -208,7 +208,7 @@ it('classifies actual Claude browser OAuth before starting an attempt', async ()
     const account = await captureLazyActionAccountContext(fixture.serverId);
     try {
         expect(await createUiConnectedAccountAuthenticationHost(account).readAccountAuthenticationModes(service)).toMatchObject({
-            status: 'available', modeIds: ['setup-token'], machineRequiredModeIds: ['oauth'],
+            status: 'available', modeIds: ['setup-token'], machineRequiredModeIds: ['oauth', 'native-import'],
         });
         expect(fixture.transactions.size).toBe(0);
         expect(fixture.vendorRequests()).toBe(0);
@@ -374,5 +374,20 @@ it.each(blockedManualInventories)('routes $name manual Connect through the selec
         }
         expect(fixture.outgoing.map(value => value.method)).toEqual(Array(3).fill(`${machineId}:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`));
         expect(fixture.vendorRequests()).toBe(0);
+    } finally { captured.dispose(); }
+});
+
+
+it('routes native import to the Machine even on native clients with an Account artifact', async () => {
+    Object.defineProperty(Platform, 'OS', { ...platformDescriptor, value: 'ios' });
+    const fixture = await restorePlacementAccount({ modeId: 'native-import', kind: 'manual', machineId: 'native-import-machine', supportsAuthentication: false });
+    const captured = await captureLazyActionAccountContext(fixture.serverId);
+    try {
+        const host = createUiConnectedAccountAuthenticationHost(captured);
+        expect(await host.readAccountAuthenticationModes(service)).toMatchObject({ status: 'available',
+            machineRequiredModeIds: expect.arrayContaining(['native-import']) });
+        expect(await host.readAccountAuthenticationModes(service)).not.toHaveProperty('browserRequiredModeIds');
+        expect(await host.authenticationCommand('native-import-machine', { operation: 'beginConnect', service, modeId: 'native-import' }))
+            .toMatchObject({ status: 'awaitingManual', attemptId: 'machine-attempt' });
     } finally { captured.dispose(); }
 });

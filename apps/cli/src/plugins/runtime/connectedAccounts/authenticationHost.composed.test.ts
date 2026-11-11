@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import * as undici from 'undici';
 import { expect, it, vi } from 'vitest';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -16,6 +17,12 @@ import { resolveExecutablePluginRuntimeRegistry } from '../resolveExecutablePlug
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+
+// Genuine vendor HTTP boundary. Keep native dispatcher and TLS owners real.
+vi.mock('undici', async importOriginal => {
+    const runtime = await importOriginal<typeof undici>();
+    return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
 
 it('agrees with begin admission when the catalog lists daemon-only Slack authentication without a Machine', async () => {
     const origin = 'http://slack-authentication-availability.test';
@@ -98,6 +105,95 @@ it('continues a refused manual Account attempt in a fresh host', async () => {
         for (const registry of registries) await registry.dispose();
         await fixture.close();
     }
+});
+
+it('lets the selected Machine admit a mode unavailable in the Account runtime', async () => {
+    const origin = 'http://machine-authentication-mode.test';
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin);
+    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
+                credentials: fixture.credentials, serverUrl: origin, isCurrent: () => true,
+            } });
+            const host = registry.connectedAccountAuthenticationHost;
+            if (!host) throw new Error('Missing Account host');
+            const command = { operation: 'beginConnect' as const, service: fixture.service, modeId: 'machine-mode' };
+            const native = vi.fn(async () => ({ status: 'awaitingManual' as const, attemptId: 'machine-attempt' }));
+            expect(await host.authenticationCommand('selected-machine', command, { native }))
+                .toEqual({ status: 'awaitingManual', attemptId: 'machine-attempt' });
+            expect(native).toHaveBeenCalledWith('selected-machine', command);
+        });
+    } finally { await registry?.dispose(); await fixture.close(); }
+});
+
+it('retains a Linear provider-refused attempt through the CLI host for corrected submission', async () => {
+    const origin = 'http://linear-provider-refusal.test';
+    const service = { pluginId: 'happier.linear', localId: 'linear-account' };
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [service.pluginId] });
+    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    // Substitute only the vendor HTTP boundary. The actual plugin, host,
+    // transaction storage and credential settlement remain in the path.
+    let accepted = false;
+    const fetch = vi.mocked(undici.fetch).mockImplementation(async target => {
+        expect(String(target)).toBe('https://api.linear.app/graphql');
+        const response = new undici.Response(JSON.stringify(accepted ? { data: { viewer: { id: 'fixture-viewer', name: 'Fixture' } } } : {}),
+            { status: accepted ? 200 : 401, headers: { 'content-type': 'application/json' } });
+        Object.defineProperty(response, 'url', { value: String(target) });
+        return response;
+    });
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
+                credentials: fixture.credentials, serverUrl: origin, isCurrent: () => true,
+            } });
+            const host = registry.connectedAccountAuthenticationHost;
+            if (!host) throw new Error('Missing Account host');
+            const native = async (): Promise<never> => { throw new Error('Linear must execute in the Account host'); };
+            const begun = await host.authenticationCommand(undefined, { operation: 'beginConnect', service, modeId: 'personal-api-key' }, { native });
+            if (begun.status !== 'awaitingManual') throw new Error(JSON.stringify(begun));
+            const command = { operation: 'submitManual' as const, attemptId: begun.attemptId, fields: { 'personal-api-key': 'synthetic-key' } };
+            expect(await host.authenticationCommand(undefined, command, { native }))
+                .toMatchObject({ status: 'rejected', code: 'linear/credentialRejected' });
+            accepted = true;
+            expect(await host.authenticationCommand(undefined, command, { native }))
+                .toMatchObject({ status: 'connected', account: { service } });
+        });
+    } finally { fetch.mockRestore(); await registry?.dispose(); await fixture.close(); }
+});
+
+it('retains a Gemini provider-refused attempt through the CLI host for corrected submission', async () => {
+    const origin = 'http://gemini-provider-refusal.test';
+    const service = { pluginId: 'happier.agent.gemini', localId: 'gemini-account' };
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [service.pluginId] });
+    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
+                credentials: fixture.credentials, serverUrl: origin, isCurrent: () => true,
+            } });
+            let host = registry.connectedAccountAuthenticationHost;
+            if (!host) throw new Error('Missing Account host');
+            const native = async (): Promise<never> => { throw new Error('Gemini must execute in the Account host'); };
+            const begun = await host.authenticationCommand(undefined, { operation: 'beginConnect', service, modeId: 'service-account' }, { native });
+            if (begun.status !== 'awaitingManual') throw new Error(JSON.stringify(begun));
+            for (const credentialsJson of ['{}', '{"type":"service_account"}']) {
+                expect(await host.authenticationCommand(undefined, { operation: 'submitManual', attemptId: begun.attemptId,
+                    fields: { credentialsJson } }, { native })).toMatchObject({ status: 'rejected', code: 'gemini_service_account_invalid' });
+                await registry.dispose();
+                registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
+                    credentials: fixture.credentials, serverUrl: origin, isCurrent: () => true,
+                } });
+                host = registry.connectedAccountAuthenticationHost;
+                if (!host) throw new Error('Missing resumed Account host');
+            }
+            expect(await host.authenticationCommand(undefined, { operation: 'read', attemptId: begun.attemptId }, { native })).toEqual(begun);
+            expect(await host.authenticationCommand(undefined, { operation: 'submitManual', attemptId: begun.attemptId,
+                fields: { credentialsJson: JSON.stringify({ type: 'service_account', client_id: '123',
+                    client_email: 'fixture@example.test', project_id: 'fixture', private_key: 'synthetic-private-key' }) } }, { native }))
+                .toMatchObject({ status: 'connected', account: { service } });
+        });
+    } finally { await registry?.dispose(); await fixture.close(); }
 });
 
 it('reports missing Account artifact availability on first and repeated lookup instead of requiring a restart', async () => {
@@ -255,5 +351,28 @@ it.each(['read', 'submitManual', 'cancel'] as const)('routes native %s by the ad
     } finally {
         native.mockRestore();
         await fixture.close();
+    }
+});
+
+
+it('routes real bundled native-import declarations before acquiring Account artifacts', async () => {
+    for (const pluginId of ['happier.agent.muse', 'happier.agent.kimi', 'happier.agent.grok', 'happier.agent.cursor', 'happier.agent.codex']) {
+        const origin = 'http://native-import-placement.test';
+        const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [pluginId] });
+        const native = vi.spyOn(machineRpc, 'callExactMachineRpc').mockResolvedValue({ status: 'awaitingManual', attemptId: 'native-import-attempt' });
+        try {
+            await runWithServerHttpBaseUrl(origin, async () => {
+                await ensureCliActionPolicySettings(fixture.credentials, origin);
+                const loaded = loadCurrentBundledPluginLocatorResult({ pluginIds: [pluginId] });
+                const manifest = loaded.loadedPlugins.find(value => value.manifest.id === pluginId)?.manifest;
+                const descriptor = manifest?.contributes.connectedAccountDescriptors?.find(value => value.authentication.modes.some(mode => mode.kind === 'manual' && mode.credentialOrigin === 'native_import'));
+                if (!descriptor) throw new Error('Missing native import declaration: ' + pluginId);
+                const service = { pluginId, localId: descriptor.id };
+                const modeId = descriptor.authentication.modes.find(mode => mode.kind === 'manual' && mode.credentialOrigin === 'native_import')!.id;
+                const executor = createCliActionExecutorFromCredentials({ credentials: fixture.credentials, pluginActionExecutionOwner: 'current_process' });
+                expect(await executor.execute('connectedServices.authentication.beginConnect', { service, modeId, machineId: 'import-machine' }, { surface: 'cli', actionRequestId: randomUUID() }))
+                    .toMatchObject({ ok: true, result: { status: 'awaitingManual', attemptId: 'native-import-attempt' } });
+            });
+        } finally { native.mockRestore(); await fixture.close(); }
     }
 });

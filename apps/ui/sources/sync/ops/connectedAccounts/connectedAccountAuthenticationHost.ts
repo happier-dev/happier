@@ -1,3 +1,4 @@
+import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/connectedServices/connectedAccountBrowserSignInMachineSupport';
@@ -22,7 +23,7 @@ type Service = AccountConnectedServiceDeclaration['service'];
 const BROWSER_SIGN_IN_MACHINE_UNAVAILABLE = 'connected_account_browser_sign_in_machine_unavailable';
 export type UiConnectedAccountAuthenticationModes =
     | Readonly<{ status: 'available'; modeIds: readonly string[];
-        machineRequiredModeIds?: readonly string[]; machineUnavailableCode?: string }>
+        machineRequiredModeIds?: readonly string[]; browserRequiredModeIds?: readonly string[]; machineUnavailableCode?: string }>
     | Readonly<{ status: 'unavailable'; code: string }>;
 export type UiConnectedAccountAuthenticationHost = Readonly<{
     authenticationCommand(machineId: string | undefined, command: ConnectedAccountDaemonCommand): Promise<ConnectedAccountAttemptResponse>;
@@ -51,6 +52,9 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
         .find(value => value.service.pluginId === service.pluginId && value.service.localId === service.localId) ?? null;
     const projectedDeclaration = (service: Service) => readPluginAccountAvailability(account.accountLifetime.scope)
         .readAccountUiProjection()?.connectedAccountDescriptorsById?.[buildQualifiedPluginContributionKey(service)];
+    const authenticationDeclaration = (service: Service) => declaration(service)?.descriptor.authentication
+        ?? projectedDeclaration(service)?.definition.authentication
+        ?? getConnectedAccountAuthentication(service, getConnectedServiceRegistrySnapshot(account.accountLifetime.scope));
     const hasAccountArtifact = (service: Service) => Boolean(declaration(service)?.descriptor.authentication.account
         ?? projectedDeclaration(service)?.definition.authentication.account);
     const selection = async (service: Service) => {
@@ -63,13 +67,13 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
             .ensureCurrentAccountExecution(service.pluginId);
         if (admitted.kind === 'unavailable') return fail(admitted.code);
         const declared = declaration(service);
-        if (!declared) return fail('connected_account_service_unavailable');
+        if (!declared) return fail('connected_account_app_service_unavailable');
         if (!declared.descriptor.authentication.account) return { declaration: declared, selected: null };
         const projected = projectedDeclaration(service);
-        if (!projected) return fail('connected_account_service_unavailable');
+        if (!projected) return fail('connected_account_app_service_unavailable');
         const selected = await resolvePluginUiAccountConnectedAccountRegistration({ descriptor: projected,
             platform: resolvePluginUiClientExecutablePlatform(), signal });
-        if (!selected) return fail('connected_account_service_unavailable');
+        if (!selected) return fail('connected_account_app_service_unavailable');
         return { declaration: declared, selected };
     };
     const runtime = async (selected: Awaited<ReturnType<typeof selection>>) => {
@@ -82,21 +86,25 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     };
     // This is the one placement policy for presentation and start. Once begun,
     // the addressed attempt record, rather than the current platform, routes work.
-    const modePlacement = async (selected: Awaited<ReturnType<typeof selection>>) => {
-        const modes = selected.selected ? Object.keys(selected.selected.runtime.authentication.modes) : [];
+    const modePlacement = async (service: Service) => {
+        const authentication = authenticationDeclaration(service);
+        const modes = authentication?.account ? authentication.modes : [];
         const browser = modes.length > 0 && await readRuntimeFetchHost(account.endpointUrl) === 'browser';
-        const machineRequiredModeIds = browser ? modes.filter(id => {
-            const mode = selected.declaration?.descriptor.authentication.modes.find(value => value.id === id);
-            return mode !== undefined && 'browserReachability' in mode && mode.browserReachability === 'unreachable';
-        }) : [];
+        const machineRequiredModeIds = modes.filter(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, browser)).map(mode => mode.id);
+        const browserRequiredModeIds = modes.filter(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, browser) === 'browser_unreachable').map(mode => mode.id);
         return { status: 'available' as const,
-            modeIds: Object.freeze(modes.filter(id => !machineRequiredModeIds.includes(id))),
+            ...(browserRequiredModeIds.length ? { browserRequiredModeIds: Object.freeze(browserRequiredModeIds) } : {}),
+            modeIds: Object.freeze(modes.filter(mode => !machineRequiredModeIds.includes(mode.id)).map(mode => mode.id)),
             ...(machineRequiredModeIds.length ? { machineRequiredModeIds: Object.freeze(machineRequiredModeIds),
-                machineUnavailableCode: BROWSER_SIGN_IN_MACHINE_UNAVAILABLE } : {}) };
+                machineUnavailableCode: browserRequiredModeIds.length ? BROWSER_SIGN_IN_MACHINE_UNAVAILABLE : 'connected_account_authentication_mode_unavailable' } : {}) };
     };
     const readAccountAuthenticationModes = async (service: Service): Promise<UiConnectedAccountAuthenticationModes> => {
         try {
-            return await modePlacement(await selection(service));
+            if (!declaration(service) && hasAccountArtifact(service)) {
+                const admitted = await readPluginAccountAvailability(account.accountLifetime.scope).ensureCurrentAccountExecution(service.pluginId);
+                if (admitted.kind === 'unavailable') return { status: 'unavailable', code: admitted.code };
+            }
+            return await modePlacement(service);
         } catch (error) { return { status: 'unavailable', code: failureCode(error) }; }
     };
     const nativeControl = (machineId: string, command: ConnectedAccountDaemonControlCommand) =>
@@ -120,7 +128,8 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
         if (machineId && (!known && !hasAccountArtifact(service)
             || accountAuthenticationModes.status === 'available' && !accountAuthenticationModes.modeIds.length)) {
             if (accountAuthenticationModes.status === 'available' && accountAuthenticationModes.machineRequiredModeIds?.length) {
-                const support = readBrowserSignInMachineSupport(machineId);
+                const requiresBrowser = Boolean(accountAuthenticationModes.browserRequiredModeIds?.length);
+                const support = requiresBrowser ? readBrowserSignInMachineSupport(machineId) : 'supported';
                 if (support !== 'supported') return { description: unavailable(support), accountAuthenticationModes };
             }
             const description = await nativeControl(machineId, { operation: 'describeService', service,
@@ -150,21 +159,20 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                         accountId: account.accountId, machineId, command, signal, requestId, assertCurrent: account.assertCurrent })
                         : unavailable('connected_account_authentication_mode_unavailable');
                 }
-                const selected = await selection(service);
                 const modeId = command.operation === 'beginConnect' ? command.modeId
                     : (await persistence.accounts.readExact(command.account))?.authenticationModeId;
-                if (modeId && selected.selected?.runtime.authentication.modes[modeId]) {
-                    const placement = await modePlacement(selected);
-                    if (placement.machineRequiredModeIds?.includes(modeId)) {
-                        if (machineId) {
-                            const support = readBrowserSignInMachineSupport(machineId);
-                            if (support !== 'supported') return unavailable(support);
-                        }
-                        return machineId ? runConnectedAccountAuthenticationCommand({ serverId: account.serverId,
-                            accountId: account.accountId, machineId, command, signal, requestId, assertCurrent: account.assertCurrent })
-                            : unavailable(BROWSER_SIGN_IN_MACHINE_UNAVAILABLE);
+                const placement = await modePlacement(service);
+                if (modeId && placement.machineRequiredModeIds?.includes(modeId)) {
+                    if (machineId && placement.browserRequiredModeIds?.includes(modeId)) {
+                        const support = readBrowserSignInMachineSupport(machineId);
+                        if (support !== 'supported') return unavailable(support);
                     }
-                    return (await runtime(selected)).execute(command, signal);
+                    return machineId ? runConnectedAccountAuthenticationCommand({ serverId: account.serverId,
+                        accountId: account.accountId, machineId, command, signal, requestId, assertCurrent: account.assertCurrent })
+                        : unavailable(placement.machineUnavailableCode ?? 'connected_account_authentication_mode_unavailable');
+                }
+                if (modeId && placement.modeIds.includes(modeId)) {
+                    return (await runtime(await selection(service))).execute(command, signal);
                 }
                 return machineId ? runConnectedAccountAuthenticationCommand({ serverId: account.serverId,
                     accountId: account.accountId, machineId, command, signal, requestId, assertCurrent: account.assertCurrent })
@@ -219,10 +227,13 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 const service = requested.kind === 'account' ? requested.account.service : requested.service;
                 if (!hasAccountArtifact(service)) return machineId
                     ? nativeControl(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
-                const selected = await selection(service);
-                const known = selected.declaration;
                 const modeId = requested.kind === 'account'
                     ? (await persistence.accounts.readExact(requested.account))?.authenticationModeId : requested.modeId;
+                const placement = await modePlacement(service);
+                if (modeId && placement.machineRequiredModeIds?.includes(modeId)) return machineId
+                    ? nativeControl(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
+                const selected = await selection(service);
+                const known = selected.declaration;
                 const mode = known?.descriptor.authentication.modes.find(candidate => candidate.id === modeId);
                 if (!known || !mode || !selected.selected?.runtime.authentication.modes[mode.id]) return machineId
                     ? nativeControl(machineId, command) : unavailable('connected_account_configuration_target_unavailable');

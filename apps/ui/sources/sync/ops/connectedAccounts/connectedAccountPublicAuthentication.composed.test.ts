@@ -266,9 +266,9 @@ it.each([
     { provider: 'Cloudflare', service: inventories.cloudflare, defaultModeId: 'oauth',
         modeIds: ['token', 'oauth'], declarationLoads: 0 },
     { provider: 'Antigravity', service: inventories.antigravity.service, defaultModeId: inventories.antigravity.modeId,
-        modeIds: inventories.antigravity.modeIds, declarationLoads: 0, beginStatus: 'awaitingOAuth' },
+        modeIds: inventories.antigravity.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Codex', service: inventories.codex.service, defaultModeId: inventories.codex.modeId,
-        modeIds: inventories.codex.modeIds, declarationLoads: 0, beginStatus: 'awaitingOAuth' },
+        modeIds: inventories.codex.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Vercel', service: inventories.vercel, defaultModeId: 'token', modeIds: ['token'], declarationLoads: 0 },
 ])('demands $provider Account authentication through the service description wrapper', async testCase => {
     const { service, defaultModeId, modeIds, declarationLoads } = testCase;
@@ -359,9 +359,11 @@ it.each([
     });
     expect(described.accountAuthenticationModes.status === 'available'
         ? [...described.accountAuthenticationModes.modeIds].sort() : []).toEqual([...modeIds].sort());
-    expect(described.accountAuthenticationModes).not.toHaveProperty('machineRequiredModeIds');
+    if ('machineModeIds' in testCase) expect(described.accountAuthenticationModes).toMatchObject({ machineRequiredModeIds: testCase.machineModeIds });
+    else expect(described.accountAuthenticationModes).not.toHaveProperty('machineRequiredModeIds');
     expect(coldDeclarationLoads).toBe(priorDeclarationLoads + declarationLoads);
-    expect(packaged.reads).toBe(1);
+    // Description exposes modes without activating executable authentication.
+    expect(packaged.reads).toBe(0);
     expect(accountListReads).toBe(1);
     if ('beginStatus' in testCase) {
         const begin = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect', {
@@ -922,7 +924,7 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
         const { describeConnectedAccountAuthenticationService } = await import('./connectedAccountDaemon');
         const described = await describeConnectedAccountAuthenticationService({ serverId, expectedAccountId: accountId, service });
         expect(described, JSON.stringify(described)).toMatchObject({ description: { status: 'described' },
-            accountAuthenticationModes: { status: 'available', modeIds: ['setup-token'], machineRequiredModeIds: ['oauth'] } });
+            accountAuthenticationModes: { status: 'available', modeIds: ['setup-token'], machineRequiredModeIds: ['oauth', 'native-import'] } });
     }
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: accountId };
     const begin = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect', { service, modeId }, context);

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
+import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
+import { ConnectedAccountAuthenticationModeUnavailableError, createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
     executeConnectedAccountAuthenticationCommand, type ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId, ConnectedAccountDaemonCommand,
     ConnectedAccountAttemptResponse, ConnectedAccountDaemonControlCommand, ConnectedAccountDaemonControlResponse,
@@ -50,8 +51,10 @@ function unavailable(code: string, attemptId?: string) {
 export function resolveCredentialedConnectedAccountAuthenticationPlacement(
     authentication: PluginConnectedAccountAuthenticationV2 | undefined,
     machineId?: string,
+    modeId?: string,
 ): Readonly<{ kind: 'account' } | { kind: 'machine'; machineId: string } | { kind: 'unavailable'; code: string }> {
-    if (authentication?.account) return { kind: 'account' as const };
+    const mode = authentication?.modes.find(candidate => candidate.id === modeId);
+    if (authentication?.account && !resolveConnectedAccountAuthenticationModeMachineRequirement(mode)) return { kind: 'account' as const };
     if (machineId) return { kind: 'machine' as const, machineId };
     return { kind: 'unavailable' as const, code: 'connected_account_authentication_mode_unavailable' };
 }
@@ -102,7 +105,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
             runtime: {
                 async admit(request) {
                     const descriptor = selected.descriptor.authentication.modes.find(mode => mode.id === request.modeId);
-                    if (!descriptor || !selected.runtime.authentication.modes[request.modeId]) throw new Error('connected_account_authentication_mode_unavailable');
+                    if (!descriptor || !selected.runtime.authentication.modes[request.modeId]) throw new ConnectedAccountAuthenticationModeUnavailableError();
                     return { service: selected.ref, descriptor,
                         authenticationModeCardinality: selected.descriptor.authentication.modes.length === 1 ? 'single' : 'multiple',
                         occurrenceId: selected.occurrenceId, sourceCustody: selected.sourceCustody };
@@ -126,6 +129,17 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         return selected;
     };
     const runtime = (selected: ConnectedAccountPortableRuntimeLease) => selected.authentication.acquire(() => createRuntime(selected));
+    const execute = async (selected: ConnectedAccountPortableRuntimeLease, machineId: string | undefined,
+        command: ConnectedAccountDaemonCommand, options: AuthenticationOptions,
+        record?: ConnectedAccountAttemptTransactionRecord): Promise<ConnectedAccountAttemptResponse> => {
+        const response = await runtime(selected).execute(command, options.signal, record);
+        if ((command.operation === 'beginConnect' || command.operation === 'beginReconnect') && machineId
+            && response.status === 'unavailable' && !response.attemptId
+            && response.code === 'connected_account_authentication_mode_unavailable') {
+            return options.native(machineId, command);
+        }
+        return response;
+    };
     const attemptConfiguration = async (selected: ConnectedAccountPortableRuntimeLease, attemptId: string,
         command: ConfigurationCommand): Promise<ConnectedAccountDaemonControlResponse> => {
         const retained = runtime(selected);
@@ -164,15 +178,15 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                     if (!service || record?.scope.machineId) return null;
                     const declaration = input.contributions.describe(service);
                     if (!declaration?.descriptor.authentication.account) return null;
-                    const selected = await select(service);
                     const modeId = 'modeId' in value ? value.modeId : 'account' in value
-                        ? (await persistence.attempts.accounts.readExact(value.account))?.authenticationModeId : record?.scope.modeId;
-                    if (!modeId || !selected.runtime.authentication.modes[modeId]) return null;
+                        ? (await persistence.attempts.accounts.readExact(value.account))?.authenticationModeId : undefined;
+                    if (resolveCredentialedConnectedAccountAuthenticationPlacement(declaration.descriptor.authentication, undefined, modeId).kind !== 'account') return null;
+                    const selected = await select(service);
                     // Only executable custody and the addressed read survive routing.
                     // The callback admits the original Action/caller/signal afresh.
-                    return Object.freeze({ ...host, authenticationCommand(_machineId: string | undefined,
+                    return Object.freeze({ ...host, authenticationCommand(machineId: string | undefined,
                         command: ConnectedAccountDaemonCommand, options: AuthenticationOptions) {
-                        return withHome(() => runtime(selected).execute(command, options.signal, record));
+                        return withHome(() => execute(selected, machineId, command, options, record));
                     }, controlCommand(machineId: string | undefined,
                         command: ConnectedAccountDaemonControlCommand, options: ControlOptions) {
                         if ((command.operation === 'readConfiguration' || command.operation === 'replaceConfiguration')
@@ -201,15 +215,13 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                     if (command.operation === 'beginConnect' || command.operation === 'beginReconnect') {
                         const service = command.operation === 'beginConnect' ? command.service : command.account.service;
                         const declared = input.contributions.describe(service);
-                        const placement = resolveCredentialedConnectedAccountAuthenticationPlacement(declared?.descriptor.authentication, machineId);
+                        const modeId = command.operation === 'beginConnect' ? command.modeId
+                            : (await persistence.attempts.accounts.readExact(command.account))?.authenticationModeId;
+                        const placement = resolveCredentialedConnectedAccountAuthenticationPlacement(declared?.descriptor.authentication, machineId, modeId);
                         if (placement.kind === 'unavailable') return unavailable(placement.code);
                         if (placement.kind === 'machine') return options.native(placement.machineId, command);
                         const selected = await select(service);
-                        const modeId = command.operation === 'beginConnect' ? command.modeId
-                            : (await persistence.attempts.accounts.readExact(command.account))?.authenticationModeId;
-                        if (!modeId || !selected.runtime.authentication.modes[modeId]) return machineId
-                            ? options.native(machineId, command) : unavailable('connected_account_authentication_mode_unavailable');
-                        return runtime(selected).execute(command, options.signal);
+                        return execute(selected, machineId, command, options);
                     }
                     const record = await api.read({ attemptId: command.attemptId });
                     if (!record) return unavailable('connected_account_attempt_not_found', command.attemptId);
@@ -253,11 +265,12 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                             return attemptConfiguration(await select(record.scope.service), requested.attemptId, command);
                         }
                         const service = requested.kind === 'account' ? requested.account.service : requested.service;
-                        if (!input.contributions.describe(service)?.descriptor.authentication.account) return machineId
-                            ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
-                        const selected = await select(service);
+                        const declared = input.contributions.describe(service);
                         const modeId = requested.kind === 'account'
                             ? (await persistence.attempts.accounts.readExact(requested.account))?.authenticationModeId : requested.modeId;
+                        if (resolveCredentialedConnectedAccountAuthenticationPlacement(declared?.descriptor.authentication, machineId, modeId).kind !== 'account') return machineId
+                            ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
+                        const selected = await select(service);
                         const mode = selected.descriptor.authentication.modes.find(candidate => candidate.id === modeId);
                         if (!mode || !selected.runtime.authentication.modes[mode.id]) return machineId
                             ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');

@@ -452,7 +452,7 @@ const ConnectedAccountServiceController = React.memo(
     const hasPortableAuthenticationModes = accountModeIds !== null && accountModeIds.length > 0;
     const selectedModeIsPortable = selectedAuthenticationModeId !== null && accountModeIds?.includes(selectedAuthenticationModeId) === true;
     const browserRequiresMachine = selectedAuthenticationModeId !== null && accountAuthenticationModes?.status === 'available'
-        && accountAuthenticationModes.machineRequiredModeIds?.includes(selectedAuthenticationModeId) === true;
+        && accountAuthenticationModes.browserRequiredModeIds?.includes(selectedAuthenticationModeId) === true;
     const resolveBrowserMachineAvailability = React.useCallback<NonNullable<MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']>>((candidate) => {
         if (!browserRequiresMachine) return undefined;
         const row = targetSelection.pickerRows.find(value => machineAdministrationTargetsEqual(value.candidate.target, candidate.target));
