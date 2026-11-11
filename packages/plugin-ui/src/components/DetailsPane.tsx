@@ -89,6 +89,15 @@ function useNoPane(): boolean {
   return false;
 }
 
+function useDetailPageTitle(title: string | undefined, ownsTitle = true) {
+  const publish = useHappierPageChromeInternal()?.publishPageTitle;
+  useEffect(() => {
+    if (!ownsTitle) return;
+    publish?.(title);
+    return () => publish?.(undefined);
+  }, [ownsTitle, publish, title]);
+}
+
 /**
  * An item opened beside the page, in the page's **app details pane** — the same pane every Happier
  * page opens details in: one band with the title, the actions and a close button, the width the user
