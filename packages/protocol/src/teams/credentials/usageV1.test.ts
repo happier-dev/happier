@@ -146,6 +146,19 @@ describe('Team credential usage coverage contract', () => {
     expect(cells(1)).toEqual(['', '', '', '']);
     expect(cells(2)).toEqual(['0', '0', '0', '']);
   });
+  it('exports the selected cost mode for totals and breakdown rows', () => {
+    const tokens = { input: 1, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3 };
+    const cost = { reportedUsd: 1, estimatedUsd: 2, currency: 'USD', costSource: 'provider_reported' as const };
+    const result = TeamCredentialUsageQueryResultV1Schema.parse({ v: 1,
+      totals: { eventCount: 1, requestCount: 1, tokens, cost }, series: [], nextCursor: null, limits: [],
+      breakdown: [{ key: 'member-1', totals: { eventCount: 1, requestCount: 1, tokens, cost } }],
+      coverage: { requestAdmissionCount: 1, agentObservationCount: 1, externalTerminalObservationCount: 0,
+        directRecordedUseOnly: false, requestCountCoverage: 'complete', tokenCoverage: 'complete', costCoverage: 'partial', unobservedExternalRequestCount: 0 } });
+    const lines = buildTeamCredentialUsageCsv({ resourceName: 'Shared provider', result, startMs: 0, endMs: 1000,
+      breakdown: 'member', breakdownComplete: true, costMode: 'estimated' }).trim().split('\n').map(line => line.split(','));
+    const costColumn = lines[0]!.indexOf('cost');
+    expect(lines.slice(1).map(row => row[costColumn])).toEqual(['2', '2']);
+  });
   it('requires independent completeness and disjoint observation counters', () => {
     const result = {
       v: 1,

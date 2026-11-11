@@ -73,8 +73,9 @@ function tokenCell(result: TeamCredentialUsageQueryResultV1, tokenCount: number 
 function costCell(
     result: TeamCredentialUsageQueryResultV1,
     cost: TeamCredentialUsageQueryResultV1['totals']['cost'],
+    mode: UsageCostMode,
 ): string {
-    const resolved = resolveEffectiveUsageCostUsd(cost, 'auto');
+    const resolved = resolveEffectiveUsageCostUsd(cost, mode);
     // A period the Home could not price has no cost, which is not the same
     // number as zero; an empty cell keeps that distinction in the file.
     return result.coverage.costCoverage === 'unavailable'
@@ -125,7 +126,7 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             '',
             requestCell(result, result.coverage.requestAdmissionCount),
             tokenCell(result, result.totals.tokens.total),
-            costCell(result, result.totals.cost),
+            costCell(result, result.totals.cost, input.costMode),
             result.totals.cost.currency,
             input.costMode,
             costComponentCell(result, result.totals.cost.reportedUsd),
@@ -142,7 +143,7 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             entry.label ?? '',
             requestCell(result, entry.totals.requestCount),
             tokenCell(result, entry.totals.tokens.total),
-            costCell(result, entry.totals.cost),
+            costCell(result, entry.totals.cost, input.costMode),
             entry.totals.cost.currency,
             input.costMode,
             costComponentCell(result, entry.totals.cost.reportedUsd),
