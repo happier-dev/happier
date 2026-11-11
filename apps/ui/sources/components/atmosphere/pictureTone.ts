@@ -1,3 +1,4 @@
+import Color from 'color';
 import type { AtmospherePixels, AtmosphereRgb } from '@happier-dev/brand/atmosphere';
 import type { GlassAtmosphereTone } from '@/components/ui/glass/glassMaterial';
 
@@ -6,6 +7,9 @@ export type PictureToneRegion = Readonly<{ x0: number; x1: number; y0: number; y
 
 /** About this many samples describe a region; the picture is smooth at that scale, and the read stays cheap. */
 const SAMPLES = 4096;
+
+/** Linear light (0–1) to an sRGB channel (0–255). */
+const encode = (value: number) => Math.round(255 * (value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055));
 
 const linear = (channel: number) => {
     const value = channel / 255;
@@ -68,8 +72,27 @@ export function measurePictureColor(pixels: AtmospherePixels, page: AtmosphereRg
     let count = 0;
     sampleRegion(pixels, page, region, (r, g, b) => { sum[0]! += r; sum[1]! += g; sum[2]! += b; count++; });
     if (count === 0) return undefined;
-    const encode = (value: number) => Math.round(255 * (value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055));
     return `rgb(${sum.map(value => encode(value / count)).join(', ')})`;
+}
+
+/**
+ * The tone glass solves against (`legibleCompression` in the glass owner). On a Wallpaper, cards stand on the haze
+ * and its veil, which already deepens the whole column for the head lines (`resolveWallpaperHaze` widens it over the
+ * column), so they answer to the haze's extremes under that veil, not the raw picture's (owner, 2026-11-11 #04:
+ * solving against the raw picture darkened the cards a second time). Head lines read the haze's middle (`focus`).
+ */
+export function glassAtmosphereTone(
+    picture: GlassAtmosphereTone | undefined,
+    haze: GlassAtmosphereTone | undefined,
+    veil: Readonly<{ color: string; alpha: number }> | null,
+): GlassAtmosphereTone | undefined {
+    if (!picture || !haze) return picture;
+    const veiled = (luminance: number) => {
+        if (!veil) return luminance;
+        const grey = encode(Math.min(1, Math.max(0, luminance)));
+        return Math.round(Color.rgb(grey, grey, grey).mix(Color(veil.color), veil.alpha).luminosity() * 1000) / 1000;
+    };
+    return { dark: veiled(haze.dark), light: veiled(haze.light), focus: haze.focus };
 }
 
 /** Luminance steps below this are measurement jitter (re-render dither); glass presents no difference. */

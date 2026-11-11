@@ -5,7 +5,7 @@ import { WallpaperHaze } from './WallpaperHaze';
 import { resolveWallpaperHaze, WALLPAPER_HAZE_LAYERS, type WallpaperHaze as WallpaperHazeComposition } from './wallpaperHaze';
 import { useSetGlassAtmosphereBehind, useSetGlassAtmosphereTone } from '@/components/ui/glass/glassRuntimeEnvironment';
 import type { AtmospherePixels } from '@happier-dev/brand/atmosphere';
-import { measurePictureColor, measurePictureTone, samePictureTone, type PictureToneRegion } from './pictureTone';
+import { glassAtmosphereTone, measurePictureColor, measurePictureTone, samePictureTone, type PictureToneRegion } from './pictureTone';
 import type { GlassAtmosphereTone } from '@/components/ui/glass/glassMaterial';
 import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
@@ -224,14 +224,12 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
     // This surface's head lines and the window's middle, where Home stands them: one veil for every surface.
     const heads = pictureRender && mergeTones(measurePictureTone(pictureRender, pageRef.current, regions.heads),
       measurePictureTone(pictureRender, pageRef.current, regions.look));
-    const measuredTone = base && soft
-      ? { dark: Math.min(base.dark, soft.dark), light: Math.max(base.light, soft.light), focus: soft.focus }
-      : base;
-    const next = soft && heads && measuredTone
-      ? resolveWallpaperHaze({ heads: { ...heads, focus: measuredTone.focus }, ...hazeInput.current, column: regions.reach, at: regions.at,
+    const next = soft && heads && base
+      ? resolveWallpaperHaze({ heads: { ...heads, focus: soft.focus }, ...hazeInput.current, column: regions.reach, at: regions.at,
         bandColor: measurePictureColor(pictureRender!, pageRef.current, regions.look) })
       : AS_COMPOSED_HAZE;
     setHaze(previous => sameHaze(previous, next) ? previous : next);
+    const measuredTone = glassAtmosphereTone(base, soft, next.veil);
     const tone = measuredTone && soft ? { ...measuredTone, ink: next.ink } : measuredTone;
     if (samePictureTone(tone, published.current)) return;
     published.current = tone;

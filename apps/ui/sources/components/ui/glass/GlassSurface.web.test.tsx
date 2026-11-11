@@ -561,6 +561,12 @@ describe('web glass material', () => {
         const { darkTheme, lightTheme } = await import('@/theme');
         const rgb = (value: string) => Color(value).rgb().array().slice(0, 3) as unknown as [number, number, number];
         const toneOf = (backdrop: [number, number, number]) => { const l = Color.rgb(backdrop).luminosity(); return { dark: l, light: l, focus: l }; };
+        const { resolveGlassReadingCoatOpacity } = await import('./glassMaterial');
+        const throughReadingCoat = (theme: typeof darkTheme, picture: readonly number[]) => {
+            const coat = resolveGlassReadingCoatOpacity({ glassSurfaceMaterials: glassPresetMaterials('auto') }, { atmosphereBehind: 'wallpaper' }, theme.dark);
+            const page = rgb(theme.colors.surface.base);
+            return picture.map((value, channel) => page[channel]! * coat + value * (1 - coat));
+        };
         // Ship by Moonlight under the light theme; the bright band of Dune grass under the dark theme.
         for (const [theme, backdrop] of [[lightTheme, [22, 28, 44]], [darkTheme, [200, 145, 153]]] as const) {
             themeMode.dark = theme.dark;
@@ -586,7 +592,8 @@ describe('web glass material', () => {
             for (const group of ['card', 'floating'] as const) {
                 // The default look: Auto at the default tint.
                 const style = await paintOver({ glassSurfaceMaterials: glassPresetMaterials('auto') }, toneOf([...backdrop]), group);
-                const glass = glassOf(style, backdrop, group);
+                // A card stands on the page's reading coat, so its glass sees the picture through it; floating surfaces see it bare.
+                const glass = glassOf(style, group === 'card' ? throughReadingCoat(theme, backdrop) : backdrop, group);
                 const ink = rgb(theme.colors.text.primary);
                 const faint = ink.map((value, channel) => value * GLASS_BACKED_FAINT_INK_SHARE + glass[channel]! * (1 - GLASS_BACKED_FAINT_INK_SHARE)) as [number, number, number];
                 expect(glassContrastRatio(ink, glass)).toBeGreaterThanOrEqual(4.5);
@@ -622,7 +629,12 @@ describe('web glass material', () => {
         const opacity = painted === undefined
             ? resolveGlassSurfaceMaterial({ glassSurfaceMaterials: glassPresetMaterials('auto') }, 'card', { atmosphereBehind: 'wallpaper' }).material.opacity
             : Number(painted) / 100;
-        const glass = renderGlassOver({ filter: style.backdropFilter!, coat, opacity, backdrop });
+        // The card stands on the page's reading coat: its glass sees the picture through it.
+        const { resolveGlassReadingCoatOpacity } = await import('./glassMaterial');
+        const readingCoat = resolveGlassReadingCoatOpacity({ glassSurfaceMaterials: glassPresetMaterials('auto') }, { atmosphereBehind: 'wallpaper' }, true);
+        const page = rgb(darkTheme.colors.surface.base);
+        const seen = backdrop.map((value, channel) => page[channel]! * readingCoat + value * (1 - readingCoat)) as [number, number, number];
+        const glass = renderGlassOver({ filter: style.backdropFilter!, coat, opacity, backdrop: seen });
         // The control's fill on glass is the material's translucent inner fill.
         const fill = Color(darkTheme.colors.surface.selected);
         const control = glass.map((value, channel) => fill.rgb().array()[channel]! * fill.alpha() + value * (1 - fill.alpha())) as [number, number, number];

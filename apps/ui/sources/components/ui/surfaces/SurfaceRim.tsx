@@ -38,8 +38,11 @@ const HAIRLINE = StyleSheet.hairlineWidth || 1;
 export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     role: SurfaceEdgeRole;
     radius: number;
-    /** The border role whose hairline the rim draws under its light (the surface's own `border.<role>`). */
-    border: 'default' | 'surface' | 'modal';
+    /**
+     * The border role whose hairline the rim draws under its light (the surface's own `border.<role>`), or `null`
+     * for the light alone: a tooltip is too small to box in a full hairline (owner, 2026-11-11).
+     */
+    border: 'default' | 'surface' | 'modal' | null;
     /** The corner the light stands in; a surface flush against a screen edge moves it to a free corner. */
     anchor?: 'top-left' | 'bottom-left';
     /** A static preview's theme; defaults to the active one. */
@@ -85,7 +88,7 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
                 </RadialGradient>
             </Defs>
             <Rect {...rect} fill={`url(#${id}s)`} />
-            <Rect {...rect} fill="none" stroke={theme.colors.border[props.border]} strokeWidth={stroke} />
+            {props.border ? <Rect {...rect} fill="none" stroke={theme.colors.border[props.border]} strokeWidth={stroke} /> : null}
             <Rect {...rect} fill="none" stroke={`url(#${id}l)`} strokeWidth={stroke} />
         </Svg>
         </View>

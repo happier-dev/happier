@@ -121,6 +121,16 @@ export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, da
     return coat === 'livePicture' ? Math.max(tint.panelCoat, GLASS_LIVE_PICTURE_PANEL_COAT) : tint.panelCoat;
 }
 
+/**
+ * The reading coat a page's content plane carries over a shown picture (the page colour, blurred, no tone): Elements
+ * stand on it, so their glass sees the picture through it. A Solid or Custom content material applies as set.
+ */
+export function resolveGlassReadingCoatOpacity(settings: GlassMaterialSettings, environment: GlassMaterialEnvironment, dark: boolean): number {
+    const material = resolveGlassSurfaceMaterial(settings, 'content', environment).material;
+    if (material.opacity === 1 || readGlassPreset(settings) === 'custom') return material.opacity;
+    return dark ? 0.66 : 0.56;
+}
+
 const toneNumber = (value: number) => String(Math.round(value * 1000) / 1000);
 const parseRgb = (value: string): readonly [number, number, number] | null => {
     const color = parseThemeColor(value);
@@ -224,18 +234,21 @@ const greyOf = (luminance: number) => {
  * solid paint plus `compression` × (picture − page), so where the picture runs against the theme (its darkest
  * under light ink, its lightest under dark ink) the compression drops just far enough for the
  * theme's ink to keep its contrast. Pictures that agree with the theme, and the plain page, change nothing.
+ * `coat` is the page coat the surface stands on (an Element on the reading coat): its glass sees the picture through
+ * it, so the solve does not dim a backdrop the coat has already calmed (owner, 2026-11-11 #04).
  */
-function legibleCompression(compression: number, dark: boolean, tone: GlassAtmosphereTone | undefined, ground: GlassBackdropGround | null): number {
+function legibleCompression(compression: number, dark: boolean, tone: GlassAtmosphereTone | undefined, ground: GlassBackdropGround | null, coat = 0): number {
     const page = ground ? parseRgb(ground.page) : null;
     const solid = ground ? parseRgb(ground.solid) ?? page : null;
     const ink = ground?.ink ? parseRgb(ground.ink) : null;
     if (!tone || !page || !solid || !ink) return compression;
-    const picture = greyOf(dark ? tone.light : tone.dark);
+    const extreme = greyOf(dark ? tone.light : tone.dark);
+    const picture = page.map(value => value * coat + extreme * (1 - coat));
     const fill = ground?.controlFill ? parseThemeColor(ground.controlFill) : null;
     const fillRgb = fill ? fill.rgb().array().map(value => value / 255) : null;
     const fillAlpha = fill ? fill.alpha() : 0;
     const holds = (k: number) => {
-        const glass = solid.map((value, channel) => Math.min(1, Math.max(0, value + k * (picture - page[channel]!))));
+        const glass = solid.map((value, channel) => Math.min(1, Math.max(0, value + k * (picture[channel]! - page[channel]!))));
         const faint = ink.map((value, channel) => value * GLASS_BACKED_FAINT_INK_SHARE + glass[channel]! * (1 - GLASS_BACKED_FAINT_INK_SHARE));
         // A nested control's translucent fill lies over the glass, so its label stands on both.
         const control = fillRgb ? glass.map((value, channel) => fillRgb[channel]! * fillAlpha + value * (1 - fillAlpha)) : glass;
@@ -281,7 +294,9 @@ export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: 
         const compression = dark ? picture ? tint.pictureDarkCompression : tint.plainDarkCompression : tint.lightCompression;
         // Light never brightens the backdrop past the page. At k = 1 the coat thickens only as far
         // as the paint needs, keeping k exact without a neutral lift.
-        return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : undefined, ground), opacity, ground);
+        // Elements stand on the page's reading coat; floating surfaces may hang over any plane, so they keep the bare picture.
+        const standing = group === 'card' && picture ? resolveGlassReadingCoatOpacity(settings, environment, dark) : 0;
+        return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : undefined, ground, standing), opacity, ground);
     }
     // Shell planes over a wallpaper are frosted picture under their coat, as in the atmosphere lab's G1
     // (owner, 2026-10-24: the title bar shows the picture): light keeps it unwashed, dark only dims it.

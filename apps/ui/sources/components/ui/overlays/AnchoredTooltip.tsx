@@ -60,12 +60,12 @@ export default function AnchoredTooltip(props: Readonly<{
 export function AnchoredTooltipBubble(props: Readonly<{ label: string; content?: React.ReactNode; testID?: string }>) {
     return <GlassSurface surfaceGroup="floating" role="tooltip" testID={props.testID} style={styles.bubble}>
         {props.content ?? <Text style={styles.label}>{props.label}</Text>}
-        <SurfaceRim role="floating" radius={TOOLTIP_RADIUS_PX} border="modal" />
+        <SurfaceRim role="floating" radius={TOOLTIP_RADIUS_PX} border={null} />
     </GlassSurface>;
 }
 
-// A tooltip is the smallest floating surface: the shared surface hairline, its raised edge and the
-// tooltip step of the elevation ladder.
+// A tooltip is the smallest floating surface: no hairline of its own, only the rim's top-left light (owner,
+// 2026-11-11), and the tooltip step of the elevation ladder.
 const styles = StyleSheet.create((theme) => ({
     bubble: {
         pointerEvents: 'none',

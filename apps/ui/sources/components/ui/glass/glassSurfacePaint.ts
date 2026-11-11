@@ -3,17 +3,15 @@ import Color from 'color';
 import { parseThemeColor } from '@/theme/parseThemeColor';
 import { happierMaterialBackgroundColor, happierMaterialInnerBackgroundColor } from '@happier-dev/plugin-ui/presentation';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup, type GlassSurfaceMaterial } from './glassMaterial';
+import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassReadingCoatOpacity, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup, type GlassSurfaceMaterial } from './glassMaterial';
 
 /** Clear only the page coat. Functional surfaces still resolve their own material and accessibility overrides. */
 export type AtmosphereContentCoat = 'opaque' | 'reading';
 
 export function resolveGlassSurfacePlaneMaterial(settings: GlassMaterialSettings, group: GlassSurfaceGroup, environment: GlassMaterialEnvironment = {}, coat?: AtmosphereContentCoat, dark = false): GlassSurfaceMaterial {
     if (group === 'content' && coat) {
-        const material = resolveGlassSurfaceMaterial(settings, group, environment).material;
         if (coat === 'opaque') return { blur: 'off', opacity: 1 };
-        if (material.opacity === 1 || readGlassPreset(settings) === 'custom') return material;
-        return { ...material, opacity: dark ? 0.66 : 0.56 };
+        return { ...resolveGlassSurfaceMaterial(settings, group, environment).material, opacity: resolveGlassReadingCoatOpacity(settings, environment, dark) };
     }
     if (group === 'content' && (environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper')) {
         return { blur: 'off', opacity: 0 };

@@ -9,7 +9,7 @@ import {
     GLASS_SURFACE_GROUPS, glassPresetMaterials, readGlassMaterials, readGlassPreset, resolveGlassPresetSettingsDelta,
     resolveGlassSurfaceMaterial, resolveGlassSurfaceSettingsDelta, resolveGlassIntensitySettingsDelta, resolveGlassBackdropTone,
     resolveGlassBackdropMap, readGlassTintedMaterials,
-    resolveGlassNotchPaint,
+    resolveGlassNotchPaint, resolveGlassReadingCoatOpacity,
 } from './glassMaterial';
 
 describe('glass material Account owner', () => {
@@ -354,7 +354,8 @@ describe('glass material Account owner', () => {
     it('defaults Auto to the layered W3 coats, not chrome-only or uniform Everywhere', () => {
         const materials = readGlassMaterials({});
         expect(materials.chrome).toEqual({ blur: 'regular', opacity: 0.70 });
-        expect(materials.sidebar.opacity).toBeCloseTo(0.754);
+        // The sidebar is chrome, not a lifted plate (owner, 2026-11-11 #25a).
+        expect(materials.sidebar).toEqual(materials.chrome);
         expect(materials.content).toEqual({ blur: 'regular', opacity: 0.84 });
         expect(materials.floating).toEqual({ blur: 'strong', opacity: 0.02 });
         expect(resolveGlassSurfaceMaterial({}, 'content', { desktopWindow: true, nativeWindowMaterialLive: true }).material)
@@ -472,5 +473,55 @@ describe('the notch paint', () => {
         const materials = glassPresetMaterials('auto', 'regular');
         expect(coat({ glassSurfaceMaterials: { ...materials, floating: { blur: 'strong', opacity: 0.4 } } })).toBeCloseTo(0.4);
     });
+});
+
+
+// Owner 2026-11-11 (#04, OWNER-1330-COAT): cards over a picture read as dark slabs while their coat is a 6.76% hair.
+// A card stands on the page's reading coat, not on the bare picture: solving it against the raw picture's brightest
+// tone dimmed a backdrop the coat had already calmed (live: brightness(0.487) over a column that peaked at L 0.07).
+describe('Elements over a picture solve against the reading coat they stand on', () => {
+    type Rgb = [number, number, number];
+    const rgb = (value: string) => Color(value).rgb().array().slice(0, 3) as Rgb;
+    const luminance = (value: Rgb) => Color.rgb(value).luminosity();
+    const grey = (l: number): Rgb => {
+        const value = 255 * (l <= 0.0031308 ? l * 12.92 : 1.055 * l ** (1 / 2.4) - 0.055);
+        return [value, value, value];
+    };
+    // Relative luminance across the content column: near-darkest, near-lightest, and the middle.
+    const pictures = {
+        bright: { dark: 0.3, light: 0.88, focus: 0.6 },
+        busy: { dark: 0.01, light: 0.85, focus: 0.2 },
+        dark: { dark: 0.005, light: 0.1, focus: 0.03 },
+    } as const;
+    for (const theme of [darkTheme, lightTheme]) {
+        for (const tint of [DEFAULT_GLASS_TINT_INTENSITY, 50]) {
+            for (const [name, atmosphereTone] of Object.entries(pictures)) {
+                for (const atmosphereBehind of ['wallpaper', 'band'] as const) {
+                    it(`${theme.dark ? 'dark' : 'light'}, tint ${tint}, ${name} ${atmosphereBehind}: body ink holds 4.5:1 and the card stays light glass`, () => {
+                        const settings = { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: tint };
+                        const environment = { atmosphereBehind, atmosphereTone };
+                        const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.cardFill, ink: theme.colors.text.primary, controlFill: theme.colors.surface.selected };
+                        // What the card's glass sees at its worst: the picture's extreme against the ink, under the reading coat.
+                        const coat = resolveGlassReadingCoatOpacity(settings, environment, theme.dark);
+                        const extreme = grey(theme.dark ? atmosphereTone.light : atmosphereTone.dark);
+                        const page = rgb(theme.colors.surface.base);
+                        const backdrop = extreme.map((value, channel) => page[channel]! * coat + value * (1 - coat)) as Rgb;
+                        const card = (tone: typeof atmosphereTone | undefined) => {
+                            const map = resolveGlassBackdropMap(settings, 'card', theme.dark, { ...environment, atmosphereTone: tone }, ground)!;
+                            const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'card', environment).material.opacity;
+                            return renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop });
+                        };
+                        const solved = card(atmosphereTone);
+                        expect(glassContrastRatio(solved, rgb(theme.colors.text.primary))).toBeGreaterThanOrEqual(4.5);
+                        // Its material's own glass over the same backdrop is what the card should read as wherever the ink
+                        // allows; the solve may take only what the ink needs, not the raw picture's double dimming.
+                        const own = card(undefined);
+                        const step = Math.abs(luminance(solved) - luminance(own)) / Math.max(luminance(own), 0.001);
+                        expect(step).toBeLessThanOrEqual(0.25);
+                    });
+                }
+            }
+        }
+    }
 });
 
