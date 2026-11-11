@@ -81,6 +81,14 @@ import { createRuntimeProviderProbeAuthorizationPort } from './probePort';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import * as spawnResolution from './resolve';
 import * as runtimeCatalog from './runtimeCatalog';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createProviderRuntimeStateStore } from '../runtimeState';
+import { createProviderCatalogService } from '../probe/catalog';
+import { createProviderProbeHttpClient } from '../probe/client';
+import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/cliproxyapi/src/provider/contribution';
+import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 
@@ -250,7 +258,7 @@ const managedContribution: ResolvedProviderContribution = {
         purpose: 'upstream',
         materialization: {
           kind: 'httpHeaders',
-          origins: ['https://api.example.test'],
+          origin: 'https://api.example.test',
           headerNames: ['authorization'],
         },
       }],
@@ -1730,25 +1738,111 @@ describe('provider spawn authorization resolver', () => {
     if (advisory.ok) advisory.attempt.cleanupOnFailure();
   });
 
+  it('carries managed family facts through the real probe, stored projection and effort admission', async () => {
+    const provider = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
+    if (!('probes' in provider.catalog)) throw new Error('Expected the real managed probe declaration');
+    const implementationIdentity = { pluginId: 'happier.provider.cliproxyapi', localId: provider.id };
+    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity, managedRuntime: provider.managedRuntime! });
+    const families = managedRuntime.connectedAccounts;
+    // Recorded r1110c shape: /models supplies ids/names/purposes, never effort metadata.
+    const rows = families.flatMap(family => (family.purpose === 'meta-upstream'
+      ? family.staticModels ?? [] : family.staticModels?.slice(0, 1) ?? []).map(model => ({
+      id: model.id, name: model.name, happier_connected_account_purposes: [{ consumer: implementationIdentity, purpose: family.purpose }],
+    })));
+    const uniqueRows = [...new Map(rows.map(row => [row.id, row])).values()];
+    const runtimeStore = createProviderRuntimeStateStore({
+      happyHomeDir: await mkdtemp(join(tmpdir(), 'gw-effort-')), machineId: 'machine-a',
+    });
+    const fingerprint = createProviderObservationAuthorizationFingerprintV1({
+      selectedSecretBindingId: null, selectedSecretRecordFingerprint: null, credential: null,
+    });
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['127.0.0.1'] }),
+      authorization: {
+        authorize: async () => ({ ok: true as const, ticket: {}, credentialRef: null, observationAuthorizationFingerprint: fingerprint }),
+        authorizeDestination: async () => ({ ok: true as const }),
+        resolveCredential: async () => { throw new Error('No credential lookup for a managed probe'); },
+      },
+      managedCatalogRuntime: { launch: async () => ({
+        ok: true as const, endpointUrl: () => 'http://127.0.0.1:45123/v1', isCurrent: () => true, close: async () => {},
+        access: { request: async () => ({ status: 200, headers: { 'content-type': 'application/json' },
+          body: new Response(JSON.stringify({ data: uniqueRows })).body }) },
+      }) },
+      runtimeStore, now: () => 10_000, createObservationId: () => 'gw-effort-observation',
+    });
+    expect(await service.refresh({ connectionId, machineId: 'machine-a', endpoints: [], probes: provider.catalog.probes!,
+      managedSources: [{ implementationIdentity, managedRuntime, purposeBindings: { v: 1, bindings: [] },
+        endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses',
+        sourceRegistryVersion: provider.catalog.sourceRegistryVersion!, publicHeaders: {} }],
+    })).toMatchObject({ status: 'success' });
+    const state = await runtimeStore.read();
+    expect(state.catalogs[0]!.state.snapshot?.models).toHaveLength(uniqueRows.length);
+    for (const row of uniqueRows) {
+        const family = families.find(family => family.purpose === row.happier_connected_account_purposes[0]!.purpose)!;
+        const declared = family.staticModels!.find(model => model.id === row.id)!;
+        const model = runtimeCatalog.selectProviderRuntimeCatalogModel({ runtimeState: state, machineId: 'machine-a', connectionId,
+          catalogFingerprint: state.catalogs[0]!.key.catalogFingerprint,
+          currentObservationAuthorizationFingerprints: new Set([fingerprint]), modelId: declared.id });
+        expect(model?.modelOptions, `${family.purpose}/${declared.id}`).toEqual(declared.modelOptions);
+        expect(model?.capabilities).toEqual(declared.capabilities);
+    }
+    const model = runtimeCatalog.selectProviderRuntimeCatalogModel({ runtimeState: state, machineId: 'machine-a', connectionId,
+      catalogFingerprint: state.catalogs[0]!.key.catalogFingerprint,
+      currentObservationAuthorizationFingerprints: new Set([fingerprint]), modelId: 'muse-spark-1.2-contributor' });
+    expect(model?.modelOptions?.find(option => option.id === 'reasoning_effort')?.options?.map(option => option.value))
+      .toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    const initialSettings = grantedSettings();
+    const connection = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+      providerSettings: initialSettings, registry, dnsEvidenceByEndpointUrl: dns });
+    if (connection.status !== 'resolved' || !model) throw new Error('Expected projected model and resolved connection');
+    const runtimeLease = lease();
+    const adapter = readLeasedAgentProviderBindingAdapter({ lease: runtimeLease, agentId: 'codex' });
+    if (!adapter) throw new Error('Expected the admitted Agent adapter');
+    const compatibility = resolveProviderModelCompatibility({ record: connection.record, providerSettings: initialSettings,
+      agentTargetKey: 'agent:happier.agent.codex/codex', support: adapter.support, model, adapterVersion: adapter.adapter.adapterVersion });
+    const settings = compatibility.result.status === 'experimental'
+      ? setProviderExperimentalConfirmationV1(initialSettings, { connectionId, agentTargetKey: 'agent:happier.agent.codex/codex',
+        modelId: compatibility.result.confirmationScope.kind === 'model' ? model.id : null,
+        compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmedAt: 1 }) : initialSettings;
+    for (const [effort, allowed] of [['minimal', true], ['max', false]] as const) {
+      const result = spawnResolution.resolveProviderSpawnSelection({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
+          providerConnectionId: connectionId, modelId: 'muse-spark-1.2-contributor' } },
+        machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+        accountSettings: accountSettings(settings), providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns,
+        lease: runtimeLease, runtimeModelDescriptor: model, runtimeCatalogSnapshotExists: true,
+        sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { value: effort, updatedAt: 1 } } },
+      });
+      expect(result.ok, result.ok ? effort : JSON.stringify(result.error)).toBe(allowed);
+    }
+  });
+
   it.each([
     { requested: 'ultra', allowed: false, declared: true },
     { requested: 'medium', allowed: false, declared: true },
     { requested: 'high', allowed: true, declared: true },
     { requested: null, allowed: true, declared: true },
     { requested: undefined, allowed: true, declared: true },
-    { requested: 'high', allowed: false, declared: false },
+    { requested: 'high', allowed: true, declared: false },
+    { requested: 'minimal', allowed: true, declared: false },
+    { requested: 'minimal', allowed: false, declared: false, controls: 'unsupported' as const },
+    { requested: 'minimal', allowed: true, declared: false, controls: 'unknown' as const },
+    { requested: 'minimal', allowed: true, declared: false, controls: 'supported' as const },
     { requested: undefined, allowed: true, declared: false },
-  ])('admits explicit effort against the selected Provider model ($requested, declared=$declared)', ({ requested, allowed, declared }) => {
+  ])('admits explicit effort against the selected Provider model ($requested, declared=$declared)', ({ requested, allowed, declared, controls }) => {
+    const modelId = controls ? 'observed-model' : 'model-a';
     const settings = ProviderSettingsV1Schema.parse({ ...grantedSettings(), manualModelsByConnectionId: {
       [connectionId]: [{ id: 'model-a', addedAt: 1, ...(declared ? { reasoningEffortLevels: ['low', 'high'] } : {}) }],
     } });
     const prepare = vi.fn(() => ({ v: 1 as const, materialization: 'engineConfig' as const, adapterBindingKey: 'gateway' }));
     const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
-        providerConnectionId: connectionId, modelId: 'model-a' } },
+        providerConnectionId: connectionId, modelId } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
       accountSettings: accountSettings(settings), providerSettings: settings, registry,
       dnsEvidenceByEndpointUrl: dns, lease: lease(prepare),
+      ...(controls ? { runtimeModelDescriptor: { id: modelId, name: modelId,
+        capabilities: { reasoningControls: controls, toolRoundTrips: 'supported' as const } } } : {}),
       ...(requested !== undefined ? { sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1,
         overrides: { reasoning_effort: { value: requested, updatedAt: 1 } } } } : {}),
     }));
@@ -1791,6 +1885,42 @@ describe('provider spawn authorization resolver', () => {
     const next = authorize('model-b');
     if (!current.ok || !next.ok) throw new Error('Expected exact Provider authorizations');
 
+  });
+
+  it.each([
+    { toolRoundTrips: 'supported', experimental: false },
+    { toolRoundTrips: 'unsupported', experimental: false },
+    { toolRoundTrips: 'supported', experimental: true },
+  ] as const)('uses a cold managed family declaration ($toolRoundTrips, experimental=$experimental)', ({ toolRoundTrips, experimental }) => {
+    const familyDefinition = ProviderContributionV1Schema.parse({ ...managedContribution.definition,
+      compatibilityOverrides: experimental ? managedContribution.definition.compatibilityOverrides?.map(override => ({
+        ...override, status: 'experimental',
+      })) : [],
+      catalog: { source: 'probe', manualModelPolicy: 'allowed', sourceRegistryVersion: 'gateway-registry:v1',
+        probes: [{ endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' }] },
+      managedRuntime: { ...managedContribution.definition.managedRuntime,
+        connectedAccounts: managedContribution.definition.managedRuntime!.connectedAccounts!.map(family => ({
+          ...family, staticModels: [{ id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips } }],
+        })),
+      },
+    });
+    const familyRegistry = { providersByContributionKey: new Map([[canonicalContributionKey,
+      { ...managedContribution, definition: familyDefinition }]]) };
+    const settings = managedGrantedSettings(familyRegistry);
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
+      selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        providerConnectionId: connectionId, modelId: 'model-a' } },
+      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+      accountSettings: { providerSettingsV1: settings }, providerSettings: settings, registry: familyRegistry,
+      dnsEvidenceByEndpointUrl: new Map(), lease: lease(), managedProviderRuntime: exactManagedProviderRuntime(),
+      managedPurposeBindingSnapshot: { v: 1, bindings: [{
+        purpose: { consumer: managedContribution.identity, purpose: 'upstream' },
+        target: { kind: 'account', account: { service: { pluginId: 'happier.connected-account.example', localId: 'example' }, accountId: 'account-a' } },
+      }] },
+    }));
+    expect(result, JSON.stringify(result)).toMatchObject(experimental ? { ok: false, error: { code: 'provider_compatibility_unverified' } }
+      : toolRoundTrips === 'supported' ? { ok: true }
+        : { ok: false, error: { code: 'provider_incompatible_with_agent' } });
   });
 
   it.each([

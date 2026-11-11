@@ -1037,9 +1037,14 @@ export function resolveProviderSpawnSelection(
   });
   if (!model) return { ok: false, error: createProviderErrorV1('provider_model_not_found', errorContext) };
   const requestedEffort = input.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value;
-  if (requestedEffort != null && readProviderReasoningEffortOption(
-    projectProviderModelReasoningForAgent(model, adapter.support),
-  )?.options?.some(option => option.value === requestedEffort) !== true) {
+  const effortOption = readProviderReasoningEffortOption(model);
+  // Missing model facts are unknown, not a declaration that effort is unsupported.
+  // Preserve the requested override for the Agent when the source has no exact list.
+  if (requestedEffort != null && (
+    adapter.support.supportsReasoningEffort !== true
+    || model.capabilities?.reasoningControls === 'unsupported'
+    || effortOption !== null && !effortOption.options?.some(option => option.value === requestedEffort)
+  )) {
     return { ok: false, error: createProviderErrorV1('provider_model_config_option_unsupported', errorContext) };
   }
   const configuredModelSettings = record.connection.modelSettings?.[model.id];

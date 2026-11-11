@@ -850,6 +850,10 @@ the CLI broker path. CLIProxyAPI's pinned catalog carries explicit reasoning lev
 from its SDK registry for both Account and Team projections; budget-only models do
 not acquire guessed level choices. These descriptors describe source controls, not
 Account entitlement or verified execution compatibility.
+Managed catalog refresh attaches those family declarations to observed rows by
+qualified upstream purpose and exact model id before persisting the observation.
+The gateway's OpenAI model-list wire format does not supply effort options;
+declarations enrich observed membership without adding unobserved models.
 
 The development picker applies the canonical required-model-capability decision to
 Account, Gateway and Team rows. Models explicitly lacking a capability the selected
@@ -1621,12 +1625,19 @@ it declares a Provider source. Provider-source current-only reads use metadata a
 observations without credential acquisition. A successful observed empty catalog
 stays empty; only an absent dynamic observation uses the purpose's static models.
 
-The connection model response preserves this distinction in `catalogObserved`
-and, for managed sources, `sourceCatalogs` keyed by the declared purpose. Each
-source carries its observation presence and model descriptors after the existing
-current/execution-compatible projection. An observed empty source remains an
-empty list; another source's observation does not make it observed. Exact Account
-requester context supplies these reads without falling back to the active Account.
+Saved Gateway model reads consume the Gateway probe's persisted catalog.
+Their `catalogObserved` records that aggregate observation. `sourceCatalogs`
+groups its rows by the observed qualified purposes and configured bindings.
+Native Connected Account browsing retains its own observation owner and exact
+Account requester context.
+
+Before the first Gateway observation, bound families' declared model descriptors
+supply catalog and compatibility facts through the shared source-facts owner.
+For probe-only declarations, a successful observation then owns membership,
+including an observed empty list. A fully declared managed model satisfies the
+shared compatibility owner's missing-integration-evidence case. Explicit
+unsupported capabilities and declared experimental overrides retain their
+existing admission outcomes.
 
 Pool gateway choices and vendor-slot writes use the captured Account catalog
 without selecting a machine. Each gateway needs its own admitted declaration;
@@ -1746,7 +1757,14 @@ shared with the existing exact-source administration read, whose public response
 remains stripped of private source and Team details.
 In development source,
 `providerBrokerEndpointDiscovery.ts` owns endpoint acquisition and failure
-classification for both Account connections and Team credentials. Its file-only
+classification for both Account connections and Team credentials. The
+endpoint refusal reader consumes the broker application's canonical closed-code
+schema, including the source Provider's codes. Personal connection errors retain
+those Provider codes, and Team launches retain the same cause. External Resource
+Test diagnostics retain the exact code in `failureDetail`; the external API's
+public error vocabulary remains separate. Matching development daemon and server
+readers must be reloaded to consume this diagnostic projection.
+Its file-only
 `[ProviderBroker] Endpoint discovery refused` record retains a closed
 `discoveryCause`, `httpStatus` only when HTTP responded, `discoveryElapsedMs`,
 and the per-stream grant's `refreshOutcome` with `refreshElapsedMs` when requested.
@@ -2838,8 +2856,11 @@ does not override this report or prove endpoint health or Agent compatibility.
 Tier declaration is currently authored through the Action or CLI.
 
 Session and Execution Run admission refuse an explicitly requested, non-null
-`reasoning_effort` unless the selected model declares that exact value and the
-Agent supports Provider effort. The shared Provider authorization owner returns
+`reasoning_effort` when the selected model declares different allowed values,
+explicitly reports unsupported reasoning controls, or the Agent cannot apply
+Provider effort. Absent effort facts remain unknown: admission preserves the
+requested value for the Agent rather than inferring unsupported capability.
+The shared Provider authorization owner returns
 non-retryable `provider_model_config_option_unsupported` before runner startup;
 retrying the same explicit launch choice preserves that requirement. Clearing or
 omitting the option leaves inherited/default configuration to the Agent's

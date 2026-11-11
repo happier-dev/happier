@@ -25,6 +25,7 @@ import {
 } from './client';
 import type { ProviderProbeManagedServiceRequest } from './client';
 import { providerProbeFailureHealthState, providerProbeSuccessHealthState } from './health';
+import { projectManagedProviderModelFacts } from './managedModelFacts';
 import {
   awaitWithinProviderOperation,
   observeProviderOperationPhase,
@@ -495,9 +496,10 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         try {
           const commitManagedCatalog = async (
             authorization: typeof authorizations[number],
-            models: ProviderCatalogGetResult['catalog']['models'],
+            observedModels: ProviderCatalogGetResult['catalog']['models'],
             loadStates: ProviderCatalogGetResult['catalog']['loadStates'],
           ): Promise<ProviderCatalogRefreshResult> => {
+            const models = projectManagedProviderModelFacts(authorization.source, observedModels);
             const observedAt = now();
             const catalogObservationId = dependencies.createObservationId();
             const commitError = await updateAuthorized(

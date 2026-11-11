@@ -162,7 +162,9 @@ endpoint or make an incompatible Agent pairing available.
 In the same 0.3 development flow, starting a Session or Run with an explicit
 effort outside that model's declared tiers is refused before the runner starts
 (`provider_model_config_option_unsupported`). Choose a declared tier or clear
-the option. Retained and default effort follows the Agent's normalization;
+the option. An explicit unsupported capability is also refused. When the catalog
+has no effort facts, admission passes the requested effort to the Agent.
+Retained and default effort follows the Agent's normalization;
 for example, Codex omits unsupported inherited effort at startup. Changing the
 model alone does not make its retained effort an explicit request.
 
