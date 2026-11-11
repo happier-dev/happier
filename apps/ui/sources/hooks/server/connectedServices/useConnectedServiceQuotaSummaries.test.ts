@@ -311,7 +311,8 @@ describe('useConnectedServiceQuotaSummaries', () => {
         ]);
         // A key reports no limits: counted once, never listed as "unavailable".
         expect(last.keysWithoutLimits).toBe(1);
-        expect(last.accountsWithoutUsage.map((account) => account.accountId)).toEqual(['personal', 'device', 'imported']);
+        // The shared profile-ref normalizer orders accounts by their canonical key.
+        expect(last.accountsWithoutUsage.map((account) => account.accountId)).toEqual(['device', 'imported', 'personal']);
         expect(last.inUseAccountKeys).toEqual(new Set(['acme.connected.accounts%2Fgateway/personal']));
     });
 

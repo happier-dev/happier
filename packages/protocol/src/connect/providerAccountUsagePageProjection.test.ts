@@ -22,6 +22,70 @@ const range = { startAtMs: 0, endAtMs: 1200 };
 const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
 
 describe('B page projection', () => {
+  it.each([8, 128])('normalizes each admitted comparison operand once per quota projection with %i observations', observationCount => {
+    const duration = observationCount;
+    const perWindow = observationCount / 2;
+    const values = Array.from({ length: observationCount }, (_, index) => {
+      const cycle = Math.floor(index / perWindow);
+      const offset = index % perWindow + 1;
+      const value = sample(cycle * duration + offset * 2, offset * 50 / perWindow, (cycle + 1) * duration);
+      value.meters[0]!.windowDurationMs = duration;
+      return value;
+    });
+    const current = sample(duration * 2 + duration / 4, 10, duration * 3);
+    current.meters[0]!.windowDurationMs = duration;
+    let entitlementReads = 0;
+    let windowReads = 0;
+    let currentPlanLabel = 'Standard';
+    let currentDuration = duration;
+    for (const value of [...values, current]) {
+      // Transparent input accessors count normalization through the real quota
+      // projection, including unused capacity, pace, resets and earlier curves.
+      Object.defineProperty(value, 'planLabel', { get() { entitlementReads++; return value === current ? currentPlanLabel : 'Standard'; } });
+      Object.defineProperty(value.meters[0]!, 'windowDurationMs', { get() { windowReads++; return value === current ? currentDuration : duration; } });
+    }
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const input = { input: { source, projection: { range: { startAtMs: 0, endAtMs: duration * 3 }, resolution: 'accepted_observations' as const } },
+      current, history: { entries: values.map((snapshot, index) => ({ id: String(index), observedAtMs: snapshot.observedAtMs, snapshot })), nextCursor: null },
+      nowMs: current.observedAtMs };
+    const projected = projectProviderAccountUsageQuotaReadV1(input);
+    console.info(JSON.stringify({ observationCount, entitlementReads, windowReads }));
+    expect(entitlementReads).toBe(values.length + 1);
+    expect(windowReads).toBe(values.length + 1);
+    expect(projected.unusedCapacity.windows.map(value => value.value)).toEqual([0, 1].map(() => expect.objectContaining({ status: 'available', unusedFraction: .5, sampleCount: perWindow })));
+    expect(projected.pageFacts?.earlierCurves[0]!.value).toMatchObject({ status: 'available', curves: [
+      { points: expect.arrayContaining([{ elapsedFraction: 1, usedFraction: .5 }]) },
+      { points: expect.arrayContaining([{ elapsedFraction: 1, usedFraction: .5 }]) },
+    ], excluded: [] });
+
+    // Every invocation admits its own operands: changed history and the latest
+    // denominator must reach the real consumers rather than reuse old answers.
+    Object.assign(values.at(-1)!.meters[0]!, { used: 60, remaining: 40, utilizationPct: 60 });
+    const changedHistory = projectProviderAccountUsageQuotaReadV1(input);
+    expect(changedHistory.unusedCapacity.windows.at(-1)!.value).toMatchObject({ status: 'available', unusedFraction: .4 });
+    expect(changedHistory.pageFacts?.earlierCurves[0]!.value).toMatchObject({ status: 'available', curves: [
+      { points: expect.arrayContaining([{ elapsedFraction: 1, usedFraction: .6 }]) }, expect.anything(),
+    ] });
+    Object.assign(current.meters[0]!, { limit: 200, remaining: 190 });
+    const changedCurrent = projectProviderAccountUsageQuotaReadV1(input);
+    expect(changedCurrent.pace[0]!.value).toMatchObject({ status: 'available', usedFraction: .05, pace: .2 });
+    expect(changedCurrent.pageFacts?.earlierCurves[0]!.value).toMatchObject({ status: 'available', curves: [],
+      excluded: [expect.objectContaining({ reason: 'denominator_changed' }), expect.objectContaining({ reason: 'denominator_changed' })] });
+    expect(projectProviderAccountUsageQuotaReadV1({ ...input, nowMs: current.observedAtMs + current.staleAfterMs }).pace[0]!.value)
+      .toEqual({ status: 'unavailable', reason: 'stale' });
+    currentPlanLabel = 'Premium';
+    expect(projectProviderAccountUsageQuotaReadV1(input).pageFacts?.earlierCurves[0]!.value).toMatchObject({ status: 'available', curves: [],
+      excluded: [expect.objectContaining({ reason: 'entitlement_changed' }), expect.objectContaining({ reason: 'entitlement_changed' })] });
+    currentPlanLabel = 'Standard';
+    currentDuration = duration * 2;
+    current.meters[0]!.resetsAt = duration * 4;
+    const changedWindow = projectProviderAccountUsageQuotaReadV1(input);
+    expect(changedWindow.pace[0]!.value).toMatchObject({ status: 'available', pace: .4,
+      window: { windowStartAtMs: duration * 2, windowDurationMs: duration * 2, resetAtMs: duration * 4 } });
+    expect(changedWindow.pageFacts?.earlierCurves[0]!.value).toMatchObject({ status: 'available', curves: [],
+      excluded: [expect.objectContaining({ reason: 'reset_changed' }), expect.objectContaining({ reason: 'reset_changed' })] });
+  });
+
   it('normalizes a shared admitted meter once while retaining every accepted observation', () => {
     const entries = Array.from({ length: 1000 }, (_, index) => {
       const snapshot = sample(100 + index, 10);

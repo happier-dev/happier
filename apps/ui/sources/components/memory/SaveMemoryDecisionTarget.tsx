@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 
-import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { resolveWorkspaceRefDisplayName, resolveWorkspaceRefDisplayNames } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -62,11 +62,14 @@ function memoryDecisionBaseLabel(row: MemoryDecisionTarget): string {
 /** Names for the offered places; Projects that share a name are told apart by the one workspace-label owner. */
 export function memoryDecisionTargetLabels(rows: readonly MemoryDecisionTarget[]): ReadonlyMap<string, string> {
   const refs = rows.flatMap((row) => (row.workspaceRef ? [row.workspaceRef] : []));
+  const displayNames = resolveWorkspaceRefDisplayNames(refs);
+  const namesByRef = new Map(refs.map((ref, index) => [ref, displayNames[index]!]));
+  const baseLabels = rows.map(memoryDecisionBaseLabel);
   const counts = new Map<string, number>();
-  for (const row of rows) counts.set(memoryDecisionBaseLabel(row), (counts.get(memoryDecisionBaseLabel(row)) ?? 0) + 1);
-  return new Map(rows.map((row) => {
-    const base = memoryDecisionBaseLabel(row);
-    const label = (counts.get(base) ?? 0) > 1 && row.workspaceRef ? resolveWorkspaceRefDisplayName(row.workspaceRef, refs) : base;
+  for (const base of baseLabels) counts.set(base, (counts.get(base) ?? 0) + 1);
+  return new Map(rows.map((row, index) => {
+    const base = baseLabels[index]!;
+    const label = (counts.get(base) ?? 0) > 1 && row.workspaceRef ? namesByRef.get(row.workspaceRef)! : base;
     return [memoryDecisionTargetId(row.target), label] as const;
   }));
 }

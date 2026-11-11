@@ -5,7 +5,7 @@ import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
 import { ConnectedServiceQuotaMeterV1Schema, ConnectedServiceQuotaMeterDetailsV1Schema } from './connectedServiceSchemas.js';
 import type { ConnectedServiceQuotaGetResultV1 } from './providerAccountUsageHistorySchemasV1.js';
 import { deriveProviderAccountUsageEarlierWindowCurves, hasProviderAccountUsageWitnessedReset,
-  resolveProviderAccountUsagePaceWindow } from './deriveProviderAccountUsagePace.js';
+  ProviderAccountUsageDerivationOperands, resolveProviderAccountUsagePaceWindow } from './deriveProviderAccountUsagePace.js';
 
 const RangeSchema = lazyZodSchema(() => z.strictObject({ startAtMs: z.number().check(z.int(), z.nonnegative()), endAtMs: z.number().check(z.int(), z.nonnegative()) }).check(z.refine(value => value.endAtMs > value.startAtMs)));
 const EntrySchema = lazyZodSchema(() => z.strictObject({ id: z.string().check(z.minLength(1)), observedAtMs: z.number().check(z.int(), z.nonnegative()), snapshot: ProviderAccountUsageSnapshotV1Schema }));
@@ -237,7 +237,7 @@ export function getProviderAccountUsageQuotaHistoryV1(read: Readonly<{
 }
 
 /** The page consumes these facts, never the observations used to derive them. */
-export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQuotaGetResultV1): ConnectedServiceQuotaGetResultV1['pageFacts'] {
+export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQuotaGetResultV1, operands = new ProviderAccountUsageDerivationOperands()): ConnectedServiceQuotaGetResultV1['pageFacts'] {
   if (read.pageFacts) return read.pageFacts;
   const history = getProviderAccountUsageQuotaHistoryV1(read);
   if (!history) return undefined;
@@ -252,9 +252,9 @@ export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQu
     for (let index = 1; index < observations.length; index++) {
       const previous = observations[index - 1]!;
       const next = observations[index]!;
-      const window = resolveProviderAccountUsagePaceWindow(previous, meter.meterId);
+      const window = resolveProviderAccountUsagePaceWindow(previous, meter.meterId, operands);
       if (!window || resets.has(window.resetAtMs) || !hasProviderAccountUsageWitnessedReset({ previous, current: next,
-        meterId: meter.meterId, nowMs: next.observedAtMs })) continue;
+        meterId: meter.meterId, nowMs: next.observedAtMs }, operands)) continue;
       resets.add(window.resetAtMs); witnessedResets.push(window);
     }
   }
@@ -263,5 +263,5 @@ export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQu
     && (!resetWitness || entry.observedAtMs > resetWitness.observedAtMs)) resetWitness = entry;
   return { historyStatus: history.nextCursor === null ? 'complete' : 'partial', resetWitness, witnessedResets,
     earlierCurves: (current?.meters ?? []).map(meter => ({ meterId: meter.meterId,
-      value: deriveProviderAccountUsageEarlierWindowCurves({ current: current!, meterId: meter.meterId, history: snapshots }) })) };
+      value: deriveProviderAccountUsageEarlierWindowCurves({ current: current!, meterId: meter.meterId, history: snapshots }, operands) })) };
 }

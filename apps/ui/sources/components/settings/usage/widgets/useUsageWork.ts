@@ -15,6 +15,7 @@ import {
   summarizeUsageWork,
   type UsageWorkSummary,
   type UsageWorkMoneyBasis,
+  type UsageWorkSessionIdentity,
 } from './usageWorkPresentation';
 import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace } from './usageBodyKit';
 import { readUsageWidgetPageScope, readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
@@ -29,6 +30,8 @@ function countLabels(labels: readonly string[]): Map<string, number> {
 }
 
 const summaries = new WeakMap<object, Map<string, UsageWorkSummary>>();
+const EMPTY_SESSION_IDENTITIES: readonly UsageWorkSessionIdentity[] = Object.freeze([]);
+const EMPTY_MACHINE_IDS: readonly string[] = Object.freeze([]);
 
 /** The Work bodies' shared reading of one slice: U7's allocation grouped once, labels and drill. */
 export function useUsageWork(
@@ -36,7 +39,6 @@ export function useUsageWork(
   query: UsageQuery,
   serverId: string,
 ) {
-  const metric = UsageAccountingMetricSchema.parse(query.metric);
   const work = slice.work;
   const view = useUsageAnalyticsView(slice, query);
   const projectNames = useUsageProjectNames(serverId, view?.breakdowns.projects);
@@ -85,15 +87,35 @@ export function useUsageWork(
   }, [format, query.metric, summary?.moneyBasis]);
   const basisLabel = React.useCallback((moneyBasis: UsageWorkMoneyBasis | null) => moneyBasis
     ? `${usageCostKindPhrase(moneyBasis.kind)} · ${moneyBasis.currency}` : undefined, []);
+  const projectMachineIds = React.useMemo(() => summary?.projects.flatMap(row => row.machineIds) ?? EMPTY_MACHINE_IDS, [summary]);
+  const { machineNames, machinePlace, sessionLabel, openSession } = useUsageWorkSessionNavigation(
+    summary?.sessions ?? EMPTY_SESSION_IDENTITIES, query, serverId, projectMachineIds,
+  );
+  // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
+  // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
+  const projectName = projectNames.label;
+  const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
+    [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
+  const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);
+  return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession, machineNames };
+}
+
+/** Session controls need identity and labels even when an empty body consumes no Work amounts. */
+export function useUsageWorkSessionNavigation(
+  sessions: readonly UsageWorkSessionIdentity[],
+  query: UsageQuery,
+  serverId: string,
+  machineIds: readonly string[] = EMPTY_MACHINE_IDS,
+) {
+  const metric = UsageAccountingMetricSchema.parse(query.metric);
   const sessionHomes = React.useMemo(() => [serverId], [serverId]);
   const renderablesByHome = useSessionListRowsByServerId(sessionHomes);
   const renderables = renderablesByHome[serverId];
   // The display owner retains opened names through an unavailable inventory.
   // A cold read can still name the exact Machine from its retained Session host.
   const selectedMachineNames = useMachineDisplayById(React.useCallback(displays => {
-    const referenced = new Set((summary?.projects ?? []).flatMap(row => row.machineIds)
-      .concat((summary?.sessions ?? []).flatMap(row => row.machineIds)));
-    const sessionMachines = new Map((summary?.sessions ?? []).flatMap(row => {
+    const referenced = new Set([...machineIds, ...sessions.flatMap(row => row.machineIds)]);
+    const sessionMachines = new Map(sessions.flatMap(row => {
       const metadata = renderables?.[row.sessionId]?.metadata;
       return metadata?.machineId && metadata.host?.trim() ? [[metadata.machineId, metadata] as const] : [];
     }));
@@ -104,16 +126,10 @@ export function useUsageWork(
           ? { id, metadata: { displayName: getSessionMachineLabel({ machineId: id, machine: null, session }) } }
           : { id, absence: 'unlisted' as const };
       })])].filter(([id]) => referenced.has(id)));
-  }, [summary, renderables]));
+  }, [sessions, machineIds, renderables]));
   // Fact lines retain the Machine owner's distinction between same-named registrations.
   const machinePlace = React.useCallback((ids: readonly string[]) =>
     usageMachinePlace(ids, selectedMachineNames), [selectedMachineNames]);
-  // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
-  // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
-  const projectName = projectNames.label;
-  const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
-    [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
-  const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);
   const isSessionVisible = useSessionRecordingVisibility();
   const displaySessionLabels = React.useMemo(() => {
     const base = (sessionId: string) => {
@@ -121,16 +137,15 @@ export function useUsageWork(
       const renderable = renderables?.[sessionId];
       return renderable ? getSessionName(renderable, serverId) : t('session.untitled');
     };
-    const rows = summary?.sessions ?? [];
-    const counts = countLabels(rows.map(row => base(row.sessionId)));
-    return new Map(rows.map(row => {
+    const counts = countLabels(sessions.map(row => base(row.sessionId)));
+    return new Map(sessions.map(row => {
       const label = base(row.sessionId);
       if (!isSessionVisible({ sessionId: row.sessionId, serverId }) || counts.get(label)! < 2) return [row.sessionId, label] as const;
       const when = row.lastObservedAtMs > 0 ? formatUsageCalendarDate(row.lastObservedAtMs, query.timeZoneOffsetMinutes ?? 0,
         { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
       return [row.sessionId, [label, when, machinePlace(row.machineIds)].filter(Boolean).join(' · ')] as const;
     }));
-  }, [summary, renderables, serverId, machinePlace, query.timeZoneOffsetMinutes, isSessionVisible]);
+  }, [sessions, renderables, serverId, machinePlace, query.timeZoneOffsetMinutes, isSessionVisible]);
   const sessionLabel = React.useCallback(
     (sessionId: string) => !isSessionVisible({ sessionId, serverId }) ? t('session.untitled')
       : displaySessionLabels.get(sessionId)
@@ -152,7 +167,7 @@ export function useUsageWork(
     },
     [router, serverId, query, metric],
   );
-  const sessionCommands = useCurrentUiContextLocalCommands((summary?.sessions ?? []).map(row => ({
+  const sessionCommands = useCurrentUiContextLocalCommands(sessions.map(row => ({
       key: row.sessionId,
       title: `${t('common.open')}: ${sessionLabel(row.sessionId)}`,
       invoke: () => navigateSession(row.sessionId),
@@ -160,6 +175,5 @@ export function useUsageWork(
   const openSession = React.useCallback((sessionId: string) => {
     void sessionCommands.invoke(sessionId);
   }, [sessionCommands.invoke]);
-  return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession,
-    machineNames: selectedMachineNames };
+  return { sessionLabel, openSession, machinePlace, machineNames: selectedMachineNames };
 }

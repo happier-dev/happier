@@ -182,49 +182,12 @@ export function resolveQuotaSummaryStrategy(raw: unknown): ConnectedServiceQuota
     return raw === 'min_remaining' ? 'min_remaining' : 'primary';
 }
 
-export function useConnectedServiceQuotaSummaries(options?: Readonly<{
-    /** `cache_only`: summarise what this launch already read; never start a read (a hub). */
-    fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy;
-}>): Readonly<{
-    summaries: ReadonlyArray<ConnectedServiceQuotaSummary>;
-    /** Profile and last-known catalog identity, independent of whether any quota meters have arrived. */
-    accountIdentities: ReadonlyArray<ConnectedServiceQuotaAccountPresentation>;
-    /**
-     * Connected accounts with no usage to show, each with why. A `cache_only` read claims nothing
-     * about an account it has not read.
-     */
-    accountsWithoutUsage: ReadonlyArray<ConnectedServiceAccountWithoutUsage>;
-    /** Accounts that need a new sign-in (their usage is not read), for the fix beside usage. */
-    accountsNeedingSignIn: ReadonlyArray<ConnectedServiceAccountNeedingSignIn>;
-    /** Keys and tokens that answered without any limit: counted, never listed as "unavailable". */
-    keysWithoutLimits: number;
-    /** Accounts a pool is using right now (summary keys). */
-    inUseAccountKeys: ReadonlySet<string>;
-    /**
-     * Each read account's provider-account usage record (summary key → record id), the server-minted
-     * binding to its subscription and usage resets (`useProviderAccountUsageSnapshots`); null on the
-     * legacy transport.
-     */
-    usageRecordIdsByKey: Readonly<Record<string, ProviderAccountUsageRecordId | null>>;
-    /** Current read activity, separate from an explicit provider-refresh operation. */
-    loadingByKey: Readonly<Record<string, boolean>>;
-    isRefreshing: boolean;
-    hasConnectedProfiles: boolean;
-    refreshableKeys: readonly string[];
-    refreshingByKey: Readonly<Record<string, boolean>>;
-    errorsByKey: Readonly<Record<string, string | null>>;
-    refresh(keys?: readonly string[]): Promise<void>;
-}> {
+function useConnectedServiceQuotaAccountModel() {
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const profile = useProfile((profile) => ({
         connectedAccountsV4: profile.connectedAccountsV4,
         connectedServicesV2: profile.connectedServicesV2,
-        connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
-    }), ['connectedAccountsV4', 'connectedServicesV2', 'connectedAccountGroupsV4']);
-    const quotaSettings = useSettingsValues([
-        'connectedServicesQuotaPinnedMeterIdsByKey',
-        'connectedServicesQuotaSummaryStrategyByKey',
-    ]);
+    }), ['connectedAccountsV4', 'connectedServicesV2']);
     const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
@@ -277,31 +240,15 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
         quotasEnabled,
     ]);
 
-    const {
-        profiles: connectedProfiles,
-        snapshotsByKey,
-        loadingByKey,
-        readByKey,
-        usageRecordIdsByKey,
-        refreshableKeys,
-        refreshingByKey,
-        errorsByKey,
-        refresh,
-    } = useConnectedServiceQuotaSnapshots(quotaProfileInputs, { fetchPolicy: options?.fetchPolicy });
-    const readsAccounts = (options?.fetchPolicy ?? 'poll') !== 'cache_only';
     // Identity is already Account data; feature/transport discovery only admits
     // quota reads. It cannot make a known account nameless before the first read.
     const identityProfiles = React.useMemo(() => normalizeConnectedServiceQuotaProfileRefs([
         ...profile.connectedAccountsV4.map(account => ({ ref: account.ref })),
-        ...connectedProfiles.filter(entry => entry.kind === 'legacy'),
-    ]), [profile.connectedAccountsV4, connectedProfiles]);
+        ...quotaProfileInputs.filter(entry => !('ref' in entry)),
+    ]), [profile.connectedAccountsV4, quotaProfileInputs]);
 
-    const { summaries, accountIdentities, accountsWithoutUsage, keysWithoutLimits } = React.useMemo(() => {
-        const next: ConnectedServiceQuotaSummary[] = [];
-        const accountIdentities: ConnectedServiceQuotaAccountPresentation[] = [];
-        const withoutUsage: ConnectedServiceAccountWithoutUsage[] = [];
-        let keysWithoutLimits = 0;
-        for (const entry of identityProfiles) {
+    const accountRows = React.useMemo(() => {
+        return identityProfiles.flatMap((entry) => {
             const summaryService = entry.kind === 'qualified'
                 ? resolveQualifiedSummaryService({
                     ref: entry.ref,
@@ -315,7 +262,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                     labelsByKey,
                     localizePluginText,
                 });
-            if (!summaryService) continue;
+            if (!summaryService) return [];
             const presentation = entry.kind === 'qualified'
                 ? profile.connectedAccountsV4.find((account) => (
                     account.ref.service.pluginId === entry.ref.service.pluginId
@@ -336,7 +283,80 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 email: presentation?.providerIdentity?.email ?? legacyProfile?.providerEmail ?? null,
                 accountId: summaryService.profileId,
             });
-            accountIdentities.push({ key: entry.key, ...summaryService, ...identity });
+            return [{ entry, summaryService, identity, isApiKey }];
+        });
+
+    }, [identityProfiles, labelsByKey, connectedServicesRegistrySnapshot.entries, localizePluginText,
+        profile.connectedAccountsV4, profile.connectedServicesV2]);
+    const accountIdentities = React.useMemo(() => accountRows.map(({ entry, summaryService, identity }) => ({
+        key: entry.key, ...summaryService, ...identity,
+    })), [accountRows]);
+    return { profile, quotasEnabled, accountTransport, quotaProfileInputs, accountRows, accountIdentities,
+        labelsByKey, connectedServicesRegistrySnapshot, localizePluginText };
+}
+
+/** Account labels subscribe to identity inputs only, independently of quota-cache publications. */
+export function useConnectedServiceAccountIdentities(): readonly ConnectedServiceQuotaAccountPresentation[] {
+    return useConnectedServiceQuotaAccountModel().accountIdentities;
+}
+
+export function useConnectedServiceQuotaSummaries(options?: Readonly<{
+    /** `cache_only`: summarise what this launch already read; never start a read (a hub). */
+    fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy;
+}>): Readonly<{
+    summaries: ReadonlyArray<ConnectedServiceQuotaSummary>;
+    /** Profile and last-known catalog identity, independent of whether any quota meters have arrived. */
+    accountIdentities: ReadonlyArray<ConnectedServiceQuotaAccountPresentation>;
+    /**
+     * Connected accounts with no usage to show, each with why. A `cache_only` read claims nothing
+     * about an account it has not read.
+     */
+    accountsWithoutUsage: ReadonlyArray<ConnectedServiceAccountWithoutUsage>;
+    /** Accounts that need a new sign-in (their usage is not read), for the fix beside usage. */
+    accountsNeedingSignIn: ReadonlyArray<ConnectedServiceAccountNeedingSignIn>;
+    /** Keys and tokens that answered without any limit: counted, never listed as "unavailable". */
+    keysWithoutLimits: number;
+    /** Accounts a pool is using right now (summary keys). */
+    inUseAccountKeys: ReadonlySet<string>;
+    /**
+     * Each read account's provider-account usage record (summary key → record id), the server-minted
+     * binding to its subscription and usage resets (`useProviderAccountUsageSnapshots`); null on the
+     * legacy transport.
+     */
+    usageRecordIdsByKey: Readonly<Record<string, ProviderAccountUsageRecordId | null>>;
+    /** Current read activity, separate from an explicit provider-refresh operation. */
+    loadingByKey: Readonly<Record<string, boolean>>;
+    isRefreshing: boolean;
+    hasConnectedProfiles: boolean;
+    refreshableKeys: readonly string[];
+    refreshingByKey: Readonly<Record<string, boolean>>;
+    errorsByKey: Readonly<Record<string, string | null>>;
+    refresh(keys?: readonly string[]): Promise<void>;
+}> {
+    const { profile, quotasEnabled, accountTransport, quotaProfileInputs, accountRows, accountIdentities,
+        labelsByKey, connectedServicesRegistrySnapshot, localizePluginText } = useConnectedServiceQuotaAccountModel();
+    const groups = useProfile(profile => profile.connectedAccountGroupsV4, ['connectedAccountGroupsV4']);
+    const quotaSettings = useSettingsValues([
+        'connectedServicesQuotaPinnedMeterIdsByKey',
+        'connectedServicesQuotaSummaryStrategyByKey',
+    ]);
+    const {
+        profiles: connectedProfiles,
+        snapshotsByKey,
+        loadingByKey,
+        readByKey,
+        usageRecordIdsByKey,
+        refreshableKeys,
+        refreshingByKey,
+        errorsByKey,
+        refresh,
+    } = useConnectedServiceQuotaSnapshots(quotaProfileInputs, { fetchPolicy: options?.fetchPolicy });
+    const readsAccounts = (options?.fetchPolicy ?? 'poll') !== 'cache_only';
+    const { summaries, accountsWithoutUsage, keysWithoutLimits } = React.useMemo(() => {
+        const next: ConnectedServiceQuotaSummary[] = [];
+        const withoutUsage: ConnectedServiceAccountWithoutUsage[] = [];
+        let keysWithoutLimits = 0;
+        for (const { entry, summaryService, identity, isApiKey } of accountRows) {
             if (!quotasEnabled || !connectedProfiles.some(profile => profile.key === entry.key)) continue;
             const snapshot = snapshotsByKey[entry.key];
             if (!snapshot || snapshot.meters.length === 0) {
@@ -396,21 +416,15 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                     : left.key.localeCompare(right.key);
             }),
             accountsWithoutUsage: withoutUsage,
-            accountIdentities,
             keysWithoutLimits,
         };
     }, [
-        connectedServicesRegistrySnapshot,
+        accountRows,
         connectedProfiles,
-        identityProfiles,
         quotasEnabled,
-        localizePluginText,
         loadingByKey,
-        profile.connectedAccountsV4,
-        profile.connectedServicesV2,
         readByKey,
         readsAccounts,
-        labelsByKey,
         quotaSettings.connectedServicesQuotaPinnedMeterIdsByKey,
         quotaSettings.connectedServicesQuotaSummaryStrategyByKey,
         snapshotsByKey,
@@ -452,7 +466,6 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
         });
     }, [accountTransport, connectedServicesRegistrySnapshot.entries, localizePluginText, profile.connectedAccountsV4, labelsByKey]);
 
-    const groups = profile.connectedAccountGroupsV4;
     const inUseAccountKeys = React.useMemo(() => new Set((groups ?? []).flatMap((group) => (
         group.activeConnectedAccountId
             ? [connectedServiceProfileKey({

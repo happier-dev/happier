@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
-import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
+import { useConnectedServiceAccountIdentities } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { presentConnectedAccountNames, presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { storage, useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useActiveMachineFacts, useMachineListForServerSelection } from '@/sync/domains/state/storage';
@@ -63,7 +63,7 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
   // A fresh `now` per render would rebuild the projection on every parent render; minute precision
   // is what the reset/stale wording shows.
   const minute = Math.floor(nowMs / 60_000);
-  const summaries = useConnectedServiceQuotaSummaries({ fetchPolicy: 'cache_only' });
+  const accountIdentities = useConnectedServiceAccountIdentities();
   const registry = useProjectedConnectedServicesRegistry();
   const baseProjection = React.useMemo(
     () => projectUsagePlans(quota, minute * 60_000, slice.pools, slice.sources),
@@ -89,12 +89,12 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
   const summaryByKey = React.useMemo(
     () =>
       new Map(
-        summaries.accountIdentities.map((summary) => [
+        accountIdentities.map((summary) => [
           accountKeyOf(summary.service, summary.profileId),
           summary,
         ]),
       ),
-    [summaries.accountIdentities],
+    [accountIdentities],
   );
   const serviceLabelOf = React.useCallback((account: UsagePlanAccount) => {
     // The catalog establishes identity independently of Usage read availability.

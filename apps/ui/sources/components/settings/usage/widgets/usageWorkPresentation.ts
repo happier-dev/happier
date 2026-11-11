@@ -105,6 +105,48 @@ export type UsageWorkSessionRow = MoneyDisplay & Readonly<{
   unallocatedReasons: readonly UsageWorkUnallocatedReason[];
 }>;
 
+export type UsageWorkSessionIdentity = Pick<UsageWorkSessionRow, 'sessionId' | 'machineIds' | 'lastObservedAtMs'>;
+type SessionIdentityAccumulator = { machines: Set<string>; lastObservedAtMs: number };
+
+function recordSessionIdentity(target: SessionIdentityAccumulator, contribution: UsageWorkAllocation['contribution']): void {
+  if (contribution.machineId) target.machines.add(contribution.machineId);
+  target.lastObservedAtMs = Math.max(target.lastObservedAtMs, contribution.observedAtMs);
+}
+
+function sessionIdentity(sessionId: string, row: SessionIdentityAccumulator): UsageWorkSessionIdentity {
+  return { sessionId, machineIds: sorted(row.machines), lastObservedAtMs: row.lastObservedAtMs };
+}
+
+type UsageWorkOutcomesPresentation = Readonly<{ kind: 'ready' }> | Readonly<{
+  kind: 'unavailable' | 'empty' | 'noPrs';
+  sessions: readonly UsageWorkSessionIdentity[];
+  machineIds: readonly string[];
+}>;
+
+/** Empty Outcomes consumes identities and evidence, never monetary or Project detail. */
+export function readUsageWorkOutcomesPresentation(work: UsageWorkProjection | undefined): UsageWorkOutcomesPresentation {
+  if (!work) return { kind: 'unavailable', sessions: [], machineIds: [] };
+  const sessions = new Map<string, SessionIdentityAccumulator>();
+  const machineIds = new Set<string>();
+  let allocatedOutcome = false;
+  let witnessed = false;
+  for (const row of work.allocations) {
+    const { contribution } = row;
+    if (contribution.machineId) machineIds.add(contribution.machineId);
+    if (contribution.sessionId) {
+      const identity = sessions.get(contribution.sessionId) ?? { machines: new Set<string>(), lastObservedAtMs: 0 };
+      recordSessionIdentity(identity, contribution);
+      sessions.set(contribution.sessionId, identity);
+      witnessed ||= row.evidence.length > 0;
+    }
+    allocatedOutcome ||= row.reason === 'allocated' && !!row.outcome;
+    if (sessions.size > 0 && (allocatedOutcome || witnessed)) return { kind: 'ready' };
+  }
+  return { kind: sessions.size === 0 ? 'empty' : 'noPrs',
+    // Empty presentations have no monetary ordering; retain first-observed Session identity order.
+    sessions: [...sessions].map(([id, identity]) => sessionIdentity(id, identity)), machineIds: [...machineIds] };
+}
+
 export type UsageWorkSummary = MoneyDisplay & Readonly<{
   total: number | null;
   allocated: number | null;
@@ -341,8 +383,7 @@ export function summarizeUsageWork(
         reasons: new Set(),
       };
       accumulate(session.amount, row, basis);
-      if (contribution.machineId) session.machines.add(contribution.machineId);
-      session.lastObservedAtMs = Math.max(session.lastObservedAtMs, contribution.observedAtMs);
+      recordSessionIdentity(session, contribution);
       if (contribution.agentId) session.agents.add(contribution.agentId);
       if (provider) session.providers.set(JSON.stringify(provider), provider);
       session.witnessed ||= row.evidence.length > 0;
@@ -421,9 +462,7 @@ export function summarizeUsageWork(
     .sort(byAmount);
   const sessions = [...sessionRows.entries()]
     .map(([sessionId, row]): UsageWorkSessionRow => ({
-      sessionId,
-      machineIds: sorted(row.machines),
-      lastObservedAtMs: row.lastObservedAtMs,
+      ...sessionIdentity(sessionId, row),
       amount: row.amount.amount,
       moneyBasis: row.amount.moneyBasis,
       agentIds: sorted(row.agents),

@@ -5,7 +5,7 @@ import { serializeProviderAccountUsageSnapshotMaterialV1 } from './providerAccou
 import { parseBuiltInLegacyProviderAccountUsageSnapshotV1 } from './legacyConnectedServiceCompatibility.js';
 export { ProviderAccountUsageHistoryCursorV1Schema, ProviderAccountUsageHistoryWitnessV1Schema } from './providerAccountUsagePrimitives.js';
 import { QualifiedProviderAccountUsageRecordResponseV4Schema } from './qualifiedConnectedAccountProjectionsV4.js';
-import { deriveProviderAccountUsagePace, deriveProviderAccountUsageUnusedCapacity, resolveProviderAccountUsagePaceWindow } from './deriveProviderAccountUsagePace.js';
+import { deriveProviderAccountUsagePace, deriveProviderAccountUsageUnusedCapacity, ProviderAccountUsageDerivationOperands, resolveProviderAccountUsagePaceWindow } from './deriveProviderAccountUsagePace.js';
 import type { UsagePacingTargetsV1Schema } from '../account/settings/usagePacingPreferencesV1.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import type { ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
@@ -30,17 +30,18 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
   const history = input.pageProjection ? getProviderAccountUsageQuotaHistoryV1(input) : input.appendHistory ? appendCoalescedHistory(input.history, input.appendHistory)
     : input.history && input.coalesceHistory ? coalesceHistory(input.history) : input.history;
   const snapshots = history?.entries.map(entry => entry.snapshot);
+  const operands = new ProviderAccountUsageDerivationOperands();
   const result: ConnectedServiceQuotaGetResultV1 = { source: input.input.source, current: input.current,
     ...(history ? { history } : {}), ...(input.pageFacts ? { pageFacts: input.pageFacts } : {}),
-    unusedCapacity: deriveProviderAccountUsageUnusedCapacity({ history: snapshots, partial: history?.nextCursor != null, nowMs: input.nowMs }),
-    pace: input.current?.meters.map(meter => ({ meterId: meter.meterId, value: deriveProviderAccountUsagePace({ snapshot: input.current!, meterId: meter.meterId, nowMs: input.nowMs, history: snapshots }) })) ?? [], targets: input.targets ?? [], waitingWork: input.waitingWork ?? { status: 'unavailable', reason: 'read_failed' } };
+    unusedCapacity: deriveProviderAccountUsageUnusedCapacity({ history: snapshots, partial: history?.nextCursor != null, nowMs: input.nowMs }, operands),
+    pace: input.current?.meters.map(meter => ({ meterId: meter.meterId, value: deriveProviderAccountUsagePace({ snapshot: input.current!, meterId: meter.meterId, nowMs: input.nowMs, history: snapshots }, operands) })) ?? [], targets: input.targets ?? [], waitingWork: input.waitingWork ?? { status: 'unavailable', reason: 'read_failed' } };
   // Current/history are already admitted by the record/page openers (or the
   // current-snapshot cache). Re-parsing them here clones the whole accumulated
   // history on every progressive page. Derived fields also stay typed; the
   // outward Action boundary validates serialized results.
   if (!input.input.projection) return result;
   const { history: _history, ...page } = result;
-  const pageFacts = input.pageFacts ?? getProviderAccountUsageQuotaPageFactsV1(result);
+  const pageFacts = input.pageFacts ?? getProviderAccountUsageQuotaPageFactsV1(result, operands);
   return { ...page, ...(pageFacts ? { pageFacts } : {}) };
 }
 

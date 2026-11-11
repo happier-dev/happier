@@ -29,7 +29,7 @@ import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/workt
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useActiveServerAccountScope, useWorkspaceRefs, useWorkspaceScmSummarySnapshot, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
-import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { resolveWorkspaceRefDisplayName, resolveWorkspaceRefDisplayNames } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { warmWorkspaceRepositoryDirectoryCache } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
 import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -265,10 +265,12 @@ function CheckoutsBody(props: Props): React.ReactElement {
     // Beside the page's main column this is a glance: this checkout, then the two that matter most (who needs
     // the person first), and the rest one press away. Array.sort is stable, so ties keep their listed order.
     // One label rule across this checkout, its worktrees and its other checkouts (QA-PROJECTS D19).
+    const displayNames = resolveWorkspaceRefDisplayNames(projectRefs);
+    const namesByRef = new Map(projectRefs.map((ref, index) => [ref, displayNames[index]!]));
     const labels = labelProjectCheckouts([
         { branch: snapshot?.branch.head ?? status(here)?.branch ?? null, folder: resolveWorkspaceRefDisplayName(checkout) },
         ...worktrees.map(worktree => ({ branch: worktree.branch ?? null, folder: resolveWorkspacePathBasenameV1(worktree.path) ?? worktree.path })),
-        ...others.map(ref => ({ branch: status(ref)?.branch ?? null, folder: resolveWorkspaceRefDisplayName(ref, projectRefs) })),
+        ...others.map(ref => ({ branch: status(ref)?.branch ?? null, folder: namesByRef.get(ref)! })),
     ]);
     const rows = [
         ...worktrees.map(worktree => ({ rank: needsYou(refAt(scope.machineId, worktree.path)), row: <WidgetGlanceRow key={worktree.path} testID={`${props.testID}.worktree:${worktree.id ?? worktree.path}`} mark="desktop"

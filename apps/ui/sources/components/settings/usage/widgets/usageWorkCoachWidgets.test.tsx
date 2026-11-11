@@ -50,6 +50,8 @@ import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema
 import { projectProviderAccountUsageQuotaReadV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
+import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 
 let actionHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let CommandWrapper: React.ComponentType<React.PropsWithChildren>;
@@ -1068,13 +1070,111 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('2493');
   });
 
-  it('outcomes with no PR evidence says so once instead of drawing a funnel that stops at its first step', async () => {
-    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
-    const screen = await renderScreen(
-      <UsageOutcomesWidget {...props} slice={{ ...slice, work: bare }} id="usage_outcomes" testID="outcomes" />,
-    );
+  it('skips monetary work for 3800 no-PR contributions while retaining the caption, retry and Session commands', async () => {
+    const navigation = vi.spyOn(router, 'push');
+    try {
+    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+      contributions: Array.from({ length: 3800 }, (_, index) => contribution(`bare-${index}`, `s${index % 2 + 1}`, `t${index}`)),
+      evidence: [],
+    }));
+    let moneyReads = 0;
+    for (const row of bare.allocations) Object.defineProperty(row.contribution.cost, 'reportedUsd', {
+      enumerable: true, get: () => { moneyReads++; return 3; },
+    });
+    const refresh = vi.fn(async () => {});
+    const caption = vi.fn();
+    const reader = React.createRef<ReturnType<typeof useOptionalCurrentUiContextReader>>();
+    function Outcomes() {
+      reader.current = useOptionalCurrentUiContextReader();
+      return <UsageOutcomesWidget {...props} model={{ refresh }} slice={{ ...slice, work: bare,
+        sources: [{ source: 'work', status: 'error' }] }} id="usage_outcomes" testID="outcomes" />;
+    }
+    const screen = await renderScreen(<WidgetFrameBodyCaptionContext.Provider value={caption}>
+      <Outcomes />
+    </WidgetFrameBodyCaptionContext.Provider>);
     expect(screen.findByTestId('outcomes.funnel')).toBeFalsy();
     expect(screen.findByTestId('outcomes.noPrs')).toBeTruthy();
+    expect(caption).toHaveBeenLastCalledWith(t('usage.board.work.outcomesCaption', { count: 0 }));
+    await act(async () => { await screen.findByType(SurfaceFreshnessLine).props.action.onPress(); });
+    expect(refresh).toHaveBeenCalledOnce();
+    const commands = reader.current!.readCurrentUiContext()!.commands.filter(row => row.title.startsWith(`${t('common.open')}: `));
+    expect(commands).toHaveLength(2);
+    const routes: string[] = [];
+    for (const command of commands) {
+      await act(async () => {
+        expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command.id },
+          context: { surface: 'agent' } })).toMatchObject({ ok: true });
+      });
+      routes.push(new URL(String(navigation.mock.calls.at(-1)?.[0]), 'https://usage.test').pathname);
+    }
+    expect(routes.sort()).toEqual(['/session/s1/usage', '/session/s2/usage']);
+    expect(moneyReads, 'the no-PR presentation has no monetary consumer').toBe(0);
+    } finally { navigation.mockRestore(); }
+  });
+
+  it('keeps the no-Sessions state ahead of the no-PR state', async () => {
+    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+      contributions: [{ ...contribution('sessionless', 's1', 't1'), sessionId: null }], evidence: [],
+    }));
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: bare }}
+      id="usage_outcomes" testID="outcomes" />);
+    expect(screen.findByTestId('outcomes.empty')).toBeTruthy();
+    expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
+    expect(screen.findByTestId('outcomes.funnel')).toBeFalsy();
+  });
+
+  it('keeps empty Outcomes Session command labels private and updates retained Machine names when inventory arrives', async () => {
+    const previous = storage.getState();
+    const serverId = actionHome!.homes.work!.id;
+    const sessions = ['s1', 's2'].map((id, index) => createSessionListRenderableSessionFixture({ id, metadata: {
+      name: 'Retained session', path: '/work', host: `Retained host ${index + 1}`, machineId: `machine-${index + 1}`,
+    } }));
+    storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: { [serverId]: null },
+      machineListStatusByServerId: { [serverId]: 'error' },
+      sessionListRowsByServerId: { [serverId]: Object.fromEntries(sessions.map(session => [session.id, session])) } });
+    storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+    storage.getState().setSessionTagAssignmentsOptimistic(serverId, 's1', ['private']);
+    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: sessions.map((session, index) => ({
+      ...contribution(`retained-${index}`, session.id, 't1'), machineId: `machine-${index + 1}`,
+      observedAtMs: 1_700_000_000_000 + index * 900_000,
+    })), evidence: [] }));
+    const Wrapper = ({ children }: React.PropsWithChildren) => <CommandWrapper>{children}
+      <UsageOutcomesWidget {...props} serverId={serverId} slice={{ ...slice, work: bare }} id="usage_outcomes" testID="retained-outcomes" />
+    </CommandWrapper>;
+    const hook = await renderHook(() => useOptionalCurrentUiContextReader(), { wrapper: Wrapper });
+    const commandTitles = () => hook.getCurrent()!.readCurrentUiContext()!.commands
+      .filter(row => row.title.startsWith(`${t('common.open')}: `)).map(row => row.title);
+    try {
+      expect(commandTitles()).toHaveLength(2);
+      expect(commandTitles().some(title => title.includes('Retained host 1'))).toBe(true);
+      expect(commandTitles().some(title => title.includes('Retained host 2'))).toBe(true);
+      await act(async () => { setScreenSharingPrivacyActive(true); });
+      expect(commandTitles()).toContain(`${t('common.open')}: ${t('session.untitled')}`);
+      expect(commandTitles().some(title => title.includes('Retained host 1'))).toBe(false);
+      await act(async () => { setScreenSharingPrivacyActive(false); });
+      const machines = ['machine-1', 'machine-2'].map((id, index) => {
+        const machine = createMachineFixture({ id });
+        return { ...machine, metadata: { ...machine.metadata!, displayName: `Current computer ${index + 1}` } };
+      });
+      await act(async () => { storage.getState().applyMachines(machines); });
+      expect(commandTitles().some(title => title.includes('Current computer 1'))).toBe(true);
+      expect(commandTitles().some(title => title.includes('Current computer 2'))).toBe(true);
+      expect(commandTitles().some(title => title.includes('Retained host'))).toBe(false);
+    } finally { setScreenSharingPrivacyActive(false); await hook.unmount(); storage.setState(previous, true); }
+  });
+
+  it('keeps witnessed ambiguous PRs in the ready funnel without an allocated PR', async () => {
+    const ambiguous = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+      contributions: [contribution('ambiguous', 's1', 't1')],
+      evidence: [evidence('s1', 't1', 1), evidence('s1', 't1', 2)],
+    }));
+    expect(ambiguous.outcomes).toHaveLength(0);
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: ambiguous }}
+      id="usage_outcomes" testID="outcomes" />);
+    expect(screen.findByType(OutcomeFunnel).props.steps).toMatchObject([
+      { id: 'sessions', value: 1 }, { id: 'witnessed', value: 1 },
+      { id: 'allocated', value: 0 }, { id: 'merged', value: 0 },
+    ]);
   });
 
   it('coach on Overview is the findings alone: no facts band, checks, digest or preferences', async () => {

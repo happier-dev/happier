@@ -12,9 +12,9 @@ import {
   useUsagePluginTheme,
   type UsageBodyProps,
 } from './usageBodyKit';
-import { useUsageWork } from './useUsageWork';
+import { useUsageWork, useUsageWorkSessionNavigation } from './useUsageWork';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
-import { partitionUsageWorkMoneyRows, type UsageWorkOutcomeRow } from './usageWorkPresentation';
+import { partitionUsageWorkMoneyRows, readUsageWorkOutcomesPresentation, type UsageWorkOutcomeRow } from './usageWorkPresentation';
 import {
   UsageWorkDisclosure,
   UsageWorkMarks,
@@ -47,24 +47,20 @@ export function UsageOutcomesWidget(props: UsageBodyProps) {
 
 /** Sessions → merged PRs, and the exact amount each linked PR consumed. A PR opens into its Sessions. */
 function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
-  const theme = useUsagePluginTheme();
-  const { theme: appTheme } = useUnistyles();
-  const { summary, format, cell, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
-    props.slice,
-    props.query,
-    props.serverId,
-  );
-  const disclosures = useUsageWorkDisclosures((summary?.outcomes ?? []).map(row => ({
-    id: row.key, title: usageWorkPullRequestTitle(row.outcome.pullRequest),
-  })));
-  useWidgetFrameBodyCaption(
-    summary
-      ? t('usage.board.work.outcomesCaption', {
-          count: summary.outcomes.length,
-        })
-      : null,
-  );
-  if (!summary)
+  const presentation = readUsageWorkOutcomesPresentation(props.slice.work);
+  return presentation.kind === 'ready'
+    ? <UsageOutcomesFacts {...props} />
+    : <UsageOutcomesEmpty {...props} presentation={presentation} />;
+}
+
+function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
+  presentation: Exclude<ReturnType<typeof readUsageWorkOutcomesPresentation>, Readonly<{ kind: 'ready' }>>;
+}>) {
+  const { presentation } = props;
+  useUsageWorkSessionNavigation(presentation.sessions, props.query, props.serverId, presentation.machineIds);
+  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' ? null
+    : t('usage.board.work.outcomesCaption', { count: 0 }));
+  if (presentation.kind === 'unavailable')
     return (
       <View style={styles.body}>
         <UsageBodyInsufficient
@@ -80,7 +76,7 @@ function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
         />
       </View>
     );
-  if (summary.sessions.length === 0)
+  if (presentation.kind === 'empty')
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
@@ -88,24 +84,36 @@ function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
         reason={t('usage.board.work.emptyReason')}
       />
     );
+  return (
+    <View style={styles.body} testID={`${props.testID}.outcomes`}>
+      <UsageBodyInsufficient
+        testID={`${props.testID}.noPrs`}
+        title={t('usage.board.work.noPrsTitle')}
+        reason={t('usage.board.work.noPrsReason')}
+      />
+      <UsageCoverageLine
+        slice={props.slice}
+        sources={['work']}
+        onRetry={props.model.refresh}
+        testID={`${props.testID}.coverage`}
+      />
+    </View>
+  );
+}
+
+function UsageOutcomesFacts(props: UsageBodyProps) {
+  const theme = useUsagePluginTheme();
+  const { theme: appTheme } = useUnistyles();
+  const { summary: projected, format, cell, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
+    props.slice, props.query, props.serverId,
+  );
+  // The presentation owner mounted facts only after admitting this Work population.
+  const summary = projected!;
+  const disclosures = useUsageWorkDisclosures(summary.outcomes.map(row => ({
+    id: row.key, title: usageWorkPullRequestTitle(row.outcome.pullRequest),
+  })));
+  useWidgetFrameBodyCaption(t('usage.board.work.outcomesCaption', { count: summary.outcomes.length }));
   const { funnel } = summary;
-  // Sessions with no PR evidence at all would draw a funnel that stops at its first step: the one honest empty state.
-  if (summary.outcomes.length === 0 && funnel.witnessed === 0)
-    return (
-      <View style={styles.body} testID={`${props.testID}.outcomes`}>
-        <UsageBodyInsufficient
-          testID={`${props.testID}.noPrs`}
-          title={t('usage.board.work.noPrsTitle')}
-          reason={t('usage.board.work.noPrsReason')}
-        />
-        <UsageCoverageLine
-          slice={props.slice}
-          sources={['work']}
-          onRetry={props.model.refresh}
-          testID={`${props.testID}.coverage`}
-        />
-      </View>
-    );
   const accent = usageSeriesColor(appTheme, 0);
   const byKey = new Map(summary.outcomes.map((row) => [row.key, row]));
   const moneyGroups = partitionUsageWorkMoneyRows(summary.outcomes, props.query.metric);

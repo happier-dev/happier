@@ -316,11 +316,31 @@ export function* reprojectUsageLeadersSteps(value: UsageAnalyticsQueryResponse, 
     if (countedDemand) for (const dimension of new Set<UsageLeaderDimension>([
         ...(rankingDemand!.breakdowns ?? []), ...(rankingDemand!.includeLeaders ? Object.values(dimensions) : []),
     ])) requestedRanks.set(dimension, yield* rank(countedDemand, dimension, rankingDemand!.topLimit));
+    // Client repricing has output-shaped demand too. Share the widest frontier
+    // for each dimension; labels and breakdown context still belong to outputs.
+    if (!rankingDemand && hasUsageEventCounts(contributions)) {
+        const limits = new Map<UsageLeaderDimension, number>();
+        const demand = (dimension: UsageLeaderDimension, entries: UsageLeader[] | undefined) => {
+            if (entries) limits.set(dimension, Math.max(limits.get(dimension) ?? 0, entries.length));
+        };
+        for (const key of Object.keys(dimensions) as (keyof typeof dimensions)[]) demand(dimensions[key], value.leaders?.[key]);
+        for (const [dimension, entries] of Object.entries(value.breakdowns ?? {})) demand(dimension as UsageLeaderDimension, entries);
+        for (const [dimension, limit] of limits) requestedRanks.set(dimension, yield* rank(contributions, dimension, limit));
+    }
+    const selectedRank = (entries: UsageLeader[], dimension: UsageLeaderDimension) => {
+        const labels = new Map(entries.map(entry => [entry.key, entry.label]));
+        return (requestedRanks.get(dimension) ?? []).slice(0, entries.length)
+            .map(entry => ({ ...entry, label: labels.get(entry.key) ?? entry.key }));
+    };
     let leaders = value.leaders && { ...value.leaders };
     if (countedDemand) {
         leaders = rankingDemand!.includeLeaders && contributions.length
             ? Object.fromEntries(Object.entries(dimensions).map(([key, dimension]) => [key, requestedRanks.get(dimension)])) : undefined;
-    } else if (leaders) for (const key of Object.keys(dimensions) as (keyof typeof dimensions)[]) leaders[key] = yield* project(leaders[key], contributions, dimensions[key]);
+    } else if (leaders) for (const key of Object.keys(dimensions) as (keyof typeof dimensions)[]) {
+        const entries = leaders[key];
+        leaders[key] = entries && requestedRanks.has(dimensions[key]) ? selectedRank(entries, dimensions[key])
+            : yield* project(entries, contributions, dimensions[key]);
+    }
     // A timeline partitions this query's selected money, not a sequence of new
     // day-scoped queries. Resolve overlap before bucketing: a whole reported
     // charge belongs to its observation time; covered earlier estimates are
@@ -348,8 +368,9 @@ export function* reprojectUsageLeadersSteps(value: UsageAnalyticsQueryResponse, 
         const entries = breakdowns[dimension];
         if (!entries) continue;
         if (hasUsageEventCounts(contributions)) {
-            breakdowns[dimension] = decorateUsageBreakdownList((yield* rank(contributions,
-                dimension, entries.length, new Map(entries.map(entry => [entry.key, entry.label])))) ?? [], contributions, dimension, entries);
+            const ranked = requestedRanks.has(dimension) ? selectedRank(entries, dimension)
+                : (yield* rank(contributions, dimension, entries.length, new Map(entries.map(entry => [entry.key, entry.label])))) ?? [];
+            breakdowns[dimension] = decorateUsageBreakdownList(ranked, contributions, dimension, entries);
         } else {
             incomplete = true;
             const grouped = groupLegacyContributions(contributions, dimension);

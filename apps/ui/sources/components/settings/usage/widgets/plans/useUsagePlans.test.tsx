@@ -39,6 +39,64 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); clearMachineRequestReachabilityForTest(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
 
+it('does no Plans render work for quota-cache publications when its displayed slice and account identities stay put', async () => {
+  const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+  const { resolveAuthCredentialsScopeKey } = await import('@/auth/storage/resolveAuthCredentialsScopeKey');
+  const { buildQualifiedQuotaSnapshotScopeKey, getQualifiedQuotaSnapshotEntry, loadQualifiedQuotaSnapshotOnce } =
+    await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+  const refs = Array.from({ length: 8 }, (_, i) => ({ service, accountId: `plan-${i}` }));
+  const profile = AccountProfileSchema.parse({ id: 'plans-local-subscription', connectedAccountsV4: refs.map(ref => ({
+    ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+    credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false,
+    configurationRevision: null, scopes: [], displayName: ref.accountId,
+  })) });
+  home = await serveAccountHomes({ homes: [{ key: 'plans', serverUrl: 'https://plans-local-subscription.test', accountId: profile.id, profile }],
+    route: request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } }));
+      if (request.path === '/v4/connect/qualified/quotas') return Response.json({ error: 'connect_quotas_not_found' }, { status: 404 });
+      return undefined;
+    } });
+  const server = home.homes.plans!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  const scope = { serverId: server.id, accountId: profile.id };
+  storage.setState({ profileScope: scope, settingsScope: scope, profile });
+  storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
+  const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+  await updateEffectiveHomeViewState(current => ({ ...current, activeTargetKind: 'server', activeTargetId: server.id }), { scope: 'device' });
+  const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+  await getServerFeaturesSnapshot({ serverId: server.id, force: true });
+  const query = normalizeUsageQuery({});
+  const slice = resolveUsagePageAggregation({ queries: [query], sources: refs.map(ref => ({
+    source: `quota:${JSON.stringify({ bindingKind: 'account', ref })}`, status: 'pending' as const,
+  })) }).results[0]!;
+  const refresh = async () => {};
+  let renders = 0;
+  const hook = await renderHook(() => { renders++; return useUsagePlans(slice, refresh); }, {
+    wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
+  });
+  try {
+    await flushHookEffects({ cycles: 20 });
+    expect(hook.getCurrent().projection.accounts).toHaveLength(8);
+    expect(home.requests.filter(request => request.path.includes('/quotas'))).toHaveLength(0);
+    const before = renders;
+    const basis = getActiveServerSnapshot();
+    for (const ref of refs) {
+      const context = { credentials, ref, serverBasis: { serverId: server.id, generation: basis.generation },
+        credentialScope: [server.id, String(basis.generation), resolveAuthCredentialsScopeKey(credentials)].join('\u0000') };
+      const key = buildQualifiedQuotaSnapshotScopeKey(context);
+      await act(async () => { loadQualifiedQuotaSnapshotOnce(key, context); });
+      await expect.poll(() => getQualifiedQuotaSnapshotEntry(key).read).toBe(true);
+    }
+    await flushHookEffects({ cycles: 20 });
+    expect(home.requests.filter(request => request.path.includes('/quotas'))).toHaveLength(8);
+    expect(renders - before, 'quota-cache updates do not change a slice-owned Plans body').toBe(0);
+    await act(async () => { storage.getState().applyProfile({ ...profile, connectedAccountsV4: profile.connectedAccountsV4.map((account, i) =>
+      i === 0 ? { ...account, displayName: 'Renamed plan' } : account) }); });
+    await expect.poll(() => hook.getCurrent().nameOf(hook.getCurrent().projection.accounts[0]!).title).toBe('Renamed plan');
+  } finally { await hook.unmount(); }
+});
+
 it.each([
   ['plan fit', true, false], ['quota only', false, false], ['admitted first mount', true, true],
 ] as const)('reads a persisted personal price on a fresh Plans Resource (%s) without label-driven quota demand', async (_surface, includeAccounting, admittedFirstMount) => {

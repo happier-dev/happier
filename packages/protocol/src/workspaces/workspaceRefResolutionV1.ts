@@ -107,7 +107,16 @@ export function createProjectAnchorOfKeyV1(
   refs: readonly WorkspaceRefV1[] | undefined,
   context: Pick<WorkspaceRefResolutionContextV1, 'normalizeServerId'> = {},
 ): (serverId: string, key: string) => string {
-  const home = context.normalizeServerId ?? ((value: string) => value.trim());
+  const normalizeServerId = context.normalizeServerId ?? ((value: string) => value.trim());
+  // This census and its lookups share one normalization per distinct Home identifier.
+  const homes = new Map<string, string>();
+  const home = (identifier: string) => {
+    const known = homes.get(identifier);
+    if (known !== undefined) return known;
+    const normalized = normalizeServerId(identifier);
+    homes.set(identifier, normalized);
+    return normalized;
+  };
   const anchors = new Set<string>();
   const anchorById = new Map<string, string>();
   for (const ref of refs ?? []) {
