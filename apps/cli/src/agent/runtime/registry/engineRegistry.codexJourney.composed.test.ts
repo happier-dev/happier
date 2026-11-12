@@ -8,7 +8,6 @@ import { afterAll, describe, expect, it, onTestFailed, vi } from 'vitest';
 
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
 import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
-import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createCodexForegroundConnectedAccountFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.codexConnectedServices.testkit';
 import { withRealForegroundAdmissionFixture } from '@/daemon/agentRuntime/foregroundAdmission.testkit';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -16,14 +15,13 @@ import { resolveBuiltInContributions } from '@/plugins/projection/registry/resol
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
-import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/utils/logger';
 import { withCodexNativeAttachFixture } from '../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
-import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture } from './engineRegistry/nativeAgentSession.testkit';
+import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture, createNativeAgentJourneyTranscriptFixture } from './engineRegistry/nativeAgentSession.testkit';
 
 afterAll(() => pluginReloadController.shutdown());
 
@@ -105,7 +103,7 @@ server.listen(endpoint.slice('unix://'.length));
                 }),
                 pluginIds: ['happier.agent.codex'],
             };
-            let session: ReturnType<typeof createMutableApiSessionClientFixture> | undefined;
+            let transcript: Awaited<ReturnType<typeof createNativeAgentJourneyTranscriptFixture>> | undefined;
             try {
                 await withRealForegroundAdmissionFixture({
                     createRuntime: ({ home, controller }) => createAdmittedPluginRuntimeFixture({
@@ -124,18 +122,20 @@ server.listen(endpoint.slice('unix://'.length));
                     const cliEnvironment = createEnvKeyScope([resolveAgentCliOverrideEnvKey('codex')]);
                     cliEnvironment.patch({ [resolveAgentCliOverrideEnvKey('codex')]: executable });
                     try {
+                        transcript = await createNativeAgentJourneyTranscriptFixture('codex');
+                        const session = transcript.client;
                         const dependencies = await account.dependenciesFor(foreground.runtime.registry, directory);
                         const prepareAndClaim = async (attemptId: string, vendorResumeId?: string) => {
                             const before = account.materializations.length;
                             const admission = await foreground.prepare({
-                                attemptId, sessionId: 'host-codex-composed', directory,
+                                attemptId, sessionId: session.sessionId, directory,
                                 connectedServices: account.connectedServices,
                                 ...(vendorResumeId ? { vendorResumeId } : {}),
                             }, dependencies);
                             if (!admission.ok) throw new Error(`Codex host admission refused: ${admission.error.code}`);
                             expect(account.materializations.length).toBeGreaterThan(before);
                             const claimed = await admission.prepared.claim({
-                                canonicalSessionId: 'host-codex-composed', httpPort: 40123,
+                                canonicalSessionId: session.sessionId, httpPort: 40123,
                                 foregroundSatisfiedProfileSecretRequirementNames: [],
                             });
                             if (!claimed.ok) throw new Error(`Codex host claim refused: ${claimed.error.code}`);
@@ -154,11 +154,6 @@ server.listen(endpoint.slice('unix://'.length));
                             diagnostics: [],
                         });
                         if (!resolution) throw new Error('Bundled Codex runtime is unavailable');
-                        session = createMutableApiSessionClientFixture({ overrides: {
-                            sessionId: 'host-codex-composed',
-                            rpcHandlerManager: createRpcHandlerManager({ scopePrefix: 'session', encryptionMode: 'plain',
-                                encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' }),
-                        } });
                         const runtimeParams = {
                             directory,
                             metadata: createTestMetadata({ path: directory }),
@@ -191,6 +186,7 @@ server.listen(endpoint.slice('unix://'.length));
                         const plan = await resolution.engineAdapter.runtimeCore.createSessionRuntime(sessionInput);
                         if (!plan.config.createSessionRuntime) throw new Error('Codex host Session factory is unavailable');
                         const created = await plan.config.createSessionRuntime(runtimeParams);
+                        const stopPublishing = transcript.observe(created.operations);
                         const events: unknown[] = [];
                         const unsubscribe = created.operations.subscribeRuntimeEvents(event => events.push(event));
                         let providerSessionId: string | null = null;
@@ -208,16 +204,37 @@ server.listen(endpoint.slice('unix://'.length));
                             expect(native.requests.find(request => request.method === 'turn/start')?.params.model).toBe('fixture-model');
                             expect(events).toEqual(expect.arrayContaining([
                                 expect.objectContaining({ kind: 'message-delta', text: 'CODEX_FIRST_REPLY' }),
+                                expect.objectContaining({ kind: 'tool-call', toolCallId: 'call_05549126603d410aa7c87203edded7aa' }),
+                                expect.objectContaining({ kind: 'tool-result', toolCallId: 'call_05549126603d410aa7c87203edded7aa' }),
                                 expect.objectContaining({ kind: 'turn-complete' }),
                             ]));
+                            await transcript.drain();
+                            expect(await transcript.readTranscript()).toEqual(expect.arrayContaining([
+                                expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({ content: expect.objectContaining({
+                                    data: expect.objectContaining({ type: 'tool-call', callId: 'call_05549126603d410aa7c87203edded7aa' }),
+                                }) }) } }),
+                                expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({ content: expect.objectContaining({
+                                    data: expect.objectContaining({ type: 'tool-result', callId: 'call_05549126603d410aa7c87203edded7aa' }),
+                                }) }) } }),
+                            ]));
+                            expect(await created.operations.updateSessionRuntimeConfig({ modelId: 'fixture-model-two' }))
+                                .toMatchObject({ status: 'applied' });
+                            await created.operations.sendTurnPrompt('stop this Codex turn', { localId: 'codex-stop-1', userMessageSeq: 2 });
+                            await vi.waitFor(() => expect(native.requests.filter(request => request.method === 'turn/start')).toHaveLength(2));
+                            await created.operations.cancelTurn();
+                            await created.operations.waitForTurnCompletion({ timeoutMs: 5_000 });
+                            expect(native.requests.filter(request => request.method === 'turn/interrupt')).toHaveLength(1);
+                            expect(native.requests.filter(request => request.method === 'turn/start')[1]?.params.model).toBe('fixture-model-two');
+                            expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'turn-cancelled' })]));
                         } finally {
                             unsubscribe();
+                            stopPublishing();
                             await created.operations.resetOrDisposeRuntime();
                         }
                         if (!providerSessionId) throw new Error('Codex did not publish its provider thread');
                         await initial.prepared.cleanup();
                         const resume = await prepareAndClaim('codex-resume', providerSessionId);
-                        expect(native.requests.filter(request => request.method === 'turn/start')).toHaveLength(1);
+                        expect(native.requests.filter(request => request.method === 'turn/start')).toHaveLength(2);
                         const resumedEnvironment = { ...native.launchEnvironment.values, ...resume.claimed.environment };
                         const resumedPlan = await resolution.engineAdapter.runtimeCore.createSessionRuntime({
                             ...sessionInput, resume: providerSessionId,
@@ -229,10 +246,11 @@ server.listen(endpoint.slice('unix://'.length));
                         });
                         if (!resumedPlan.config.createSessionRuntime) throw new Error('Codex resume factory is unavailable');
                         const resumed = await resumedPlan.config.createSessionRuntime(runtimeParams);
+                        const stopPublishingResumed = transcript.observe(resumed.operations);
                         const resumedEvents: unknown[] = [];
                         const unsubscribeResumed = resumed.operations.subscribeRuntimeEvents(event => resumedEvents.push(event));
                         try {
-                            await resumed.operations.sendTurnPrompt('second Codex question', { localId: 'codex-input-2', userMessageSeq: 2 });
+                            await resumed.operations.sendTurnPrompt('second Codex question', { localId: 'codex-input-2', userMessageSeq: 3 });
                             await resumed.operations.waitForTurnCompletion({ timeoutMs: 5_000 });
                             expect(resumed.operations.readSessionIdentity().sessionId).toBe(providerSessionId);
                             expect(resumedEvents).toEqual(expect.arrayContaining([
@@ -245,9 +263,10 @@ server.listen(endpoint.slice('unix://'.length));
                             expect(native.requests.filter(request => request.method === 'thread/resume').map(request => request.params.threadId))
                                 .toEqual([providerSessionId]);
                             expect(native.requests.filter(request => request.method === 'turn/start').map(request => request.params.threadId))
-                                .toEqual([providerSessionId, providerSessionId]);
+                                .toEqual([providerSessionId, providerSessionId, providerSessionId]);
                         } finally {
                             unsubscribeResumed();
+                            stopPublishingResumed();
                             await resumed.operations.resetOrDisposeRuntime();
                         }
                     } finally { cliEnvironment.restore(); }
@@ -256,10 +275,14 @@ server.listen(endpoint.slice('unix://'.length));
                 const nativeError = await readFile(nativeErrorPath, 'utf8').catch(() => 'No native process error captured');
                 throw new Error(`${error instanceof Error ? error.message : String(error)}; ${nativeError}`, { cause: error });
             } finally {
-                await session?.close();
+                await transcript?.close();
                 await account.cleanup();
             }
         }, {
+            modelListResponse: { data: [
+                { id: 'fixture-model', model: 'fixture-model', displayName: 'Fixture Model', isDefault: true },
+                { id: 'fixture-model-two', model: 'fixture-model-two', displayName: 'Fixture Model Two', isDefault: false },
+            ], nextCursor: null },
             onTurnStart: async ({ socket, params, turnId }) => {
                 // Vendor persistence is part of this native-process boundary.
                 // Host resume admission still runs the real declared-file hook.
@@ -268,8 +291,27 @@ server.listen(endpoint.slice('unix://'.length));
                 await writeFile(join(nativeHome, 'sessions', `rollout-2026-11-10T00-00-00-${String(params.threadId)}.jsonl`),
                     `${JSON.stringify({ type: 'session_meta', payload: { id: params.threadId } })}\n`);
                 const input = Array.isArray(params.input) ? params.input : [];
-                prompts.push(input.flatMap((item: unknown) => item && typeof item === 'object'
-                    && 'text' in item && typeof item.text === 'string' ? [item.text] : []).join(''));
+                const prompt = input.flatMap((item: unknown) => item && typeof item === 'object'
+                    && 'text' in item && typeof item.text === 'string' ? [item.text] : []).join('');
+                if (prompt === 'stop this Codex turn') return;
+                prompts.push(prompt);
+                if (prompts.length === 1) {
+                    // Captured Codex 0.162.1 code-mode exec call and result.
+                    const callId = 'call_05549126603d410aa7c87203edded7aa';
+                    for (const item of [{
+                        type: 'custom_tool_call', id: 'ctc_0c52db4d85e61039016ad3fc2889ec81918f3a156ec4635a81',
+                        status: 'completed', call_id: callId, name: 'exec',
+                        input: 'const r = await tools.exec_command({cmd:"pwd", max_output_tokens:1000});\ntext(JSON.stringify(r));\n',
+                        internal_chat_message_metadata_passthrough: { turn_id: 'turn-1', create_time: 1792277544.5442138 },
+                    }, {
+                        type: 'custom_tool_call_output', id: 'ctco_01a14c10-ff7f-78b1-82ba-7f0e8c706b09',
+                        call_id: callId, output: [
+                            { type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' },
+                            { type: 'input_text', text: '{"chunk_id":"34b657","wall_time_seconds":0,"exit_code":101,"original_token_count":74,"output":"\\nthread \'main\' (1453173) panicked at linux-sandbox/src/launcher.rs:60:13:\\nbubblewrap is unavailable: no system bwrap was found on PATH and no bundled codex-resources/bwrap binary was found next to the Codex executable\\nnote: run with RUST_BACKTRACE=1 environment variable to display a backtrace\\n"}' },
+                        ],
+                        internal_chat_message_metadata_passthrough: { turn_id: 'turn-1', create_time: 1792277544.831558 },
+                    }]) socket.send(JSON.stringify({ method: 'rawResponseItem/completed', params: { threadId: params.threadId, turnId, item } }));
+                }
                 const delta = prompts.length === 1 ? 'CODEX_FIRST_REPLY' : `CODEX_RESUMED_REPLY:${prompts.join('|')}`;
                 socket.send(JSON.stringify({ method: 'item/agentMessage/delta', params: {
                     threadId: params.threadId, turnId, itemId: `reply-${turnId}`, delta,

@@ -1,0 +1,78 @@
+{
+  "producer": {
+    "name": "OpenCode",
+    "version": "1.19.0",
+    "capturedAt": "2026-11-12T22:29:42.657Z",
+    "runtime": "agent-qa-providers r1112u",
+    "fixture": "qa-a-acp-alpha",
+    "sanitization": "Session identity anonymized."
+  },
+  "initialize": {
+    "protocolVersion": 1,
+    "agentCapabilities": {
+      "loadSession": true,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "promptCapabilities": {
+        "embeddedContext": true,
+        "image": true
+      },
+      "sessionCapabilities": {
+        "close": {},
+        "fork": {},
+        "list": {},
+        "resume": {}
+      }
+    },
+    "authMethods": [
+      {
+        "description": "Run `opencode auth login` in the terminal",
+        "name": "Login with opencode",
+        "id": "opencode-login"
+      }
+    ],
+    "agentInfo": {
+      "name": "OpenCode",
+      "version": "1.19.0"
+    }
+  },
+  "newSession": {
+    "sessionId": "configured-provider-session",
+    "configOptions": [
+      {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "ollama/qwen2.5:3b",
+        "options": [
+          {
+            "value": "ollama/qwen2.5:3b",
+            "name": "Ollama (nl1 local)/Qwen2.5 3B (local CPU)"
+          }
+        ]
+      },
+      {
+        "id": "mode",
+        "name": "Session Mode",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "build",
+        "options": [
+          {
+            "value": "build",
+            "name": "build",
+            "description": "The default agent. Executes tools based on configured permissions."
+          },
+          {
+            "value": "plan",
+            "name": "plan",
+            "description": "Plan mode. Disallows all edit tools."
+          }
+        ]
+      }
+    ]
+  }
+}

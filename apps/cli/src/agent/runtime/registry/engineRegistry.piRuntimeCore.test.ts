@@ -1,6 +1,7 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import { accountSettingsParse } from '@happier-dev/protocol';
 import { withRealForegroundAdmissionFixture } from '@/daemon/agentRuntime/foregroundAdmission.testkit';
 
 import axios from 'axios';
@@ -23,29 +24,38 @@ import { createResolvedContributionRegistry } from '../../../plugins/projection/
 import { resolveBuiltInContributions } from '../../../plugins/projection/registry/resolveBuiltInContributions';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
+import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
-import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture } from './engineRegistry/nativeAgentSession.testkit';
+import { bindNativeAgentLaunchPreparationFixture, createNativeAgentJourneyTranscriptFixture, createNativeAgentLaunchPreparationFixture } from './engineRegistry/nativeAgentSession.testkit';
 
 const PI_BACKEND_ID = 'pi';
 const PI_PLUGIN_ID = 'happier.agent.pi';
 
 describe('engineRegistry (pi runtimeCore)', () => {
   afterAll(() => pluginReloadController.shutdown());
-  it('prepares the catalog-selected Pi launch, replies, and resumes the native conversation with its exact model', async () => {
+  it('prepares the catalog-selected Pi launch, changes model, stops, and resumes the native boundary fixture', async () => {
     await withTempDir('happier-pi-native-consumer-', async (directory) => {
       const capturePath = join(directory, 'pi-capture.json');
       const conversationPath = join(directory, 'pi-conversation.json');
+      // OS-boundary fixture recorded from Pi 1.5.0, QA A's own Muse source,
+      // r1112u. Provenance and the anonymization are retained with the frames.
+      const recorded = JSON.parse(readFileSync(new URL(
+        '../../../../../../packages/plugins/pi/src/agent/transcripts/__fixtures__/pi-rpc-own-muse-1.5.0.json', import.meta.url,
+      ), 'utf8')) as { toolCall: Record<string, unknown>; toolResult: Record<string, unknown>; settled: Record<string, unknown> };
+      const recordedTool = { call: recorded.toolCall, result: recorded.toolResult };
       const agentSource = (launchDirectory: string) => `
         const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
         const { join } = require('node:path');
-        if (process.argv.includes('--version')) { process.stdout.write('1.0.0'); process.exit(0); }
+        if (process.argv.includes('--version')) { process.stdout.write('1.5.0'); process.exit(0); }
 
         const capturePath = ${JSON.stringify(capturePath)};
         const conversationPath = ${JSON.stringify(conversationPath)};
         const resumed = process.argv.includes('--session');
         if (resumed && process.argv[process.argv.indexOf('--session') + 1] !== 'provider-pi-native-1') process.exit(81);
         if (resumed && !existsSync(conversationPath)) process.exit(82);
-        const conversation = resumed ? JSON.parse(readFileSync(conversationPath, 'utf8')) : [];
+        const retained = resumed ? JSON.parse(readFileSync(conversationPath, 'utf8')) : { prompts: [], tool: null };
+        const conversation = retained.prompts;
+        const recordedTool = ${JSON.stringify(recordedTool)};
         let model = { provider: 'anthropic', id: 'native-default' };
         const decoder = new TextDecoder();
         let buffer = '';
@@ -87,17 +97,34 @@ describe('engineRegistry (pi runtimeCore)', () => {
                 data: { sessionId: 'provider-pi-native-1', model },
               });
             } else if (request.type === 'prompt') {
+              if (request.message === 'wait for stop') {
+                send({ type: 'response', id: request.id, command: request.type, success: true });
+                send({ type: 'agent_start' });
+                continue;
+              }
               conversation.push(request.message);
+              if (!resumed) retained.tool = recordedTool;
               const root = join(process.env.PI_CODING_AGENT_DIR, 'sessions', ${JSON.stringify(PI_SESSION_FILE_STORE_DESCRIPTOR_V1.encodeCwdSubdir(launchDirectory))});
               mkdirSync(root, { recursive: true });
               writeFileSync(join(root, '2026-11-10T00-00-00_provider-pi-native-1.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'provider-pi-native-1', timestamp: '2026-11-10T00:00:00.000Z', cwd: process.cwd() }) + '\\n');
-              writeFileSync(conversationPath, JSON.stringify(conversation));
+              writeFileSync(conversationPath, JSON.stringify(retained));
               send({ type: 'response', id: request.id, command: request.type, success: true });
               send({ type: 'agent_start' });
+              if (!resumed) {
+                send(recordedTool.call);
+                send(recordedTool.result);
+              }
               send({
                 type: 'message_update',
-                assistantMessageEvent: { type: 'text_delta', delta: resumed ? 'PI_NATIVE_RESUMED:' + conversation.join('|') : 'PI_NATIVE_OK' },
+                assistantMessageEvent: { type: 'text_delta', delta: resumed ? 'PI_NATIVE_RESUMED:' + conversation.join('|') + ':' + retained.tool.result.result.content[0].text : 'PI_NATIVE_OK' },
               });
+              // Pi 1.5.0 emits agent_end without willRetry, then agent_settled.
+              // The captured messages are omitted because this boundary tests
+              // streamed tool projection rather than full vendor history import.
+              send({ type: 'agent_end', messages: [] });
+              send(${JSON.stringify(recorded.settled)});
+            } else if (request.type === 'abort') {
+              send({ type: 'response', id: request.id, command: request.type, success: true });
               send({ type: 'agent_end', willRetry: false });
             } else {
               if (request.type === 'set_model') model = { provider: request.provider, id: request.modelId };
@@ -150,6 +177,13 @@ describe('engineRegistry (pi runtimeCore)', () => {
           },
         }) }, async foreground => {
           envScope.patch({ [resolveAgentCliOverrideEnvKey(PI_BACKEND_ID)]: systemToolExecutablePath });
+          const rawSettings = { connectedServicesProviderStateSharingSettingsV1: {
+            v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' },
+            byAgentId: { pi: { stateMode: 'shared' } },
+            acknowledgedRisksByAgentId: { pi: { sharedStatePrivacy: true } },
+          } };
+          setActiveAccountSettingsSnapshot({ source: 'cache', settings: accountSettingsParse(rawSettings), rawSettings,
+            settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
           const accountGet = vi.mocked(axios.get).getMockImplementation();
           if (!accountGet) throw new Error('Selected Account HTTP boundary unavailable');
           const nativeLaunch = await createNativeAgentLaunchPreparationFixture();
@@ -165,15 +199,17 @@ describe('engineRegistry (pi runtimeCore)', () => {
             return path.startsWith('/v4/connect/') || path.startsWith('/v2/connect/') || path === '/v1/account/encryption'
               ? accountGet(url, config) : nativeLaunch.homeGet(url, config);
           });
+          const transcript = await createNativeAgentJourneyTranscriptFixture('pi');
+          onTestFinished(() => transcript.close());
           const runtimeRegistry = bindNativeAgentLaunchPreparationFixture(foreground.runtime.registry, nativeLaunch);
           const dependencies = await account.dependenciesFor(runtimeRegistry, launchDirectory);
           const prepareAndClaim = async (attemptId: string, selection?: NonNullable<Parameters<typeof foreground.prepare>[0]>['selection'], vendorResumeId?: string) => {
-            const admission = await foreground.prepare({ attemptId, sessionId: 'host-pi-native-1', directory: launchDirectory,
+            const admission = await foreground.prepare({ attemptId, sessionId: transcript.sessionId, directory: launchDirectory,
               agentId: PI_BACKEND_ID, backendTarget: { kind: 'backend', backendId: PI_BACKEND_ID },
               connectedServices: account.connectedServices, selection, ...(vendorResumeId ? { vendorResumeId } : {}),
             }, dependencies);
             if (!admission.ok) throw new Error(`Pi foreground admission refused: ${admission.error.code}: ${JSON.stringify(admission.error)}`);
-            const claimed = await admission.prepared.claim({ canonicalSessionId: 'host-pi-native-1', httpPort: 40123, foregroundSatisfiedProfileSecretRequirementNames: [] });
+            const claimed = await admission.prepared.claim({ canonicalSessionId: transcript.sessionId, httpPort: 40123, foregroundSatisfiedProfileSecretRequirementNames: [] });
             if (!claimed.ok) throw new Error(`Pi foreground claim refused: ${claimed.error.code}`);
             expect(claimed.environment.PI_CODING_AGENT_DIR).toBeTruthy();
             return { prepared: admission.prepared, claimed };
@@ -200,18 +236,7 @@ describe('engineRegistry (pi runtimeCore)', () => {
             ...launchAuthentication(), modelSelection,
             isolation: { env: { HAPPIER_PI_THINKING_LEVEL: 'high' } },
           });
-          const session = createMutableApiSessionClientFixture({
-            overrides: {
-              sessionId: 'host-pi-native-1',
-              rpcHandlerManager: createRpcHandlerManager({
-                scopePrefix: 'session',
-                encryptionKey: new Uint8Array(32),
-                encryptionVariant: 'legacy',
-                encryptionMode: 'plain',
-              }),
-            },
-          });
-          onTestFinished(() => session.close());
+          const session = transcript.client;
           const runtimeParams = {
             directory: launchDirectory,
             metadata: createTestMetadata({ path: launchDirectory }),
@@ -241,6 +266,7 @@ describe('engineRegistry (pi runtimeCore)', () => {
           const created = await plan.config.createSessionRuntime!(runtimeParams);
           const runtimeEvents: unknown[] = [];
           const unsubscribe = created.operations.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
+          const stopTranscript = transcript.observe(created.operations);
 
           try {
             const initialCapture = JSON.parse(await readFileEventually(capturePath, { timeoutMs: 5_000 })) as {
@@ -277,21 +303,63 @@ describe('engineRegistry (pi runtimeCore)', () => {
                 text: 'PI_NATIVE_OK',
               }),
               expect.objectContaining({ kind: 'turn-complete' }),
+              expect.objectContaining({ kind: 'tool-call', toolCallId: 'pi-recorded-bash' }),
+              expect.objectContaining({ kind: 'tool-result', toolCallId: 'pi-recorded-bash' }),
             ]));
+            // This is the simulated vendor file, not host-loop transcript persistence.
+            expect(JSON.parse(readFileSync(conversationPath, 'utf8'))).toEqual({ prompts: ['hello'], tool: recordedTool });
+            await transcript.drain();
+            expect(await transcript.readTranscript()).toEqual(expect.arrayContaining([
+              expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({ content: expect.objectContaining({
+                data: expect.objectContaining({ type: 'tool-call', callId: 'pi-recorded-bash' }),
+              }) }) } }),
+              expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({ content: expect.objectContaining({
+                data: expect.objectContaining({ type: 'tool-result', callId: 'pi-recorded-bash' }),
+              }) }) } }),
+            ]));
+            await expect(created.operations.updateSessionRuntimeConfig({ modelId: 'anthropic/claude-sonnet-5' }))
+              .resolves.toMatchObject({ status: 'applied' });
+            const native = created.nativeRuntime as typeof created.nativeRuntime & { models?: AgentSessionModelsSource };
+            await expect.poll(() => native.models?.read().currentModelId).toBe('anthropic/claude-sonnet-5');
+            await created.operations.sendTurnPrompt('wait for stop', { localId: 'pi-stop-input', userMessageSeq: 2 });
+            await created.operations.cancelTurn();
+            await created.operations.waitForTurnCompletion({ timeoutMs: 5_000 });
+            expect(runtimeEvents).toEqual(expect.arrayContaining([
+              expect.objectContaining({ kind: 'turn-cancelled', cause: 'user' }),
+            ]));
+            const stopped = JSON.parse(await readFileEventually(capturePath, { timeoutMs: 5_000 })) as {
+              commands: string[]; requests: Array<Readonly<Record<string, unknown>>>;
+            };
+            expect(stopped.commands).toContain('abort');
+            expect(stopped.requests.filter(request => request.type === 'set_model')).toEqual([
+              expect.objectContaining({ provider: 'anthropic', modelId: 'claude-opus-5' }),
+              expect.objectContaining({ provider: 'anthropic', modelId: 'claude-sonnet-5' }),
+            ]);
           } finally {
             unsubscribe();
+            stopTranscript();
             await created.operations.resetOrDisposeRuntime();
           }
 
           await launch.prepared.cleanup();
-          launch = await prepareAndClaim('pi-resume', modelSelection, 'provider-pi-native-1');
+          // Native discovery must retain the first Session in the cold shared
+          // home after the materialized launch retires, independently of the
+          // fixture's separate conversation response file.
+          const retainedNativeSession = join(nativeHome, 'sessions',
+            PI_SESSION_FILE_STORE_DESCRIPTOR_V1.encodeCwdSubdir(launchDirectory),
+            '2026-11-10T00-00-00_provider-pi-native-1.jsonl');
+          expect(JSON.parse((await readFileEventually(retainedNativeSession, { timeoutMs: 5_000 })).trim()))
+            .toMatchObject({ type: 'session', id: 'provider-pi-native-1', cwd: launchDirectory });
+          const retainedSelection = { ...modelSelection,
+            ref: { ...modelSelection.ref, modelId: 'anthropic/claude-sonnet-5' } };
+          launch = await prepareAndClaim('pi-resume', retainedSelection, 'provider-pi-native-1');
           const resumedPlan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({
             credentials: account.credentials,
             directory: launchDirectory,
             backendTarget: { kind: 'backend', backendId: PI_BACKEND_ID },
             resume: 'provider-pi-native-1',
             permissionMode: 'safe-yolo',
-            ...launchAuthentication(), modelSelection,
+            ...launchAuthentication(), modelSelection: retainedSelection,
           });
           const resumed = await resumedPlan.config.createSessionRuntime!(runtimeParams);
           const resumedEvents: unknown[] = [];
@@ -306,8 +374,11 @@ describe('engineRegistry (pi runtimeCore)', () => {
             };
             expect(resumedCapture.args).toEqual(expect.arrayContaining(['--session', 'provider-pi-native-1']));
             expect(resumedCapture.selectedAccountMaterialized).toBe(true);
+            expect(resumedCapture.requests.filter(request => request.type === 'set_model')).toEqual([
+              expect.objectContaining({ provider: 'anthropic', modelId: 'claude-sonnet-5' }),
+            ]);
             expect(resumedEvents).toEqual(expect.arrayContaining([
-              expect.objectContaining({ kind: 'message-delta', text: 'PI_NATIVE_RESUMED:hello|follow up' }),
+              expect.objectContaining({ kind: 'message-delta', text: 'PI_NATIVE_RESUMED:hello|follow up:RECORDED_PI_TEXT' }),
               expect.objectContaining({ kind: 'turn-complete' }),
             ]));
           } finally {
@@ -370,9 +441,11 @@ describe('engineRegistry (pi runtimeCore)', () => {
               session: rejectedSession,
               logPrefix: '[Pi native rejected initial model]',
             }),
-          })).rejects.toThrow(
-            'Pi rejected its initial session configuration (pi_configuration_failed)',
-          );
+          })).rejects.toMatchObject({
+            code: 'agent_startup_failed',
+            details: { failureCause: { phase: 'client_start', providerErrorCode: 'pi_configuration_failed',
+              providerErrorMessage: expect.stringContaining('model unavailable') } },
+          });
           const rejectedCapture = JSON.parse(
             await readFileEventually(capturePath, { timeoutMs: 5_000 }),
           ) as { commands: string[] };

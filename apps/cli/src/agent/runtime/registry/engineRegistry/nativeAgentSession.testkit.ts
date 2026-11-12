@@ -10,6 +10,67 @@ import { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import { createRuntimeTranscriptProjector } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
+import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { ACPProvider } from '@/api/session/sessionMessageTypes';
+
+/** The production transcript publisher and Home writer, with only transport substituted. */
+export async function createNativeAgentJourneyTranscriptFixture(provider: ACPProvider) {
+    const { createProtectedFirstInputHomeHarness } = await import('@/testkit/backends/protectedFirstInputHome.composed.testkit');
+    const previousFetch = globalThis.fetch;
+    const previousGet = vi.isMockFunction(axios.get) ? vi.mocked(axios.get).getMockImplementation() : axios.get.bind(axios);
+    const previousPost = vi.isMockFunction(axios.post) ? vi.mocked(axios.post).getMockImplementation() : axios.post.bind(axios);
+    if (!previousGet || !previousPost) throw new Error('Journey Account HTTP boundaries are unavailable');
+    const home = await createProtectedFirstInputHomeHarness();
+    try {
+        const fixture = await home.createSession('', { enqueueImmediately: false });
+        const homeGet = vi.mocked(axios.get).getMockImplementation();
+        const homePost = vi.mocked(axios.post).getMockImplementation();
+        if (!homeGet || !homePost) throw new Error('Journey transcript HTTP boundaries are unavailable');
+        vi.mocked(axios.get).mockImplementation((url, ...args) => {
+            const path = new URL(String(url)).pathname;
+            return path === '/v1/account/encryption' || path.startsWith(`/v2/sessions/${fixture.sessionId}`)
+                || path === `/v1/sessions/${fixture.sessionId}/messages`
+                ? homeGet(url, ...args) : previousGet(url, ...args);
+        });
+        vi.mocked(axios.post).mockImplementation((url, ...args) => new URL(String(url)).pathname.startsWith(`/v2/sessions/${fixture.sessionId}/pending`)
+            ? homePost(url, ...args) : previousPost(url, ...args));
+        const homeFetch = globalThis.fetch;
+        // The Home features response must not intercept native hook HTTP.
+        globalThis.fetch = (input, init) => new URL(String(input)).pathname === '/v1/features'
+            ? homeFetch(input, init) : previousFetch(input, init);
+        const project = createRuntimeTranscriptProjector();
+        const bridge = createKeyedStreamedTranscriptBridge({ provider, createSessionForStream: () => fixture.client });
+        let projection = Promise.resolve();
+        return {
+            ...fixture,
+            // Deliberately compose the publisher, not a substitute host loop.
+            // runSessionLoopLifecycle's subscription wiring is a separate boundary.
+            observe(runtime: RuntimeTurnOperations) {
+                return runtime.subscribeRuntimeEvents(event => {
+                    const priorProjection = projection;
+                    projection = project({ session: fixture.client, provider, event,
+                        runtimeMessageDeltaBridge: bridge, priorProjection }).then(() => undefined);
+                    void projection.catch(() => undefined);
+                });
+            },
+            drain: () => projection,
+            async close() {
+                try { await projection; }
+                finally {
+                    bridge.clear();
+                    try { await fixture.close(); }
+                    finally { globalThis.fetch = previousFetch; await home.close(); }
+                }
+            },
+        };
+    } catch (error) {
+        globalThis.fetch = previousFetch;
+        await home.close();
+        throw error;
+    }
+}
 
 /** Real captured requester and Project preparation, with only Home/OS boundaries supplied by the installed fixture. */
 export async function createNativeAgentLaunchPreparationFixture() {

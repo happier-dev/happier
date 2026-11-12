@@ -1,0 +1,43 @@
+{
+  "producer": {
+    "name": "Pi",
+    "version": "1.5.0",
+    "capturedAt": "2026-11-12T22:31:50.564Z",
+    "runtime": "agent-qa-providers r1112u",
+    "fixture": "QA A own Muse meta/muse-spark-1.2; bash pwd",
+    "sanitization": "Native tool identity and workspace text anonymized."
+  },
+  "toolCall": {
+    "type": "tool_execution_start",
+    "toolCallId": "pi-recorded-bash",
+    "toolName": "bash",
+    "args": {
+      "command": "pwd"
+    }
+  },
+  "toolResult": {
+    "type": "tool_execution_end",
+    "toolCallId": "pi-recorded-bash",
+    "toolName": "bash",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "RECORDED_PI_TEXT"
+        }
+      ],
+      "structuredContent": {
+        "output": "RECORDED_PI_TEXT\n",
+        "truncated": false,
+        "exit_code": 0,
+        "wall_time_seconds": 0
+      }
+    },
+    "isError": false,
+    "durationMs": 22
+  },
+  "settled": {
+    "type": "agent_settled",
+    "aborted": false
+  }
+}

@@ -85,16 +85,19 @@ function createCredentials(): StoredCredentials {
   };
 }
 
-function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-agent.mjs'): string {
+function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-agent.mjs', recorded?: {
+  initialize: Record<string, unknown>; newSession: Record<string, unknown>;
+}): string {
   return writeAcpTestAgentScript({
     dir,
     fileName,
     source: `
-      import { writeFileSync } from 'node:fs';
+      import { existsSync, readFileSync, writeFileSync } from 'node:fs';
       import path from 'node:path';
       import { fileURLToPath } from 'node:url';
 
       const here = path.dirname(fileURLToPath(import.meta.url));
+      const conversationPath = path.join(here, 'conversation.json');
       const observed = { pid: process.pid, scriptPath: fileURLToPath(import.meta.url), env: { ...process.env }, methods: [], loadedSessionIds: [], configurationChanges: [] };
       const persist = () => writeFileSync(
         path.join(here, 'observed.json'),
@@ -120,16 +123,16 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
           observed.methods.push(request.method);
           persist();
           if (request.method === 'initialize') {
-            ok(request.id, {
+            ok(request.id, ${recorded ? JSON.stringify(recorded.initialize) : `{
               protocolVersion: 1,
               agentCapabilities: { loadSession: true },
               authMethods: [],
-            });
+            }`});
           } else if (request.method === 'session/new') {
-            ok(request.id, { sessionId: '${PROVIDER_SESSION_ID}',
+            ok(request.id, ${recorded ? JSON.stringify(recorded.newSession) : `{ sessionId: '${PROVIDER_SESSION_ID}',
               modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'review', name: 'Review' }, { id: 'explicit-mode', name: 'Explicit' }] },
               models: { currentModelId: 'provider-default', availableModels: [{ modelId: 'provider-default', name: 'Default' }, { modelId: 'registry-model', name: 'Registry' }, { modelId: 'explicit-model', name: 'Explicit' }] },
-            });
+            }`});
           } else if (request.method === 'session/set_mode' || request.method === 'session/set_model') {
             observed.configurationChanges.push({ method: request.method, ...request.params });
             persist();
@@ -137,8 +140,20 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
           } else if (request.method === 'session/load') {
             observed.loadedSessionIds.push(request.params.sessionId);
             persist();
+            if (existsSync(conversationPath)) {
+              observed.retainedConversation = JSON.parse(readFileSync(conversationPath, 'utf8'));
+              persist();
+            }
             ok(request.id, {});
           } else if (request.method === 'session/prompt') {
+            const prompt = request.params.prompt.filter((block) => block.type === 'text').map((block) => block.text).join('');
+            if (prompt === 'hello configured backend') {
+              writeFileSync(conversationPath, JSON.stringify({ prompt, tool: { id: 'configured-read-1', result: 'project facts' } }));
+              send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: request.params.sessionId,
+                update: { sessionUpdate: 'tool_call_update', toolCallId: 'configured-read-1', status: 'completed',
+                  kind: 'read', title: 'Read project', rawInput: { path: 'README.md' },
+                  content: [{ type: 'content', content: { type: 'text', text: 'project facts' } }] } } });
+            }
             send({
               jsonrpc: '2.0',
               method: 'session/update',
@@ -146,7 +161,9 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
                 sessionId: request.params.sessionId,
                 update: {
                   sessionUpdate: 'agent_message_chunk',
-                  content: { type: 'text', text: 'configured reply' },
+                  content: { type: 'text', text: prompt === 'hello resumed backend' && observed.retainedConversation
+                    ? 'configured reply after ' + observed.retainedConversation.prompt + ' and ' + observed.retainedConversation.tool.result
+                    : 'configured reply' },
                 },
               },
             });
@@ -175,6 +192,7 @@ function readObserved(dir: string): Readonly<{
   env: Record<string, string>;
   methods: string[];
   loadedSessionIds: string[];
+  retainedConversation?: { prompt: string; tool: { id: string; result: string } };
   configurationChanges: readonly Readonly<{ method: string; sessionId: string; modeId?: string; modelId?: string }>[];
 }> {
   return JSON.parse(readFileSync(path.join(dir, 'observed.json'), 'utf8'));
@@ -241,12 +259,12 @@ function setConfiguredAcpAccountSettings(scriptPath: string): void {
   });
 }
 
-function setConfiguredNativeDefaults() {
+function setConfiguredNativeDefaults(defaultMode = 'review', defaultModel = 'registry-model') {
   const active = getActiveAccountSettingsSnapshot()!;
   if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
   commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
     catalog: { ...active.acpCatalog, revision: 5, record: { ...active.acpCatalog.record,
-      definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, defaultMode: 'review', defaultModel: 'registry-model' })),
+      definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, defaultMode, defaultModel })),
     } } });
 }
 
@@ -662,9 +680,14 @@ describe('Account-configured ACP composed Session journey', () => {
     });
   });
 
-  it('creates, streams, and terminates one configured ACP turn through the canonical composer and host launch custody', async () => {
+  it('creates, stops, and resumes the configured ACP boundary fixture with its recorded native advertisement', async () => {
     await withTempDir('happier-configured-acp-composed-create-', async (dir) => {
-      setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
+      // Actual OpenCode 1.19.0 ACP results from qa-a-acp-alpha on r1112u.
+      // Its real turn failed, so tool and load responses below remain constructed.
+      const recorded = JSON.parse(readFileSync(new URL(
+        '../../../acp/testkit/opencode119.producerFrames.json', import.meta.url,
+      ), 'utf8')) as { initialize: Record<string, unknown>; newSession: Record<string, unknown> };
+      setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir, 'configured-acp-agent.mjs', recorded));
 
       const resolution = await resolveContributedConfiguredRuntime(BACKEND_ID);
       expect(resolution?.agent.identity).toEqual({ pluginId: PLUGIN_MANIFEST.id, localId: CUSTOM_ACP_ID });
@@ -704,13 +727,55 @@ describe('Account-configured ACP composed Session journey', () => {
             .map((event) => event.text)
             .join(''),
         ).toContain('configured reply');
+        expect(events).toEqual(expect.arrayContaining([
+          expect.objectContaining({ kind: 'tool-call', toolCallId: 'configured-read-1' }),
+          expect.objectContaining({ kind: 'tool-result', toolCallId: 'configured-read-1' }),
+        ]));
+        expect(JSON.parse(readFileSync(path.join(dir, 'conversation.json'), 'utf8'))).toEqual({
+          prompt: 'hello configured backend', tool: { id: 'configured-read-1', result: 'project facts' },
+        });
+        await runtime.deliverInput(runtimeId, { text: 'wait for cancellation' }, { localId: 'configured-stop-input' });
+        await waitForCondition(() => events.filter(event => event.kind === 'input-accepted').length === 2, {
+          timeoutMs: 15_000, intervalMs: 10, label: 'configured ACP Stop input accepted',
+        });
+        await runtime.cancel(runtimeId);
+        await waitForCondition(() => events.some(event => event.kind === 'turn-cancelled'), {
+          timeoutMs: 15_000, intervalMs: 10, label: 'configured ACP Stop settled',
+        });
       } finally {
         await runtime.dispose();
         unsubscribe?.();
       }
       expect(events.filter((event) => ['turn-complete', 'turn-failed', 'turn-cancelled'].includes(event.kind))).toEqual([
         expect.objectContaining({ kind: 'turn-complete' }),
+        expect.objectContaining({ kind: 'turn-cancelled', cause: 'user' }),
       ]);
+      await expectAcpChildExited(readObserved(dir).pid);
+      setConfiguredNativeDefaults('build', 'ollama/qwen2.5:3b');
+      const resumed = createComposedRuntime(await resolveContributedConfiguredRuntime(BACKEND_ID), dir);
+      const resumedEvents: AgentSessionRuntimeEvent[] = [];
+      const stopResumed = resumed.subscribeRuntimeEvents?.(event => { resumedEvents.push(event); });
+      try {
+        const { runtimeId } = await resumed.provisionRuntime({ resumeRuntimeId: PROVIDER_SESSION_ID });
+        await resumed.deliverInput(runtimeId, { text: 'hello resumed backend' }, { localId: 'configured-resume-input' });
+        await waitForCondition(() => resumedEvents.some(event => event.kind === 'turn-complete'), {
+          timeoutMs: 15_000, intervalMs: 10, label: 'configured ACP retained turn-complete',
+        });
+        expect(readObserved(dir)).toMatchObject({
+          loadedSessionIds: [PROVIDER_SESSION_ID],
+          retainedConversation: { prompt: 'hello configured backend', tool: { id: 'configured-read-1', result: 'project facts' } },
+          // Both requested defaults are already current in the recorded advertisement.
+          configurationChanges: [],
+        });
+        expect(readObserved(dir).methods).not.toContain('session/new');
+        expect(resumedEvents).toEqual(expect.arrayContaining([
+          expect.objectContaining({ kind: 'message-delta', text: 'configured reply after hello configured backend and project facts' }),
+          expect.objectContaining({ kind: 'turn-complete' }),
+        ]));
+      } finally {
+        await resumed.dispose();
+        stopResumed?.();
+      }
       await expectAcpChildExited(readObserved(dir).pid);
     });
   }, 40_000);
