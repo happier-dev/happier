@@ -17,8 +17,8 @@ it('offers only the return notification without a last report and fills the glob
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://offline-prompts.example.test', serverIdentityId: serverId });
     onTestFinished(() => connection.dispose());
     const machine = createMachineFixture({ id: 'machine-offline-prompts', active: false, activeAt: 1 });
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true,
-        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
     const screen = await renderScreen(<MachineResourcesAskBlock serverId={serverId} machineId={machine.id} machineName="Laptop" />);
     const list = () => screen.root.findAll(node => node.type === Reflect.get(HubComposerSuggestionList, 'type'))[0]!;
     expect(screen.root.findAllByType(NewSessionEmbeddedHostProvider)).toHaveLength(0);
@@ -30,7 +30,7 @@ it('offers only the return notification without a last report and fills the glob
         const testId = `hub-composer.suggestion.${suggestion.id}`;
         expect(screen.findByTestId(testId)?.props.disabled).not.toBe(true);
         await screen.pressByTestIdAsync(testId);
-        expect(routePush).toHaveBeenLastCalledWith({ pathname: '/new', params: {
+        expect(routePush.mock.lastCall?.[0]).toEqual({ pathname: '/new', params: {
             draftId: expect.any(String), draftServerId: scope.serverId, draftAccountId: scope.accountId,
         } });
         const route = routePush.mock.lastCall![0] as { params: { draftId: string } };
@@ -46,7 +46,8 @@ it('offers only the return notification without a last report and fills the glob
     }
     expect(storage.getState().sessions).toEqual({});
     expect(rpc).not.toHaveBeenCalled();
-    await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...machine, active: true, activeAt: Date.now() }] } }));
+    await act(async () => publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope,
+        [{ ...machine, active: true, activeAt: Date.now() }]));
     await act(async () => list().props.onFill({ prompt: 'Inspect the current report', placement: { serverId, machineId: machine.id } }));
     const host: NewSessionEmbeddedHost = screen.root.findByType(NewSessionEmbeddedHostProvider).props.host;
     expect(host.params.prompt).toBe('Inspect the current report');
@@ -59,8 +60,8 @@ it('does not seed an offline machine alert prompt into another Home’s active A
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://active-home.example.test', serverIdentityId: 'srv_active_home' });
     onTestFinished(() => connection.dispose());
     const machine = createMachineFixture({ id: 'foreign-machine', active: false, activeAt: 1 });
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true,
-        machineListByServerId: { 'srv_foreign_home': [machine] }, machineListStatusByServerId: { 'srv_foreign_home': 'idle' } });
+    await publishMachineInventoryForTest({ ...captureActiveServerAccountScopeLifetime()!.scope, serverId: 'srv_foreign_home' }, [machine]);
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
     const screen = await renderScreen(<MachineResourcesAskBlock serverId="srv_foreign_home" machineId={machine.id} machineName="Studio" />);
     const list = screen.root.findAll(node => node.type === Reflect.get(HubComposerSuggestionList, 'type'))[0]!;
     const suggestion = list.props.suggestions.find((entry: { kind: string }) => entry.kind === 'notifyWhenBack');
@@ -87,6 +88,7 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 await loadSyncSingletonForTests();
 const { HubComposerSuggestionList } = await import('@/components/hub/composer/suggestions/HubComposerSuggestions');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
 const { machineStorageStore } = await import('@/sync/domains/machines/storage/machineStorageStore');
 const { machineProcessesStore } = await import('@/sync/domains/machines/processes/machineProcessesStore');
@@ -110,13 +112,13 @@ it('keeps the presented Ask launch model quiet across unrelated resource publica
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://ask-tick-locality.example.test', serverIdentityId: serverId });
     onTestFinished(() => connection.dispose());
     const sampledAt = Date.now();
-    const machine = createMachineFixture({ id: 'ask-tick-locality', active: true, activeAt: sampledAt, daemonStateVersion: 1,
+    const machine = createMachineFixture({ id: 'ask-tick-locality', active: true, activeAt: sampledAt, presenceProtocolVersion: 1, daemonStateVersion: 1,
       keyBasis: { dataEncryptionKey: null, metadataVersion: 1, daemonStateVersion: 1 },
       daemonState: { contributionRegistryProjectionRevision: 1 }, metadata: {
         ...createMachineFixture().metadata!, resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, guard: { memoryGuard: { enabled: false } } }),
     } });
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true, machines: { [machine.id]: machine },
-        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
     let at = sampledAt;
     let memoryPressure: 'calm' | 'elevated' = 'calm';
     let diskAvailableBytes = 50_000_000_000;
@@ -236,14 +238,16 @@ it('recovers the mounted Ask composer from canonical presence without requiring 
     const serverId = 'srv_presence';
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://presence.example.test', serverIdentityId: serverId });
     onTestFinished(() => connection.dispose());
-    const machine = createMachineFixture({ id: 'machine-presence', active: false, activeAt: 1 });
-    storage.setState({ machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const machine = createMachineFixture({ id: 'machine-presence', active: false, activeAt: 1, presenceProtocolVersion: 1 });
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
     const screen = await renderScreen(<MachineResourcesAskBlock serverId={serverId} machineId={machine.id} machineName="Laptop" />);
     const composers = () => screen.root.findAllByType(NewSessionEmbeddedHostProvider);
     expect(composers()).toHaveLength(0);
-    await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...machine, active: true, activeAt: Date.now() }] } }));
+    await act(async () => publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope,
+        [{ ...machine, active: true, activeAt: Date.now() }]));
     expect(composers()).toHaveLength(1);
-    await act(async () => storage.setState({ machineListByServerId: { [serverId]: [machine] } }));
+    await act(async () => publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope,
+        [{ ...machine, activeAt: Date.now() }]));
     expect(composers()).toHaveLength(0);
     await screen.unmount();
 });
@@ -254,7 +258,7 @@ it('starts Ask on the page machine and home folder before intent, independently 
     onTestFinished(() => connection.dispose());
     const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() });
     const homeDir = machine.metadata?.homeDir;
-    storage.setState({ machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
     const screen = await renderScreen(<MachineResourcesAskBlock serverId={serverId} machineId="machine-a" machineName="Laptop" />);
     expect(rpc).not.toHaveBeenCalled();
     const host: NewSessionEmbeddedHost = screen.root.findByType(NewSessionEmbeddedHostProvider).props.host;
@@ -329,9 +333,9 @@ it('uses warmed Storage and Processes facts without extra reads and suppresses u
         ...createMachineFixture().metadata!, resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, guard: { memoryGuard: { enabled: true } } }),
     } });
     const existingSession = createSessionFixture({ id: 'existing-warmed-ask', serverId });
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true, machines: { [machine.id]: machine },
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true,
         sessions: { [existingSession.id]: existingSession },
-        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' },
         settings: { ...storage.getState().settings, featureToggles: { ...storage.getState().settings.featureToggles, automations: false } } });
     const accountId = captureActiveServerAccountScopeLifetime()!.scope.accountId;
     const storageReport = HappierStorageSummaryV1Schema.parse({ revision: 1, sizedAt: 1, volumes: [], categories: [
@@ -388,9 +392,8 @@ it('mounts Ask with a real warmed summary and reads calm from canonical attentio
         resources: { v: 1, vitals: { state: 'reporting' },
             host: { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 }, attention: { level: 'calm', reasons: [] } },
     } });
-    // This fixture supplies an already-hydrated Account snapshot, as screen testkits do.
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true, machines: { [machine.id]: machine },
-        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
     rpc.mockResolvedValue({ state: 'reporting', sample: {
         v: 1, sampledAt, intervalMs: 15_000, cpu: { reported: true, busyPct: 20 },
         memory: { reported: true, totalBytes: 100, availableBytes: 80, usedBytes: 20, pressure: { level: 'calm', source: 'psi' } },
