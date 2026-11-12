@@ -10,7 +10,7 @@ import { acquireAccountChangePublicationLocksInTx, enqueueAccountChangePublicati
 import { withdrawPublicProfileInTx } from '@/app/account/profile/publicProfileWithdrawal';
 import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { resolveCurrentMachineRecipientAccountIdsInTx } from "@/app/machines/machineAccess";
-import { applyMachineAccessImpactsInTx, captureMachineAccessImpactsInTx } from "@/app/machines/machineAccessEffects";
+import { applyMachineAccessImpactsInTx, captureMachineAccessImpactsInTx, readMachineAccessGrantsForAccountErasureInTx } from "@/app/machines/machineAccessEffects";
 import { eventRouter } from "@/app/events/eventRouter";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import {
@@ -648,17 +648,12 @@ async function readAccountErasureScopeInTx(tx: Tx, accountId: string) {
         readDiscussionAccessGrantsForAccountErasureInTx(tx, accountId),
         tx.session.findMany({ where: { accountId }, select: { id: true } }),
         readSessionResponsibilityRemovalSessionIdsInTx(tx, accountId),
-        tx.machine.findMany({ where: { OR: [
-            { accountId },
-            { accountGrants: { some: { OR: [{ accountId }, { createdByAccountId: accountId }] } } },
-            { teamGrants: { some: { createdByAccountId: accountId } } },
-            { groupGrants: { some: { createdByAccountId: accountId } } },
-        ] }, select: { id: true } }),
+        readMachineAccessGrantsForAccountErasureInTx(tx, accountId),
     ]);
     // Physical deletion cascades owned Machines and received/authored grants.
     // Admit their current audience before lifecycle locks, even when a foreign
     // grant creator no longer has access to the Machine it once shared.
-    const machineIds = machines.map(machine => machine.id).sort();
+    const machineIds = machines.sort();
     const machineAccountIds = [...new Set((await Promise.all(machineIds.map(machineId =>
         resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)))).flat())].sort();
     const ownedSessionIds = ownedSessions.map(session => session.id);

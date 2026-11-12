@@ -1184,11 +1184,10 @@ export async function setSessionAccessContextInTx(
 }
 
 /** Entry discovery and cleanup share the authored-or-received retained-share predicate. */
-export function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accountId: string) {
-    return tx.sessionShare.findMany({
+export async function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accountId: string) {
+    const shares = await tx.sessionShare.findMany({
         where: {
             OR: [{ sharedByUserId: accountId }, { sharedWithUserId: accountId }],
-            session: { accountId: { not: accountId } },
         },
         select: {
             id: true,
@@ -1198,6 +1197,9 @@ export function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accountId: 
         },
         orderBy: [{ sessionId: "asc" }, { id: "asc" }],
     });
+    // Filter only this Account's grant results: a relational owner inequality
+    // lets PostgreSQL drive the join from unrelated Home Sessions instead.
+    return shares.filter(share => share.session.accountId !== accountId);
 }
 
 /**

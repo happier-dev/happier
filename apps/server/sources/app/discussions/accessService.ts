@@ -1,3 +1,5 @@
+import { readDiscussionAccessGrantsForAccountErasureInTx } from "./accountErasureGrants";
+export { readDiscussionAccessGrantsForAccountErasureInTx } from "./accountErasureGrants";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { isDeepStrictEqual } from "node:util";
 import { createCanonicalJsonSigningInput } from "@happier-dev/protocol/crypto/canonicalJson";
@@ -648,14 +650,6 @@ export async function reconcileDiscussionGrantAudienceForTeamsInTx(tx: Tx, input
         const previous = [...new Set([...row.readStates.map(state => state.accountId), ...input.additionalAccountIds ?? []])];
         await reconcileDiscussionGrantAudienceInTx(tx, row.id, previous);
     }
-}
-
-/** Discovery and physical cleanup consume the same retained grant predicates. */
-export function readDiscussionAccessGrantsForAccountErasureInTx(tx: Tx, accountId: string) {
-    return tx.discussion.findMany({ where: { OR: [
-        { ownerAccountId: accountId }, { accountGrants: { some: { OR: [{ accountId }, { createdByAccountId: accountId }] } } },
-        { teamGrants: { some: { createdByAccountId: accountId } } }, { groupGrants: { some: { createdByAccountId: accountId } } },
-    ] }, select: { id: true, ownerAccountId: true } });
 }
 
 /** Account erasure preserves other people's grants while retiring its own authority and private state. */
