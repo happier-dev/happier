@@ -1,3 +1,5 @@
+import { warnFirstPartyRetentionObservationUnavailable } from './retentionWarning.js';
+export { warnFirstPartyRetentionObservationUnavailable } from './retentionWarning.js';
 import { rm } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -19,11 +21,6 @@ const VERSION_PRUNE_MAX_ATTEMPTS = 6;
 const VERSION_PRUNE_RETRY_DELAY_MS = 25;
 const RETRYABLE_VERSION_PRUNE_ERROR_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM', 'EACCES']);
 
-export function warnFirstPartyRetentionObservationUnavailable(onWarning?: (message: string) => void): void {
-  const message = 'Skipped older payload cleanup because ps/lsof could not establish whether versions are in use; older versions were retained.';
-  if (onWarning) onWarning(message);
-  else process.stderr.write(`[happier] ${message}\n`);
-}
 
 function isRetryableVersionPruneError(error: unknown): boolean {
   const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : null;

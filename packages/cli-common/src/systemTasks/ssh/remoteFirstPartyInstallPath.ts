@@ -2,7 +2,7 @@ import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
 import { resolveRetainedVersionIds } from '../../firstPartyRuntime/retentionPolicy.js';
 import { FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS } from '../../firstPartyRuntime/versionUse.js';
-import { warnFirstPartyRetentionObservationUnavailable } from '../../firstPartyRuntime/pruneRetainedVersions.js';
+import { warnFirstPartyRetentionObservationUnavailable } from '../../firstPartyRuntime/retentionWarning.js';
 import { compareVersions } from '../../update/compareVersions.js';
 import { FIRST_PARTY_INSTALL_HOME_ENV_KEY, assertValidFirstPartyVersionId } from '../../firstPartyRuntime/installLayoutContract.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
