@@ -13,7 +13,7 @@ export function readNativeStartupFailureDetail(error: unknown): Readonly<{
   const text = (value: unknown): string | undefined => {
     if (typeof value !== 'string') return undefined;
     // Redact before truncating, so a cut cannot hide the end of a credential.
-    const safe = (projectPluginFailureMessage(value).split(/[\r\n]/u, 1)[0] ?? '').trim();
+    const safe = projectPluginFailureMessage(value).replace(/[\r\n]+/gu, ' ').trim();
     return safe ? safe.slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) : undefined;
   };
   const seen = new Set<object>();

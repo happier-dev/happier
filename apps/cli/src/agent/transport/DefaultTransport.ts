@@ -72,6 +72,12 @@ export class DefaultTransport implements TransportHandler {
     if (!trimmed) return { message: null, suppress: true };
 
     const lower = trimmed.toLowerCase();
+    // ACP request-handler dumps include the request as well as the failure.
+    // The matching JSON-RPC response owns the error code and message; treating
+    // its stderr echo as terminal races it and can publish request content.
+    if (lower.startsWith('error handling request {')) {
+      return { message: null, suppress: false };
+    }
     const outputFailure = classifyProviderOutputFailure(trimmed);
 
     // During long-running investigations, keep stderr as diagnostics but avoid noisy UI errors.

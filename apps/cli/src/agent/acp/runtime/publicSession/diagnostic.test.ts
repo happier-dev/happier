@@ -31,7 +31,7 @@ it('preserves a more specific native phase and reason instead of replacing them'
 });
 
 
-it('carries a Gemini gateway refusal through ACP decoding and transcript publication, then recovers', async () => {
+it.each([false, true])('carries a multiline backend refusal through ACP and transcript publication, then recovers (request dump=%s)', async requestDump => {
   await withTempDir('gemini-acp-refusal-', async directory => {
     // Only the external native process and transcript persistence are substituted.
     const script = writeAcpTestAgentScript({ dir: directory, fileName: 'gemini.mjs', source: `
@@ -43,8 +43,12 @@ it('carries a Gemini gateway refusal through ACP decoding and transcript publica
         if (r.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: { loadSession: true } };
         if (r.method === 'session/new') result = { sessionId: 'native-gemini' };
         if (r.method === 'session/prompt' && ++prompts === 1) {
+          if (${requestDump}) {
+            process.stderr.write('Error handling request { id: 2, method: "session/prompt" } { message: "APIError: Unable to connect" }\\n');
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
           process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, error: { code: -32603,
-            message: 'Gateway validation failed Authorization: Bearer synthetic-private-token',
+            message: 'Error handling request {\\n  "message": "Cannot connect to API",\\n  "authorization": "Bearer synthetic-private-token"\\n}',
             data: { limitCategory: 'validation_failed', body: 'PRIVATE_BODY' },
           } }) + '\\n');
           continue;
@@ -76,8 +80,8 @@ it('carries a Gemini gateway refusal through ACP decoding and transcript publica
       const failure = events.find(event => event.kind === 'turn-failed');
       if (!failure || failure.kind !== 'turn-failed') throw new Error('Missing turn failure');
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'gemini', error: failure.diagnostic });
-      expect(issue).toMatchObject({ source: 'agent_status_error', failureCause: { phase: 'turn',
-        providerErrorCode: -32603, providerErrorMessage: expect.stringContaining('Gateway validation failed') } });
+      expect(issue).toMatchObject({ source: 'agent_session_error', failureCause: { phase: 'turn',
+        providerErrorCode: -32603, providerErrorMessage: expect.stringContaining('Cannot connect to API') } });
       const writes: unknown[] = [];
       const project = createRuntimeFailureTranscriptProjector({ provider: 'gemini', providerName: 'Gemini',
         session: { sessionId: 'session', enqueueAgentMessageCommitted: async (_provider, body, options) => {
@@ -86,8 +90,9 @@ it('carries a Gemini gateway refusal through ACP decoding and transcript publica
         } } });
       await project(failure);
       expect(writes).toContainEqual(expect.objectContaining({ meta: expect.objectContaining({ runtimeIssueV1:
-        expect.objectContaining({ sanitizedPreview: expect.stringContaining('Gateway validation failed'),
-          failureCause: expect.objectContaining({ providerErrorCode: -32603 }) }) }) }));
+        expect.objectContaining({ sanitizedPreview: expect.stringContaining('Cannot connect to API'),
+          failureCause: expect.objectContaining({ providerErrorCode: -32603,
+            providerErrorMessage: expect.stringContaining('Cannot connect to API') }) }) }) }));
       expect(JSON.stringify(writes)).not.toMatch(/synthetic-private-token|PRIVATE_BODY/);
       await session.send({ inputIds: ['retry'], input: { text: 'Try again' }, delivery: { kind: 'newTurn', turnId: 'retry' } });
       await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'retry')).toBe(true);
