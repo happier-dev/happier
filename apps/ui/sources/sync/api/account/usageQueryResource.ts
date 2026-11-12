@@ -2529,12 +2529,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             // those versions are observed below at the existing state owner.
             // Reconnects and Sessions absent from that owner still need fresh
             // admission when the wake cannot name the changed Session.
-            sessionInputs.invalidateForHomeChange(event);
+            const privateInputsChanged = sessionInputs.invalidateForHomeChange(event);
             syncQualifiedSubscriptions();
             const accountingUnchanged = event.usageAccountingAffects === false
                 && event.source !== 'snapshot' && !event.usageAccountingChange;
-            owner.invalidate(isUsageQuotaHomeAccountChange(event)
-                || accountingUnchanged && isUsageProjectionHomeAccountChange(event, true) ? event
+            const projectionChanged = isUsageQuotaHomeAccountChange(event) || isUsageProjectionHomeAccountChange(event, true);
+            // A named record outside retained inputs changes no Usage fact.
+            if (accountingUnchanged && !privateInputsChanged && !projectionChanged) return;
+            owner.invalidate(projectionChanged ? event
                 : accountingUnchanged ? 'session-evidence' : event);
         }
     }, { reconnect: 'refresh' });

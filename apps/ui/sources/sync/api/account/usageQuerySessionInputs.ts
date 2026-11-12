@@ -108,7 +108,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     readSelection: SessionInputSelectionReader;
     projectSelection: SessionInputSelectionProjector;
     retryFailures(sourceReferenceKeys: ReadonlySet<string>): void;
-    invalidateForHomeChange(event: HomeAccountChangeEvent): void;
+    invalidateForHomeChange(event: HomeAccountChangeEvent): boolean;
     reconcile(sessionIds?: Iterable<string>, publication?: Readonly<{
         scopeChanged: boolean; membershipChangedSessionIds: readonly string[];
     }>): boolean;
@@ -435,8 +435,20 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                 .map(record => record.sessionId) ?? [];
             // A record write changes private evidence, not Session membership.
             // Unconsumed Sessions need no read; retained inputs re-admit by id.
-            for (const entry of entriesForSessions(workFactSessionIds)) entry.needsAdmission = true;
-            if (event.source !== 'connected' && event.changeKinds !== undefined && !event.changeKinds.includes('session')) return;
+            let changed = false;
+            for (const entry of entriesForSessions(workFactSessionIds)) {
+                entry.needsAdmission = true;
+                changed = true;
+            }
+            if (event.source !== 'connected' && event.changeKinds !== undefined && !event.changeKinds.includes('session')) {
+                // Other Home facts keep their own Usage wake. Only complete
+                // record routing can prove that no consumed fact changed.
+                const recordsOnly = event.changeKinds.length === 1 && event.changeKinds[0] === 'account'
+                    && (event.sessionSystemRecords?.length ?? 0) > 0;
+                // A selection still discovering its members cannot exclude this record yet.
+                return !recordsOnly || changed
+                    || workFactSessionIds.length > 0 && [...selections.values()].some(selection => !selection.sessionIds);
+            }
             if (event.source === 'connected' || event.entityIds === undefined) invalidateSelections();
             else invalidateSelectionsFor(event.entityIds);
             const selected = event.source === 'connected' || event.entityIds === undefined
@@ -446,6 +458,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                     ? !readSessionState(entry.sessionId) && !readSessionRow(entry.sessionId)
                     : event.entityIds.includes(entry.sessionId))) entry.needsAdmission = true;
             }
+            return true;
         },
         reconcile(sessionIds, publication) {
             let changed = renewCurrentness() || publication?.scopeChanged === true;
