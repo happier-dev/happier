@@ -66,6 +66,9 @@ function resizeAccessoryIconForDensity(accessory: React.ReactNode, iconSize: num
 
 type ItemTextEllipsizeMode = NonNullable<TextProps['ellipsizeMode']>;
 
+/** Settings rows show their full descriptions, while transient menu rows keep their compact clamp. */
+export const ItemSubtitleWrappingContext = React.createContext(false);
+
 export interface ItemProps {
     testID?: string;
     /** Imperative focus target for list-owned focus restoration after row removal. */
@@ -321,6 +324,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const selectionContext = React.useContext(ItemGroupSelectionContext);
+    const wrapSubtitleByDefault = React.useContext(ItemSubtitleWrappingContext) && props.rowRole !== 'menu';
     const rowPosition = useItemGroupRowPosition();
 
     // Platform-specific measurements
@@ -683,9 +687,11 @@ export const Item = React.memo<ItemProps>((props) => {
                     if (typeof subtitle !== 'string') {
                         const wrapPrimitive = (value: string | number) => {
                             const asText = String(value);
-                            const effectiveLines = subtitleLines !== undefined
-                                ? (subtitleLines <= 0 ? undefined : subtitleLines)
-                                : (asText.indexOf('\n') !== -1 ? undefined : 1);
+                            const effectiveLines = wrapSubtitleByDefault
+                                ? undefined
+                                : subtitleLines !== undefined
+                                    ? (subtitleLines <= 0 ? undefined : subtitleLines)
+                                    : (asText.indexOf('\n') !== -1 ? undefined : 1);
 
                             return renderPrimitiveText({
                                 value: asText,
@@ -715,9 +721,11 @@ export const Item = React.memo<ItemProps>((props) => {
                     }
 
                     // Allow multiline when requested or when content contains line breaks
-                    const effectiveLines = subtitleLines !== undefined
-                        ? (subtitleLines <= 0 ? undefined : subtitleLines)
-                        : (subtitle.indexOf('\n') !== -1 ? undefined : 1);
+                    const effectiveLines = wrapSubtitleByDefault
+                        ? undefined
+                        : subtitleLines !== undefined
+                            ? (subtitleLines <= 0 ? undefined : subtitleLines)
+                            : (subtitle.indexOf('\n') !== -1 ? undefined : 1);
 
                     return renderPrimitiveText({
                         value: subtitle,

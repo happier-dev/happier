@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { createAppStackScreenOptions } from '@/components/navigation/createAppStackScreenOptions';
 import { composeAppStackScreenLayout } from '@/components/navigation/appStackScreenLayout';
 import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { ItemSubtitleWrappingContext } from '@/components/ui/lists/Item';
 import { getSettingsStackScreenDefinitions, type SettingsStackScope } from './settingsRouteRegistry';
 import { t } from '@/text';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -25,16 +26,18 @@ export function SettingsStack({ scope = 'settings', screenLayout }: Readonly<{
     const appScreenLayout = React.useMemo(() => composeAppStackScreenLayout(screenLayout), [screenLayout]);
 
     return (
-        <NavigatorSafeAreaBleed>
-            <Stack screenOptions={screenOptions} screenLayout={appScreenLayout}>
-                {screenDefinitions.map((definition) => (
-                    <Stack.Screen
-                        key={definition.name}
-                        name={definition.name}
-                        options={definition.options}
-                    />
-                ))}
-            </Stack>
-        </NavigatorSafeAreaBleed>
+        <ItemSubtitleWrappingContext.Provider value={true}>
+            <NavigatorSafeAreaBleed>
+                <Stack screenOptions={screenOptions} screenLayout={appScreenLayout}>
+                    {screenDefinitions.map((definition) => (
+                        <Stack.Screen
+                            key={definition.name}
+                            name={definition.name}
+                            options={definition.options}
+                        />
+                    ))}
+                </Stack>
+            </NavigatorSafeAreaBleed>
+        </ItemSubtitleWrappingContext.Provider>
     );
 }
