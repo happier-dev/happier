@@ -820,14 +820,16 @@ describe('workflow input materialization', () => {
     }, runtime)).rejects.toMatchObject({ code: 'invalid_condition' });
   });
 
-  it('treats only an absent reference as false for exists and keeps invalid paths typed', async () => {
+  it('treats absent references and result leaves as false for exists while preserving invalid producer scope', async () => {
     await expect(evaluateWorkflowCondition({
       kind: 'exists', value: { kind: 'input', name: 'absent' },
     }, runtime)).resolves.toBe(false);
-    await expect(evaluateWorkflowCondition({
-      kind: 'exists',
-      value: { kind: 'result', producer: { blockId: 'analyze', scope: { kind: 'current' } }, path: ['missing'] },
-    }, runtime)).rejects.toMatchObject({ code: 'invalid_condition' });
+    const condition = { kind: 'exists' as const,
+      value: { kind: 'result' as const, producer: { blockId: 'analyze', scope: { kind: 'current' as const } }, path: ['missing'] } };
+    await expect(evaluateWorkflowCondition(condition, runtime)).resolves.toBe(false);
+    await expect(evaluateWorkflowCondition(condition, { ...runtime,
+      resolveResult: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); },
+    })).rejects.toMatchObject({ code: 'invalid_condition' });
   });
 
   it('resolves structured inputs in authored order and stops at the first typed failure', async () => {

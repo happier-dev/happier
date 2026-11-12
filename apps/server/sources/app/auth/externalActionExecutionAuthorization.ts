@@ -146,6 +146,7 @@ import { readExternalActionNativeCredentialSpawnChildInTx } from './externalActi
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
 import { hasCurrentDeploymentWorkflowOriginInTx, readCurrentMachineWorkflowOriginInTx, type DeploymentWorkflowOriginInput, type MachineWorkflowOriginPhase } from './deploymentWorkflowOrigin';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { ProviderAccountUsageDaySummaryReadV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { PendingResetStartsReadInputV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { readExternalActionPendingResetStartPurpose, isExternalActionPendingResetStartReadPurpose } from './externalActionPendingResetStartPurpose';
 import { isExternalActionApprovalReplyPurpose } from './externalActionApprovalReplyPurpose';
@@ -2143,13 +2144,16 @@ function isQuotaReadHttpPurpose(proof: ExternalActionExecutionRequestProof): boo
     }
     const field = url.pathname === '/v4/connect/qualified/provider-account-usage/sources/resolve' ? 'source'
         : url.pathname === '/v4/connect/qualified/provider-account-usage/record' ? 'recordId'
-        : url.pathname === '/v4/connect/qualified/provider-account-usage/history' ? 'query' : null;
+        : url.pathname === '/v4/connect/qualified/provider-account-usage/history'
+            || url.pathname === '/v4/connect/qualified/provider-account-usage/day-summaries' ? 'query' : null;
     if (!field || Array.from(url.searchParams.keys()).length !== 1 || !url.searchParams.has(field)) return false;
     try {
         const value = url.searchParams.get(field);
         if (field === 'recordId') return ProviderAccountUsageRecordIdSchema.safeParse(value).success;
         if (field === 'source') parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedServiceUsageSourceV4Schema, value);
-        else parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, value);
+        else if (url.pathname === '/v4/connect/qualified/provider-account-usage/day-summaries') {
+            parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema, value);
+        } else parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, value);
         return true;
     } catch {
         return false;

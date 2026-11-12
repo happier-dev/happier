@@ -34,7 +34,6 @@ export type MachinePresetsActionInputById = {
             teamId: string;
         };
         homeId: string;
-        setup?: unknown;
         retention?: undefined | {
             afterMs: number;
             kind: 'unused';
@@ -51,7 +50,7 @@ export type MachinePresetsActionInputById = {
             schemaVersion: number;
             name: string;
             choices: unknown;
-            credentials?: undefined | {
+            credentials?: ({
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -66,12 +65,38 @@ export type MachinePresetsActionInputById = {
                     };
                     accountId: string;
                 };
-            }[];
+            } | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            })[] | undefined;
         };
         controller?: undefined | {
             machineId: string;
             installationId: string;
         };
+        setup?: unknown;
         controllerPoolId?: string | undefined;
         controllerDisplayName?: string | undefined;
         teamAcquireDelegated?: boolean | undefined;
@@ -93,7 +118,7 @@ export type MachinePresetsActionInputById = {
                 schemaVersion: number;
                 name: string;
                 choices: unknown;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -108,7 +133,32 @@ export type MachinePresetsActionInputById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: null | undefined | {
                 machineId: string;
@@ -165,7 +215,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -180,7 +230,32 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -398,6 +473,7 @@ export type MachinePresetsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -430,7 +506,7 @@ export type MachinePresetsActionResultById = {
                         schemaVersion: number;
                         name: string;
                         choices: PluginJsonValueV2;
-                        credentials?: undefined | {
+                        credentials?: ({
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -445,7 +521,32 @@ export type MachinePresetsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        }[];
+                        } | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            teamId: string;
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                        })[] | undefined;
                     };
                     optionStatus: 'current' | 'loading' | 'unavailable';
                     billing: {
@@ -670,6 +771,7 @@ export type MachinePresetsActionResultById = {
                             kind: 'native';
                             exec: string;
                             putFile: string;
+                            stream?: string | undefined;
                         };
                         bootstrapCredential?: undefined | {
                             kind: 'native-token' | 'ssh';
@@ -881,7 +983,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -896,7 +998,32 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -1114,6 +1241,7 @@ export type MachinePresetsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -1146,7 +1274,7 @@ export type MachinePresetsActionResultById = {
                         schemaVersion: number;
                         name: string;
                         choices: PluginJsonValueV2;
-                        credentials?: undefined | {
+                        credentials?: ({
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -1161,7 +1289,32 @@ export type MachinePresetsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        }[];
+                        } | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            teamId: string;
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                        })[] | undefined;
                     };
                     optionStatus: 'current' | 'loading' | 'unavailable';
                     billing: {
@@ -1386,6 +1539,7 @@ export type MachinePresetsActionResultById = {
                             kind: 'native';
                             exec: string;
                             putFile: string;
+                            stream?: string | undefined;
                         };
                         bootstrapCredential?: undefined | {
                             kind: 'native-token' | 'ssh';
@@ -1602,7 +1756,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -1617,7 +1771,32 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -1835,6 +2014,7 @@ export type MachinePresetsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -1867,7 +2047,7 @@ export type MachinePresetsActionResultById = {
                         schemaVersion: number;
                         name: string;
                         choices: PluginJsonValueV2;
-                        credentials?: undefined | {
+                        credentials?: ({
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -1882,7 +2062,32 @@ export type MachinePresetsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        }[];
+                        } | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            teamId: string;
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                        })[] | undefined;
                     };
                     optionStatus: 'current' | 'loading' | 'unavailable';
                     billing: {
@@ -2107,6 +2312,7 @@ export type MachinePresetsActionResultById = {
                             kind: 'native';
                             exec: string;
                             putFile: string;
+                            stream?: string | undefined;
                         };
                         bootstrapCredential?: undefined | {
                             kind: 'native-token' | 'ssh';
@@ -2320,7 +2526,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -2335,7 +2541,32 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -2553,6 +2784,7 @@ export type MachinePresetsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -2585,7 +2817,7 @@ export type MachinePresetsActionResultById = {
                         schemaVersion: number;
                         name: string;
                         choices: PluginJsonValueV2;
-                        credentials?: undefined | {
+                        credentials?: ({
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -2600,7 +2832,32 @@ export type MachinePresetsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        }[];
+                        } | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            teamId: string;
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                        })[] | undefined;
                     };
                     optionStatus: 'current' | 'loading' | 'unavailable';
                     billing: {
@@ -2825,6 +3082,7 @@ export type MachinePresetsActionResultById = {
                             kind: 'native';
                             exec: string;
                             putFile: string;
+                            stream?: string | undefined;
                         };
                         bootstrapCredential?: undefined | {
                             kind: 'native-token' | 'ssh';
@@ -3038,7 +3296,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -3053,7 +3311,32 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -3271,6 +3554,7 @@ export type MachinePresetsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -3303,7 +3587,7 @@ export type MachinePresetsActionResultById = {
                         schemaVersion: number;
                         name: string;
                         choices: PluginJsonValueV2;
-                        credentials?: undefined | {
+                        credentials?: ({
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -3318,7 +3602,32 @@ export type MachinePresetsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        }[];
+                        } | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            teamId: string;
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                        })[] | undefined;
                     };
                     optionStatus: 'current' | 'loading' | 'unavailable';
                     billing: {
@@ -3543,6 +3852,7 @@ export type MachinePresetsActionResultById = {
                             kind: 'native';
                             exec: string;
                             putFile: string;
+                            stream?: string | undefined;
                         };
                         bootstrapCredential?: undefined | {
                             kind: 'native-token' | 'ssh';
@@ -3756,7 +4066,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -3771,7 +4081,32 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -3989,6 +4324,7 @@ export type MachinePresetsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -4021,7 +4357,7 @@ export type MachinePresetsActionResultById = {
                         schemaVersion: number;
                         name: string;
                         choices: PluginJsonValueV2;
-                        credentials?: undefined | {
+                        credentials?: ({
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -4036,7 +4372,32 @@ export type MachinePresetsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        }[];
+                        } | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            teamId: string;
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                        })[] | undefined;
                     };
                     optionStatus: 'current' | 'loading' | 'unavailable';
                     billing: {
@@ -4261,6 +4622,7 @@ export type MachinePresetsActionResultById = {
                             kind: 'native';
                             exec: string;
                             putFile: string;
+                            stream?: string | undefined;
                         };
                         bootstrapCredential?: undefined | {
                             kind: 'native-token' | 'ssh';

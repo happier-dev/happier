@@ -145,7 +145,7 @@ export type BrowserControlActionInputById = {
         expectedVersion?: string | undefined;
         provenance?: undefined | {
             sourceId: string;
-            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
             sourceUrl: string;
             itemId: string;
             ref: {
@@ -252,8 +252,8 @@ export type BrowserControlActionInputById = {
         profileId: string;
     };
     readonly "browser.view.list": {
-        machineId: string;
         browserSessionId: string;
+        machineId?: string | undefined;
     };
     readonly "browser.workspace.open": {
         scopeId: string;
@@ -1296,7 +1296,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1418,7 +1418,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1533,7 +1533,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1648,7 +1648,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1763,7 +1763,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1878,7 +1878,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -3739,6 +3739,7 @@ export type BrowserControlActionResultById = {
                 maxFramesPerSecond?: number | undefined;
             };
         }[];
+        machineId?: string | undefined;
     };
     readonly "browser.workspace.open": {
         v: 1;

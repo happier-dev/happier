@@ -397,6 +397,7 @@ export type MachinePoolsActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -429,7 +430,7 @@ export type MachinePoolsActionResultById = {
                     schemaVersion: number;
                     name: string;
                     choices: PluginJsonValueV2;
-                    credentials?: undefined | {
+                    credentials?: ({
                         purpose: {
                             consumer: {
                                 pluginId: string;
@@ -444,7 +445,32 @@ export type MachinePoolsActionResultById = {
                             };
                             accountId: string;
                         };
-                    }[];
+                    } | {
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        teamId: string;
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                    })[] | undefined;
                 };
                 optionStatus: 'current' | 'loading' | 'unavailable';
                 billing: {
@@ -669,6 +695,7 @@ export type MachinePoolsActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';

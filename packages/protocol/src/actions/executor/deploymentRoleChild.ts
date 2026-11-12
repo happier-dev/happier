@@ -24,7 +24,11 @@ function reviewedChildScopeDenied(reason: 'issuer_binding' | 'issuer_target' | '
   return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
     failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: reason, httpStatus: null } };
 }
-type ReviewedOperation = Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> & Readonly<{ [deploymentRoleChild]?: true }>;
+type ReviewedOperation = Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> & Readonly<{
+  approvedBy?: WorkflowApprovedOperationV1['approvedBy'];
+  approvedRequestId?: string;
+  [deploymentRoleChild]?: true;
+}>;
 type RootActionId = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | 'deployments.cancel' | 'deployments.receipts.observe' | 'deployments.logs.read';
 export type HostReviewedChildPolicyV1 = Readonly<{
   action: HostReviewedChildInvocationV1['action'];
@@ -323,6 +327,8 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   /** Supplied only by the receiving custody/placement owner after ordinary admission. */
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
   admittedReview?: HostReviewedChildPolicyV1;
+  /** Live Run reader's retained person; private proof only, never accepted from Action JSON. */
+  approvedBy?: WorkflowApprovedOperationV1['approvedBy'];
   environmentId?: string;
   execute(input: unknown, context: ActionExecutorContext, actionId: TAction | 'action.invoke'): Promise<T>;
 }>): Promise<T | ActionExecuteFailure> {
@@ -368,6 +374,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
       [credentialScopeAdmission]: params.admittedReview[credentialScopeAdmission],
     } : {}),
     operation: {
+      ...(params.approvedBy ? { approvedBy: structuredClone(params.approvedBy), approvedRequestId: context.actionRequestId ?? undefined } : {}),
       ...(params.admittedReview ? { [deploymentRoleChild]: true as const } : {}),
       parent: { actionId: parent.actionId, input: parentInput as Record<string, JsonValue> },
       // Contributed operands can be any JSON value. Keep their single ordinary

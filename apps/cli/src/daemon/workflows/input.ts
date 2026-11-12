@@ -239,6 +239,11 @@ async function referenceExists(
   runtime: WorkflowValueResolutionRuntime,
 ): Promise<boolean> {
   try {
+    // Result scope is required; its optional leaf may legitimately be absent.
+    if (reference.kind === 'result') {
+      const result = await runtime.resolveResult(reference.producer);
+      return readWorkflowValuePathV1(result, reference.path) !== undefined;
+    }
     await resolveWorkflowValueReference(reference, runtime);
     return true;
   } catch (error) {

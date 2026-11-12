@@ -9,6 +9,7 @@ export * from './workflowDefinitionResolverV1.js';
 export * from './workflowPluginSourceV1.js';
 export * from './workflowPluginSourceContractV1.js';
 export * from './builtins/catalog.js';
+export * from './builtins/machineUpdatesV1.js';
 export * from './triggers/triggerTargetV1.js';
 export * from './workflowWorkspaceV1.js';
 export * from './workflowV1.js';

@@ -612,6 +612,30 @@ export type LocalServicesActionsActionResultById = {
                     remedy: string;
                     domainHostname?: string | undefined;
                 } | {
+                    failure: {
+                        kind: 'native_effect_failed' | 'native_observation_unavailable';
+                        reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                        requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                        errorCode?: string | undefined;
+                        stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                        nativeCommand?: undefined | {
+                            command: 'docker';
+                            phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                            exitCode: null | number;
+                        };
+                        containerExitCode?: number | undefined;
+                        containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                        port?: number | undefined;
+                    };
+                    remedy: string;
+                    requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                } | {
+                    kind: 'finiteCommand';
+                    phase: string;
+                    exitCode: null | number;
+                    signal: null | number;
+                    step?: number | undefined;
+                } | {
                     kind: 'machineSetup';
                     failure: {
                         kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -1016,6 +1040,23 @@ export type LocalServicesActionsActionResultById = {
                         };
                     };
                     continuation?: undefined | {
+                        actionId: 'action.invoke';
+                        input: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input?: JsonValue;
+                            expectedContributorOccurrenceId?: string;
+                            clientId?: string;
+                            messageActionReference?: {
+                                v: 1;
+                                sessionId: string;
+                                messageId: string;
+                                observedRevision: string;
+                            };
+                        };
+                    } | {
                         actionId: 'deployments.bindings.set';
                         input: {
                             set: ({
@@ -1384,10 +1425,51 @@ export type LocalServicesActionsActionResultById = {
                                             role: 'readOnlyPassword';
                                         };
                                     })[];
-                                    data: {
+                                    data: ({
                                         targetLinkId: string;
-                                        kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                                    }[];
+                                        kind: 'createEmpty';
+                                        provision: {
+                                            action: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            input: Record<string, JsonValue>;
+                                        };
+                                    } | {
+                                        targetLinkId: string;
+                                        kind: 'omit';
+                                    } | {
+                                        targetLinkId: string;
+                                        kind: 'restoreBackup';
+                                    } | {
+                                        targetLinkId: string;
+                                        kind: 'reuse';
+                                        bindings?: ({
+                                            purpose: 'backupDestination';
+                                            configKey: 'destination';
+                                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                        } | {
+                                            purpose: 'domainCredential';
+                                            domainId: string;
+                                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                        } | {
+                                            purpose: 'registry';
+                                            targetLinkId: string;
+                                            registryOrigin: string;
+                                        } | {
+                                            purpose: 'variable';
+                                            name: string;
+                                            phase: 'build' | 'runtime';
+                                        } | {
+                                            service: string;
+                                            purpose: 'dataRole';
+                                            role: 'readOnlyPassword';
+                                        } | {
+                                            targetLinkId: string;
+                                            purpose: 'dataRole';
+                                            role: 'readOnlyPassword';
+                                        })[] | undefined;
+                                    })[];
                                     retainPreviousDeployments?: 'copy' | 'default' | undefined;
                                 };
                             };
@@ -1465,8 +1547,185 @@ export type LocalServicesActionsActionResultById = {
                                     role: 'readOnlyPassword';
                                 })[];
                                 sourceRuntimeTargetLinkId?: string | undefined;
+                                data?: undefined | {
+                                    targetLinkId: string;
+                                    targetId: string;
+                                    targetKind: string;
+                                    contribution: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    provision: {
+                                        action: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        input: Record<string, JsonValue>;
+                                    };
+                                }[];
                             };
                             copyIntentCommitment?: string | undefined;
+                        };
+                    } | {
+                        actionId: 'deployments.targets.link';
+                        input: {
+                            targetId: string;
+                            role: 'data' | 'runtime';
+                            machines: {
+                                machineId: string;
+                                installationId: string;
+                            }[];
+                            requestKey: string;
+                            environmentId: string;
+                            expectedRevision: number;
+                            serverId: string;
+                            source: {
+                                kind: 'plugin';
+                                contribution: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                            };
+                            targetKind: string;
+                            provider: {
+                                credentialPrincipal: {
+                                    kind: 'account';
+                                    accountId: string;
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    target: {
+                                        kind: 'account';
+                                        account: {
+                                            service: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            accountId: string;
+                                        };
+                                    } | {
+                                        kind: 'group';
+                                        service: {
+                                            pluginId: 'happier';
+                                            localId: 'mcp-sign-in';
+                                        } | {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        groupId: string;
+                                    };
+                                } | {
+                                    kind: 'team';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    teamId: string;
+                                    selection: {
+                                        source: 'team_resource';
+                                        resourceId: string;
+                                        deliveryMode: 'brokered';
+                                    } | {
+                                        source: 'team_resource';
+                                        resourceId: string;
+                                        deliveryMode: 'direct';
+                                        disclosedMember: {
+                                            service: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            accountId: string;
+                                        };
+                                    };
+                                };
+                                providerIdentity: {
+                                    providerAccountId: string;
+                                    providerResourceId: string;
+                                    providerEnvironment: string;
+                                };
+                                providerEnvironment: {
+                                    kind: 'custom';
+                                    id: string;
+                                } | {
+                                    kind: 'preview';
+                                    gitBranch?: string | undefined;
+                                } | {
+                                    kind: 'preview';
+                                    scriptName: string;
+                                    previewName: string;
+                                } | {
+                                    kind: 'production';
+                                } | {
+                                    kind: 'script';
+                                    scriptName: string;
+                                };
+                                repositoryAccess?: undefined | {
+                                    status: 'needsGitAccess';
+                                    repository: {
+                                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                        deployment: string;
+                                        repository: string;
+                                    };
+                                    grantUrl?: string | undefined;
+                                } | {
+                                    status: 'ready';
+                                    repository: {
+                                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                        deployment: string;
+                                        repository: string;
+                                    };
+                                };
+                                preparedNative?: undefined | {
+                                    projectName: string;
+                                    reviewNotice?: string | undefined;
+                                    gitSource?: undefined | {
+                                        type: 'github';
+                                        repoId: string;
+                                    };
+                                    triggerUuid?: string | undefined;
+                                    previewId?: string | undefined;
+                                    gitBranch?: string | undefined;
+                                    workerTag?: string | undefined;
+                                    scriptName?: string | undefined;
+                                    pages?: undefined | {
+                                        projectMode: 'directUpload' | 'gitIntegration';
+                                        productionBranch: string;
+                                        buildCommand?: string | undefined;
+                                        buildOutputDirectory?: string | undefined;
+                                        rootDirectory?: string | undefined;
+                                    };
+                                };
+                                ownedVariables?: undefined | {
+                                    key: string;
+                                    providerId: string;
+                                    desiredRevision: number;
+                                    providerRevision?: string | undefined;
+                                }[];
+                                data?: undefined | {
+                                    engine: string;
+                                    version?: string | undefined;
+                                    providerConsole?: undefined | {
+                                        url: string;
+                                        label: string;
+                                    };
+                                };
+                                providerUrl?: string | undefined;
+                            };
+                            managedRetention?: 'keep' | 'until-delete' | undefined;
+                            provisioned?: true | undefined;
+                            machineId?: string | undefined;
+                            installationId?: string | undefined;
+                            replacesLinkId?: string | undefined;
+                            drainedDeploymentId?: string | undefined;
+                            expectedTargetLinkRevision?: number | undefined;
+                            title?: string | undefined;
                         };
                     };
                     unknownSecret?: undefined | {
@@ -1520,6 +1779,71 @@ export type LocalServicesActionsActionResultById = {
                     reason: 'machine_setup_requires_manage';
                     requiredFact: 'machine_manage_role';
                     remedy: 'request_machine_manage_access';
+                } | {
+                    remedy: string;
+                    status?: 'outcome_unknown' | 'recoveryRequired' | 'refused' | 'rolledBack' | undefined;
+                    failure?: undefined | {
+                        kind: 'daemon_reachability_unavailable';
+                        reason: 'required_fact_unavailable';
+                        requiredFact: 'homeRoutedDaemonAck';
+                        errorCode?: string | undefined;
+                    } | {
+                        kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                        reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                        stepId?: string | undefined;
+                        phase?: 'apply' | 'check' | undefined;
+                        requiredFact?: string | undefined;
+                        remedy?: string | undefined;
+                        nativeCommand?: undefined | {
+                            command: 'apt-get';
+                            phase: 'install' | 'update';
+                            exitCode: null | number;
+                            category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                        };
+                    };
+                    recovery?: undefined | {
+                        rules: {
+                            kind: 'absent';
+                        } | {
+                            kind: 'file';
+                            content: string;
+                        };
+                        unit: {
+                            kind: 'absent';
+                        } | {
+                            kind: 'file';
+                            content: string;
+                        };
+                        table: null | string;
+                        boot: {
+                            present: boolean;
+                            enabled: boolean;
+                            running: boolean;
+                        };
+                    };
+                    restoration?: undefined | {
+                        status: 'verified';
+                        recovery: {
+                            rules: {
+                                kind: 'absent';
+                            } | {
+                                kind: 'file';
+                                content: string;
+                            };
+                            unit: {
+                                kind: 'absent';
+                            } | {
+                                kind: 'file';
+                                content: string;
+                            };
+                            table: null | string;
+                            boot: {
+                                present: boolean;
+                                enabled: boolean;
+                                running: boolean;
+                            };
+                        };
+                    };
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -1646,6 +1970,12 @@ export type LocalServicesActionsActionResultById = {
                         installationId: string;
                     }>[];
                 };
+            } | {
+                kind: 'deploymentTargetLink';
+                serverId: string;
+                environmentId: string;
+                requestKey: string;
+                purpose: 'associate' | 'create';
             } | {
                 kind: 'forkRequest';
                 id: string;

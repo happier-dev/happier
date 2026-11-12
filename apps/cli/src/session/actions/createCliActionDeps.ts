@@ -13,6 +13,7 @@ import { resolveSessionInputTargetMachineId } from '@/session/services/sessionIn
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
 import { resolveAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
+import { createMachineUpdatesRolloutActionDeps } from '@/machines/setup/composeMachineUpdates';
 import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher } from '@/machines/setup/composeMachineSetup';
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -870,6 +871,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const messageActionDeps = createCliMessageActionDeps(params, { assertProjectRequesterCurrent, callSessionActionRpc, callSessionRpcForTransport, dispatchSessionLifecycleHookEvent, projectAccountAdmission, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const settingsDeps = createCliSettingsActionDeps(params, { callMachineAction });
   const machineDeps = createCliMachineActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent });
+  const updatesRolloutDeps = createMachineUpdatesRolloutActionDeps({ orchestrationDirectory: configuration.happyHomeDir,
+    startCombined: startCombinedWorkflow, waitForRun: request => waitForCombinedWorkflow(request, request.start.runId) });
   const setupDeps = createCombinedMachineSetupActionDeps({
     readDeps: () => readEffectiveDeps?.() ?? actionDeps,
     targetPlan: machineDeps.machineSetupPlan!,
@@ -1743,6 +1746,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     machineSetupPlan: setupDeps.machineSetupPlan,
     machineSetupRemove: machineDeps.machineSetupRemove,
     machineSetupUpdatesApply: machineDeps.machineSetupUpdatesApply,
+    machineSetupUpdatesRollout: updatesRolloutDeps.machineSetupUpdatesRollout,
     prepareMachineSetupApply: setupDeps.prepareMachineSetupApply,
     machineSetupApply: createMachineSetupApplyDispatcher({ readDeps: () => readEffectiveDeps?.() ?? actionDeps,
       native: machineDeps.machineSetupApply!, compose: setupDeps.machineSetupApply! }),

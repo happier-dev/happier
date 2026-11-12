@@ -18,8 +18,12 @@ export type HomeGovernanceActionInputById = {
         reason: string;
         notice: string;
     };
-    readonly "home.search.rebuild": Record<string, never>;
-    readonly "home.governance.get": Record<string, never>;
+    readonly "home.search.rebuild": {
+        projection?: 'session_defaults' | undefined;
+    };
+    readonly "home.governance.get": {
+        projection?: 'session_defaults' | undefined;
+    };
     readonly "home.governance.eligibility.get": Record<string, never>;
     readonly "home.emptiness.get": Record<string, never>;
     readonly "home.governance.claim": {
@@ -129,6 +133,126 @@ export type HomeGovernanceActionInputById = {
             v: 1;
             mode: 'public_only';
         };
+        sessionDefaults?: null | undefined | {
+            placement?: undefined | {
+                kind: 'machine';
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+            } | {
+                kind: 'preset';
+                homeId: string;
+                presetId: string;
+            };
+            permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+            modelByAgentTargetKey?: Record<string, {
+                ref: {
+                    source: 'account_provider_connection';
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'native';
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    agentTargetKey: string;
+                    modelId: string;
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            }> | undefined;
+            connectedServicesByAgentTargetKey?: Record<string, readonly {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                target: null | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
+                teamResource: null | {
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                    teamId: string;
+                };
+            }[]> | undefined;
+        };
         confirmWidening?: true | undefined;
     };
     readonly "home.settings.get": Record<string, never>;
@@ -180,6 +304,127 @@ export type HomeGovernanceActionResultById = {
         ok: true;
     };
     readonly "home.governance.get": {
+        homeDefaults: null | {
+            placement?: undefined | {
+                kind: 'machine';
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+            } | {
+                kind: 'preset';
+                homeId: string;
+                presetId: string;
+            };
+            permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+            modelByAgentTargetKey?: Record<string, {
+                ref: {
+                    source: 'account_provider_connection';
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'native';
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    agentTargetKey: string;
+                    modelId: string;
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            }> | undefined;
+            connectedServicesByAgentTargetKey?: Record<string, readonly {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                target: null | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
+                teamResource: null | {
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                    teamId: string;
+                };
+            }[]> | undefined;
+        };
+    } | {
         viewer: {
             accountId: string;
             homeRole: 'admin' | 'member' | 'owner';
@@ -243,6 +488,126 @@ export type HomeGovernanceActionResultById = {
                 };
             } | {
                 status: 'unreadable';
+            };
+            sessionDefaults?: null | undefined | {
+                placement?: undefined | {
+                    kind: 'machine';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                } | {
+                    kind: 'preset';
+                    homeId: string;
+                    presetId: string;
+                };
+                permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                modelByAgentTargetKey?: Record<string, {
+                    ref: {
+                        source: 'account_provider_connection';
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'native';
+                        agentTargetKey: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        agentTargetKey: string;
+                        modelId: string;
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                }> | undefined;
+                connectedServicesByAgentTargetKey?: Record<string, readonly {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    target: null | {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
+                    teamResource: null | {
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                        teamId: string;
+                    };
+                }[]> | undefined;
             };
         };
         setupState: 'owned' | 'setup_required';
@@ -1444,6 +1809,126 @@ export type HomeGovernanceActionResultById = {
             };
         } | {
             status: 'unreadable';
+        };
+        sessionDefaults?: null | undefined | {
+            placement?: undefined | {
+                kind: 'machine';
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+            } | {
+                kind: 'preset';
+                homeId: string;
+                presetId: string;
+            };
+            permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+            modelByAgentTargetKey?: Record<string, {
+                ref: {
+                    source: 'account_provider_connection';
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'native';
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    agentTargetKey: string;
+                    modelId: string;
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            }> | undefined;
+            connectedServicesByAgentTargetKey?: Record<string, readonly {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                target: null | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
+                teamResource: null | {
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                    teamId: string;
+                };
+            }[]> | undefined;
         };
     };
     readonly "home.settings.get": {

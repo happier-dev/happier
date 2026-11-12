@@ -47,7 +47,16 @@ export function createActionCatalogReader(readSource = path => readFileSync(path
     node = unwrap(node);
     if (ts.isIdentifier(node)) return bindings.has(node.text) ? bindings.get(node.text) : value(path, node.text);
     if (ts.isStringLiteral(node)) return node.text;
-    if (ts.isPropertyAccessExpression(node)) return evaluate(path, node.expression, bindings)[node.name.text];
+    if (ts.isPropertyAccessExpression(node)) {
+      if (ts.isIdentifier(node.expression) && !bindings.has(node.expression.text)) {
+        const namespace = source(path).statements.find(statement => ts.isImportDeclaration(statement)
+          && statement.moduleSpecifier.text.startsWith('.') && statement.importClause?.namedBindings
+          && ts.isNamespaceImport(statement.importClause.namedBindings)
+          && statement.importClause.namedBindings.name.text === node.expression.text);
+        if (namespace) return value(resolve(dirname(path), namespace.moduleSpecifier.text.replace(/\.js$/u, '.ts')), node.name.text);
+      }
+      return evaluate(path, node.expression, bindings)[node.name.text];
+    }
     if (ts.isElementAccessExpression(node)) return evaluate(path, node.expression, bindings)[evaluate(path, node.argumentExpression, bindings)];
     if (ts.isArrayLiteralExpression(node)) return node.elements.flatMap(n => ts.isSpreadElement(n) ? evaluate(path, n.expression, bindings) : [evaluate(path, n, bindings)]);
     if (ts.isObjectLiteralExpression(node)) return Object.assign({}, ...node.properties.map(n => ts.isSpreadAssignment(n) ? evaluate(path, n.expression, bindings) : { [n.name.text]: evaluate(path, n.initializer, bindings) }));

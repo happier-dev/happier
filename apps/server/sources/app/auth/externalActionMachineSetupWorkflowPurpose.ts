@@ -1,6 +1,6 @@
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionTargetV1,
     ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupCombinedActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
@@ -18,9 +18,9 @@ export function isMachineSetupCombinedRunHttpPurpose(verified: Readonly<{
     reviewedChildAdmission?: ReviewedActionChildHttpProofV1;
 }>, proof: Readonly<{ method: string; path: string; body?: unknown }>): boolean {
     const { binding, reviewedChildAdmission } = verified;
-    if (verified.effectActionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1
-        || binding.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1
-            && reviewedChildAdmission?.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1
+    const rootActionId = reviewedChildAdmission?.actionId ?? binding.actionId;
+    if (!isMachineSetupCombinedActionIdV1(verified.effectActionId)
+        || !isMachineSetupCombinedActionIdV1(rootActionId) || rootActionId !== verified.effectActionId
         || verified.target.kind !== 'machine' || verified.target.machineId !== binding.machineId
         || proof.method.toUpperCase() !== 'POST' || proof.path !== '/v3/automations/runs/workflow-storage'
         || !proof.body || typeof proof.body !== 'object' || Array.isArray(proof.body)) return false;
@@ -31,7 +31,7 @@ export function isMachineSetupCombinedRunHttpPurpose(verified: Readonly<{
     // The storage route retains its full strict operation parser, publisher
     // signature, requester access and native admission after this purpose check.
     return runId.success && runId.data === deriveMachineSetupCombinedRunIdV1({
-        homeId: binding.serverIdentityId, accountId: binding.accountId, requestId: binding.requestId,
+        actionId: rootActionId, homeId: binding.serverIdentityId, accountId: binding.accountId, requestId: binding.requestId,
         ...(reviewedChildAdmission ? { reviewedChild: reviewedChildAdmission } : {}),
     });
 }

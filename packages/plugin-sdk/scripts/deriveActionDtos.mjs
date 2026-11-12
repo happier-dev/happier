@@ -494,14 +494,7 @@ function createDerivationProgram({ repoRoot, requests = [], bindings = [], clien
       const original = sources.get(path);
       // Preserve exports reached through schema/catalog import cycles. One
       // shared checker now pays for this graph once for the complete batch.
-      const hasZodBinding = original.statements.some(statement => {
-        if (!ts.isImportDeclaration(statement) || !['zod', 'zod/mini'].includes(statement.moduleSpecifier.text)
-          || statement.importClause?.isTypeOnly) return false;
-        const binding = statement.importClause.namedBindings;
-        return binding && (ts.isNamespaceImport(binding) && binding.name.text === 'z'
-          || ts.isNamedImports(binding) && binding.elements.some(element =>
-            !element.isTypeOnly && element.name.text === 'z' && (element.propertyName ?? element.name).text === 'z'));
-      });
+      const hasZodBinding = hasSchemaZodBinding(original, protocol);
       overlays.set(path, (hasZodBinding ? '' : "import { z } from 'zod/mini';\n") + original.text + '\n' + added.join('\n') + '\n');
     }
     const rootPath = resolve(protocol, 'actions/actionDtoDerivation.ts');
@@ -527,6 +520,20 @@ function createDerivationProgram({ repoRoot, requests = [], bindings = [], clien
   session.metrics.programMs = performance.now() - programStart;
   return { program, checker, privateSymbolNames, inputs, metrics: session.metrics, symbols: new Map(),
     inputDigests: [...inputs].map(([path, text]) => [path, createHash('sha256').update(text).digest('hex')]) };
+}
+
+function hasSchemaZodBinding(sourceFile, protocol) {
+  return sourceFile.statements.some(statement => {
+    if (!ts.isImportDeclaration(statement) || statement.importClause?.isTypeOnly) return false;
+    const module = statement.moduleSpecifier.text;
+    const validator = ['zod', 'zod/mini'].includes(module) || module.startsWith('.')
+      && resolve(dirname(sourceFile.fileName), module.replace(/\.js$/u, '.ts')) === resolve(protocol, 'zodRuntimePolicy.ts');
+    if (!validator) return false;
+    const binding = statement.importClause.namedBindings;
+    return binding && (ts.isNamespaceImport(binding) && binding.name.text === 'z'
+      || ts.isNamedImports(binding) && binding.elements.some(element =>
+        !element.isTypeOnly && element.name.text === 'z' && (element.propertyName ?? element.name).text === 'z'));
+  });
 }
 
 function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNames = [] }, context) {

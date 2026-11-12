@@ -3013,6 +3013,24 @@ finite setup task and administrator interpreter. It never rewrites desired
 Software and never reboots. Package updates may restart services; review reports
 possible downtime when packages will change.
 
+The 0.3 development Action `machines.setup.updates.rollout` composes exact native
+plans into ordered batches on one selected controller. Callers resolve all,
+manual, or active approved-role selections through `machines.list` and
+`machines.roles.list`/`machines.roles.get`, then review the resulting exact plans
+once. The existing setup admission checks Manage for the entire target set
+before starting the Run. Workflow parallel blocks own each batch's failure
+policy and join accepted update operations through terminal settlement before
+advancing. An optional reboot uses `machines.reboot` only after the receiving
+Machine's check positively reports `rebootNeeded`; an unavailable observation
+keeps its reason in the retained check result. The Workflow builder
+`createScheduledMachineUpdatesRolloutWorkflowV1` supplies one rollout Action to
+the existing Workflow Trigger schedule, so each occurrence admits its exact
+fleet together. Saved automatic consent preserves ordinary root approval
+policy, including Require. Targets and plans stay frozen; the native owner
+refuses a stale plan rather than choosing unreviewed updates. If the controller itself reboots, ordinary Run persistence,
+interrupted/uncertain status and Workflow inspection/recovery apply; acceptance
+of a reboot is not proof of successful Run completion.
+
 The native owner publishes counts and the reboot-needed fact at
 `daemonState.setup.updates`, through the normal Machine publication owner. Equal
 observations produce no publication. Reads occur on explicit Security demand
@@ -6860,13 +6878,22 @@ channels and exits when the holder closes that connection.
     `~/.happier/sessions/<key>/agent-home`; config, hooks, MCP settings and plugins never
     cross. Only env entries pointing into that home are rewritten for the Agent. The
     directory is removed by a cleanup on the launch resource scope (it runs before the
-    authority ends); leftovers of Sessions that ended without it are swept when a later
-    Session is placed, unless an Agent holds the directory's `.live` lock (`flock -s`,
-    taken by every Agent of the Session) or this daemon is placing it. The Agent CLI is
-    placed once per content digest (`~/.happier/agent-cli/<sha256>/`) when it is a Linux
-    ELF for the target's architecture, streamed over the channel and verified in the
-    guest with the digest computed on this Machine (transport integrity only: the guest
-    user can replace its own files); otherwise the spawn is refused
+    authority ends) unless an Agent of the Session still holds its `.live` lock (a
+    crashed runner's spared Agent keeps its credentials for the adopting respawn);
+    leftovers are swept when a later Session is placed, unless an Agent holds the
+    directory's `.live` lock (`flock -s`, taken by every Agent of the Session) or this
+    daemon is placing it. The Agent CLI is placed once per content digest
+    (`~/.happier/agent-cli/<sha256>/`) when it is a Linux ELF for the target's
+    architecture, streamed over the channel and verified in the guest with the digest
+    computed on this Machine (transport integrity only: the guest user can replace its
+    own files). Otherwise (a launcher script such as Muse's, another architecture) the
+    provider's own Linux install recipe from the Agent's CLI descriptor
+    (`planAgentCliInstallForRuntime`, no-admin vendor recipes only) runs in the target
+    as its user, once per target, with this Session's delivered credential environment
+    (Muse's installer downloads with the login), and the CLI is found in the provider's
+    declared user bin directories. A missing recipe tool (e.g. `bash`/`curl` in a slim
+    image), a failed recipe, a managed package (needs this Machine's runtime) or a
+    managed GitHub release for another architecture is refused
     (`agent_cli_target_unavailable`). A custody hand-over of the row (pushed row change or
     the per-call re-check) ends the Session authority and its channels. `exec` and
     `putFile` never wake a stopped target. Request-auth materializations (a loopback
@@ -6904,6 +6931,13 @@ channels and exits when the holder closes that connection.
   5. If the respawn gives up (no restart, Stop, already running, startup failure,
      respawn not attempted), the spared tree is ended (`sparedHeldAgents.end`). An
      end never retires a live owner of the Session.
+  6. A Session placed on a target: its holder and Agent run in the target, so the
+     runner reports the target's pids, and the daemon probes and ends the spared
+     Agent there (`reachHeldTargetAgent`, a short Session authority of its own; the
+     crashed runner's authority ended with it) instead of as processes of this
+     Machine. The respawn's placement keeps the adopted holder as the Session's
+     `primarySocketPath`, and its runner adopts through its own relay
+     (`{ kind: 'adopt', target }`).
 - Adopt contract (`sessionHolderAdoption.ts`): the one owner every protocol seam
   uses, each with its own frame codec:
   - the host JSON-RPC client (`createJsonRpcProcessClient`: Codex per-Session
@@ -7015,11 +7049,9 @@ Start-up failures are typed errors (`StartupMachineIdMissingError`), not
 `process.exit`. Still process-wide, owned elsewhere: the Windows Job cache (holder)
 and the active Account settings snapshot (one Account per host).
 
-#### The daemon's session host (0.3 development, off by default)
+#### The daemon's session host (0.3 development)
 
-With the client-local feature `sessions.multiSessionHost` enabled
-(`HAPPIER_FEATURE_SESSIONS_MULTI_SESSION_HOST__ENABLED=1`; missing or malformed is
-off), a daemon spawn of a headless Session does not start a runner process. The
+A daemon spawn of a headless Session does not start a runner process. The
 spawn owner (`spawnRegularProcessAndWaitForWebhook.ts`) asks the daemon's one
 session host
 ([`daemonSessionHost.ts`](../apps/cli/src/daemon/sessionHost/daemonSessionHost.ts))
@@ -7075,8 +7107,7 @@ through the host), and its end is re-observed through `/v1/session-host/watch`,
 which returns that Session's exit code like its add. A Session the live host no
 longer runs is observed as ended; a broken connection is the host's death
 (`process-missing`, respawn as above). A live host of the daemon's current runtime
-takes new Sessions. Adoption does not depend on the feature state: a host that
-exists must be stopped through it.
+takes new Sessions.
 
 Host update uses the crash path, without its loss. When a reattached live host runs
 an older runtime than the daemon (`isCurrentRuntime`, the runner staleness owner
@@ -7091,8 +7122,8 @@ Agent; the holder replays only output the old host never delivered. There is no
 separate detach mode.
 
 Not yet built: per-Session memory ceilings and stderr inside the host, and one Session
-MCP endpoint per host without a per-Session bridge process. The feature stays off by
-default pending the owner ruling on the gate.
+MCP endpoint per host without a per-Session bridge process (pending an owner ruling on
+its transport).
 
 ### One tree terminator and owner-end recovery
 

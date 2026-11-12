@@ -99,7 +99,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         const child = { action: parseQualifiedPluginActionId(childAction) ?? ActionIdSchema.parse(childAction),
           role: logicalInvocationId, input: structuredClone(childInput) };
         return { ...bound, invokeReviewedChild: execute => invokeHostReviewedChildV1({
-          parent, child, context, ...(!savedTrigger ? {
+          parent, child, context, approvedBy: operation.approvedBy, ...(!savedTrigger ? {
             admittedReview: { action: child.action, role: logicalInvocationId, surface: surface.surface },
           } : {}),
           execute: (_input, issuedContext) => execute(issuedContext),

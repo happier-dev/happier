@@ -444,6 +444,10 @@ export type SessionLifecycleActionInputById = {
                 reason: 'not_selected';
             }[];
         };
+        managedTargetPlacement?: undefined | {
+            managedId: string;
+            workspaceRoot: string;
+        };
         agentInstallConsent?: undefined | {
             vendorRecipe: boolean;
         };
@@ -714,6 +718,9 @@ export type SessionLifecycleActionInputById = {
                     url?: string | undefined;
                     mimeType?: string | undefined;
                     label?: string | undefined;
+                    sha256?: string | undefined;
+                    sizeBytes?: number | undefined;
+                    provenance?: Record<string, unknown> | undefined;
                 }[];
                 browserContext?: undefined | {
                     contexts: ({
@@ -1901,6 +1908,7 @@ export type SessionLifecycleActionInputById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -1926,6 +1934,7 @@ export type SessionLifecycleActionInputById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -1956,12 +1965,12 @@ export type SessionLifecycleActionInputById = {
                 kind: 'workflow';
                 ref: string;
             };
-            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
+            inputs?: Record<string, unknown> | undefined;
             approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
@@ -1969,6 +1978,7 @@ export type SessionLifecycleActionInputById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: string | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -3290,7 +3300,7 @@ export type SessionLifecycleActionResultById = {
                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                 };
                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                providerErrorCode?: number | string | undefined;
                 httpStatus?: number | undefined;
                 providerErrorMessage?: string | undefined;
             };

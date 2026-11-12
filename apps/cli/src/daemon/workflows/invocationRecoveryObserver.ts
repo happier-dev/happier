@@ -556,6 +556,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           if (!input.frozenActionContract?.completion) return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
           const completion = await resumeActionCompletionV1({ actionId: execution.actionId,
             completion: input.frozenActionContract.completion,
+            context: { input: execution.input },
             state: { output: execution.output, awaitedOperations: execution.awaitedOperations },
             resolveDeclaration: () => getActionSpec(id.data).completion,
             observeOperation: async (target) => observedOperations.find((entry) => entry.target.key === target.key
@@ -607,6 +608,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           };
         }
         const completion = await resumeActionCompletionV1({ actionId: execution.actionId, completion: input.frozenActionContract.completion,
+          context: { input: execution.input },
           state: { output: execution.output, awaitedRuns: execution.awaitedRuns },
           resolveDeclaration: () => getActionSpec(id.data).completion,
           observeRun: async (run) => {

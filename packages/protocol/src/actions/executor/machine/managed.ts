@@ -1,4 +1,5 @@
 import { isActionFamilyId } from '../actionFamilies.js';
+import { MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../../../machines/managed/actionIdsV1.js';
 import { ManagedDeleteOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '../../../machines/managed/actionsV1.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { MachineReferenceCensusV1Schema, type MachineReferenceCensusV1 } from '../../../machines/machineReferenceCensusV1.js';
@@ -33,6 +34,14 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
           if (!deps.machineSetupApply) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const result = await deps.machineSetupApply({ input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.apply']>,
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          return readActionFailureEnvelope(result) ?? { ok: true, result };
+        }
+        if (managedMachineActionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1) {
+          if (!deps.machineSetupUpdatesRollout) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.machineSetupUpdatesRollout({
+            input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.updates.rollout']>,
+            context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
           return readActionFailureEnvelope(result) ?? { ok: true, result };
         }
         if (managedMachineActionId === 'machines.setup.updates.apply') {

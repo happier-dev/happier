@@ -54,6 +54,16 @@ export type DevicesSimulatorActionInputById = {
                 }[];
                 sequence: number;
             } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -307,6 +317,16 @@ export type DevicesSimulatorActionInputById = {
                 kind: 'fileChooser';
                 target: 'page';
                 chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
                 files: {
                     name: string;
                     dataBase64: string;
@@ -604,6 +624,16 @@ export type DevicesSimulatorActionInputById = {
                 }[];
                 sequence: number;
             } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -844,6 +874,16 @@ export type DevicesSimulatorActionInputById = {
                 kind: 'fileChooser';
                 target: 'page';
                 chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
                 files: {
                     name: string;
                     dataBase64: string;
@@ -1096,6 +1136,16 @@ export type DevicesSimulatorActionInputById = {
                 }[];
                 sequence: number;
             } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -1336,6 +1386,16 @@ export type DevicesSimulatorActionInputById = {
                 kind: 'fileChooser';
                 target: 'page';
                 chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
                 files: {
                     name: string;
                     dataBase64: string;
@@ -1588,6 +1648,16 @@ export type DevicesSimulatorActionInputById = {
                 }[];
                 sequence: number;
             } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -1834,6 +1904,16 @@ export type DevicesSimulatorActionInputById = {
                 }[];
                 sequence: number;
             } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -2074,6 +2154,16 @@ export type DevicesSimulatorActionInputById = {
                 kind: 'fileChooser';
                 target: 'page';
                 chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
+                kind: 'fileDrop';
+                target: 'page';
+                x: number;
+                y: number;
                 files: {
                     name: string;
                     dataBase64: string;

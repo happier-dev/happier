@@ -46,6 +46,9 @@ export type SessionControlActionInputById = {
                 url?: string | undefined;
                 mimeType?: string | undefined;
                 label?: string | undefined;
+                sha256?: string | undefined;
+                sizeBytes?: number | undefined;
+                provenance?: Record<string, unknown> | undefined;
             }[];
             browserContext?: undefined | {
                 contexts: ({
@@ -925,7 +928,6 @@ export type SessionControlActionInputById = {
                 kind: 'rule';
                 ruleId: string;
             };
-            expectedVersion: number;
             ruleDefinition: {
                 v: 1;
                 filter: Readonly<{
@@ -999,6 +1001,7 @@ export type SessionControlActionInputById = {
                 }>;
                 enabled: boolean;
             };
+            expectedVersion: number;
         }[];
         sessionId: SessionTargetV1<true>;
         answersWorkerQuestions?: boolean | undefined;
@@ -1536,6 +1539,9 @@ export type SessionControlActionResultById = {
                 url?: string | undefined;
                 mimeType?: string | undefined;
                 label?: string | undefined;
+                sha256?: string | undefined;
+                sizeBytes?: number | undefined;
+                provenance?: Record<string, unknown> | undefined;
             }[];
             browserContext?: undefined | {
                 contexts: ({
@@ -2654,7 +2660,7 @@ export type SessionControlActionResultById = {
                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                     };
                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                    providerErrorCode?: number | string | undefined;
                     httpStatus?: number | undefined;
                     providerErrorMessage?: string | undefined;
                 };
@@ -2863,6 +2869,10 @@ export type SessionControlActionResultById = {
                 status: 'revoked';
                 machineId: string;
             } | {
+                status: 'roleInactive';
+                machineId: string;
+                roleId: 'sessions';
+            } | {
                 status: 'rpcUnavailable';
                 machineId: string;
             } | {
@@ -3066,7 +3076,7 @@ export type SessionControlActionResultById = {
             nativeChoices?: undefined | {
                 requirementId: string;
                 source: string;
-                choices: {
+                choices: readonly Readonly<{
                     id: string;
                     label: string;
                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3089,7 +3099,7 @@ export type SessionControlActionResultById = {
                         actionId: string;
                         input: JsonValue;
                     };
-                }[];
+                }>[];
                 origin?: undefined | {
                     sessionId: string;
                     subagentId?: string | undefined;
@@ -3332,7 +3342,7 @@ export type SessionControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -3541,6 +3551,10 @@ export type SessionControlActionResultById = {
                             status: 'revoked';
                             machineId: string;
                         } | {
+                            status: 'roleInactive';
+                            machineId: string;
+                            roleId: 'sessions';
+                        } | {
                             status: 'rpcUnavailable';
                             machineId: string;
                         } | {
@@ -3744,7 +3758,7 @@ export type SessionControlActionResultById = {
                         nativeChoices?: undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3767,7 +3781,7 @@ export type SessionControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -3824,6 +3838,29 @@ export type SessionControlActionResultById = {
             modelId: string;
         };
         reason?: string | undefined;
+        failureCause?: undefined | {
+            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+            code?: string | undefined;
+            retryable?: boolean | undefined;
+            requestId?: string | undefined;
+            preparationCause?: undefined | {
+                code: string;
+                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                requestId?: string | undefined;
+            };
+            connectedServicesDefault?: undefined | {
+                v: 1;
+                source: 'account_default';
+                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                phase: 'purpose_binding';
+                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+            };
+            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+            providerErrorCode?: number | string | undefined;
+            httpStatus?: number | undefined;
+            providerErrorMessage?: string | undefined;
+        };
     } | {
         ok: false;
         status: 'owner_unavailable';
@@ -3846,6 +3883,29 @@ export type SessionControlActionResultById = {
             modelId: string;
         };
         reason?: string | undefined;
+        failureCause?: undefined | {
+            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+            code?: string | undefined;
+            retryable?: boolean | undefined;
+            requestId?: string | undefined;
+            preparationCause?: undefined | {
+                code: string;
+                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                requestId?: string | undefined;
+            };
+            connectedServicesDefault?: undefined | {
+                v: 1;
+                source: 'account_default';
+                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                phase: 'purpose_binding';
+                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+            };
+            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+            providerErrorCode?: number | string | undefined;
+            httpStatus?: number | undefined;
+            providerErrorMessage?: string | undefined;
+        };
     } | {
         ok: false;
         status: 'reconciliation_required';
@@ -3868,6 +3928,29 @@ export type SessionControlActionResultById = {
             modelId: string;
         };
         reason?: string | undefined;
+        failureCause?: undefined | {
+            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+            code?: string | undefined;
+            retryable?: boolean | undefined;
+            requestId?: string | undefined;
+            preparationCause?: undefined | {
+                code: string;
+                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                requestId?: string | undefined;
+            };
+            connectedServicesDefault?: undefined | {
+                v: 1;
+                source: 'account_default';
+                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                phase: 'purpose_binding';
+                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+            };
+            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+            providerErrorCode?: number | string | undefined;
+            httpStatus?: number | undefined;
+            providerErrorMessage?: string | undefined;
+        };
     } | {
         ok: true;
         status: 'already_active' | 'applied';

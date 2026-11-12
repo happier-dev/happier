@@ -174,7 +174,7 @@ export type ExternalSessionsActionResultById = {
     };
     readonly "sessions.external.backgroundFollow.set": {
         ok: false;
-        errorCode: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
+        errorCode: 'agent_error' | 'agent_format_unsupported' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
         error: string;
     } | {
         ok: true;
@@ -184,7 +184,7 @@ export type ExternalSessionsActionResultById = {
     };
     readonly "sessions.external.status.get": {
         ok: false;
-        errorCode: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
+        errorCode: 'agent_error' | 'agent_format_unsupported' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
         error: string;
     } | {
         ok: true;

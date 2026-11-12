@@ -189,8 +189,8 @@ export type WorkflowStepExecutionResult = (
       /** Native Execution Run results are already decoded; Session results remain exact assistant text. */
       resultEncoding?: 'raw_text' | 'typed';
     }>
-  | Readonly<{ kind: 'failed'; code: string; message?: string; reasonDetails?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['details']; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
-  | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
+  | Readonly<{ kind: 'failed'; code: string; message?: string; reasonDetails?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['details']; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause']; usage?: WorkflowUsageV1 }>
+  | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause']; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string; usage?: WorkflowUsageV1 }>
 ) & Readonly<{ replyOutcome?: WorkflowProgressEnvelopeV1['replyOutcome'] }>;
@@ -1841,7 +1841,8 @@ async function executeActionBlock(
   const prepareCompletion = async (invoked: ActionExecuteResult, serverId?: string | null) => {
     const declaration = frozen.actionContract!.completion && builtinActionId.success ? getActionSpec(builtinActionId.data).completion : undefined;
     if (frozen.actionContract!.completion && !declaration) return await fail('outcome_uncertain', 'outcome_uncertain');
-    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: serverId ?? undefined });
+    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: serverId ?? undefined,
+      ...(row!.execution?.kind === 'action' ? { input: row!.execution.input } : {}) });
     if (phase.kind === 'awaiting' && row!.execution?.kind === 'action') {
       completionState = phase.state;
       row = await context.deps.store.commitFact({ key: row!.key, lifecycle: 'running', execution: { ...row!.execution, ...completionState } });
@@ -2025,6 +2026,7 @@ async function executeActionBlock(
     const completionActionId = builtinActionId.data;
     completed = await context.holds.track(() => resumeActionCompletionV1({ actionId: completionActionId,
       completion: frozen.actionContract!.completion, state: completionState,
+      ...(row.execution?.kind === 'action' ? { context: { input: row.execution.input } } : {}),
       resolveDeclaration: () => getActionSpec(completionActionId).completion,
       ...(context.deps.action!.observeOperation ? { observeOperation: async (operation: ActionCompletionOperation) =>
         await context.deps.action!.observeOperation!(operation, context.signal ? { signal: context.signal } : {}) } : {}),
@@ -2714,6 +2716,8 @@ async function executeStepBlock(
       isGeneration: isReviewGeneration, inputCompleted: false, observation: execution,
       continuationRefusedBeforeAdmission: generationContinuationRefused }) === 'waiting_for_review') {
       const row = await enterReview({ key, lifecycle: 'waiting_for_review', reason: execution.code,
+        ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.failureCause
+          ? { failureCause: execution.failureCause } : {}),
         ...(execution.kind === 'failed' && execution.runtimeIssueV1 ? { runtimeIssueV1: execution.runtimeIssueV1 } : {}),
         ...(execution.kind === 'failed' && execution.reasonDetails ? { reasonDetails: execution.reasonDetails } : {}),
         ...(execution.kind === 'failed' && execution.message !== undefined ? { reasonMessage: execution.message } : {}),
@@ -2767,6 +2771,8 @@ async function executeStepBlock(
       key,
       lifecycle: failStopClosure ? 'cancelled' : execution.kind,
       reason,
+      ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.failureCause && reason === execution.code
+        ? { failureCause: execution.failureCause } : {}),
       ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.runtimeIssueV1 && reason === execution.code
         ? { runtimeIssueV1: execution.runtimeIssueV1 } : {}),
       ...(execution.kind === 'failed' && execution.reasonDetails && reason === execution.code

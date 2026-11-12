@@ -33,23 +33,25 @@ export type MachineAgentInstallActionInputById = {
 export type MachineAgentInstallActionResultById = {
     readonly "machines.agents.install": {
         ok: false;
-        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
     } | {
         ok: true;
         jobId: string;
+        executionScope?: 'machine' | 'member' | undefined;
     };
     readonly "machines.agents.uninstall": {
         ok: false;
-        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
     } | {
         ok: true;
         jobId: string;
+        executionScope?: 'machine' | 'member' | undefined;
     };
     readonly "machines.agents.install.status": {
         ok: false;
-        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
     } | {
         ok: true;
@@ -93,7 +95,7 @@ export type MachineAgentInstallActionResultById = {
     };
     readonly "machines.agents.install.cancel": {
         ok: false;
-        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
     } | {
         ok: true;

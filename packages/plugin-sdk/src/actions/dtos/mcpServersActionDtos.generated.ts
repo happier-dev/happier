@@ -181,7 +181,7 @@ export type McpServersActionInputById = {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -468,7 +468,7 @@ export type McpServersActionInputById = {
                     kind: 'registry';
                     provenance: {
                         sourceId: string;
-                        format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -872,7 +872,7 @@ export type McpServersActionInputById = {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1846,7 +1846,7 @@ export type McpServersActionResultById = {
                     kind: 'registry';
                     provenance: {
                         sourceId: string;
-                        format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -2156,7 +2156,7 @@ export type McpServersActionResultById = {
                     kind: 'registry';
                     provenance: {
                         sourceId: string;
-                        format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -2535,7 +2535,7 @@ export type McpServersActionResultById = {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -2697,7 +2697,7 @@ export type McpServersActionResultById = {
     readonly "mcp.servers.test": {
         [x: string]: unknown;
         ok: false;
-        errorCode: 'binding_not_found' | 'invalid_request' | 'materialization_failed' | 'mcp_connect_failed' | 'mcp_list_tools_failed' | 'missing_credentials' | 'server_disabled' | 'server_not_found';
+        errorCode: 'binding_not_found' | 'invalid_request' | 'materialization_failed' | 'mcp_connect_failed' | 'mcp_list_tools_failed' | 'mcp_sign_in_required' | 'missing_credentials' | 'server_disabled' | 'server_not_found';
         error: string;
         durationMs: number;
         runtimeMissing?: string | undefined;

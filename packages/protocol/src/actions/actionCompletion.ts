@@ -91,7 +91,11 @@ export function isActionCompletionRunObservationPendingV1(observation: Execution
 }
 
 export type ActionCompletionOperation = Readonly<{ key: string; serverId: string; machineId: string; operationId: string }>;
-export type ActionCompletionContextV1 = Readonly<{ serverId?: string | null }>;
+export type ActionCompletionContextV1 = Readonly<{
+  serverId?: string | null;
+  /** The admitted invocation's frozen input, also retained by Workflow recovery. */
+  input?: unknown;
+}>;
 
 type ExecutionRunCompletionDeclaration = Readonly<{
   awaits: 'execution_runs';
@@ -203,6 +207,7 @@ export async function resumeActionCompletionV1(params: Readonly<{
   actionId: string;
   completion: unknown;
   state: unknown;
+  context?: ActionCompletionContextV1;
   resolveDeclaration: (actionId: string) => ActionCompletionDeclaration | undefined;
   observeRun?: (run: ActionCompletionRun) => Promise<ExecutionRunTerminalObservation>;
   observeOperation?: (operation: ActionCompletionOperation) => Promise<unknown>;
@@ -216,7 +221,7 @@ export async function resumeActionCompletionV1(params: Readonly<{
       const declaration = params.resolveDeclaration(params.actionId);
       if (declaration?.awaits !== 'action_operations' || !state.data.awaitedOperations || !params.observeOperation) return uncertain;
       const launched = ActionCompletionOperationLaunchesSchema.parse(declaration.launched(state.data.output,
-        { serverId: state.data.awaitedOperations[0]?.serverId }));
+        { ...params.context, serverId: state.data.awaitedOperations[0]?.serverId }));
       if (!sameStrictJsonValue(launched.operations, state.data.awaitedOperations)) return uncertain;
       const observations = await Promise.all(state.data.awaitedOperations.map(async target => {
         const operation = ActionOperationSnapshotV1Schema.parse(await params.observeOperation!(target));

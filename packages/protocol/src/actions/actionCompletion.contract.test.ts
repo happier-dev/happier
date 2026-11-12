@@ -19,6 +19,31 @@ const declaration: ActionCompletionDeclaration = {
 };
 
 describe('generic Action completion seam', () => {
+  it.each(['machines.setup.updates.apply', 'machines.setup.updates.rollout'] as const)
+    ('joins %s through its retained Machine target on recovery', async actionId => {
+      const target = { homeId: 'home', machineId: 'worker', scope: 'security', plan: { v: 1,
+        basis: { kind: 'updates', machineId: 'worker', scope: 'security' }, steps: [], nativeFacts: [], planDigest: 'a'.repeat(64) } };
+      const input = actionId === 'machines.setup.updates.apply' ? target
+        : { homeId: 'home', machineId: 'controller', batches: [[target]], failurePolicy: 'fail_stop' };
+      const completion = getActionSpec(actionId).completion;
+      if (!completion) throw new Error('Missing finite Machine update completion');
+      const phase = prepareActionCompletionV1(completion, { ok: true, result: { operationId: 'finite' } },
+        { serverId: 'home', input });
+      if (phase.kind !== 'awaiting') throw new Error('Machine update acceptance must remain pending');
+      let observations = 0;
+      const operation = { version: 1, operationId: 'finite', revision: 2, actionId, state: 'failed',
+        scope: { accountId: 'requester', machineId: input.machineId }, title: 'Update', cancellation: 'unsupported',
+        createdAt: 1, startedAt: 1, settledAt: 2, error: { errorCode: 'native_failed', error: 'native_failed' } };
+      const resume = (retainedInput?: unknown) => resumeActionCompletionV1({ actionId,
+        completion: freezeActionCompletionContractV1(completion), state: phase.state, context: { input: retainedInput },
+        resolveDeclaration: () => completion, observeOperation: async () => { observations++; return operation; } });
+      expect(await resume()).toMatchObject({ kind: 'outcome_uncertain' });
+      expect(await resume({ ...input, machineId: 'another-machine' })).toMatchObject({ kind: 'outcome_uncertain' });
+      expect(observations).toBe(0);
+      expect(await resume(input)).toMatchObject({ kind: 'failed', errorCode: 'native_failed', value: { operation: {
+        operationId: 'finite', state: 'failed', scope: { accountId: 'requester', machineId: input.machineId },
+      } } });
+    });
   it('projects a live no-effect setup review through the existing FIN consent hold without terminal failure', async () => {
     const operation = { version: 1, operationId: 'finite', revision: 1, actionId: 'projects.script.run', state: 'accepted',
       scope: { accountId: 'account', machineId: 'machine' }, title: 'Script', cancellation: 'supported', createdAt: 1,

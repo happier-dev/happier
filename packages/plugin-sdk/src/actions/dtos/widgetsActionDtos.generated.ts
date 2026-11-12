@@ -2403,8 +2403,8 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
+                titleKey?: string | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
             };
             description?: string | undefined;
@@ -2647,8 +2647,8 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
+                titleKey?: string | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
             };
             origin?: undefined | {
@@ -13807,6 +13807,10 @@ export type WidgetsActionResultById = {
         definitions: {
             name: string;
             inputSchema: PluginJsonSchemaV2;
+            sizeDeclaration: {
+                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+            };
             inputs: {
                 fields: readonly {
                     path: string;
@@ -13870,10 +13874,6 @@ export type WidgetsActionResultById = {
                 description?: string | undefined;
                 submitLabel?: string | undefined;
             };
-            sizeDeclaration: {
-                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
-                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
-            };
             artifactId: string;
             bodyKind: 'builtin' | 'declarative' | 'html' | 'installed';
             resources: {
@@ -13881,7 +13881,6 @@ export type WidgetsActionResultById = {
                 localId: string;
             }[];
             description?: string | undefined;
-            sessionInputPath?: string | undefined;
             publicPresentation?: undefined | {
                 kind: 'declarative';
                 document: Readonly<{
@@ -13889,6 +13888,7 @@ export type WidgetsActionResultById = {
                     root: PluginDeclarativeNodeV2;
                 }>;
             };
+            sessionInputPath?: string | undefined;
             connectedAccountPurposeBindings?: undefined | {
                 path: string;
                 purpose: string;

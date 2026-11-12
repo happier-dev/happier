@@ -3417,6 +3417,13 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
 
+  /** One reviewed batch is composed by the incumbent Workflow Run owner. */
+  machineSetupUpdatesRollout?: (args: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupUpdatesRolloutInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   /** On-demand exact native package updates reuse the setup operation owner. */
   machineSetupUpdatesApply?: (args: Readonly<{
     input: import('../../machines/managed/actionsV1.js').MachineSetupUpdatesApplyInputV1;

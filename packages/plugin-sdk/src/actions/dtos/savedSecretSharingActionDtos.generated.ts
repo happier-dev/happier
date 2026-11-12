@@ -623,7 +623,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -845,7 +845,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -1207,6 +1207,7 @@ export type SavedSecretSharingActionInputById = {
                             };
                             catalogSourceKey?: string | undefined;
                         }[];
+                        modelPickerVisibilityByConnectionId?: Record<string, boolean> | undefined;
                         migration?: undefined | {
                             v: 1;
                             completedSources: ({
@@ -1251,7 +1252,6 @@ export type SavedSecretSharingActionInputById = {
                             }[];
                             migratedAt?: number | undefined;
                         };
-                        modelPickerVisibilityByConnectionId?: Record<string, boolean> | undefined;
                     };
                 };
                 referencedSavedSecretIds: string[];
@@ -1542,8 +1542,8 @@ export type SavedSecretSharingActionInputById = {
                             sources: {
                                 id: string;
                                 title: string;
-                                format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-                                kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
+                                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                                kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
                                 url: string;
                                 enabled: boolean;
                                 addedAt: number;
@@ -1568,6 +1568,7 @@ export type SavedSecretSharingActionInputById = {
                                 engine?: undefined | {
                                     agentTargetKey: string;
                                     modelId?: string | undefined;
+                                    providerConnectionId?: string | undefined;
                                     effort?: string | undefined;
                                 };
                                 runsAs?: undefined | {
@@ -1877,7 +1878,7 @@ export type SavedSecretSharingActionInputById = {
                     v: unknown;
                 };
             };
-            directExportContract?: 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
+            directExportContract?: 'happier.team-credential-access-only-connected-account-direct.v1' | 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
             savedSecretResourceIds?: string[] | undefined;
             savedSecretRevisions?: undefined | {
                 resourceId: string;
@@ -1926,7 +1927,7 @@ export type SavedSecretSharingActionInputById = {
                     };
                 };
             };
-            directExportContract?: 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
+            directExportContract?: 'happier.team-credential-access-only-connected-account-direct.v1' | 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
             savedSecretResourceIds?: string[] | undefined;
             savedSecretRevisions?: undefined | {
                 resourceId: string;

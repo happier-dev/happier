@@ -1,3 +1,4 @@
+import { isMachineSetupNativeCodecActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -359,7 +360,7 @@ function openInstallationSealedContext(sealed: z.infer<typeof SessionRequesterIn
 export function isReviewedMachineSetupCodecV1(binding: Readonly<{
   actionId: string; workflowActionOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'];
 }>): boolean {
-  return binding.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+  return isMachineSetupNativeCodecActionIdV1(binding.actionId)
     && binding.workflowActionOrigin !== undefined;
 }
 

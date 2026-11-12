@@ -118,8 +118,12 @@ export type UsageActionInputById = {
     } & {
         clientId?: string | undefined;
     };
-    readonly "usage.prices.get": Record<string, never>;
-    readonly "usage.prices.refresh": Record<string, never>;
+    readonly "usage.prices.get": {
+        modelIds?: string[] | undefined;
+    };
+    readonly "usage.prices.refresh": {
+        modelIds?: string[] | undefined;
+    };
     readonly "usage.calendar.export": {
         query: {
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
@@ -774,12 +778,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1145,12 +1149,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1516,12 +1520,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1889,12 +1893,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2262,12 +2266,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2633,12 +2637,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3004,12 +3008,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3377,12 +3381,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3734,6 +3738,17 @@ export type UsageActionResultById = {
     };
     readonly "usage.prices.get": {
         v: 1;
+        modelCount: number;
+        provenance: {
+            source: 'litellm';
+            origin: 'bundled' | 'cached' | 'fetched';
+            asOfMs: number;
+            revision: string;
+            fetchStatus: 'disabled' | 'error' | 'ready';
+            errorCode?: string | undefined;
+        };
+    } | {
+        v: 1;
         models: Record<string, {
             inputUsdPerMillion: number;
             outputUsdPerMillion: number;
@@ -3753,6 +3768,17 @@ export type UsageActionResultById = {
         };
     };
     readonly "usage.prices.refresh": {
+        v: 1;
+        modelCount: number;
+        provenance: {
+            source: 'litellm';
+            origin: 'bundled' | 'cached' | 'fetched';
+            asOfMs: number;
+            revision: string;
+            fetchStatus: 'disabled' | 'error' | 'ready';
+            errorCode?: string | undefined;
+        };
+    } | {
         v: 1;
         models: Record<string, {
             inputUsdPerMillion: number;
@@ -3798,12 +3824,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4178,12 +4204,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4550,12 +4576,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4930,12 +4956,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -5300,12 +5326,12 @@ export type UsageActionResultById = {
         coverage: {
             accounting: null | {
                 status: 'complete' | 'partial' | 'unknown';
+                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
-                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                 ranked: {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -5669,12 +5695,12 @@ export type UsageActionResultById = {
         coverage: {
             accounting: null | {
                 status: 'complete' | 'partial' | 'unknown';
+                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
-                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                 ranked: {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -7526,6 +7552,7 @@ export type UsageActionResultById = {
                             value: {
                                 path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                 source: string;
+                                execution: 'happier' | 'outside' | 'unknown';
                                 tokens: {
                                     input: null | number;
                                     output: null | number;
@@ -7534,7 +7561,6 @@ export type UsageActionResultById = {
                                     cacheWrite: null | number;
                                     total: null | number;
                                 };
-                                execution: 'happier' | 'outside' | 'unknown';
                                 eventCount: number;
                             };
                             population: {
@@ -8207,10 +8233,6 @@ export type UsageActionResultById = {
                                     };
                                     tokens?: number | undefined;
                                 }[];
-                                footprint?: undefined | {
-                                    status: 'insufficient_basis';
-                                    reason: 'no_applicable_versioned_method';
-                                };
                                 agentActiveDays?: undefined | {
                                     agentId: string;
                                     days: number;
@@ -8231,6 +8253,10 @@ export type UsageActionResultById = {
                                     startMs: number;
                                     endMs: number;
                                 }[];
+                                footprint?: undefined | {
+                                    status: 'insufficient_basis';
+                                    reason: 'no_applicable_versioned_method';
+                                };
                             };
                             days: {
                                 date: string;
@@ -8779,10 +8805,6 @@ export type UsageActionResultById = {
                                         };
                                         tokens?: number | undefined;
                                     }[];
-                                    footprint?: undefined | {
-                                        status: 'insufficient_basis';
-                                        reason: 'no_applicable_versioned_method';
-                                    };
                                     agentActiveDays?: undefined | {
                                         agentId: string;
                                         days: number;
@@ -8803,6 +8825,10 @@ export type UsageActionResultById = {
                                         startMs: number;
                                         endMs: number;
                                     }[];
+                                    footprint?: undefined | {
+                                        status: 'insufficient_basis';
+                                        reason: 'no_applicable_versioned_method';
+                                    };
                                 };
                                 days: {
                                     date: string;
@@ -9833,8 +9859,8 @@ export type UsageActionResultById = {
                         providerLimitId?: string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         currency?: string | undefined;
-                        windowDurationMs?: number | undefined;
                         resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
+                        windowDurationMs?: number | undefined;
                         isExhausted?: boolean | undefined;
                         isSoftLimited?: boolean | undefined;
                         isCapacityLimited?: boolean | undefined;
@@ -10075,6 +10101,283 @@ export type UsageActionResultById = {
                         resetAtMs: number;
                         windowStartAtMs: number;
                         windowDurationMs: number;
+                    }[];
+                    dayQuotaHistory?: undefined | {
+                        v: 1;
+                        recordId: string;
+                        dayStartAtMs: number;
+                        lastSnapshot: {
+                            v: 1;
+                            recordId: string;
+                            recordKey: {
+                                providerId: string;
+                                accountSubjectId: string;
+                                subjectKind: 'account' | 'modelFamily' | 'organization' | 'project' | 'subscription' | 'tenant' | 'unknown' | 'workspace';
+                                quotaScope: 'account' | 'model' | 'organization' | 'project' | 'provider' | 'unknown' | 'workspace';
+                                quotaScopeId?: string | undefined;
+                            };
+                            providerId: string;
+                            accountSubject: {
+                                kind: 'providerSubject' | 'provisionalLocalSubject';
+                                id: string;
+                                mergeKey?: string | undefined;
+                            };
+                            observedAtMs: number;
+                            fetchedAtMs: number;
+                            staleAfterMs: number;
+                            source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
+                            confidence: 'confirmed' | 'estimated' | 'unknown';
+                            state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
+                            meters: {
+                                meterId: string;
+                                label: string;
+                                used: null | number;
+                                limit: null | number;
+                                unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
+                                utilizationPct: null | number;
+                                resetsAt: null | number;
+                                status: 'estimated' | 'ok' | 'unavailable';
+                                details: {
+                                    note?: null | string | undefined;
+                                    code?: string | undefined;
+                                    rawScope?: string | undefined;
+                                    remainingPct?: null | number | undefined;
+                                    scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                                    providerLimitId?: string | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                };
+                                remaining?: null | number | undefined;
+                                remainingPct?: null | number | undefined;
+                                usedPct?: null | number | undefined;
+                                resetAtMs?: null | number | undefined;
+                                resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
+                                providerLimitId?: string | undefined;
+                                windowDurationMs?: number | undefined;
+                                modelId?: null | string | undefined;
+                                isExhausted?: boolean | undefined;
+                                isSoftLimited?: boolean | undefined;
+                                isCapacityLimited?: boolean | undefined;
+                                currency?: string | undefined;
+                                source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
+                                scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                                limitScope?: 'account' | 'model' | 'organization' | 'provider' | 'session' | 'unknown' | 'workspace' | undefined;
+                                confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                            }[];
+                            planLabel?: null | string | undefined;
+                            accountLabel?: null | string | undefined;
+                            subscription?: undefined | {
+                                status: 'none' | 'subscribed' | 'unavailable';
+                                renewal: 'off' | 'on' | 'unknown';
+                                observedAtMs: number;
+                                staleAfterMs: number;
+                                currentPeriodStartAtMs?: number | undefined;
+                                currentPeriodEndAtMs?: number | undefined;
+                                monetaryFacts?: undefined | {
+                                    kind: 'list' | 'paid';
+                                    amount: number;
+                                    currency: string;
+                                    period: {
+                                        startAtMs: number;
+                                        endAtMs: number;
+                                    };
+                                    source: {
+                                        kind: 'provider' | 'published';
+                                        id: string;
+                                        version: string;
+                                    };
+                                    effectiveAtMs: number;
+                                    asOfMs: number;
+                                    tier?: string | undefined;
+                                    region?: string | undefined;
+                                }[];
+                                enteredMonthlyPrice?: undefined | {
+                                    amount: number;
+                                    currency: string;
+                                    enteredAtMs: number;
+                                };
+                                lastRefreshError?: undefined | {
+                                    observedAtMs: number;
+                                    code: 'auth_failure' | 'malformed' | 'missing_auth' | 'network' | 'provider_backoff';
+                                    status?: number | undefined;
+                                };
+                            };
+                            recoveryCredits?: undefined | {
+                                availableCount: number;
+                                credits: {
+                                    kind: 'quota_reset' | 'rate_limit_reset' | 'unknown' | 'usage_limit_reset';
+                                    status: 'available' | 'expired' | 'redeemed' | 'redeeming' | 'unavailable' | 'unknown';
+                                    id?: string | undefined;
+                                    providerResetType?: string | undefined;
+                                    appliesToProviderLimitId?: null | string | undefined;
+                                    grantedAtMs?: null | number | undefined;
+                                    expiresAtMs?: null | number | undefined;
+                                    redeemStartedAtMs?: null | number | undefined;
+                                    redeemedAtMs?: null | number | undefined;
+                                    title?: null | string | undefined;
+                                    description?: null | string | undefined;
+                                }[];
+                                totalCount?: number | undefined;
+                                nextExpiresAtMs?: null | number | undefined;
+                                source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
+                                confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                            };
+                            recoveryCreditDetails?: Record<string, {
+                                remainingCount: number;
+                                appliesToProviderLimitIds: string[];
+                                unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
+                            }> | undefined;
+                            diagnostics?: undefined | {
+                                kind: 'projection' | 'provider_http' | 'runtime_signal' | 'storage' | 'unavailable' | 'unknown' | 'validation';
+                                code?: string | undefined;
+                                message?: string | undefined;
+                                status?: number | undefined;
+                                headers?: Record<string, string> | undefined;
+                                observedAtMs?: number | undefined;
+                                retryAtMs?: number | undefined;
+                            }[];
+                        };
+                        windows: {
+                            meterId: string;
+                            windowStartAtMs: null | number;
+                            resetAtMs: null | number;
+                            lastSnapshot: {
+                                v: 1;
+                                recordId: string;
+                                recordKey: {
+                                    providerId: string;
+                                    accountSubjectId: string;
+                                    subjectKind: 'account' | 'modelFamily' | 'organization' | 'project' | 'subscription' | 'tenant' | 'unknown' | 'workspace';
+                                    quotaScope: 'account' | 'model' | 'organization' | 'project' | 'provider' | 'unknown' | 'workspace';
+                                    quotaScopeId?: string | undefined;
+                                };
+                                providerId: string;
+                                accountSubject: {
+                                    kind: 'providerSubject' | 'provisionalLocalSubject';
+                                    id: string;
+                                    mergeKey?: string | undefined;
+                                };
+                                observedAtMs: number;
+                                fetchedAtMs: number;
+                                staleAfterMs: number;
+                                source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
+                                confidence: 'confirmed' | 'estimated' | 'unknown';
+                                state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
+                                meters: {
+                                    meterId: string;
+                                    label: string;
+                                    used: null | number;
+                                    limit: null | number;
+                                    unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
+                                    utilizationPct: null | number;
+                                    resetsAt: null | number;
+                                    status: 'estimated' | 'ok' | 'unavailable';
+                                    details: {
+                                        note?: null | string | undefined;
+                                        code?: string | undefined;
+                                        rawScope?: string | undefined;
+                                        remainingPct?: null | number | undefined;
+                                        scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                                        providerLimitId?: string | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    };
+                                    remaining?: null | number | undefined;
+                                    remainingPct?: null | number | undefined;
+                                    usedPct?: null | number | undefined;
+                                    resetAtMs?: null | number | undefined;
+                                    resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
+                                    providerLimitId?: string | undefined;
+                                    windowDurationMs?: number | undefined;
+                                    modelId?: null | string | undefined;
+                                    isExhausted?: boolean | undefined;
+                                    isSoftLimited?: boolean | undefined;
+                                    isCapacityLimited?: boolean | undefined;
+                                    currency?: string | undefined;
+                                    source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
+                                    scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                                    limitScope?: 'account' | 'model' | 'organization' | 'provider' | 'session' | 'unknown' | 'workspace' | undefined;
+                                    confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                                }[];
+                                planLabel?: null | string | undefined;
+                                accountLabel?: null | string | undefined;
+                                subscription?: undefined | {
+                                    status: 'none' | 'subscribed' | 'unavailable';
+                                    renewal: 'off' | 'on' | 'unknown';
+                                    observedAtMs: number;
+                                    staleAfterMs: number;
+                                    currentPeriodStartAtMs?: number | undefined;
+                                    currentPeriodEndAtMs?: number | undefined;
+                                    monetaryFacts?: undefined | {
+                                        kind: 'list' | 'paid';
+                                        amount: number;
+                                        currency: string;
+                                        period: {
+                                            startAtMs: number;
+                                            endAtMs: number;
+                                        };
+                                        source: {
+                                            kind: 'provider' | 'published';
+                                            id: string;
+                                            version: string;
+                                        };
+                                        effectiveAtMs: number;
+                                        asOfMs: number;
+                                        tier?: string | undefined;
+                                        region?: string | undefined;
+                                    }[];
+                                    enteredMonthlyPrice?: undefined | {
+                                        amount: number;
+                                        currency: string;
+                                        enteredAtMs: number;
+                                    };
+                                    lastRefreshError?: undefined | {
+                                        observedAtMs: number;
+                                        code: 'auth_failure' | 'malformed' | 'missing_auth' | 'network' | 'provider_backoff';
+                                        status?: number | undefined;
+                                    };
+                                };
+                                recoveryCredits?: undefined | {
+                                    availableCount: number;
+                                    credits: {
+                                        kind: 'quota_reset' | 'rate_limit_reset' | 'unknown' | 'usage_limit_reset';
+                                        status: 'available' | 'expired' | 'redeemed' | 'redeeming' | 'unavailable' | 'unknown';
+                                        id?: string | undefined;
+                                        providerResetType?: string | undefined;
+                                        appliesToProviderLimitId?: null | string | undefined;
+                                        grantedAtMs?: null | number | undefined;
+                                        expiresAtMs?: null | number | undefined;
+                                        redeemStartedAtMs?: null | number | undefined;
+                                        redeemedAtMs?: null | number | undefined;
+                                        title?: null | string | undefined;
+                                        description?: null | string | undefined;
+                                    }[];
+                                    totalCount?: number | undefined;
+                                    nextExpiresAtMs?: null | number | undefined;
+                                    source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
+                                    confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                                };
+                                recoveryCreditDetails?: Record<string, {
+                                    remainingCount: number;
+                                    appliesToProviderLimitIds: string[];
+                                    unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
+                                }> | undefined;
+                                diagnostics?: undefined | {
+                                    kind: 'projection' | 'provider_http' | 'runtime_signal' | 'storage' | 'unavailable' | 'unknown' | 'validation';
+                                    code?: string | undefined;
+                                    message?: string | undefined;
+                                    status?: number | undefined;
+                                    headers?: Record<string, string> | undefined;
+                                    observedAtMs?: number | undefined;
+                                    retryAtMs?: number | undefined;
+                                }[];
+                            };
+                            peakUsed: null | number;
+                            firstObservedAtMs: number;
+                            lastObservedAtMs: number;
+                            resets: {
+                                resetAtMs: number;
+                                usedBeforeReset: null | number;
+                            }[];
+                        }[];
                     }[];
                 };
                 unusedCapacity?: undefined | {
@@ -11801,6 +12104,7 @@ export type UsageActionResultById = {
                                 value: {
                                     path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                     source: string;
+                                    execution: 'happier' | 'outside' | 'unknown';
                                     tokens: {
                                         input: null | number;
                                         output: null | number;
@@ -11809,7 +12113,6 @@ export type UsageActionResultById = {
                                         cacheWrite: null | number;
                                         total: null | number;
                                     };
-                                    execution: 'happier' | 'outside' | 'unknown';
                                     eventCount: number;
                                 };
                                 population: {
@@ -12478,10 +12781,6 @@ export type UsageActionResultById = {
                                         };
                                         tokens?: number | undefined;
                                     }[];
-                                    footprint?: undefined | {
-                                        status: 'insufficient_basis';
-                                        reason: 'no_applicable_versioned_method';
-                                    };
                                     agentActiveDays?: undefined | {
                                         agentId: string;
                                         days: number;
@@ -12502,6 +12801,10 @@ export type UsageActionResultById = {
                                         startMs: number;
                                         endMs: number;
                                     }[];
+                                    footprint?: undefined | {
+                                        status: 'insufficient_basis';
+                                        reason: 'no_applicable_versioned_method';
+                                    };
                                 };
                                 days: {
                                     date: string;
@@ -13020,10 +13323,6 @@ export type UsageActionResultById = {
                                             };
                                             tokens?: number | undefined;
                                         }[];
-                                        footprint?: undefined | {
-                                            status: 'insufficient_basis';
-                                            reason: 'no_applicable_versioned_method';
-                                        };
                                         agentActiveDays?: undefined | {
                                             agentId: string;
                                             days: number;
@@ -13041,6 +13340,10 @@ export type UsageActionResultById = {
                                             startMs: number;
                                             endMs: number;
                                         }[];
+                                        footprint?: undefined | {
+                                            status: 'insufficient_basis';
+                                            reason: 'no_applicable_versioned_method';
+                                        };
                                     };
                                     days: {
                                         date: string;
@@ -13734,7 +14037,6 @@ export type UsageActionResultById = {
             };
             publicProfileEvidence?: undefined | {
                 facts: {
-                    mergedPrs?: number | undefined;
                     peakParallel?: number | undefined;
                     weeklyPeakParallel?: undefined | {
                         peak: number;
@@ -13744,10 +14046,6 @@ export type UsageActionResultById = {
                         };
                         startMs: number;
                         endMs: number;
-                    }[];
-                    sessionDurations?: undefined | {
-                        agentId: string;
-                        durationMs: number;
                     }[];
                     dayNightActivity?: undefined | {
                         window: {
@@ -13762,6 +14060,11 @@ export type UsageActionResultById = {
                         };
                     };
                     agentTimeMs?: number | undefined;
+                    mergedPrs?: number | undefined;
+                    sessionDurations?: undefined | {
+                        agentId: string;
+                        durationMs: number;
+                    }[];
                 };
                 fieldCoverage: Partial<Record<'agentTime' | 'dayNightActivity' | 'mergedPrs' | 'peakParallel' | 'sessionDurations' | 'weeklyPeakParallel', {
                     status: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -13770,7 +14073,6 @@ export type UsageActionResultById = {
                 lenses: {
                     execution: 'happier' | 'outside';
                     facts: {
-                        mergedPrs?: number | undefined;
                         peakParallel?: number | undefined;
                         weeklyPeakParallel?: undefined | {
                             peak: number;
@@ -13780,10 +14082,6 @@ export type UsageActionResultById = {
                             };
                             startMs: number;
                             endMs: number;
-                        }[];
-                        sessionDurations?: undefined | {
-                            agentId: string;
-                            durationMs: number;
                         }[];
                         dayNightActivity?: undefined | {
                             window: {
@@ -13798,6 +14096,11 @@ export type UsageActionResultById = {
                             };
                         };
                         agentTimeMs?: number | undefined;
+                        mergedPrs?: number | undefined;
+                        sessionDurations?: undefined | {
+                            agentId: string;
+                            durationMs: number;
+                        }[];
                     };
                     accountingFacts?: undefined | {
                         agentMix?: undefined | {
@@ -15592,6 +15895,7 @@ export type UsageActionResultById = {
                                 engine?: undefined | {
                                     agentTargetKey: string;
                                     modelId?: string | undefined;
+                                    providerConnectionId?: (string) | undefined;
                                     effort?: string | undefined;
                                 };
                                 runsAs?: undefined | {
@@ -15617,6 +15921,7 @@ export type UsageActionResultById = {
                                 engine?: undefined | {
                                     agentTargetKey: string;
                                     modelId?: string | undefined;
+                                    providerConnectionId?: (string) | undefined;
                                     effort?: string | undefined;
                                 };
                                 profileId?: string | undefined;

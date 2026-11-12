@@ -263,6 +263,18 @@ export type MachineAdminAccessActionResultById = {
             reasonCode?: 'daemonRunningAsRoot' | 'dropInInvalid' | 'needs_admin_to_check' | 'observationFailed' | 'platformUnsupported' | 'sudoUnavailable' | undefined;
         };
         checkedAt: number;
+        adminAccess: {
+            version: 1;
+            mode: 'ask';
+            administratorUsername: string;
+        } | {
+            version: 1;
+            mode: 'none';
+        } | {
+            version: 1;
+            mode: 'preauthorized';
+        };
+        metadataVersion: number;
     } | {
         status: 'invalid' | 'locked' | 'unavailable';
     };

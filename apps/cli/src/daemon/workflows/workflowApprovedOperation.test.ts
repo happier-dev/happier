@@ -33,6 +33,8 @@ import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/jso
 import { createPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createActionExecutorBoundaryFixture } from '../../../../../packages/tests/src/testkit/actionExecutorBoundary';
+import { createScheduledMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
+import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 
 const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
 const invocationId = 'exact-child';
@@ -107,6 +109,73 @@ async function fixture(withApproval = true, encrypted = false, initial = snapsho
 }
 
 describe('Workflow approved operation private custody', () => {
+  it.each([false, true])('retains scheduled rollout identity after ordinary root policy (Require=%s)', async requireApproval => {
+    const h = await fixture(false);
+    const actionId = 'machines.setup.updates.rollout' as const;
+    const target = { homeId: 'home', machineId: 'target', scope: 'security' as const,
+      plan: createMachineSetupEffectPlan({ basis: { kind: 'updates', machineId: 'target', scope: 'security' }, steps: [], nativeFacts: [] }) };
+    const input = { homeId: 'home', machineId: 'host', batches: [[target]], failurePolicy: 'fail_stop' as const };
+    const definition = createScheduledMachineUpdatesRolloutWorkflowV1(input);
+    const triggerId = 'scheduled-rollout';
+    const automationId = 'fleet-updates';
+    const operation: WorkflowApprovedOperationV1 = { parent: { actionId: 'workflow.trigger.add', input: {
+      target: { kind: 'inline', definition: StrictJsonValueSchema.parse(definition) }, project: { machineId: 'host', directory: '/repo' },
+      trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } },
+      inputs: {}, actionApproval: 'automatic',
+    } }, approvedBy: { accountId }, steps: [{ actionId, input }] };
+    // The persisted Account trigger and Run are transport/storage boundaries;
+    // their real consent reader, exact invocation reader and Action policy run.
+    const row = AutomationDefinitionDetailSchema.parse({ id: automationId, name: 'Fleet updates', description: null,
+      enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+      assignments: [{ machineId: 'host', enabled: true, priority: 0, updatedAt: 1 }],
+      triggers: [{ id: triggerId, revision: 0, kind: 'schedule', enabled: true, createdAt: 1, updatedAt: 1,
+        schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null }, nextRunAt: 2, triggerDefinitionEnvelope: null }],
+      executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: definition,
+        inputs: {}, actionApprovals: [{ triggerId, operation }],
+      } } },
+    });
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected Automation mutation'); };
+    const triggers = createAccountWorkflowTriggerActions({ automations: { get: async () => row,
+      list: unavailable, listDetails: unavailable, create: unavailable, reconcile: unavailable, delete: unavailable },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      resolveWorkflow: unavailable, randomBytes: size => new Uint8Array(size), newId: () => 'unused' });
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'schedule', triggerId, triggerRevision: 0,
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor: 1 } }),
+      occurredAt: 1, evidence: { scheduledFor: 1 } });
+    const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...h.approved, definition, authoredDefinition: definition,
+      approvedOperation: operation, materializedLeaves: [{ ...h.approved.materializedLeaves[0], blockId: 'rollout', actionId, actionInput: input }] });
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      ...h.mode, binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted }));
+    const storage = createWorkflowRunStorageTestkit({ runId, accountId, machineId: 'host', state: 'running',
+      origin: { kind: 'automation', automationId, cause }, acceptedEnvelope,
+      keyCensus: createPlainWorkflowRunKeyCensusFixture({ runId, accountId }) });
+    const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...h.mode,
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: invocationId, sequence: '1', parentRecordId: 'root', memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'action', invocationPath: { blockId: 'rollout', scope: [] },
+        attempt: '0', logicalInvocationRecordId: invocationId } }));
+    await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 0, parentAttempt: 0, checkpointEnvelope: '{}',
+      invocations: [{ id: invocationId, sequence: '1', parentRecordId: 'root', memberOrdinal: '0', contentEnvelope }] });
+    const reader = createWorkflowApprovedOperationReader({ storage, resolveEncryption: async () => h.encryption,
+      readSavedTriggerConsent: request => triggers.readSavedConsent(request, request.context) });
+    let produced: WorkflowApprovedOperationV1 | undefined;
+    let starts = 0;
+    const executor = createActionExecutor({ readApprovedOperation: request => request.runId ? reader({ ...request, runId: request.runId }) : Promise.resolve(null),
+      machineSetupUpdatesRollout: async ({ context }) => {
+        starts++;
+        // This is the same root consent producer used by combined Run start.
+        produced = await prepareWorkflowApprovedOperation({ parent: { actionId, input },
+          steps: [{ actionId: 'machines.setup.updates.apply', input: target }], context });
+        return { operationId: 'rollout', runId: 'native-updates' };
+      } });
+    const result = await executor.execute(actionId, input, { ...h.context, serverId: 'home', surface: 'agent',
+      authority: 'account_automation', approvalProfileId: requireApproval ? 'builtin:read-propose' : 'builtin:full-trust' });
+    expect(starts).toBe(requireApproval ? 0 : 1);
+    expect(result.ok, JSON.stringify(result)).toBe(!requireApproval);
+    if (requireApproval) expect(result).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(produced).toEqual(requireApproval ? undefined : { parent: { actionId, input }, approvedBy: { accountId },
+      steps: [{ actionId: 'machines.setup.updates.apply', input: target }] });
+  });
   it('spends saved Nightly consent on the current capture and holds changed Environment or destination policy', async () => {
     const h = await fixture(false);
     const policy = { destinationRef: { pluginId: 'example.backups', localId: 'repository' }, occurrenceId: 'installed',

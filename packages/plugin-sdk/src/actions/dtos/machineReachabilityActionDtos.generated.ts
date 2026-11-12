@@ -530,8 +530,6 @@ export type MachineReachabilityActionInputById = {
                             hostAddress: string;
                             hostPort: number;
                             protocol: 'tcp' | 'udp';
-                            providerId?: undefined;
-                            networkIdentity?: undefined;
                             containerPort?: number | undefined;
                         } | {
                             exposure: 'privateNetwork';
@@ -543,6 +541,25 @@ export type MachineReachabilityActionInputById = {
                             protocol: 'tcp' | 'udp';
                             containerPort?: number | undefined;
                         })[] | undefined;
+                        caddyObservation?: undefined | {
+                            privateNetworks: {
+                                provider: {
+                                    kind: 'builtin';
+                                    id: string;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                networkIdentity: null | string;
+                                displayName: null | string;
+                                dnsName: null | string;
+                                addresses: string[];
+                                state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                interfaceName: null | string;
+                                sourceRanges: string[];
+                                magicDnsEnabled: boolean | null;
+                            }[];
+                        };
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -1294,24 +1311,15 @@ export type MachineReachabilityActionInputById = {
                         sourceRanges: string[];
                     }[];
                 }[];
-            } | {
-                status: 'unavailable';
-                requiredFact: string;
-                remedy?: string | undefined;
-            };
-            firewallTransition?: undefined | {
-                intent: {
-                    v: 1;
-                    kind: 'preserveSsh' | 'retainSsh';
-                    caddy: {
+                caddy?: undefined | {
+                    status: 'ready';
+                    bindings: {
                         publicBindings?: ({
                             exposure: 'loopback' | 'public';
                             requirementId: string;
                             hostAddress: string;
                             hostPort: number;
                             protocol: 'tcp' | 'udp';
-                            providerId?: undefined;
-                            networkIdentity?: undefined;
                             containerPort?: number | undefined;
                         } | {
                             exposure: 'privateNetwork';
@@ -1330,8 +1338,143 @@ export type MachineReachabilityActionInputById = {
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                providerId?: undefined;
-                                networkIdentity?: undefined;
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                    details?: undefined | {
+                        failure: {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy: string;
+                        requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                    };
+                };
+            } | {
+                status: 'unavailable';
+                requiredFact: string;
+                remedy?: string | undefined;
+                caddy?: undefined | {
+                    status: 'ready';
+                    bindings: {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
+                        privateBinding?: undefined | {
+                            exposure: {
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                    details?: undefined | {
+                        failure: {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy: string;
+                        requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                    };
+                };
+            };
+            firewallTransition?: undefined | {
+                intent: {
+                    v: 1;
+                    kind: 'preserveSsh' | 'retainSsh';
+                    caddy: {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
+                        privateBinding?: undefined | {
+                            exposure: {
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             } | {
                                 exposure: 'privateNetwork';
@@ -1353,6 +1496,25 @@ export type MachineReachabilityActionInputById = {
                         kind: 'open';
                         port: number;
                         sourceCidrs: string[];
+                    };
+                    caddyObservation?: undefined | {
+                        privateNetworks: {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            networkIdentity: null | string;
+                            displayName: null | string;
+                            dnsName: null | string;
+                            addresses: string[];
+                            state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                            interfaceName: null | string;
+                            sourceRanges: string[];
+                            magicDnsEnabled: boolean | null;
+                        }[];
                     };
                     privateWorkloadBindings?: undefined | {
                         environmentId: string;
@@ -1595,10 +1757,140 @@ export type MachineReachabilityActionResultById = {
                         sourceRanges: string[];
                     }[];
                 }[];
+                caddy?: undefined | {
+                    status: 'ready';
+                    bindings: {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
+                        privateBinding?: undefined | {
+                            exposure: {
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                    details?: undefined | {
+                        failure: {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy: string;
+                        requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                    };
+                };
             } | {
                 status: 'unavailable';
                 requiredFact: string;
                 remedy?: string | undefined;
+                caddy?: undefined | {
+                    status: 'ready';
+                    bindings: {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
+                        privateBinding?: undefined | {
+                            exposure: {
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                    details?: undefined | {
+                        failure: {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy: string;
+                        requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                    };
+                };
             };
             recovery?: undefined | {
                 kind: 'explicitSsh' | 'providerConsole' | 'tailscaleSsh';
@@ -1909,8 +2201,6 @@ export type MachineReachabilityActionResultById = {
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                providerId?: undefined;
-                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
                             } | {
                                 exposure: 'privateNetwork';
@@ -1922,6 +2212,25 @@ export type MachineReachabilityActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            caddyObservation?: undefined | {
+                                privateNetworks: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    networkIdentity: null | string;
+                                    displayName: null | string;
+                                    dnsName: null | string;
+                                    addresses: string[];
+                                    state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                    interfaceName: null | string;
+                                    sourceRanges: string[];
+                                    magicDnsEnabled: boolean | null;
+                                }[];
+                            };
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -2673,24 +2982,15 @@ export type MachineReachabilityActionResultById = {
                             sourceRanges: string[];
                         }[];
                     }[];
-                } | {
-                    status: 'unavailable';
-                    requiredFact: string;
-                    remedy?: string | undefined;
-                };
-                firewallTransition?: undefined | {
-                    intent: {
-                        v: 1;
-                        kind: 'preserveSsh' | 'retainSsh';
-                        caddy: {
+                    caddy?: undefined | {
+                        status: 'ready';
+                        bindings: {
                             publicBindings?: ({
                                 exposure: 'loopback' | 'public';
                                 requirementId: string;
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                providerId?: undefined;
-                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
                             } | {
                                 exposure: 'privateNetwork';
@@ -2709,8 +3009,143 @@ export type MachineReachabilityActionResultById = {
                                     hostAddress: string;
                                     hostPort: number;
                                     protocol: 'tcp' | 'udp';
-                                    providerId?: undefined;
-                                    networkIdentity?: undefined;
+                                    containerPort?: number | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                };
+                                interfaceName: string;
+                                sourceRanges: string[];
+                            };
+                        };
+                    } | {
+                        status: 'unavailable';
+                        reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                        details?: undefined | {
+                            failure: {
+                                kind: 'native_effect_failed' | 'native_observation_unavailable';
+                                reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                                requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                                errorCode?: string | undefined;
+                                stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                                nativeCommand?: undefined | {
+                                    command: 'docker';
+                                    phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                    exitCode: null | number;
+                                };
+                                containerExitCode?: number | undefined;
+                                containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                                port?: number | undefined;
+                            };
+                            remedy: string;
+                            requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    requiredFact: string;
+                    remedy?: string | undefined;
+                    caddy?: undefined | {
+                        status: 'ready';
+                        bindings: {
+                            publicBindings?: ({
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            })[] | undefined;
+                            privateBinding?: undefined | {
+                                exposure: {
+                                    exposure: 'loopback' | 'public';
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                };
+                                interfaceName: string;
+                                sourceRanges: string[];
+                            };
+                        };
+                    } | {
+                        status: 'unavailable';
+                        reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                        details?: undefined | {
+                            failure: {
+                                kind: 'native_effect_failed' | 'native_observation_unavailable';
+                                reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                                requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                                errorCode?: string | undefined;
+                                stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                                nativeCommand?: undefined | {
+                                    command: 'docker';
+                                    phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                    exitCode: null | number;
+                                };
+                                containerExitCode?: number | undefined;
+                                containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                                port?: number | undefined;
+                            };
+                            remedy: string;
+                            requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                        };
+                    };
+                };
+                firewallTransition?: undefined | {
+                    intent: {
+                        v: 1;
+                        kind: 'preserveSsh' | 'retainSsh';
+                        caddy: {
+                            publicBindings?: ({
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            })[] | undefined;
+                            privateBinding?: undefined | {
+                                exposure: {
+                                    exposure: 'loopback' | 'public';
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
                                     containerPort?: number | undefined;
                                 } | {
                                     exposure: 'privateNetwork';
@@ -2732,6 +3167,25 @@ export type MachineReachabilityActionResultById = {
                             kind: 'open';
                             port: number;
                             sourceCidrs: string[];
+                        };
+                        caddyObservation?: undefined | {
+                            privateNetworks: {
+                                provider: {
+                                    kind: 'builtin';
+                                    id: string;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                networkIdentity: null | string;
+                                displayName: null | string;
+                                dnsName: null | string;
+                                addresses: string[];
+                                state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                interfaceName: null | string;
+                                sourceRanges: string[];
+                                magicDnsEnabled: boolean | null;
+                            }[];
                         };
                         privateWorkloadBindings?: undefined | {
                             environmentId: string;
@@ -2972,10 +3426,140 @@ export type MachineReachabilityActionResultById = {
                         sourceRanges: string[];
                     }[];
                 }[];
+                caddy?: undefined | {
+                    status: 'ready';
+                    bindings: {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
+                        privateBinding?: undefined | {
+                            exposure: {
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                    details?: undefined | {
+                        failure: {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy: string;
+                        requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                    };
+                };
             } | {
                 status: 'unavailable';
                 requiredFact: string;
                 remedy?: string | undefined;
+                caddy?: undefined | {
+                    status: 'ready';
+                    bindings: {
+                        publicBindings?: ({
+                            exposure: 'loopback' | 'public';
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        } | {
+                            exposure: 'privateNetwork';
+                            providerId: string;
+                            networkIdentity: string;
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            containerPort?: number | undefined;
+                        })[] | undefined;
+                        privateBinding?: undefined | {
+                            exposure: {
+                                exposure: 'loopback' | 'public';
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            } | {
+                                exposure: 'privateNetwork';
+                                providerId: string;
+                                networkIdentity: string;
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                containerPort?: number | undefined;
+                            };
+                            interfaceName: string;
+                            sourceRanges: string[];
+                        };
+                    };
+                } | {
+                    status: 'unavailable';
+                    reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                    details?: undefined | {
+                        failure: {
+                            kind: 'native_effect_failed' | 'native_observation_unavailable';
+                            reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                            requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                            errorCode?: string | undefined;
+                            stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                            nativeCommand?: undefined | {
+                                command: 'docker';
+                                phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                exitCode: null | number;
+                            };
+                            containerExitCode?: number | undefined;
+                            containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                            port?: number | undefined;
+                        };
+                        remedy: string;
+                        requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                    };
+                };
             };
             recovery?: undefined | {
                 kind: 'explicitSsh' | 'providerConsole' | 'tailscaleSsh';

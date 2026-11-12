@@ -1489,7 +1489,7 @@ export type MemoryActionResultById = {
             machineId: string;
             agentId: string;
             sourceKey: string;
-            errorCode: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
+            errorCode: 'agent_error' | 'agent_format_unsupported' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
             retryable: boolean;
         }[];
         continuations?: undefined | {

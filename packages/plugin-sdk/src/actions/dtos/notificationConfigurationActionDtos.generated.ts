@@ -9,6 +9,7 @@ export type NotificationConfigurationActionInputById = {
         machineId: string;
         sourceInstanceId: string;
         channelId: string;
+        channelIndex: number;
         expectedSourceRevision: string;
     };
     readonly "notifications.webhooks.list": Record<string, never> & {

@@ -126,6 +126,7 @@ export type WorkflowsActionInputById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: string | undefined;
                 effort?: string | undefined;
             };
             runsAs?: undefined | {
@@ -1120,6 +1121,7 @@ export type WorkflowsActionInputById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: string | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -1145,6 +1147,7 @@ export type WorkflowsActionInputById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: string | undefined;
                     effort?: string | undefined;
                 };
                 profileId?: string | undefined;
@@ -1421,6 +1424,10 @@ export type WorkflowsActionInputById = {
     } | {
         automationId: string;
         triggerId: string;
+    } | {
+        backupFreshness: {
+            automationId: string;
+        };
     } | {
         deploymentBackup: {
             machineId: string;
@@ -1836,12 +1843,12 @@ export type WorkflowsActionInputById = {
             paths?: string[] | undefined;
         };
         actionApproval?: 'ask' | 'automatic' | undefined;
-        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
+        inputs?: Record<string, unknown> | undefined;
         approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
@@ -1849,6 +1856,7 @@ export type WorkflowsActionInputById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: string | undefined;
                 effort?: string | undefined;
             };
             runsAs?: undefined | {
@@ -2066,12 +2074,12 @@ export type WorkflowsActionInputById = {
                 paths?: string[] | undefined;
             };
             actionApproval?: 'ask' | 'automatic' | undefined;
-            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
+            inputs?: Record<string, unknown> | undefined;
             approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
@@ -2079,6 +2087,7 @@ export type WorkflowsActionInputById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: string | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -2312,12 +2321,12 @@ export type WorkflowsActionInputById = {
             kind: 'workflow';
             ref: string;
         };
-        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
+        inputs?: Record<string, unknown> | undefined;
         approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
@@ -2325,6 +2334,7 @@ export type WorkflowsActionInputById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: string | undefined;
                 effort?: string | undefined;
             };
             runsAs?: undefined | {
@@ -2548,12 +2558,12 @@ export type WorkflowsActionInputById = {
                 };
                 kind: 'sessionLifecycle';
             };
-            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
+            inputs?: Record<string, unknown> | undefined;
             approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
@@ -2561,6 +2571,7 @@ export type WorkflowsActionInputById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: string | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -2870,6 +2881,7 @@ type WorkflowsActionDefinition1 = Readonly<{
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: (string) | undefined;
             effort?: string | undefined;
         };
         runsAs?: undefined | {
@@ -2895,6 +2907,7 @@ type WorkflowsActionDefinition1 = Readonly<{
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: (string) | undefined;
             effort?: string | undefined;
         };
         profileId?: string | undefined;
@@ -3206,6 +3219,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -3231,6 +3245,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 profileId?: string | undefined;
@@ -4401,6 +4416,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -4488,6 +4504,7 @@ export type WorkflowsActionResultById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -4978,6 +4995,7 @@ export type WorkflowsActionResultById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -5271,6 +5289,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -5296,6 +5315,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -5405,6 +5425,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -5736,6 +5757,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -5823,6 +5845,7 @@ export type WorkflowsActionResultById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -6313,6 +6336,7 @@ export type WorkflowsActionResultById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -6606,6 +6630,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -6631,6 +6656,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -6728,6 +6754,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -7016,6 +7043,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -7041,6 +7069,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 profileId?: string | undefined;
@@ -9479,7 +9508,7 @@ export type WorkflowsActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -10129,7 +10158,7 @@ export type WorkflowsActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -11034,7 +11063,7 @@ export type WorkflowsActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -12187,6 +12216,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -12212,6 +12242,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 profileId?: string | undefined;
@@ -12583,6 +12614,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 runsAs?: undefined | {
@@ -12608,6 +12640,7 @@ export type WorkflowsActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 profileId?: string | undefined;
@@ -13208,6 +13241,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -13495,6 +13529,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -13520,6 +13555,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -13622,6 +13658,88 @@ export type WorkflowsActionResultById = {
             sourceInstanceId: string;
             revision: string;
             source: {
+                alerts: {
+                    channels: {
+                        channelId: string;
+                        destination?: PluginJsonValueV2 | undefined;
+                    }[];
+                    phases: ('open' | 'recovered')[];
+                };
+                subject: {
+                    kind: 'environment';
+                    environmentId: string;
+                };
+                checks: {
+                    checkId: string;
+                    kind: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    binding: {
+                        kind: 'domain';
+                        domainId: string;
+                        targetLinkId: string;
+                        condition: 'certificate_renewal_failed' | 'domain_probe_failed';
+                    } | {
+                        kind: 'environmentHealth';
+                        domainId: string;
+                        targetLinkId: string;
+                    } | {
+                        kind: 'healthCheck';
+                    };
+                    config: PluginJsonValueV2;
+                    periodMs: number;
+                    consecutiveFailuresBeforeAlerting: number;
+                }[];
+                v: 1;
+                investigation?: undefined | {
+                    mode: 'auto_start';
+                    configuredActionId: string;
+                } | {
+                    mode: 'inbox';
+                };
+            } | {
+                investigation: {
+                    mode: 'auto_start';
+                    configuredActionId: string;
+                } | {
+                    mode: 'inbox';
+                };
+                subject: {
+                    kind: 'environment';
+                    environmentId: string;
+                };
+                checks: {
+                    checkId: string;
+                    kind: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    binding: {
+                        kind: 'domain';
+                        domainId: string;
+                        targetLinkId: string;
+                        condition: 'certificate_renewal_failed' | 'domain_probe_failed';
+                    } | {
+                        kind: 'environmentHealth';
+                        domainId: string;
+                        targetLinkId: string;
+                    } | {
+                        kind: 'healthCheck';
+                    };
+                    config: PluginJsonValueV2;
+                    periodMs: number;
+                    consecutiveFailuresBeforeAlerting: number;
+                }[];
+                v: 1;
+                alerts?: undefined | {
+                    channels: {
+                        channelId: string;
+                        destination?: PluginJsonValueV2 | undefined;
+                    }[];
+                    phases: ('open' | 'recovered')[];
+                };
+            } | {
                 v: 1;
                 subject: {
                     kind: 'environment';
@@ -13676,6 +13794,10 @@ export type WorkflowsActionResultById = {
             };
             automationId: string;
             triggerId: string;
+        }[];
+        backupEnvironments?: undefined | {
+            serverId: string;
+            environmentId: string;
         }[];
     };
     readonly "workflow.trigger.add": {
@@ -13971,6 +14093,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -14258,6 +14381,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -14283,6 +14407,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -14677,6 +14802,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -14964,6 +15090,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -14989,6 +15116,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -15387,6 +15515,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -15674,6 +15803,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -15699,6 +15829,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -16255,6 +16386,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -16542,6 +16674,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -16567,6 +16700,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -16681,6 +16815,88 @@ export type WorkflowsActionResultById = {
             sourceInstanceId: string;
             revision: string;
             source: {
+                alerts: {
+                    channels: {
+                        channelId: string;
+                        destination?: PluginJsonValueV2 | undefined;
+                    }[];
+                    phases: ('open' | 'recovered')[];
+                };
+                subject: {
+                    kind: 'environment';
+                    environmentId: string;
+                };
+                checks: {
+                    checkId: string;
+                    kind: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    binding: {
+                        kind: 'domain';
+                        domainId: string;
+                        targetLinkId: string;
+                        condition: 'certificate_renewal_failed' | 'domain_probe_failed';
+                    } | {
+                        kind: 'environmentHealth';
+                        domainId: string;
+                        targetLinkId: string;
+                    } | {
+                        kind: 'healthCheck';
+                    };
+                    config: PluginJsonValueV2;
+                    periodMs: number;
+                    consecutiveFailuresBeforeAlerting: number;
+                }[];
+                v: 1;
+                investigation?: undefined | {
+                    mode: 'auto_start';
+                    configuredActionId: string;
+                } | {
+                    mode: 'inbox';
+                };
+            } | {
+                investigation: {
+                    mode: 'auto_start';
+                    configuredActionId: string;
+                } | {
+                    mode: 'inbox';
+                };
+                subject: {
+                    kind: 'environment';
+                    environmentId: string;
+                };
+                checks: {
+                    checkId: string;
+                    kind: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    binding: {
+                        kind: 'domain';
+                        domainId: string;
+                        targetLinkId: string;
+                        condition: 'certificate_renewal_failed' | 'domain_probe_failed';
+                    } | {
+                        kind: 'environmentHealth';
+                        domainId: string;
+                        targetLinkId: string;
+                    } | {
+                        kind: 'healthCheck';
+                    };
+                    config: PluginJsonValueV2;
+                    periodMs: number;
+                    consecutiveFailuresBeforeAlerting: number;
+                }[];
+                v: 1;
+                alerts?: undefined | {
+                    channels: {
+                        channelId: string;
+                        destination?: PluginJsonValueV2 | undefined;
+                    }[];
+                    phases: ('open' | 'recovered')[];
+                };
+            } | {
                 v: 1;
                 subject: {
                     kind: 'environment';
@@ -16735,6 +16951,10 @@ export type WorkflowsActionResultById = {
             };
             automationId: string;
             triggerId: string;
+        }[];
+        backupEnvironments?: undefined | {
+            serverId: string;
+            environmentId: string;
         }[];
     };
     readonly "session.trigger.add": {
@@ -17030,6 +17250,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -17317,6 +17538,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -17342,6 +17564,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -17736,6 +17959,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -18023,6 +18247,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -18048,6 +18273,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -18442,6 +18668,7 @@ export type WorkflowsActionResultById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -18729,6 +18956,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         runsAs?: undefined | {
@@ -18754,6 +18982,7 @@ export type WorkflowsActionResultById = {
                         engine?: undefined | {
                             agentTargetKey: string;
                             modelId?: string | undefined;
+                            providerConnectionId?: (string) | undefined;
                             effort?: string | undefined;
                         };
                         profileId?: string | undefined;
@@ -19130,6 +19359,7 @@ type WorkflowsActionDefinition2 = Readonly<{
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: (string) | undefined;
             effort?: string | undefined;
         };
         runsAs?: undefined | {
@@ -19155,6 +19385,7 @@ type WorkflowsActionDefinition2 = Readonly<{
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: (string) | undefined;
             effort?: string | undefined;
         };
         profileId?: string | undefined;

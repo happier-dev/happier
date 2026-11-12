@@ -1,7 +1,9 @@
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { MACHINE_PRESET_INPUT_FIELDS, MACHINE_POOL_INPUT_FIELDS } from './machineInputHints.js';
 import { declareDeploymentPreparationScopeV1 } from './deploymentPreparationScope.js';
-import { isMachineSetupPlanOrApplyActionIdV1, isMachineSetupCombinedActionIdV1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import { isMachineSetupPlanOrApplyActionIdV1, isMachineSetupCombinedActionIdV1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import { ActionOperationCompletionOutputV1Schema, type ActionCompletionDeclaration } from '../actionCompletion.js';
+import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_ACTION_IDS_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, EphemeralRunnerActionInputSchemasV1, EphemeralRunnerActionOutputSchemasV1, type EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionsV1.js';
@@ -48,6 +50,21 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.managed.controller.update': 'Move machine management',
   'machines.managed.retire': 'Hide managed machine with manual responsibility',
 };
+
+/** Setup acceptance names a finite native operation; it never settles a Workflow leaf. */
+function machineUpdatesCompletion(actionId: typeof MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1
+  | typeof MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1): ActionCompletionDeclaration {
+  return {
+    awaits: 'action_operations', terminalOutputSchema: ActionOperationCompletionOutputV1Schema,
+    launched: (output, context) => {
+      const input = ManagedMachineActionInputSchemasV1[actionId].parse(context?.input);
+      const receipt = MachineSetupApplyResultV1Schema.parse(output);
+      return { operations: [{ key: 'setup', serverId: context?.serverId ?? input.homeId,
+        machineId: input.machineId, operationId: receipt.operationId }] };
+    },
+    terminal: (_output, operations) => ({ operation: operations[0]!.operation }),
+  };
+}
 
 function createManagedMachineActionSpecs() {
   return MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
@@ -150,6 +167,8 @@ function createManagedMachineActionSpecs() {
     inputHints: { title: titles[actionId], fields: MANAGED_MACHINE_INPUT_FIELDS[actionId] },
     inputSchema: ManagedMachineActionInputSchemasV1[actionId],
     outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
+    ...(actionId === MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1 || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1
+      ? { completion: machineUpdatesCompletion(actionId) } : {}),
     // This requester-private census is assembled by the Account's existing
     // readers; it has no server endpoint that could read E2EE references.
     ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan'

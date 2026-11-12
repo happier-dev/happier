@@ -14,7 +14,7 @@ import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from
 import { z as zodMiniCore0 } from '../../zodRuntimePolicy.js';
 
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1,
-  type WorkflowAcceptedSnapshotV1, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
+  type WorkflowAcceptedSnapshotListingV1, type WorkflowAcceptedSnapshotV1, type WorkflowDefinitionSavedByV1, type WorkflowRunDisplaySummaryV1, workflowRunStepNameKeyV1 } from '../../workflows/workflowDefinitionV1.js';
 import { deriveWorkflowDestinationsV1, WorkflowDiscussionOriginV1Schema, type WorkflowDiscussionOriginV1 } from '../../workflows/workflowDestinationsV1.js';
 import { listWorkflowAcceptedLeafSelectionsV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { workflowBlockOrdinalV1 } from '../../workflows/workflowStepLabel.js';
@@ -24,7 +24,7 @@ import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, Workflo
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
   hasUnresolvedWorkflowValueV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
-import { openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
+import { openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
 import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
@@ -34,7 +34,7 @@ import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, r
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
-import type { MachineSetupApplyInputV1 } from '../../machines/managed/actionsV1.js';
+import type { MachineSetupApplyInputV1, MachineSetupUpdatesRolloutInputV1 } from '../../machines/managed/actionsV1.js';
 import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { WorkflowRunAdmissionPreparationResultV1Schema, WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema, type WorkflowRunRecipientCensusResponseV1 } from '../../workflows/workflowRunKeyV1.js';
@@ -660,6 +660,12 @@ export async function prepareWorkflowApprovedOperation(params: Readonly<{
     }
   }
   if (!accountId) {
+    const child = readHostReviewedChildOperationV1(context, parent.actionId, parent.input);
+    if (child?.approvedBy && child.approvedBy.accountId === context.runtimeAccountId
+      && child.approvedRequestId !== undefined && child.approvedRequestId === context.actionRequestId
+      && isHostAdmittedReviewedChildPolicyV1(child, parent.actionId, parent.input)) accountId = child.approvedBy.accountId;
+  }
+  if (!accountId) {
     const authorization = context.externalActionExecutionAuthorization;
     const binding = authorization?.binding;
     const requesterAccountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : null;
@@ -761,11 +767,24 @@ function readWorkflowApprovedOperationLeaves(snapshot: WorkflowAcceptedSnapshotV
 /** One Account run owner; hosts supply concrete storage, authority and machine effects. */
 /** Host-only composition at the Run owner; never an Action input or consent carrier. */
 export type WorkflowCombinedRunStartV1 = Readonly<{
-  parent: Readonly<{ actionId: 'machines.setup.apply'; input: MachineSetupApplyInputV1 }>;
+  parent: Readonly<{ actionId: 'machines.setup.apply'; input: MachineSetupApplyInputV1 }
+    | { actionId: 'machines.setup.updates.rollout'; input: MachineSetupUpdatesRolloutInputV1 }>;
   start: WorkflowActionExecuteArgs<'workflow.run.start'>['input'];
   context: ActionExecutorContext;
   orchestrationTarget: WorkflowProjectTargetV1;
 }>;
+
+/** `authoredContext`'s answer from a display summary's step names (same keys as its writer). */
+function summarizedStepContext(stepNames: WorkflowRunDisplaySummaryV1['stepNames'], path: WorkflowProgressEnvelopeV1['invocationPath']):
+  Readonly<{ laneLabel?: string; block?: Readonly<{ kind: string; name?: string }> }> {
+  const chain: string[] = [];
+  let laneLabel: string | undefined;
+  for (const scope of path.scope) {
+    if (scope.kind === 'workflow') chain.push(scope.blockId);
+    else if (scope.kind === 'branch') laneLabel = stepNames?.lanes[workflowRunStepNameKeyV1(chain, scope.blockId, scope.branchId)] || laneLabel;
+  }
+  return { ...(laneLabel ? { laneLabel } : {}), block: stepNames?.steps[workflowRunStepNameKeyV1(chain, path.blockId)] };
+}
 
 export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{
   prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>,
@@ -1454,10 +1473,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         ? admissionCensus ?? WorkflowRunRecipientCensusResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.census', runId: input.runId, sourceArtifactId, ...(visibleTeamId ? { visibleTeamId } : {}) }, args.context.signal ? { signal: args.context.signal } : {}))
         : undefined;
       const prepared = prepareWorkflowRunDataKeyV1({ accountId, encryption: enc, ...(census ? { census } : {}), randomBytes: deps.randomBytes });
-      const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      const { acceptedEnvelope, displayEnvelope } = sealWorkflowRunAcceptedEnvelopesV1({
         ...sealMode({ witness: enc.witness, runCrypto: prepared.runCrypto }, deps.randomBytes),
-        binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: input.runId }, acceptedSnapshot: accepted,
-      }));
+        accountId, runId: input.runId, acceptedSnapshot: accepted,
+      });
       const requesterScope = { scopeId: input.runId, machineId: projectTarget.machineId };
       await deps.workflowRequesterCustody?.retain(requesterScope);
       let result: Readonly<Record<string, unknown>>;
@@ -1465,7 +1484,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         result = record(await deps.storage.execute({
           operation: 'admit', runId: input.runId, origin: projectAcceptedOrigin(accepted.origin), machineId: projectTarget.machineId,
           ...(input.managedCreation ? { managedCreation: input.managedCreation } : {}),
-          accountCurrentness: enc.witness, acceptedEnvelope,
+          accountCurrentness: enc.witness, acceptedEnvelope, displayEnvelope,
           sourceArtifactId,
           recipientKeyEnvelopes: prepared.recipientKeyEnvelopes,
           ...(census ? { visibleTeamId: census.visibleTeamId } : visibleTeamId ? { visibleTeamId } : {}),
@@ -2657,6 +2676,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             ...page, projection: 'membership', metadataByRunId: {},
           });
           const acceptedEnvelopesByRunId = record(storagePage.acceptedEnvelopesByRunId);
+          // Rows with a sealed display summary arrive without their frozen
+          // program unless this request names authored steps.
+          const displayEnvelopesByRunId = record(storagePage.displayEnvelopesByRunId ?? {});
           const readEncryption = page.runs.length === 0 ? undefined
             : await (callerEncryption ??= deps.resolveReadEncryption?.(args.context.signal) ?? encryption(args.context.signal));
           const keyCensusByRunId = record(storagePage.keyCensusByRunId);
@@ -2690,20 +2712,34 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               ({ stepProgress, stepProgressCurrentness, resultProvenance } = openRootProgress(run.id,
                 rootProgressByRunId[run.id], resolved.encryption, census.ownerAccountId));
               const rawEnvelope = acceptedEnvelopesByRunId[run.id];
-              if (typeof rawEnvelope !== 'string') throw workflowError('content_unavailable');
-              const envelope = parseWorkflowStoredContentEnvelopeV1(rawEnvelope);
-              if (!envelope) throw workflowError('content_unavailable');
-              const acceptedOpen = { ...openMode(resolved.encryption), envelope,
-                binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.ownerAccountId, runId: run.id } } as const;
-              // A row shows only listed facts. The frozen program is admitted
-              // only when this page must name authored steps or derive an
-              // older snapshot's destinations.
-              const listed = openWorkflowAcceptedSnapshotListingStoredEnvelopeV1(acceptedOpen);
-              if (listed.kind !== 'available') throw workflowError('content_unavailable');
-              const accepted = listed.content;
+              const rawDisplay = displayEnvelopesByRunId[run.id];
+              const envelope = typeof rawEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(rawEnvelope) : null;
+              if (typeof rawEnvelope === 'string' && !envelope) throw workflowError('content_unavailable');
+              const acceptedOpen = envelope ? { ...openMode(resolved.encryption), envelope,
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.ownerAccountId, runId: run.id } } as const : null;
+              // A row shows only listed facts: the sealed display summary, or
+              // for Runs admitted before summaries the snapshot's listed facts.
+              // The frozen program is admitted only when this page must name
+              // authored steps or derive an older snapshot's destinations.
+              let accepted: WorkflowAcceptedSnapshotListingV1;
+              let stepNames: WorkflowRunDisplaySummaryV1['stepNames'];
+              if (acceptedOpen) {
+                const listed = openWorkflowAcceptedSnapshotListingStoredEnvelopeV1(acceptedOpen);
+                if (listed.kind !== 'available') throw workflowError('content_unavailable');
+                accepted = listed.content;
+              } else {
+                const displayEnvelope = typeof rawDisplay === 'string' ? parseWorkflowStoredContentEnvelopeV1(rawDisplay) : null;
+                if (!displayEnvelope) throw workflowError('content_unavailable');
+                const summary = openWorkflowRunDisplaySummaryStoredEnvelopeV1({ ...openMode(resolved.encryption), envelope: displayEnvelope,
+                  binding: { v: 1, purpose: 'display_summary', accountId: census.ownerAccountId, runId: run.id } });
+                if (summary.kind !== 'available') throw workflowError('content_unavailable');
+                accepted = summary.content;
+                stepNames = summary.content.stepNames;
+              }
               let program: WorkflowAcceptedSnapshotV1 | undefined;
               const openProgram = () => {
                 if (program) return program;
+                if (!acceptedOpen) throw workflowError('content_unavailable');
                 const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1(acceptedOpen);
                 if (opened.kind !== 'available') throw workflowError('content_unavailable');
                 return program = opened.content;
@@ -2742,7 +2778,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                       memberOrdinal: index.memberOrdinal, attempt: index.attempt },
                     envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
                   if (progress.kind === 'available') {
-                    const authored = authoredContext(progress.content.invocationPath);
+                    // A summarized row names its held step from the summary; only a pre-summary row opens the program.
+                    const authored = acceptedOpen ? authoredContext(progress.content.invocationPath)
+                      : summarizedStepContext(stepNames, progress.content.invocationPath);
                     const label = (authored.block?.kind === progress.content.blockKind ? authored.block.name?.trim() : undefined)
                       || progress.content.blockKind;
                     heldStep = { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
@@ -2795,7 +2833,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               // Scheduled admission precedes the daemon sealing the snapshot
               // and its keys. That public row has no private history to open yet.
               projected = run.workflowCustodyState === 'pending' && (run.state === 'queued' || run.state === 'claimed')
-                && acceptedEnvelopesByRunId[run.id] == null
+                && acceptedEnvelopesByRunId[run.id] == null && displayEnvelopesByRunId[run.id] == null
                 ? null
                 : { kind: 'unavailable', reason: reason.success ? reason.data : 'content_unavailable' };
             }

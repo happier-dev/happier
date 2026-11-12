@@ -9,8 +9,8 @@ export type MessagingActionInputById = {
         sessionId: SessionTargetV1<true>;
         message: string;
         wait?: boolean | undefined;
-        reply?: 'none' | 'return' | 'wait' | undefined;
         timeoutSeconds?: number | undefined;
+        reply?: 'none' | 'return' | 'wait' | undefined;
         recipient?: undefined | {
             kind: 'agent_team_broadcast';
             teamId: string;

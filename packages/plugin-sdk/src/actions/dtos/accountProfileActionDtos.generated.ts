@@ -42,11 +42,11 @@ export type AccountProfileActionInputById = {
             avatar?: undefined | {
                 kind: 'account' | 'planet';
             };
-            bio?: string | undefined;
             links?: undefined | {
                 label: string;
                 url: string;
             }[];
+            bio?: string | undefined;
         };
         query: {
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
@@ -689,11 +689,11 @@ export type AccountProfileActionInputById = {
             avatar?: undefined | {
                 kind: 'account' | 'planet';
             };
-            bio?: string | undefined;
             links?: undefined | {
                 label: string;
                 url: string;
             }[];
+            bio?: string | undefined;
         };
         query: {
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
@@ -1336,11 +1336,11 @@ export type AccountProfileActionInputById = {
             avatar?: undefined | {
                 kind: 'account' | 'planet';
             };
-            bio?: string | undefined;
             links?: undefined | {
                 label: string;
                 url: string;
             }[];
+            bio?: string | undefined;
         };
         query?: undefined | {
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;

@@ -145,49 +145,6 @@ export type ComputerControlActionInputById = {
         };
         sourceId?: string | undefined;
     };
-    readonly "computer.secret.fill": {
-        serverId: string;
-        sessionId: string;
-        machineId: string;
-        purpose: string;
-        sourceId: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        captureId: string;
-        geometry: {
-            captureWidth: number;
-            captureHeight: number;
-            nativeWidth: number;
-            nativeHeight: number;
-            originX: number;
-            originY: number;
-            scaleX: number;
-            scaleY: number;
-            crop: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            };
-        };
-        field: {
-            fieldId: string;
-            focusId: string;
-        };
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        submit?: undefined | {
-            controlId: string;
-            label: string;
-            consequence: string;
-        };
-    };
     readonly "computer.control.status": {
         machineId: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
@@ -784,29 +741,6 @@ export type ComputerControlActionResultById = {
     } | {
         ok: true;
         text?: string | undefined;
-    };
-    readonly "computer.secret.fill": {
-        status: 'canceled';
-        code: 'canceled';
-    } | {
-        status: 'filled';
-        code: 'filled';
-        submit?: undefined | {
-            status: 'refused';
-            code: 'submit_refused';
-        } | {
-            status: 'submitted';
-            code: 'submitted';
-        } | {
-            status: 'unknown';
-            code: 'submit_unknown';
-        };
-    } | {
-        status: 'refused';
-        code: 'approval_changed' | 'approval_required' | 'field_verification_unsupported' | 'observation_unavailable' | 'saved_secret_changed' | 'saved_secret_corrupt' | 'saved_secret_deleted' | 'saved_secret_forbidden' | 'saved_secret_missing' | 'saved_secret_mode_incompatible' | 'saved_secret_repair_required' | 'saved_secret_unavailable' | 'target_changed' | 'target_unavailable';
-    } | {
-        status: 'unknown';
-        code: 'delivery_unknown';
     };
     readonly "computer.control.status": {
         controller: 'agent' | 'human' | 'idle';

@@ -82,6 +82,7 @@ export type { MachineProcessesActionInputById, MachineProcessesActionResultById 
 export type { MachineReachabilityActionInputById, MachineReachabilityActionResultById } from './machineReachabilityActionDtos.generated.js';
 export type { MachineRebootActionInputById, MachineRebootActionResultById } from './machineRebootActionDtos.generated.js';
 export type { MachineResourcesActionInputById, MachineResourcesActionResultById } from './machineResourcesActionDtos.generated.js';
+export type { MachineRolesActionInputById, MachineRolesActionResultById } from './machineRolesActionDtos.generated.js';
 export type { MachineStorageActionInputById, MachineStorageActionResultById } from './machineStorageActionDtos.generated.js';
 export type { MachineVitalsActionInputById, MachineVitalsActionResultById } from './machineVitalsActionDtos.generated.js';
 export type { MachineWorkSummaryActionInputById, MachineWorkSummaryActionResultById } from './machineWorkSummaryActionDtos.generated.js';

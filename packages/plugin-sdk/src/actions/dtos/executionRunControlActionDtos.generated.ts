@@ -125,6 +125,9 @@ export type ExecutionRunControlActionInputById = {
                 url?: string | undefined;
                 mimeType?: string | undefined;
                 label?: string | undefined;
+                sha256?: string | undefined;
+                sizeBytes?: number | undefined;
+                provenance?: Record<string, unknown> | undefined;
             }[];
             browserContext?: undefined | {
                 contexts: ({
@@ -947,6 +950,9 @@ export type ExecutionRunControlActionInputById = {
                     url?: string | undefined;
                     mimeType?: string | undefined;
                     label?: string | undefined;
+                    sha256?: string | undefined;
+                    sizeBytes?: number | undefined;
+                    provenance?: Record<string, unknown> | undefined;
                 }[];
                 browserContext?: undefined | {
                     contexts: ({
@@ -1823,6 +1829,7 @@ export type ExecutionRunControlActionInputById = {
                         delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
+                        functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
                         compaction?: undefined | {
                             events: true;
@@ -1898,30 +1905,7 @@ export type ExecutionRunControlActionInputById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
-                                id: string;
-                                label: string;
-                                decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
-                                scope: 'localPersistent' | 'once' | 'session';
-                                response: {
-                                    approved: boolean;
-                                    reason?: string | undefined;
-                                    answeringClientCategory?: 'android' | 'desktop' | 'ios' | 'web' | undefined;
-                                    mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | undefined;
-                                    allowedTools?: string[] | undefined;
-                                    decision?: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | undefined;
-                                    execPolicyAmendment?: undefined | {
-                                        command: string[];
-                                    };
-                                    updatedPermissions?: unknown;
-                                };
-                                rulePreview?: string | undefined;
-                                allowsFeedback?: boolean | undefined;
-                                followUp?: undefined | {
-                                    actionId: string;
-                                    input: unknown;
-                                };
-                            }[];
+                            choices: unknown;
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -2387,7 +2371,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -2528,7 +2512,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -2567,6 +2551,7 @@ export type ExecutionRunControlActionResultById = {
                             delivery: ('followUp' | 'newTurn' | 'steer')[];
                             cancel: boolean;
                             configuration?: boolean | undefined;
+                            functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
                             compaction?: undefined | {
                                 events: true;
@@ -2642,7 +2627,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: {
+                                choices: readonly Readonly<{
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -2665,7 +2650,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }[];
+                                }>[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -2811,7 +2796,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -3187,7 +3172,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -3328,7 +3313,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -3367,6 +3352,7 @@ export type ExecutionRunControlActionResultById = {
                             delivery: ('followUp' | 'newTurn' | 'steer')[];
                             cancel: boolean;
                             configuration?: boolean | undefined;
+                            functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
                             compaction?: undefined | {
                                 events: true;
@@ -3442,7 +3428,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: {
+                                choices: readonly Readonly<{
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3465,7 +3451,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }[];
+                                }>[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -3611,7 +3597,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -3986,7 +3972,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -4127,7 +4113,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -4166,6 +4152,7 @@ export type ExecutionRunControlActionResultById = {
                             delivery: ('followUp' | 'newTurn' | 'steer')[];
                             cancel: boolean;
                             configuration?: boolean | undefined;
+                            functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
                             compaction?: undefined | {
                                 events: true;
@@ -4241,7 +4228,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: {
+                                choices: readonly Readonly<{
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -4264,7 +4251,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }[];
+                                }>[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -4410,7 +4397,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -4786,7 +4773,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -4927,7 +4914,7 @@ export type ExecutionRunControlActionResultById = {
                                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                         };
                                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        providerErrorCode?: number | string | undefined;
                                         httpStatus?: number | undefined;
                                         providerErrorMessage?: string | undefined;
                                     };
@@ -4966,6 +4953,7 @@ export type ExecutionRunControlActionResultById = {
                             delivery: ('followUp' | 'newTurn' | 'steer')[];
                             cancel: boolean;
                             configuration?: boolean | undefined;
+                            functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
                             compaction?: undefined | {
                                 events: true;
@@ -5041,7 +5029,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: {
+                                choices: readonly Readonly<{
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -5064,7 +5052,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }[];
+                                }>[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -5210,7 +5198,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -5596,7 +5584,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -5737,7 +5725,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -5776,6 +5764,7 @@ export type ExecutionRunControlActionResultById = {
                     delivery: ('followUp' | 'newTurn' | 'steer')[];
                     cancel: boolean;
                     configuration?: boolean | undefined;
+                    functionTools?: true | undefined;
                     workspaceWrites?: 'deny' | undefined;
                     compaction?: undefined | {
                         events: true;
@@ -5851,7 +5840,7 @@ export type ExecutionRunControlActionResultById = {
                     nativeChoices?: null | undefined | {
                         requirementId: string;
                         source: string;
-                        choices: {
+                        choices: readonly Readonly<{
                             id: string;
                             label: string;
                             decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -5874,7 +5863,7 @@ export type ExecutionRunControlActionResultById = {
                                 actionId: string;
                                 input: JsonValue;
                             };
-                        }[];
+                        }>[];
                         origin?: undefined | {
                             sessionId: string;
                             subagentId?: string | undefined;
@@ -6020,7 +6009,7 @@ export type ExecutionRunControlActionResultById = {
                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                         };
                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                        providerErrorCode?: number | string | undefined;
                         httpStatus?: number | undefined;
                         providerErrorMessage?: string | undefined;
                     };
@@ -6274,7 +6263,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -6415,7 +6404,7 @@ export type ExecutionRunControlActionResultById = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -6454,6 +6443,7 @@ export type ExecutionRunControlActionResultById = {
                     delivery: ('followUp' | 'newTurn' | 'steer')[];
                     cancel: boolean;
                     configuration?: boolean | undefined;
+                    functionTools?: true | undefined;
                     workspaceWrites?: 'deny' | undefined;
                     compaction?: undefined | {
                         events: true;
@@ -6529,7 +6519,7 @@ export type ExecutionRunControlActionResultById = {
                     nativeChoices?: null | undefined | {
                         requirementId: string;
                         source: string;
-                        choices: {
+                        choices: readonly Readonly<{
                             id: string;
                             label: string;
                             decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -6552,7 +6542,7 @@ export type ExecutionRunControlActionResultById = {
                                 actionId: string;
                                 input: JsonValue;
                             };
-                        }[];
+                        }>[];
                         origin?: undefined | {
                             sessionId: string;
                             subagentId?: string | undefined;
@@ -6698,7 +6688,7 @@ export type ExecutionRunControlActionResultById = {
                             catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                         };
                         reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                        providerErrorCode?: number | string | undefined;
                         httpStatus?: number | undefined;
                         providerErrorMessage?: string | undefined;
                     };
@@ -7199,7 +7189,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -7340,7 +7330,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -7379,6 +7369,7 @@ export type ExecutionRunControlActionResultById = {
                         delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
+                        functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
                         compaction?: undefined | {
                             events: true;
@@ -7454,7 +7445,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -7477,7 +7468,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -7623,7 +7614,7 @@ export type ExecutionRunControlActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -7999,7 +7990,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -8140,7 +8131,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -8179,6 +8170,7 @@ export type ExecutionRunControlActionResultById = {
                         delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
+                        functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
                         compaction?: undefined | {
                             events: true;
@@ -8254,7 +8246,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -8277,7 +8269,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -8423,7 +8415,7 @@ export type ExecutionRunControlActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -8798,7 +8790,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -8939,7 +8931,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -8978,6 +8970,7 @@ export type ExecutionRunControlActionResultById = {
                         delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
+                        functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
                         compaction?: undefined | {
                             events: true;
@@ -9053,7 +9046,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -9076,7 +9069,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -9222,7 +9215,7 @@ export type ExecutionRunControlActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -9598,7 +9591,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -9739,7 +9732,7 @@ export type ExecutionRunControlActionResultById = {
                                         catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                     };
                                     reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    providerErrorCode?: number | string | undefined;
                                     httpStatus?: number | undefined;
                                     providerErrorMessage?: string | undefined;
                                 };
@@ -9778,6 +9771,7 @@ export type ExecutionRunControlActionResultById = {
                         delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
+                        functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
                         compaction?: undefined | {
                             events: true;
@@ -9853,7 +9847,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -9876,7 +9870,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -10022,7 +10016,7 @@ export type ExecutionRunControlActionResultById = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };

@@ -363,6 +363,37 @@ export type ProvidersActionInputById = {
             };
             groupId: string;
         };
+        connectedServices?: undefined | {
+            v: 2;
+            bindingsByServiceId?: Record<string, {
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
+            } | {
+                source: 'connected';
+                selection: 'group';
+                groupId: string;
+                profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
+            } | {
+                source: 'native';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            }> | undefined;
+        };
         sourceCatalog?: true | undefined;
         nativeSource?: undefined | {
             resourceId: string;
@@ -719,6 +750,37 @@ export type ProvidersActionInputById = {
                 localId: string;
             };
             groupId: string;
+        };
+        connectedServices?: undefined | {
+            v: 2;
+            bindingsByServiceId?: Record<string, {
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
+            } | {
+                source: 'connected';
+                selection: 'group';
+                groupId: string;
+                profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
+            } | {
+                source: 'native';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            }> | undefined;
         };
         sourceCatalog?: true | undefined;
         nativeSource?: undefined | {
@@ -1567,7 +1629,7 @@ export type ProvidersActionInputById = {
                         sharing?: 'connectionMachine' | undefined;
                         sourceEnvelopeTransport?: 'cpx-v1' | undefined;
                         dependencies?: string[] | undefined;
-                        unavailableConnectedAccounts?: undefined | {
+                        unavailableConnectedAccounts?: readonly {
                             purpose: string;
                             service: string | {
                                 pluginId: string;
@@ -1583,12 +1645,20 @@ export type ProvidersActionInputById = {
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
-                        }[];
+                        }[] | undefined;
                         connectedAccounts?: undefined | {
                             purpose: string;
                             service: string | {
                                 pluginId: string;
                                 localId: string;
+                            };
+                            managedProviderEndpoint?: undefined | {
+                                provider: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                                modelIdPrefix?: string | undefined;
                             };
                             title?: string | undefined | {
                                 key: string;
@@ -1665,6 +1735,7 @@ export type ProvidersActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                modelIdPrefix?: string | undefined;
                             } | {
                                 provider: {
                                     pluginId: string;

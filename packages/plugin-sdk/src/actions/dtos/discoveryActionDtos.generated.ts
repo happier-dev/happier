@@ -1925,8 +1925,6 @@ export type DiscoveryActionResultById = {
                         hostAddress: string;
                         hostPort: number;
                         protocol: 'tcp' | 'udp';
-                        providerId?: undefined;
-                        networkIdentity?: undefined;
                         containerPort?: number | undefined;
                     } | {
                         exposure: 'privateNetwork';
@@ -1954,6 +1952,18 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -1976,18 +1986,6 @@ export type DiscoveryActionResultById = {
                         kind: 'path';
                         path: string;
                     })[] | undefined;
-                    review?: undefined | {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                        description?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
                     when?: ({
                         checkId: string;
                         status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
@@ -3842,8 +3840,6 @@ export type DiscoveryActionResultById = {
                         hostAddress: string;
                         hostPort: number;
                         protocol: 'tcp' | 'udp';
-                        providerId?: undefined;
-                        networkIdentity?: undefined;
                         containerPort?: number | undefined;
                     } | {
                         exposure: 'privateNetwork';
@@ -3871,6 +3867,18 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -3893,18 +3901,6 @@ export type DiscoveryActionResultById = {
                         kind: 'path';
                         path: string;
                     })[] | undefined;
-                    review?: undefined | {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                        description?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
                     when?: ({
                         checkId: string;
                         status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];

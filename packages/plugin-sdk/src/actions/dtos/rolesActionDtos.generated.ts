@@ -15,6 +15,7 @@ export type RolesActionInputById = {
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: string | undefined;
             effort?: string | undefined;
         };
         runsAs?: undefined | {
@@ -49,6 +50,7 @@ export type RolesActionInputById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: string | undefined;
                 effort?: string | undefined;
             };
             profileId?: string | undefined;
@@ -87,6 +89,7 @@ export type RolesActionInputById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: string | undefined;
                 effort?: string | undefined;
             };
             profileId?: string | undefined;
@@ -115,6 +118,7 @@ export type RolesActionInputById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: string | undefined;
                 effort?: string | undefined;
             };
             profileId?: string | undefined;
@@ -133,6 +137,7 @@ export type RolesActionInputById = {
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: string | undefined;
             effort?: string | undefined;
         };
         runsAs?: undefined | {
@@ -191,6 +196,7 @@ export type RolesActionResultById = {
                 engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
+                    providerConnectionId?: (string) | undefined;
                     effort?: string | undefined;
                 };
                 profileId?: string | undefined;
@@ -233,6 +239,7 @@ export type RolesActionResultById = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: (string) | undefined;
                 effort?: string | undefined;
             };
             profileId?: string | undefined;

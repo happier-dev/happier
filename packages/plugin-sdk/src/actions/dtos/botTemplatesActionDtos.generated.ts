@@ -329,6 +329,10 @@ export type BotTemplatesActionInputById = {
                     reason: 'not_selected';
                 }[];
             };
+            managedTargetPlacement?: undefined | {
+                managedId: string;
+                workspaceRoot: string;
+            };
             agentInstallConsent?: undefined | {
                 vendorRecipe: boolean;
             };
@@ -599,6 +603,9 @@ export type BotTemplatesActionInputById = {
                         url?: string | undefined;
                         mimeType?: string | undefined;
                         label?: string | undefined;
+                        sha256?: string | undefined;
+                        sizeBytes?: number | undefined;
+                        provenance?: Record<string, unknown> | undefined;
                     }[];
                     browserContext?: undefined | {
                         contexts: ({
@@ -1786,6 +1793,7 @@ export type BotTemplatesActionInputById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             runsAs?: undefined | {
@@ -1811,6 +1819,7 @@ export type BotTemplatesActionInputById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -1841,12 +1850,12 @@ export type BotTemplatesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
-                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
+                inputs?: Record<string, unknown> | undefined;
                 approvalProfileId?: null | string | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
@@ -1854,6 +1863,7 @@ export type BotTemplatesActionInputById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: string | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -2830,6 +2840,7 @@ export type BotTemplatesActionResultById = {
         type: 'error';
         code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
         retryable: boolean;
+        failureCause?: ActionFailureCauseV1 | undefined;
         agentId?: string | undefined;
         providerError?: undefined | {
             v: 1;
@@ -2899,7 +2910,7 @@ export type BotTemplatesActionResultById = {
                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                 };
                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                providerErrorCode?: number | string | undefined;
                 httpStatus?: number | undefined;
                 providerErrorMessage?: string | undefined;
             };

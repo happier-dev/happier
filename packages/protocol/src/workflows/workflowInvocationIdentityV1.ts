@@ -4,16 +4,17 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import type { WorkflowDefinitionV1 } from './workflowV1.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
 /** Home and the combined Setup producer bind storage to the same original invocation. */
 export function deriveMachineSetupCombinedRunIdV1(input: Readonly<{
+  actionId?: typeof MACHINE_SETUP_APPLY_ACTION_ID_V1 | typeof MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1;
   homeId: string;
   accountId: string;
   requestId: string;
   reviewedChild?: Pick<ReviewedActionChildHttpProofV1, 'role' | 'inputDigest'>;
 }>): string {
-  return deriveWorkflowReplacementId([MACHINE_SETUP_APPLY_ACTION_ID_V1, input.homeId, input.accountId, input.requestId,
+  return deriveWorkflowReplacementId([input.actionId ?? MACHINE_SETUP_APPLY_ACTION_ID_V1, input.homeId, input.accountId, input.requestId,
     ...(input.reviewedChild ? ['reviewed-action-child', input.reviewedChild.role, input.reviewedChild.inputDigest] : [])]);
 }
 

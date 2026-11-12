@@ -384,6 +384,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.setup.apply",
   "machines.setup.remove",
   "machines.setup.updates.apply",
+  "machines.setup.updates.rollout",
   "machines.storage.deleteNow",
   "machines.storage.docker.prune",
   "machines.storage.pile.set",
@@ -1515,6 +1516,7 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly cancel: (input: PublicActionInputById["deployments.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.cancel">>;
     readonly data: Readonly<{
+      readonly page: (input: PublicActionInputById["deployments.data.page"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.data.page">>;
       readonly query: (input: PublicActionInputById["deployments.data.query"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.data.query">>;
     }> ;
     readonly deploy: (input: PublicActionInputById["deployments.deploy"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.deploy">>;
@@ -1522,6 +1524,7 @@ export type GeneratedActions = Readonly<{
       readonly add: (input: PublicActionInputById["deployments.domains.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.add">>;
       readonly get: (input: PublicActionInputById["deployments.domains.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.get">>;
       readonly list: (input: PublicActionInputById["deployments.domains.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.list">>;
+      readonly page: (input: PublicActionInputById["deployments.domains.page"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.page">>;
       readonly remove: (input: PublicActionInputById["deployments.domains.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.remove">>;
       readonly verify: (input: PublicActionInputById["deployments.domains.verify"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.verify">>;
     }> ;
@@ -2109,6 +2112,7 @@ export type GeneratedActions = Readonly<{
       readonly remove: (input: PublicActionInputById["machines.setup.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.remove">>;
       readonly updates: Readonly<{
         readonly apply: (input: PublicActionInputById["machines.setup.updates.apply"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.updates.apply">>;
+        readonly rollout: (input: PublicActionInputById["machines.setup.updates.rollout"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.updates.rollout">>;
       }> ;
     }> ;
     readonly storage: Readonly<{
@@ -4383,6 +4387,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       cancel: (input: PublicActionInputById["deployments.cancel"], options?: ActionExecutionOptions) => execute("deployments.cancel", input, options),
       data: {
+        page: (input: PublicActionInputById["deployments.data.page"], options?: ActionExecutionOptions) => execute("deployments.data.page", input, options),
         query: (input: PublicActionInputById["deployments.data.query"], options?: ActionExecutionOptions) => execute("deployments.data.query", input, options),
       },
       deploy: (input: PublicActionInputById["deployments.deploy"], options?: ActionExecutionOptions) => execute("deployments.deploy", input, options),
@@ -4390,6 +4395,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         add: (input: PublicActionInputById["deployments.domains.add"], options?: ActionExecutionOptions) => execute("deployments.domains.add", input, options),
         get: (input: PublicActionInputById["deployments.domains.get"], options?: ActionExecutionOptions) => execute("deployments.domains.get", input, options),
         list: (input: PublicActionInputById["deployments.domains.list"], options?: ActionExecutionOptions) => execute("deployments.domains.list", input, options),
+        page: (input: PublicActionInputById["deployments.domains.page"], options?: ActionExecutionOptions) => execute("deployments.domains.page", input, options),
         remove: (input: PublicActionInputById["deployments.domains.remove"], options?: ActionExecutionOptions) => execute("deployments.domains.remove", input, options),
         verify: (input: PublicActionInputById["deployments.domains.verify"], options?: ActionExecutionOptions) => execute("deployments.domains.verify", input, options),
       },
@@ -4977,6 +4983,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         remove: (input: PublicActionInputById["machines.setup.remove"], options?: ActionExecutionOptions) => execute("machines.setup.remove", input, options),
         updates: {
           apply: (input: PublicActionInputById["machines.setup.updates.apply"], options?: ActionExecutionOptions) => execute("machines.setup.updates.apply", input, options),
+          rollout: (input: PublicActionInputById["machines.setup.updates.rollout"], options?: ActionExecutionOptions) => execute("machines.setup.updates.rollout", input, options),
         },
       },
       storage: {
