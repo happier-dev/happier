@@ -4,7 +4,15 @@ import type { HostAgentIsolationLaunchContext, HostRequesterExecutionIdentity } 
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { logger } from '@/ui/logger';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+
+/** Capability admission has already expanded and validated the effective request. */
+export function isAgentInventoryRead(method: string, input: unknown): boolean {
+  return method === RPC_METHODS.CAPABILITIES_DETECT
+    && (input as CapabilitiesDetectRequest).requests?.some(request =>
+      request.id.startsWith('cli.') || request.id === 'tool.acpAgentInventory') === true;
+}
 
 export type FilesystemEffectFailure = Readonly<{
   errorCode: 'filesystem_identity_custody_unavailable';
@@ -139,7 +147,7 @@ export function createFilesystemEffectAdmission(params: Readonly<{
         const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
         // Session folder preflight must run where the Agent will run. Manage
         // file browsing retains the person's administrator placement.
-        const identity = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+        const identity = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT || isAgentInventoryRead(method, input)
           ? policy.resolveHostRequesterAgentExecutionIdentity(requester.identity) : requester.identity;
         if (!context || context.signal.aborted || identity.kind === 'unknown')
           return projectFailure(refuse('requester_identity_unavailable'));

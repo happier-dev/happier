@@ -50,10 +50,10 @@ vi.mock('node:child_process', async importOriginal => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-test.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('registered %s member install uses existing UID and member-local roots without daemon secrets', async role => {
+test.skipIf(process.platform !== 'linux').each([{ role: 'use', accountId: 'member' }, { role: 'manage', accountId: 'member' }, { role: 'manage', accountId: 'custodian' }] as const)('registered $role $accountId install uses the Agent placement without daemon secrets', async ({ role, accountId }) => {
   const directory = await mkdtemp(join(tmpdir(), 'member-install-boundary-'));
   const requester: AgentIsolationMemberRequester = { kind: 'isolated', separationRequired: role === 'use', homeServerIdentityId: 'home',
-    requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
+    requester: { serverId: 'home', accountId, machineId: 'machine', installationId: 'installation' } };
   const identity = deriveAgentIsolationMemberIdentity(requester);
   Object.assign(os, { directory, home: identity.home, workspace: identity.workspaceRoot, capture: join(directory, 'capture'), dispatch: [] });
   const boundary = createAgentIsolationMemberPreparationBoundary({ activeServerDir: directory, requesterIdentity: requester,
@@ -67,7 +67,7 @@ test.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('regi
     prepareMember: () => { throw new Error('Install must not provision or repair native users'); },
   };
   const session: TrackedSession = { pid: process.pid, startedBy: 'daemon',
-    requesterWorkAttributionV1: { ...requester.requester, accountId: 'custodian' },
+    requesterWorkAttributionV1: { ...requester.requester, accountId: 'other-account' },
     spawnOptions: { directory, runtimeDescriptorV1: { v: 1, agentId: 'fixture', agent: {} } } };
   const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [session],
     readRegistry: () => ({ agents: [{ id: 'fixture',
@@ -79,19 +79,19 @@ test.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('regi
       nativeOperationRuntime: { prepareNativeOperation: input => prepareRequesterNativeOperation(input, { machine,
         homeServerIdentityId: 'home', machineId: 'machine', installationId: 'installation' }) } } });
   const context: RpcHandlerContext = { signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
-    machineAdmission: { actorAccountId: 'member', custodianAccountId: 'custodian', machineId: 'machine', installationId: 'installation', role, encryptionMode: 'plain' } };
+    machineAdmission: { actorAccountId: accountId, custodianAccountId: 'custodian', machineId: 'machine', installationId: 'installation', role, encryptionMode: 'plain' } };
   vi.stubEnv('HAPPIER_MANAGED_TOOLS_ROOT', '/owner-private/tools'); vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', '/owner-private/install');
   vi.stubEnv('NPM_CONFIG_USERCONFIG', '/owner-private/.npmrc'); vi.stubEnv('GITHUB_TOKEN', 'owner-private-token');
   try {
     const result = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'install', consent: { vendorRecipe: true } }, context);
     if (!result || typeof result !== 'object' || !('jobId' in result) || typeof result.jobId !== 'string') throw new Error(JSON.stringify(result));
-    expect(await owner.read({ jobId: result.jobId, cursor: 0, waitForTerminal: true }, 'member'))
+    expect(await owner.read({ jobId: result.jobId, cursor: 0, waitForTerminal: true }, accountId))
       .toMatchObject({ done: true, outcome: { kind: 'succeeded', version: '1.0.0' } });
-    expect(owner.list('custodian')).toEqual({ ok: true, jobs: [] });
-    expect(owner.list('member')).toMatchObject({ jobs: [{ executionScope: 'member' }] });
+    expect(owner.list('other-account')).toEqual({ ok: true, jobs: [] });
+    expect(owner.list(accountId)).toMatchObject({ jobs: [{ executionScope: 'member' }] });
     const updated = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'update', consent: { vendorRecipe: true } }, context);
     if (!updated || typeof updated !== 'object' || !('jobId' in updated) || typeof updated.jobId !== 'string') throw new Error(JSON.stringify(updated));
-    expect(await owner.read({ jobId: updated.jobId, cursor: 0, waitForTerminal: true }, 'member'))
+    expect(await owner.read({ jobId: updated.jobId, cursor: 0, waitForTerminal: true }, accountId))
       .toMatchObject({ done: true, outcome: { kind: 'succeeded' } });
     session.requesterWorkAttributionV1 = requester.requester;
     expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'update', consent: { vendorRecipe: true } }, context))

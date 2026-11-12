@@ -358,7 +358,7 @@ import {
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
-import { assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { isAgentInventoryRead, assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { Socket } from 'socket.io-client';
@@ -757,9 +757,7 @@ export class ApiMachineClient {
             // The capability service already expanded the effective request.
             // Agent inventory consumes an existing member binding; other native
             // capabilities retain their established preparation behavior.
-            const agentInventoryRead = method === RPC_METHODS.CAPABILITIES_DETECT
-                && (input as CapabilitiesDetectRequest).requests?.some(request =>
-                    request.id.startsWith('cli.') || request.id === 'tool.acpAgentInventory');
+            const agentInventoryRead = isAgentInventoryRead(method, input);
             const channel = await this.openNativeFilesystemChannel({ requester, identity,
                 operationKey: context.localActionContext?.operationAcceptance?.operationId
                     ?? context.localActionContext?.actionRequestId ?? context.transportRequestId ?? '',

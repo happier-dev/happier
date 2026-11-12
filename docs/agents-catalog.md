@@ -2054,9 +2054,13 @@ It resolves the Agent's `runtimeSpec` from the contribution registry, so declare
 paths apply to installed plugin Agents as well as bundled Agents.
 
 In current 0.3 development, Agent install/update/cancel admission accepts Machine
-Use. The job owner consumes the signed requester Account and role: the custodian
-uses the daemon environment; other requesters require an existing Linux isolated
-member binding and run the whole installer through the same native-user launcher as Sessions.
+Use. The job owner consumes the signed requester Account and role and follows
+the Machine Agent placement policy. On separate-user Machines, every requester,
+including the custodian, requires an existing Linux isolated member binding and
+runs the whole installer through the same native-user launcher as Sessions.
+Custodian jobs retain the daemon environment when Agent placement is not a member.
+Agent inventory follows that same placement rather than administrator file-browsing
+placement, so the install offer describes the runtime that requester can launch.
 Member jobs use that member's home and explicit install environment, without
 daemon credentials or private configuration. Job identity, reads, lists and
 cancellation are scoped to the requester, including built-in Agents. Missing

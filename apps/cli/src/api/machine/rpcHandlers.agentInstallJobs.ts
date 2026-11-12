@@ -34,13 +34,12 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
     // verified ingress, including built-in Agent jobs and their later reads.
     if (context && !accountId || parsed.data.definitionId !== undefined && !accountId) return unavailable;
     if (parsed.data.intent === 'uninstall' && context?.machineAdmission?.role !== 'manage' && context) return unavailable;
-    const isMember = accountId && accountId !== context?.machineAdmission?.custodianAccountId;
-    const executeMember = isMember ? await readMemberAgentInstallExecutor(context!, params.deps).catch(error => {
+    const executeMember = accountId ? await readMemberAgentInstallExecutor(context!, params.deps).catch(error => {
       context!.signal.throwIfAborted();
       if (isPluginError(error) && error.code === 'agent_isolation_unavailable') return null;
       throw error;
     }) : undefined;
-    if (isMember && !executeMember) return memberUnavailable;
+    if (executeMember === null) return memberUnavailable;
     const account = accountId ? { accountId, ...(executeMember ? { executeMember } : {}) } : undefined;
     if (parsed.data.definitionId !== undefined) {
       if (!accountId) return unavailable;

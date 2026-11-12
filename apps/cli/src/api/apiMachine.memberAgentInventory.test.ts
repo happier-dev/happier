@@ -7,7 +7,8 @@ import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/instal
 import { createAgentIsolationMemberPreparationBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
-it.skipIf(process.platform !== 'linux')('reads Agent inventory without preparing a missing member binding and preserves owner discovery', async () => {
+it.skipIf(process.platform !== 'linux').each(['member', 'requester'])('reads Agent inventory without preparing a missing member binding and preserves owner discovery', async actorAccountId => {
+  let isolationEnabled = true;
   let member: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
   const getMember = (input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]): ReturnType<typeof createAgentIsolationMemberPreparationBoundary> => member ??= (
     createAgentIsolationMemberPreparationBoundary({ activeServerDir: fixture.directory,
@@ -15,7 +16,7 @@ it.skipIf(process.platform !== 'linux')('reads Agent inventory without preparing
   );
   const fixture = await createInstalledFilesystemMachineFixture({ agentIsolation: {
     managedHappierBinaryPath: '/opt/happier/cli/current/happier',
-    read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+    read: () => ({ enabled: isolationEnabled, memberProvisioning: 'linuxUsersV1',
       status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }),
     readMember: input => getMember(input).members.read(input),
     prepareMember: async input => {
@@ -26,11 +27,11 @@ it.skipIf(process.platform !== 'linux')('reads Agent inventory without preparing
   } });
   try {
     const request = { requests: [{ id: 'cli.codex' as const }], bypassCache: true };
-    const unavailable = await fixture.invoke(RPC_METHODS.CAPABILITIES_DETECT, request, { actorAccountId: 'member', role: 'use' });
+    const unavailable = await fixture.invoke(RPC_METHODS.CAPABILITIES_DETECT, request, { actorAccountId, role: 'use' });
     expect(unavailable).toMatchObject({ failureCause: { errorCode: 'agent_isolation_unavailable' } });
     await expect(fixture.invoke(RPC_METHODS.CAPABILITIES_DETECT, {
       requests: [{ id: 'tool.acpAgentInventory', params: { definitions: [] } }],
-    }, { actorAccountId: 'member', role: 'use' })).resolves.toMatchObject({
+    }, { actorAccountId, role: 'use' })).resolves.toMatchObject({
       failureCause: { errorCode: 'agent_isolation_unavailable' },
     });
     expect(member).toBeDefined();
@@ -38,6 +39,7 @@ it.skipIf(process.platform !== 'linux')('reads Agent inventory without preparing
     // policy/preparation observations when the committed member is absent.
     expect(member?.launches).toEqual([]);
     expect(member?.daemonInspections()).toBe(0);
+    isolationEnabled = false;
     const ownerCli = join(fixture.directory, 'owner-codex');
     await writeFile(ownerCli, '#!/bin/sh\necho codex-cli 9.0.0\n', { mode: 0o755 });
     vi.stubEnv('HAPPIER_CODEX_PATH', ownerCli);

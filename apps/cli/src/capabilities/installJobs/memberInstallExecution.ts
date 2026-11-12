@@ -1,3 +1,4 @@
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
@@ -25,9 +26,16 @@ const RecordSchema = z.discriminatedUnion('t', [
   z.strictObject({ t: z.literal('outcome'), outcome: AgentInstallJobOutcomeSchema, cleanupError: z.literal(true).optional() }),
 ]);
 
-/** Eligibility consumes an existing committed native binding; it never provisions. */
+/** Agent placement owns scope, including the custodian on a separate-users Machine.
+ * undefined retains machine execution; null refuses unavailable member execution.
+ * Eligibility consumes an existing committed native binding; it never provisions. */
 export async function readMemberAgentInstallExecutor(context: RpcHandlerContext,
-  deps: MemberAgentInstallExecutionDeps = {}): Promise<MemberAgentInstallExecutor | null> {
+  deps: MemberAgentInstallExecutionDeps = {}): Promise<MemberAgentInstallExecutor | null | undefined> {
+  const placement = resolveMachineAgentExecutionPlacementV1({
+    policy: deps.agentIsolation?.read() ?? { enabled: false }, platform: deps.platform ?? process.platform,
+  });
+  if (context.machineAdmission?.actorAccountId === context.machineAdmission?.custodianAccountId
+    && placement !== 'member') return undefined;
   if ((deps.platform ?? process.platform) !== 'linux' || !deps.agentIsolation?.readMember || !deps.nativeOperationRuntime) return null;
   const homeServerIdentityId = deps.resolveHostHomeServerIdentityId
     ? await deps.resolveHostHomeServerIdentityId() : context.callerInputAuthorization?.binding.serverIdentityId;
