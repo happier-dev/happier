@@ -299,6 +299,35 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
+    it('preserves pending plugin availability until the Event catalog answers', async () => {
+        const event = eligibleEvent();
+        const inputs = publishDaemonMergedProjectionInputs({
+            projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+                installedPackagesById: { [PLUGIN_ID]: {
+                    id: PLUGIN_ID, displayName: 'GitHub', version: '1.0.0', enabled: true,
+                    source: { kind: 'path', locator: '/sources/github' },
+                    occurrenceId: event.event.occurrenceId, sourceCustody: event.event.sourceCustody,
+                } },
+            }),
+            automationEligibleEvents: [event],
+        });
+        const hook = await renderHook((phase: 'loading' | 'ready' | 'error') => usePluginEventAutomationComposer({
+            machineId: WATCHER_MACHINE_ID, serverId, projectionPhase: phase,
+            projectionInputs: phase === 'ready' ? inputs : null,
+            initialEventRef: event.event.identity,
+        }), { initialProps: 'loading' as 'loading' | 'ready' | 'error' });
+        expect(hook.getCurrent().getPluginPresentation(event).availability).toBe('loading');
+        await hook.rerender('ready');
+        await waitForHomeGovernance(() => expect(hook.getCurrent().getPluginPresentation(event).availability).toBe('available'));
+        await act(async () => hook.getCurrent().selectEvent(event));
+        await hook.rerender('loading');
+        expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity);
+        expect(hook.getCurrent().sourceStatus).not.toBe('unavailable');
+        expect(hook.getCurrent().getPluginPresentation(event).availability).toBe('loading');
+        await hook.rerender('error');
+        expect(hook.getCurrent().getPluginPresentation(event).availability).toBe('unavailable');
+    });
+
     beforeEach(async () => {
         editorProjectionReads.length = 0;
         await harness.reset();

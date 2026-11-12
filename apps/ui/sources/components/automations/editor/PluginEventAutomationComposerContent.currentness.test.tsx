@@ -33,6 +33,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => null,
 }));
 
+const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
+
 function createModel(options: Readonly<{
     eventAvailable?: boolean;
     watcherCurrent?: boolean;
@@ -165,8 +167,16 @@ describe('PluginEventAutomationComposerContent currentness', () => {
         standardCleanup();
     });
 
+    it('keeps a retained selection pending while its catalog and watcher candidates load', async () => {
+        const current = createModel({ eventAvailable: true });
+        const model: PluginEventAutomationComposerModel = { ...current, eventCatalogStatus: 'loading', watcherCandidates: [],
+            getPluginPresentation: event => ({ ...current.getPluginPresentation(event), availability: 'loading' }) };
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} guidedPreset />);
+        expect(screen.getTextContent()).toContain('common.loading');
+        expect(screen.getTextContent()).not.toContain('automations.form.trigger.sourceUnavailable');
+    });
+
     it('offers only the existing watcher chooser for pending Event intent before catalog admission', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         const current = createModel();
         const model = { ...current, eligibleEvents: [], selectedEvent: null, selectedWatcherOrigin: null,
             eventCatalogStatus: 'unavailable' as const, pendingEventRef: current.selectedEvent!.event.identity };
@@ -178,7 +188,6 @@ describe('PluginEventAutomationComposerContent currentness', () => {
     });
 
     it('stops disclosing the one-time webhook secret once the configured source is no longer current', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         const webhookEndpoint = {
             publicUrl: 'https://ingress.example/hooks/abc',
             oneTimeGeneratedSecret: 'whsec-account-a-private',
@@ -208,7 +217,6 @@ describe('PluginEventAutomationComposerContent currentness', () => {
     });
 
     it('offers a recheck beside the unconfirmed webhook alert and withdraws both once it reports ready', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         const refreshWebhookEndpoint = vi.fn();
         const endpoint = (readiness: string) => ({
             webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
@@ -250,7 +258,6 @@ describe('PluginEventAutomationComposerContent currentness', () => {
     });
 
     it('marks the webhook recheck busy rather than admitting a second concurrent reread', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         const refreshWebhookEndpoint = vi.fn();
 
         const screen = await renderScreen(
@@ -276,7 +283,6 @@ describe('PluginEventAutomationComposerContent currentness', () => {
     });
 
     it('does not present a stale configured source as ready to reconfigure', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
 
         const screen = await renderScreen(<PluginEventAutomationComposerContent model={createModel()} />);
 
@@ -286,7 +292,6 @@ describe('PluginEventAutomationComposerContent currentness', () => {
     });
 
     it('keeps the recovery state honest when the selected watcher is no longer admitted', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
 
         const screen = await renderScreen(
             <PluginEventAutomationComposerContent model={createModel({ eventAvailable: true, watcherCurrent: false })} />,
@@ -298,7 +303,6 @@ describe('PluginEventAutomationComposerContent currentness', () => {
     });
 
     it('does not invite a source setup Action while the Event filter is invalid', async () => {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
 
         const screen = await renderScreen(
             <PluginEventAutomationComposerContent model={createModel({
@@ -325,7 +329,6 @@ describe('PluginEventAutomationComposerContent webhook endpoint readiness', () =
     async function renderWithEndpoint(
         endpoint: PluginEventAutomationComposerModel['webhookEndpoint'],
     ): Promise<Awaited<ReturnType<typeof renderScreen>>> {
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         return await renderScreen(
             <PluginEventAutomationComposerContent
                 model={createModel({ eventAvailable: true, watcherCurrent: true, webhookEndpoint: endpoint })}

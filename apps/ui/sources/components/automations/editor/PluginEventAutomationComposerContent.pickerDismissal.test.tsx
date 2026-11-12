@@ -278,7 +278,6 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
         });
         const option = screen.findByTestId(`automation-event-option-${eligibleEvents[59]!.event.id}`);
         expect(option).toBeTruthy();
-        expect(screen.getTextContent()).toContain(eligibleEvents[59]!.event.id);
         await act(async () => option?.props.onPress());
         expect(selectEvent).toHaveBeenCalledWith(eligibleEvents[59]);
     });

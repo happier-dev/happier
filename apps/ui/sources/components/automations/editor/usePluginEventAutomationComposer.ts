@@ -99,7 +99,7 @@ type WebhookEndpointRefreshRequest = Readonly<{
 export type PluginEventAutomationPluginPresentation = Readonly<{
     eventKey: string;
     displayName: string;
-    availability: 'available' | 'unavailable';
+    availability: 'loading' | 'available' | 'unavailable';
     installedPackage: PluginProjectionInstalledPackageV2 | null;
     expectedOccurrenceId: string | null;
     machineId: string | null;
@@ -216,7 +216,7 @@ function readPluginEventAutomationPluginPresentationFacts(
     return Object.freeze({
         eventKey: eventPresentationKey(event),
         displayName: installedPackage?.displayName ?? projectionEntry?.title ?? pluginId,
-        availability: available ? 'available' : 'unavailable',
+        availability: state.projectionPhase === 'loading' ? 'loading' : available ? 'available' : 'unavailable',
         // The package-brand owner must never receive an unavailable or stale
         // package binding merely to paint decorative chrome.
         installedPackage: available ? installedPackage : null,
@@ -360,6 +360,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             : []
     ), [params.projectionInputs?.automationEligibleEvents, params.projectionPhase]);
     React.useEffect(() => {
+        // A pending catalog cannot withdraw the retained Event or its configured source.
+        if (params.projectionPhase === 'loading') return;
         const selected = selectedEventRef.current;
         if (!selected) return;
         const matches = eligibleEvents.filter((candidate) => (
@@ -390,7 +392,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSelectedEvent(current);
             advanceRevision();
         }
-    }, [eligibleEvents]);
+    }, [eligibleEvents, params.projectionPhase]);
     const eventCatalogStatus = params.projectionPhase === 'ready'
         && params.projectionInputs?.automationEligibleEvents !== undefined
         ? 'ready' as const

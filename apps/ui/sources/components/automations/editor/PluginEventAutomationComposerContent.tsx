@@ -233,7 +233,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const watcherFailureByOrigin = React.useMemo(() => new Map((props.model.watcherFailures ?? []).map(failure => [
         createCanonicalJsonSigningInput(failure.origin), failure,
     ])), [props.model.watcherFailures]);
-    const selectedWatcherCurrent = selectedWatcher === null
+    const selectedWatcherCurrent = selectedWatcher === null || props.model.eventCatalogStatus === 'loading'
         ? null
         : props.model.watcherCandidates.some((candidate) => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
@@ -265,7 +265,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                     />
                 ),
                 // Healthy is quiet: only a source that cannot be chosen says so.
-                ...(plugin.availability === 'available' ? {} : { rightAccessory: t('common.unavailable') }),
+                ...(plugin.availability === 'available' ? {} : { rightAccessory: t(plugin.availability === 'loading' ? 'common.loading' : 'common.unavailable') }),
                 disabled: plugin.availability !== 'available',
             };
         }),
@@ -348,7 +348,8 @@ export function PluginEventAutomationComposerContent(props: Props) {
             : props.model.sourceStatus === 'settingUp'
                 ? t('common.loading')
                 : t('automations.form.trigger.configureSource');
-    const sourceUnavailable = props.model.sourceStatus === 'unavailable' || sourceCurrentnessUnavailable;
+    const sourceUnavailable = props.model.eventCatalogStatus !== 'loading'
+        && (props.model.sourceStatus === 'unavailable' || sourceCurrentnessUnavailable);
     const sourceFailureDetails = sourceUnavailable && props.model.sourceFailure ? (
         <TechnicalDetailsDisclosure testID="automation-event-source-unavailable.details"
             title={t('workflows.run.technicalDetails')}
@@ -368,7 +369,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 ? t('automations.form.trigger.maximumObservationAgeInvalid')
                 : undefined;
     const showSourceInstanceId = props.model.sourceStatus === 'configured'
-        && !sourceCurrentnessUnavailable
+        && selectedEventAvailability === 'available' && selectedWatcherCurrent === true
         && props.model.sourceInstanceId !== null;
     // The one-time secret is disclosed by the ensure that configured this
     // source. Keeping it tied to `configured` means a reconfiguration cannot
@@ -376,7 +377,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
     // live source currentness means an out-of-date event/watcher binding — the
     // shape an Account or target change leaves behind — stops disclosing it.
     const webhookEndpoint = props.model.sourceStatus === 'configured'
-        && !sourceCurrentnessUnavailable
+        && selectedEventAvailability === 'available' && selectedWatcherCurrent === true
         ? props.model.webhookEndpoint
         : null;
 
