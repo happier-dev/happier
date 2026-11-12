@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { realpath } from 'node:fs/promises';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 
@@ -433,6 +434,17 @@ export function createDaemonPluginChangeService(params: Readonly<{
         if (incumbent) {
           await reconcileApprovalRetirement(incumbent);
           incumbent = pendingById.get(incumbent.id);
+        }
+        if (options?.retainReview === true && incumbent?.state === 'awaitingDecision'
+          && !isDevelopmentCandidate(incumbent.prepared) && !isDevelopmentCandidate(prepared)) {
+          const outstanding = projectOutstandingPendingChange(incumbent);
+          const requested = projectOutstandingPendingChange({ ...incumbent, prepared });
+          if (outstanding?.kind === 'reviewRequired' && sameStrictJsonValue(outstanding, requested)) {
+            // Native confirmation can end before an approval Artifact exists.
+            // Re-present the same retained decision instead of stranding it busy.
+            await cleanupPrepared(prepared);
+            return outstanding;
+          }
         }
         if (incumbent?.state === 'awaitingDecision'
           && isDevelopmentCandidate(incumbent.prepared)

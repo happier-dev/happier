@@ -53,6 +53,34 @@ async function createFixture(onRegistryApplied?: () => void) {
 }
 
 describe('plugin change cancellation through real path preparation', () => {
+    it.each([false, true])('recovers an interrupted Action review only for the same candidate (changed=%s)', async changed => {
+        const fixture = await createFixture();
+        try {
+            const abandoned = new AbortController();
+            const request = { kind: 'installPath' as const, locator: fixture.pluginRoot };
+            const first = await fixture.service.requestPluginChange(request, { retainReview: true, signal: abandoned.signal });
+            if (first.kind !== 'reviewRequired') throw new Error('Expected an installation review');
+            // The native review was prepared, but the invocation ended before
+            // creating an approval Artifact or answering the retained decision.
+            abandoned.abort();
+            if (changed) {
+                const manifestPath = join(fixture.pluginRoot, '.happier-plugin', 'plugin.json');
+                const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+                await fs.writeFile(manifestPath, JSON.stringify({ ...manifest, version: '1.1.0' }));
+            }
+            const retried = await fixture.service.requestPluginChange(request, { retainReview: true });
+            expect(retried).toEqual(changed ? { kind: 'busy', pluginId: 'acme.cancellation' } : first);
+            await expect(fixture.service.decidePluginChange({ pendingChangeId: first.pendingChangeId, decision: 'cancel' }))
+                .resolves.toEqual({ kind: 'cancelled' });
+            const next = await fixture.service.requestPluginChange(request, { retainReview: true });
+            expect(next).toMatchObject({ kind: 'reviewRequired' });
+            if (next.kind !== 'reviewRequired') throw new Error('Expected the next installation review');
+            expect(next.pendingChangeId).not.toBe(first.pendingChangeId);
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it('preserves real plugin decisions and publication through unused-stop, then disposes at final shutdown', async () => {
         let invalidateProjection = () => {};
         const fixture = await createFixture(() => invalidateProjection());
@@ -154,6 +182,14 @@ describe('plugin change cancellation through real path preparation', () => {
                 if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
                 throw error;
             })).toEqual([]);
+            // An interrupted preparation must not reserve the plugin for the
+            // rest of this daemon lifetime. Re-enter through the real preparer.
+            filesystemObservation.afterRealpath = undefined;
+            const next = await fixture.service.requestPluginChange({ kind: 'installPath', locator: fixture.pluginRoot });
+            expect(next).toMatchObject({ kind: 'reviewRequired' });
+            if (next.kind !== 'reviewRequired') throw new Error('Expected a fresh installation review');
+            await expect(fixture.service.decidePluginChange({ pendingChangeId: next.pendingChangeId, decision: 'cancel' }))
+                .resolves.toEqual({ kind: 'cancelled' });
         } finally {
             filesystemObservation.afterRealpath = undefined;
             await fixture.close();

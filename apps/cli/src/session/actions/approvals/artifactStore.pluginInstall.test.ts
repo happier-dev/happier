@@ -413,7 +413,13 @@ describe('plugin install approval Artifact rejoin', () => {
         const executor = createActionExecutor({ ...deps, ...store,
           ...(outcome === 'unmounted' ? {} : { presentUserActionConfirmation }),
         });
-        return { machineId, happyHomeDir, source, reloadController, owner, executor, reviews, preparation };
+        const resumedExecutor = createActionExecutor({ ...deps, ...store,
+          presentUserActionConfirmation: async params => {
+            await presentUserActionConfirmation(params);
+            return true;
+          },
+        });
+        return { machineId, happyHomeDir, source, reloadController, owner, executor, resumedExecutor, reviews, preparation };
       }));
       try {
         for (const machine of machines) {
@@ -426,9 +432,23 @@ describe('plugin install approval Artifact rejoin', () => {
             ? { ok: true, result: { ok: true, outcome: 'applied' } }
             : { ok: false, errorCode: outcome === 'unmounted' ? 'action_interactive_review_required' : 'approval_canceled' });
           expect(machine.reviews).toHaveLength(outcome === 'unmounted' ? 0 : 1);
-          expect(machine.preparation.calls).toBe(outcome === 'unmounted' ? 0 : 1);
+          expect(machine.preparation.calls).toBe(1);
           expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion)
             .toBe(outcome === 'install' ? '1.0.0' : undefined);
+          if (outcome === 'unmounted') {
+            const outstanding = await machine.owner.changeService.listPendingPluginChanges();
+            expect(outstanding.changes).toHaveLength(1);
+            const resumed = await machine.resumedExecutor.execute('plugins.install', {
+              kind: 'archive', path: machine.source, machineId: machine.machineId,
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+              serverId: 'home-1', serverIdentityId, runtimeAccountId: 'account-1',
+              actionRequestId: `resume-${machine.machineId}` });
+            expect(resumed).toMatchObject({ ok: true, result: { ok: true, outcome: 'applied' } });
+            expect(machine.reviews).toEqual([outstanding.changes[0]!.pendingChangeId]);
+            expect(await machine.owner.changeService.listPendingPluginChanges()).toEqual({ changes: [] });
+            expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read())
+              .plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+          }
         }
         if (outcome !== 'unmounted') {
           expect(machines[0]!.reviews[0]).not.toBe(machines[1]!.reviews[0]);

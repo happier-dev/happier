@@ -991,6 +991,22 @@ describe('development Settings through the real UI Action wiring', () => {
         expect(actionRequests).toHaveLength(1);
     });
 
+    it.each(['approval_rejected', 'machine_unavailable'])('retains the installed revision and trust when native update returns %s', async actionError => {
+        const { hook, actionRequests } = await renderRemovalOwner('disable', [], { actionError });
+        const before = structuredClone(hook.getCurrent().installedPlugins);
+        expect(before).toMatchObject([{ pluginId: 'example.compute', version: '1.0.0',
+            source: { kind: 'localPath', trustPolicy: 'trusted' } }]);
+        await act(async () => { hook.getCurrent().runCatalogAction({ method: 'update', pluginId: 'example.compute' }); });
+        await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
+        expect(hook.getCurrent().installedPlugins).toEqual(before);
+        if (actionError === 'approval_rejected') {
+            expect(hook.getCurrent().routineOperationSettlement).toMatchObject({ outcome: 'withdrawn' });
+        } else {
+            expect(boundary.alert).toHaveBeenCalledWith('common.error', 'machine_unavailable');
+        }
+    });
+
     it('updates the selected installed channel without reconstructing its distribution in the UI', async () => {
         const { hook, requests, actionRequests } = await renderRemovalOwner('disable', []);
         await act(async () => { hook.getCurrent().runCatalogAction({ method: 'update', pluginId: 'example.compute' }); });
