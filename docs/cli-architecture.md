@@ -573,6 +573,15 @@ holding its `daemon.state.json` and `daemon.state.json.lock` — and only that s
 - `daemon stop` stops the current scope only; `daemon stop --all` and `auth logout --all` deliberately
   stop every relay's daemon.
 
+### Session Stop without a live runtime (development)
+
+The existing Protocol Session Stop owner classifies a missing runtime separately
+from a missing saved Session. CLI and UI both report `already_stopped` with
+`no_runtime_session_inactive` only when an authoritative Session read confirms
+that the saved Session is inactive. An active Session or an unavailable read
+leaves termination unconfirmed; cached UI activity and transport errors do not
+prove that a process stopped.
+
 ### Confirmed daemon stop outcomes (development)
 
 Current 0.2 development source reports `not_running` separately from a confirmed `stopped`
