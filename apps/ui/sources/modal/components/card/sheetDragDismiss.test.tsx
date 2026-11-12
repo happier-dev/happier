@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { standardCleanup } from '@/dev/testkit';
-import type { GestureResponderEvent, LayoutChangeEvent, PanResponderGestureState } from 'react-native';
+import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { PanResponder, type GestureResponderEvent, type LayoutChangeEvent, type PanResponderGestureState } from 'react-native';
+import { ModalCardFrame } from './ModalCardFrame';
+import { resolveSheetDragRelease, SheetDismissProvider, useSheetDrag } from './sheetDragDismiss';
 
 import { installModalComponentCommonModuleMocks } from '../modalComponentTestHelpers';
 
@@ -18,9 +20,6 @@ afterEach(() => standardCleanup());
  */
 describe('sheet drag to dismiss', () => {
     it('leaves a tap to the close button and preserves drag, cancel, and dismiss at the responder boundary', async () => {
-        const { act, renderHook } = await import('@/dev/testkit');
-        const { PanResponder } = await import('react-native');
-        const { useSheetDrag } = await import('./sheetDragDismiss');
         // PanResponder is the native input boundary; capture its handlers, keeping sheet logic real.
         const create = vi.spyOn(PanResponder, 'create');
         const dismiss = vi.fn();
@@ -59,7 +58,6 @@ describe('sheet drag to dismiss', () => {
     });
 
     it('dismisses past a third of the sheet or on a downward fling, and settles back otherwise', async () => {
-        const { resolveSheetDragRelease } = await import('./sheetDragDismiss');
         const sheet = 600;
         expect(resolveSheetDragRelease({ translationY: 60, velocityY: 0.1, sheetHeightPx: sheet })).toBe('settle');
         expect(resolveSheetDragRelease({ translationY: 199, velocityY: 0, sheetHeightPx: sheet })).toBe('settle');
@@ -72,9 +70,6 @@ describe('sheet drag to dismiss', () => {
     });
 
     it('draws the grabber on a dismissible sheet only', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { ModalCardFrame } = await import('./ModalCardFrame');
-        const { SheetDismissProvider } = await import('./sheetDragDismiss');
         const dismiss = vi.fn();
         const dismissible = await renderScreen(
             <SheetDismissProvider onDismiss={dismiss}>
