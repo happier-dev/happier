@@ -52,7 +52,7 @@ it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false
     'prepares an unsaved %s %s destination on its controller before any target exists (requester %s)', async (mode, destination, requester) => {
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: plugin.manifest,
-            files: { '.happier-plugin/daemon.js': 'export function activate() {}', 'package.json': '{"type":"module"}' },
+            files: { [plugin.manifest.entrypoints.daemon]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
             instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
         async resolveContributes(happyHomeDir) {
             return createResolvedContributionRegistry(projectLoadedPluginContributes({
@@ -217,7 +217,7 @@ it.each(['first-party', 'external'] as const)('prepares selected sources through
     const manifest = normalizePluginManifestV2(definition.manifest);
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: definition.manifest,
-            files: { '.happier-plugin/daemon.js': 'export function activate() {}', 'package.json': '{"type":"module"}' },
+            files: { [definition.manifest.entrypoints.daemon]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
             instantiateCommittedModule: () => ({ activate: definition.activate }) }],
         async resolveContributes(happyHomeDir) {
             return createResolvedContributionRegistry(projectLoadedPluginContributes({
@@ -362,10 +362,10 @@ it.each(['first-party', 'external'] as const)('prepares selected sources through
                         service: 'application', consistency: 'logical' }] } });
                 const selectedAttachment = await selected.execEnv.prepare({ backupDestination: { configKey: 'destination' } });
                 try {
-                    expect(selected.data).toEqual(sqlite);
-                    expect(selected.destination).toEqual({ environmentId: 'environment', service: 'application',
-                        adapter: 'sqlite-v1', path: '/data/application.sqlite' });
-                } finally { selectedAttachment.dispose(); }
+                    expect(selected.data).toEqual([sqlite]);
+                    expect(selected.destinations).toEqual([{ environmentId: 'environment', service: 'application',
+                        adapter: 'sqlite-v1', path: '/data/application.sqlite' }]);
+                } finally { selectedAttachment.dispose(); await selected.dispose(); }
             }
             const volume = await prepareRun({ ...operands, data: [],
                 configuration: { ...configuration, sources: [{ kind: 'volume', sourceId: 'uploads', service: 'app',
