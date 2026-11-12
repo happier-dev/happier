@@ -515,8 +515,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 && item.exposure === 'privateNetwork').map(item => item.privateNetwork!))];
             if (networks.length > 1) return { status: 'unavailable', reason: 'private_scope_unenforceable' };
             const exposures: NativeCaddyFirewallExposure[] = [];
+            // Caddy is shared: reconciling a Tunnel's network must retain the
+            // public listeners/publications already serving sibling Domains.
             const publicIngress = !request.environment.ingress || request.environment.ingress.kind === 'edgeCaddy'
-                && request.environment.ingress.edgeMachineId === host.machineId;
+                && request.environment.ingress.edgeMachineId === host.machineId
+                || request.retainedCaddy?.servers.some(server => server.tls && server.endpoints.length > 0) === true;
             if (publicIngress) exposures.push(...nativeCaddyProfile.publicPortRequirements.map(requirement => ({
                 requirementId: requirement.id, exposure: requirement.exposure, protocol: requirement.protocol,
                 containerPort: requirement.containerPort, hostPort: requirement.hostPort, hostAddress: '0.0.0.0',

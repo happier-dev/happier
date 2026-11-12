@@ -243,14 +243,17 @@ export function createOwnServerDomainNative(host: Readonly<{
             }) ?? [];
             if (!withoutWorkload && member && !replicas.length) return serviceUnavailable(job, 'service_replicas');
             let caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
+            const retainedCaddy = caddy.status === 'ready' ? caddy : undefined;
             // Only an admitted Domain add prepares or reconciles infrastructure. Verify,
             // removal and deployment observations retain their read-only paths.
             if (job.kind === 'domainDiscover' && isDeploymentDomainAddActionIdV1(job.actionId) && member && environmentContent
                 && (caddy.status === 'needs_setup' || caddy.status === 'stopped'
                     || caddy.status === 'unavailable' && caddy.reason === 'required_fact_unavailable'
-                    || caddy.status === 'ready' && (!environmentContent.ingress
-                        || environmentContent.ingress.kind === 'edgeCaddy' && environmentContent.ingress.edgeMachineId === host.machineId)
-                        && !caddy.servers.some(server => server.tls && server.endpoints.length))) {
+                    || retainedCaddy && (retainedCaddy.containerOrigins?.length === 0
+                        || replicas.some(replica => replica.networkNames.some(name => !retainedCaddy.networkNames.includes(name)))
+                        || (!environmentContent.ingress
+                            || environmentContent.ingress.kind === 'edgeCaddy' && environmentContent.ingress.edgeMachineId === host.machineId)
+                        && !retainedCaddy.servers.some(server => server.tls && server.endpoints.length)))) {
                 const setup = host.captureNativeSetup?.();
                 if (!setup) return refuse('admin_access_unavailable');
                 const admin = await setup.elevation.observe();
@@ -258,7 +261,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 if (!admin.daemonPrimaryGroup || daemonGroupId === undefined) return refuse('required_fact_unavailable',
                     { requiredFact: admin.daemonPrimaryGroup ? 'daemonPrimaryGroupId' : 'daemonPrimaryGroup' });
                 const prepared = host.runtime?.prepareDomainCaddy?.({ domain: opened.content, environment: environmentContent,
-                    replicas, privateNetworks, daemonGroup: admin.daemonPrimaryGroup, daemonGroupId });
+                    replicas, retainedCaddy, privateNetworks, daemonGroup: admin.daemonPrimaryGroup, daemonGroupId });
                 if (!prepared) return refuse('native_route_unavailable');
                 if (prepared.status !== 'ready') return refuse(prepared.reason, 'details' in prepared ? prepared.details : undefined);
                 // The native binding owner observes conflicts before administrator

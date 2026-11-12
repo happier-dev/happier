@@ -162,6 +162,8 @@ async function observed(address: string, port: number, edge = false,
         retainedPublicPorts?: Record<string, { HostIp: string; HostPort: string }[]>;
         retainedPublicDomain?: CaddyDomainRouteInput;
         failNetworkConnect?: boolean;
+        retiredNetwork?: boolean;
+        runningRetained?: boolean;
     }> = {}, produced?: ReturnType<NonNullable<ReturnType<typeof createOwnServerDeploymentRuntimeForHost>['prepareDomainCaddy']>>): Promise<NativeCaddyObservationResult> {
     const root = await mkdtemp('/tmp/hde-'); roots.push(root);
     if (containerNetwork.retainedSeed !== undefined) {
@@ -274,9 +276,13 @@ async function observed(address: string, port: number, edge = false,
             { Type: 'bind', Source: '/var/lib/happier/caddy/initial.json', Target: '/etc/caddy/happier.json', ReadOnly: true },
         ] });
     }
-    let recoveryRunning = containerNetwork.retainedSeed === undefined || containerNetwork.retainedPublicDomain !== undefined;
+    let recoveryRunning = containerNetwork.retainedSeed === undefined || containerNetwork.retainedPublicDomain !== undefined || containerNetwork.runningRetained === true;
     let recreated = false;
     let removed = false;
+    if (containerNetwork.retiredNetwork) {
+        container.HostConfig.NetworkMode = 'retired_default';
+        container.NetworkSettings.Networks = { incumbent_default: { IPAddress: '172.18.0.2' } };
+    }
     nativeDocker.set(containerNetwork.retainedSeed === undefined ? socketPath : '/run/happier-caddy/admin.sock', { engineId: 'engine-a', async run(args, signal) {
         if (containerNetwork.retainedSeed !== undefined && args.some(arg => arg.startsWith('name=^/happier-cloudflared-')))
             return { exitCode: 0, stdout: JSON.stringify(retainedConnector.id), stderr: '' };
@@ -296,18 +302,29 @@ async function observed(address: string, port: number, edge = false,
             if (args.includes('ready') || args.includes('restart')) return { exitCode: 0, stdout: '', stderr: '' };
             throw new Error('Unexpected retained connector Docker operation');
         }
+        if (args[0] === 'network' && args[1] === 'ls') return { exitCode: 0,
+            stdout: ['deployed_default', ...Object.keys(container.NetworkSettings.Networks)].map(name => `id-${name} ${name}`).join('\n'), stderr: '' };
         if (args.includes('ls')) return { exitCode: 0, stdout: removed ? '' : JSON.stringify(container.Id), stderr: '' };
         if (args.includes('inspect')) {
             const retained = containerNetwork.retainedSeed !== undefined;
             return { exitCode: 0, stdout: JSON.stringify([{ ...container,
                 State: { Running: recoveryRunning, Status: recoveryRunning ? 'running' : 'created', ExitCode: recoveryRunning || recreated ? 0 : 128 },
                 ...(retained ? { HostConfig: { ...container.HostConfig, PortBindings: recreated ? {} : containerNetwork.retainedPublicPorts },
-                    NetworkSettings: { Networks: recreated || containerNetwork.retainedPublicDomain ? container.NetworkSettings.Networks : {},
+                    NetworkSettings: { Networks: recoveryRunning || recreated ? container.NetworkSettings.Networks : {},
                         Ports: containerNetwork.retainedPublicDomain ? containerNetwork.retainedPublicPorts : {} } } : {}),
             }]), stderr: '' };
         }
         if (containerNetwork.failNetworkConnect && args[0] === 'network' && args[1] === 'connect')
             return { exitCode: 1, stdout: '', stderr: 'network attachment failed' };
+        if (containerNetwork.retiredNetwork && args[0] === 'network' && args[1] === 'connect') {
+            if (!recreated) return { exitCode: 1, stdout: '', stderr: 'network retired_default not found' };
+            container.NetworkSettings.Networks[args[2]!] = { IPAddress: '172.19.0.2' };
+            return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (containerNetwork.retiredNetwork && args[0] === 'container' && args[1] === 'stop') {
+            recoveryRunning = false;
+            return { exitCode: 0, stdout: container.Id, stderr: '' };
+        }
         if (containerNetwork.retainedSeed !== undefined && args.includes('rm')) {
             expect(recoveryRunning).toBe(false);
             removed = true;
@@ -316,6 +333,8 @@ async function observed(address: string, port: number, edge = false,
         if (containerNetwork.retainedSeed !== undefined && args.includes('create')) {
             expect(removed).toBe(true);
             expect(args).not.toContain('--publish');
+            container.HostConfig.NetworkMode = args[args.indexOf('--network') + 1]!;
+            container.NetworkSettings.Networks = { [container.HostConfig.NetworkMode]: { IPAddress: '172.19.0.2' } };
             recreated = true;
             removed = false;
             return { exitCode: 0, stdout: container.Id, stderr: '' };
@@ -541,7 +560,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -558,11 +577,12 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     const nativeUnknownFailure = MachineElevationFailureV1Schema.parse({ ...nativeCheckFailure, kind: 'native_effect_failed' });
     const environment = createDeploymentEnvironmentDetailV1();
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
-    const networkConnectFailure = scenario === 'Tunnel running public network failure';
+    const networkConnectFailure = scenario === 'Tunnel running private network failure';
     // File logging is the diagnostic boundary; keep the real controller/native path.
     const nativeWarnings = networkConnectFailure ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
-    const runningPublic = scenario === 'Tunnel running public Caddy' || networkConnectFailure;
-    const retainedSeed = scenario === 'Tunnel retained public seed' || scenario === 'Tunnel foreign seed' || runningPublic;
+    const retiredNetwork = scenario === 'Tunnel running private retired network';
+    const runningPublic = scenario === 'Tunnel running public Caddy';
+    const retainedSeed = scenario === 'Tunnel retained public seed' || scenario === 'Tunnel foreign seed' || runningPublic || retiredNetwork || networkConnectFailure;
     const incumbentPublicDomain: CaddyDomainRouteInput = { domainId: 'incumbent-public',
         domain: { hostname: 'incumbent.example.test', target: { service: 'web', containerPort: 80 } },
         listener: 'public', upstreams: { kind: 'replicas', containerNames: ['deployed-web-1'] },
@@ -618,6 +638,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             ])),
             ...(runningPublic ? { retainedPublicDomain: incumbentPublicDomain } : {}),
             ...(networkConnectFailure ? { failNetworkConnect: true } : {}),
+            ...(retiredNetwork ? { retiredNetwork: true } : {}),
+            ...(retiredNetwork || networkConnectFailure ? { runningRetained: true, retainedPublicPorts: {} } : {}),
         }) }
             : scenario === 'missing tunnel origin' ? { address: null } : {}, runningPublic ? publicPrepared : prepared), observed('100.70.0.3', 9381)]);
     let installed: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
@@ -1327,7 +1349,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                             phase: 'deployment.domain.native_execution', callSite: expect.stringContaining('ownServerDomainNative'),
                         })],
                         ['[Deployment] Domain native operation failed', expect.objectContaining({
-                            kind: 'domain', domainId: children[0]!.input.domainId,
+                            kind: 'domainDiscover', domainId: input.domainId,
                             requiredFact: 'caddyAdminConfig',
                             nativeCommand: { command: 'docker', phase: 'network-connect', exitCode: 1 },
                         })],
@@ -1356,10 +1378,10 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                     ])));
                 }
                 expect(Object.keys(finalContainer.NetworkSettings.Networks)).toContain('deployed_default');
-                expect(admissions).toHaveLength(1);
-                expect(children).toHaveLength(1);
+                expect(admissions).toHaveLength(networkConnectFailure ? 0 : 1);
+                expect(children).toHaveLength(networkConnectFailure ? 0 : 1);
                 expect(transitions).toMatchObject(networkConnectFailure ? [] : [{ observations: [{ state: 'active' }] }]);
-                expect(admissions[0]?.placements).toMatchObject([{ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }]);
+                if (!networkConnectFailure) expect(admissions[0]?.placements).toMatchObject([{ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }]);
             }
         } else if (scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'incumbent receipt joining member') {
             expect(result, `Native public TLS listener/publication required for Domain admission: ${JSON.stringify(result)}`)

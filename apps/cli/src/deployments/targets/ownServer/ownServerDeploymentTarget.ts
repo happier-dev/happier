@@ -96,6 +96,7 @@ export type OwnServerDomainCaddyRequest = Readonly<{
     domain: Pick<import('@happier-dev/deployment-protocol').DeploymentDomainContentV1, 'hostname' | 'target'>;
     environment: DeploymentEnvironmentContentV1;
     replicas: readonly Readonly<{ containerName: string; networkNames: readonly string[] }>[];
+    retainedCaddy?: Extract<import('@happier-dev/cli-common/machineSetup').NativeCaddyObservationResult, { status: 'ready' }>;
     privateNetworks: readonly import('@happier-dev/protocol/plugins/contributions/accessProviders').MachinePrivateNetworkObservationV1[];
     daemonGroup: string; daemonGroupId: number;
 }>;

@@ -729,6 +729,39 @@ it('consumes the setup owner result and preserves the owned running container an
     expect(readCaddyContainerFirewallExposures(f.input)).toEqual([f.input.privateBinding!.exposure]);
 });
 
+it.each(['detached', 'attached', 'healthy-new-route'] as const)('reconciles running Caddy after Environment network retirement: %s', async scenario => {
+    const f = await fixture(false); await f.setup();
+    expect(await ensureNativeCaddyContainer(f.input, f.options())).toMatchObject({ status: 'ready' });
+    const retained = f.readContainer();
+    if (scenario !== 'healthy-new-route') retained.HostConfig.NetworkMode = 'retired_default';
+    if (scenario === 'detached') retained.NetworkSettings.Networks = {};
+    const input = { ...f.input, routedNetworks: scenario === 'attached' ? f.input.routedNetworks : ['new-route'] };
+    const autosave = join(input.stateDirectory, 'config', 'caddy', 'autosave.json');
+    await writeFile(autosave, '{"retainedDomain":"sibling.example"}');
+    const options = { ...f.options(), run: async (command: MachineSetupNativeCommand) => {
+        const args = command.args.slice(2);
+        if (args[0] === 'network' && args[1] === 'ls') return ok('id-a routed-a\nid-b routed-b\nid-new new-route\n');
+        // Docker cannot attach a running container whose primary network vanished.
+        if (args[0] === 'network' && args[1] === 'connect' && f.readContainer() === retained && scenario !== 'healthy-new-route') {
+            return { code: 1, stdout: '', stderr: 'network retired_default not found' };
+        }
+        return f.run(command);
+    } };
+    expect(await ensureNativeCaddyContainer(input, { ...options, run: command =>
+        command.args[2] === 'network' && command.args[3] === 'ls'
+            ? Promise.resolve({ code: 1, stdout: '', stderr: 'inventory unavailable' }) : options.run(command),
+    })).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
+    expect(f.readContainer()).toBe(retained);
+    expect(retained.State.Running).toBe(true);
+    expect(await ensureNativeCaddyContainer(input, options)).toMatchObject({ status: 'ready' });
+    expect(f.readContainer() === retained).toBe(scenario === 'healthy-new-route');
+    expect(f.readContainer().State.Running).toBe(true);
+    expect(f.readContainer().HostConfig.Mounts).toEqual(retained.HostConfig.Mounts);
+    expect(f.readContainer().HostConfig.PortBindings).toEqual(retained.HostConfig.PortBindings);
+    expect(Object.keys(f.readContainer().NetworkSettings.Networks)).toEqual(expect.arrayContaining(input.routedNetworks));
+    expect(await readFile(autosave, 'utf8')).toBe('{"retainedDomain":"sibling.example"}');
+});
+
 it.each([false, true].flatMap(publicIngress => [
     undefined,
     // REPLAY-132-CLI/caddy-before.txt: the previous start predates network deletion.

@@ -57,6 +57,28 @@ const environment: DeploymentEnvironmentContentV1 = { name: 'Staging', retainPre
     definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
     ingress: { kind: 'cloudflareTunnel' } };
 
+it('retains observed public listeners while preparing a Tunnel network reconciliation', () => {
+    const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
+        serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        async acquirePluginRuntimeRegistryLease() { throw new Error('Uses the admitted deployed service'); } });
+    const prepared = runtime.prepareDomainCaddy!({
+        domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 80 } }, environment,
+        replicas: [{ containerName: 'web-1', networkNames: ['new_default'] }], privateNetworks: [],
+        daemonGroup: 'happier', daemonGroupId: 1000,
+        retainedCaddy: { status: 'ready', containerId: 'caddy', containerName: 'happier-caddy',
+            adminSocketPath: '/run/happier-caddy/admin.sock', networkNames: [], containerOrigins: [],
+            servers: [{ serverId: 'happier_public', listen: [':443'], tls: true, automaticHttpsDisabled: false,
+                endpoints: [{ hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443 }] }] },
+    });
+    if (prepared.status !== 'ready') throw new Error('Expected shared Caddy preparation');
+    expect(prepared.input.publicBindings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ hostPort: 80, hostAddress: '0.0.0.0' }),
+        expect.objectContaining({ hostPort: 443, hostAddress: '0.0.0.0' }),
+    ]));
+    expect(JSON.parse(prepared.input.initialConfig).apps.http.servers.happier_public).toBeDefined();
+});
+
 it.skipIf(process.platform === 'win32').each(['public', 'tunnel'] as const)('transitions the exact retained Happier seed to %s ingress without claiming custom seed content', async ingress => {
     const root = await mkdtemp(join(tmpdir(), 'domain-caddy-seed-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
