@@ -1593,6 +1593,36 @@ describe('materializeConnectedServicesForSpawn', () => {
     }
   });
 
+  it('does not rediscover an isolated conversation already in the durable native home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-unchanged-native-state-'));
+    try {
+      const record = buildConnectedServiceCredentialRecord({ now: 10,
+        serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: 100000,
+        oauth: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', idToken: null,
+          scope: null, tokenType: null, providerAccountId: null, providerEmail: null },
+      });
+      const params: MaterializeParams = { agentId: 'codex', materializationKey: 'unchanged-state',
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
+        recordsByServiceId: new Map([['openai-codex', record]]), processEnv: {},
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: { v: 1,
+          defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } },
+      };
+      const first = await materializeConnectedServicesForSpawn(params);
+      const home = first!.env.CODEX_HOME!;
+      const vendorResumeId = '019fea40-8040-7d00-9b7e-9b8f3b5cfca8';
+      const rollout = join(home, 'sessions', `rollout-2026-09-07T12-00-00-${vendorResumeId}.jsonl`);
+      await mkdir(join(home, 'sessions'), { recursive: true });
+      await writeFile(rollout, JSON.stringify({ type: 'session_meta', payload: { id: vendorResumeId } }) + '\n');
+      vi.mocked(filesystem.readdir).mockClear();
+      const resumed = await materializeConnectedServicesForSpawn({ ...params, vendorResumeId });
+      expect(filesystem.readdir).not.toHaveBeenCalledWith(join(home, 'sessions'), expect.anything());
+      expect(await readFile(rollout, 'utf8')).toContain(vendorResumeId);
+      await resumed!.cleanupOnExit!();
+      await first!.cleanupOnExit!();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('refuses to import local state through an aliased previous materialized home', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-aliased-run-native-state-'));
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -1914,7 +1944,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       // beyond the production orphan TTL, independently of the rollout's age.
       await utimes(join(baseDir, 'requester-accounts'), new Date(1_000), new Date(1_000));
       const restartedCleanup = createConnectedServiceMaterializedHomeCleanupScheduler({
-        baseDir, pidToTrackedSession: new Map(), nowMs: () => 8 * 24 * 60 * 60_000,
+        baseDir, trackedSessionsByKey: new Map(), nowMs: () => 8 * 24 * 60 * 60_000,
         orphanTtlMs: 7 * 24 * 60 * 60_000, getRetainedMaterializationKeys: async () => [],
       });
       await restartedCleanup.reconcile();
