@@ -202,6 +202,23 @@ describe('bundled Conversation runtime host tool projection', () => {
     }
   });
 
+  it.each(['direct', 'generic'] as const)('delivers the real spawn Action detail through the %s provider callback', async transport => {
+    const lease = createBundledConversationRuntimeHostLease();
+    try {
+      const tool = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+        .find(candidate => candidate.name === (transport === 'direct' ? 'getActionSpec' : 'action_execute'));
+      if (!tool) throw new Error('Expected Action discovery tool');
+      const result = await tool.execute(transport === 'direct'
+        ? { id: 'session.spawn_new' }
+        : { actionId: 'action.spec.get', input: { id: 'session.spawn_new' } });
+      expect(result).toMatchObject(transport === 'direct'
+        ? { actionSpec: { id: 'session.spawn_new' } }
+        : { ok: true, result: { actionSpec: { id: 'session.spawn_new' } } });
+    } finally {
+      lease.revoke();
+    }
+  });
+
   it('publishes the canonical Inbox read and its briefing guidance to standalone realtime attempts', () => {
     const lease = createBundledConversationRuntimeHostLease();
     try {

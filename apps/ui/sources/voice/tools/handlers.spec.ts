@@ -4,6 +4,7 @@ import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/t
 import * as React from 'react';
 import { Conversation, TextConversation } from '@elevenlabs/client';
 import { createElevenLabsVoiceProviderRuntime } from '../../../../../packages/plugins/elevenlabs/src/ui/voice/runtime';
+import { PLUGIN_MANIFEST as ELEVENLABS_PLUGIN_MANIFEST } from '../../../../../packages/plugins/elevenlabs/src/manifest';
 import { createSdkHandleConnection } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import {
   bindVoiceRuntimeAttemptBinding, createVoiceRuntimeAttemptBindingOwner,
@@ -494,7 +495,8 @@ async function createElevenLabsToolHarness() {
   } });
   const barrierInput = {
     adapterId, controlSessionId,
-    resolveSessionId: () => 's1', effectCalls: 'stable_ids',
+    resolveSessionId: () => 's1',
+    effectCalls: ELEVENLABS_PLUGIN_MANIFEST.contributes.voiceProviders[0].capabilities.tools.effectCalls,
     async submitResults(_responseId: string, results: readonly import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeToolResultV1[]) {
       for (const event of runtime.encodeToolResults(results)) await connection.sendControl(event);
     },
@@ -1883,6 +1885,122 @@ describe('voice tool handlers', () => {
 
     const pathsRaw = await tools.listRecentPaths({ limit: 10 });
     expect(JSON.parse(pathsRaw)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+  });
+
+  it.each(['direct', 'discovered'] as const)('lists ready backends on the admitted realtime Voice Machine after preferences move (%s)', async (entry) => {
+    const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { rememberLastUsedBackendSelection, readLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+    const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol/machines/machineStoredContent');
+    const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const { QualifiedConnectedAccountGroupV4Schema } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
+    const { ConnectedAccountCatalogRecordV1Schema } = await import('@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1');
+    const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+    const { getServerFeaturesSnapshot, primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+    const previousSnapshot = getVoiceSessionSnapshot();
+    onTestFinished(() => setVoiceSessionSnapshot(previousSnapshot));
+    await publishMachineInventoryForTest(account.scope, ['m1', 'm2'].map(id => createMachineFixture({
+      id, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, storageMode: 'plain', presenceProtocolVersion: 1,
+    })));
+    rememberLastUsedBackendSelection(storage.getState().settingsScope, {
+      lastUsedAgent: 'claude', lastUsedBackendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    });
+    expect(readLastUsedBackendSelection(storage.getState().settingsScope)).toMatchObject({ lastUsedAgent: 'claude',
+      lastUsedBackendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+    const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }]);
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const identity = { pluginId: 'happier.agent.codex', localId: 'codex' };
+    const projection = PluginProjectionV2Schema.parse({ ...inventory.projection,
+      agentsById: { ...inventory.projection.agentsById,
+        codex: { ...inventory.projection.agentsById.codex, identity,
+          connectedAccounts: [{ purpose: 'primary', service, credentialKinds: ['oauth'] }] } },
+      familiesById: { connectedAccounts: { family: 'connectedAccounts', entriesById: { 'happier.agent.codex/openai-codex': {
+        id: service.localId, serviceId: service.localId, pluginId: service.pluginId, title: 'ChatGPT',
+        provenance: 'external', sourceKind: 'installed', capabilities: [], diagnostics: [],
+        availability: { state: 'available', reason: 'resolved' },
+        authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode',
+          callbackUrl: 'http://127.0.0.1:4000/auth/callback', pkce: 'required', outcomeReconciliation: 'providerCheck' }] },
+      } } } },
+    });
+    storage.setState({ profileScope: account.scope, profile: { ...storage.getState().profile,
+      connectedAccountsV4: [{ ref: { service, accountId: 'work' }, revisionSemantics: 'revisioned',
+        credentialRevision: 'revision-1', status: 'connected', kind: 'oauth', authenticationModeId: 'oauth',
+        configurationReady: true, configurationRevision: null, displayName: 'Work account', scopes: [] }],
+      connectedAccountGroupsV4: [QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'pool' },
+        incarnation: 'pool:1', displayName: 'Codex pool', generation: 1, runtimeStateRevision: 1, policy: {},
+        activeConnectedAccountId: 'work', state: {}, members: [{ v: 1, connectedAccountId: 'work', state: {}, createdAt: 0, updatedAt: 0 }],
+        createdAt: 0, updatedAt: 0 })],
+    } });
+    const features = await getServerFeaturesSnapshot({ serverId: homeA });
+    if (features.status !== 'ready') throw new Error('Expected admitted Account feature snapshot');
+    primeServerFeaturesSnapshot({ serverId: homeA, snapshot: { ...features, features: FeaturesResponseSchema.parse({
+      ...features.features, capabilities: { ...features.features.capabilities,
+        connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
+    }) } });
+    applyConnectedAccountCatalogSnapshot(account.scope, 'purposes', { status: 'ready', revision: 1,
+      record: ConnectedAccountCatalogRecordV1Schema.parse({ key: 'purposes', value: { v: 1, bindings: [{
+        purpose: { consumer: identity, purpose: 'primary' }, target: { kind: 'group', service, groupId: 'pool' },
+      }] } }),
+    }, true);
+    const signedOut = { ...inventory.capabilities, results: Object.fromEntries(Object.entries(inventory.capabilities.results)
+      .map(([key, result]) => [key, { ...result, data: { ...result.data,
+        signIn: { ...result.data.signIn, status: 'signedOut' }, isLoggedIn: false,
+        authStatus: { state: 'logged_out', checkedAt: 1 } } }])) };
+    daemonRpc.mockImplementation(async request => {
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection };
+      if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return request.sessionId === 'm1'
+        ? signedOut : inventory.capabilities;
+      if (request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { jobs: [] };
+      throw new Error(`Unexpected Voice inventory RPC: ${request.method}`);
+    });
+    for (const machineId of ['m1', 'm2']) publishMachineContributionRegistryProjectionInvalidation({ serverId: homeA, machineId }, 'authority');
+    const adapterId = 'test.voice.provider/conversation';
+    const controlSessionId = 'admitted-backend-list';
+    setVoiceSessionSnapshot({ adapterId, sessionId: controlSessionId, status: 'connected', mode: 'idle', canStop: true,
+      recoveryTarget: { serverId: homeA, machineId: 'm1', machineLabel: 'Admitted Machine', agentRuntime: null } });
+    const owner = createVoiceRuntimeAttemptBindingOwner();
+    bindVoiceRuntimeAttemptBinding({ owner, binding: { adapterId, controlSessionId,
+      conversationSessionId: 's1', conversationSessionAddress: { serverId: homeA, sessionId: 's1' },
+      transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt: 1 } });
+    storage.setState(current => ({ settings: { ...current.settings, voice: { ...current.settings.voice,
+      executionMachine: { mode: 'fixed', machineId: 'm2' } } } }));
+    const lease = createBundledConversationRuntimeHostLease();
+    const barrier = lease.host.createToolBarrier({ adapterId, controlSessionId, resolveSessionId: () => null,
+      effectCalls: 'stable_ids', submitResults: async () => {}, continueResponse: async () => {} });
+    onTestFinished(() => { barrier.dispose(); lease.revoke(); unbindVoiceRuntimeAttemptBindingIfOwned({ conversationSessionId: 's1', owner }); });
+    const list = async (responseId: string, input: Record<string, import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue>) => {
+      const batch = await barrier.run({ responseId, calls: [{ v: 1, responseId, callId: responseId, order: 0,
+        toolName: entry === 'direct' ? 'listAgentBackends' : 'action_execute',
+        arguments: entry === 'direct' ? input : { actionId: 'agents.backends.list', input } }] });
+      expect(batch.results[0], JSON.stringify(batch)).toMatchObject({ status: 'success' });
+      const value = batch.results[0]?.output;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected backend inventory output');
+      return entry === 'direct' ? value : Reflect.get(value, 'result');
+    };
+    const listed = await list('admitted-list', {});
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { readMachineAgentsForScope } = await import('@/agents/machineAgents/useMachineAgents');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected admitted Account lifetime');
+    const admittedAgents = readMachineAgentsForScope(lifetime, 'm1').agents;
+    expect(admittedAgents.find(agent => agent.agentId === 'claude')).toMatchObject({ state: 'needsSignIn',
+      signIn: { status: 'signedOut', native: { status: 'signedOut' } } });
+    expect(admittedAgents.find(agent => agent.agentId === 'codex')).toMatchObject({ state: 'ready',
+      signIn: { status: 'signedIn', native: { status: 'signedOut' }, via: { kind: 'connected', profileLabel: 'Work account' } } });
+    expect(listed).toMatchObject({ executionTarget: { serverId: homeA, machineId: 'm1' }, defaultTargetKey: 'agent:happier.agent.codex/codex', items: expect.arrayContaining([
+      expect.objectContaining({ agentId: 'claude', readiness: 'needsSignIn' }),
+      expect.objectContaining({ agentId: 'codex', readiness: 'ready' }),
+    ]) });
+    expect(new Set(daemonRpc.mock.calls.map(([request]) => request.sessionId))).toEqual(new Set(['m1']));
+    daemonRpc.mockClear();
+    const explicit = await list('explicit-machine-list', { machineId: 'm2' });
+    expect(explicit).toMatchObject({ executionTarget: { serverId: homeA, machineId: 'm2' }, defaultTargetKey: 'agent:happier.agent.claude/claude', items: expect.arrayContaining([
+      expect.objectContaining({ agentId: 'claude', readiness: 'ready' }),
+    ]) });
+    expect(new Set(daemonRpc.mock.calls.map(([request]) => request.sessionId))).toEqual(new Set(['m2']));
   });
 
   it('can list agent backends and models for spawning via voice', async () => {

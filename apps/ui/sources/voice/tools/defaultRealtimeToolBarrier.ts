@@ -3,10 +3,13 @@ import type {
 import type {
   VoiceRealtimeToolResultV1,
 } from '@happier-dev/protocol/voice/realtime/events';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import {
   redactVoiceToolResultForProvider,
@@ -49,6 +52,10 @@ type DefaultRealtimeToolBarrierDeps = Readonly<{
   voiceSessionBinding?: VoiceSessionBinding | null;
   playHostText?: VoiceHostTextPlayback;
   resolveSessionId: (explicitSessionId?: string | null) => string | null;
+  /** Home captured with the connected Voice attempt; survives later navigation. */
+  currentServerId?: string | null;
+  /** Machine captured from this attempt's existing Start admission. */
+  currentExecutionTarget?: SessionExecutionTargetV1 | null;
   exposure?: 'voice_assistant' | 'current_ui_only';
   currentSessionAddress?: SessionAddress | null;
   /** Provider-local current-context capability; absent means no such tool. */
@@ -63,8 +70,6 @@ type DefaultRealtimeToolBarrierDeps = Readonly<{
   continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
 }>;
 
-const SAFE_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
-
 function parseHandlerResult(serialized: string): unknown {
   try {
     return JSON.parse(serialized);
@@ -73,12 +78,14 @@ function parseHandlerResult(serialized: string): unknown {
   }
 }
 
-function readSafeHandlerFailure(value: unknown): string | null {
+function readHandlerFailure(value: unknown): PluginError | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Readonly<Record<string, unknown>>;
   if (record.ok !== false) return null;
-  const code = typeof record.errorCode === 'string' ? record.errorCode.trim() : '';
-  return SAFE_ERROR_CODE_PATTERN.test(code) ? code : 'tool_failed';
+  const code = typeof record.errorCode === 'string' && record.errorCode.length > 0 ? record.errorCode : 'tool_failed';
+  return new PluginError({ code,
+    ...(record.details === undefined ? {} : { details: StrictJsonValueSchema.parse(record.details) }),
+  });
 }
 
 export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarrierDeps) {
@@ -111,8 +118,8 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
         callId: call.callId,
         signal,
       }));
-      const failureCode = readSafeHandlerFailure(parsed);
-      if (failureCode) throw new RealtimeToolExecutionError('error', failureCode);
+      const failure = readHandlerFailure(parsed);
+      if (failure) throw failure;
       return parsed;
     },
     redactResult: (value, call) => (call.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
@@ -130,6 +137,8 @@ export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrie
       voiceSessionBinding: deps.voiceSessionBinding,
       resolveSessionId: deps.resolveSessionId,
       currentSessionAddress: deps.currentSessionAddress,
+      currentServerId: deps.currentServerId,
+      currentExecutionTarget: deps.currentExecutionTarget,
       // Realtime lacks Local's host tool-result speaker. Missing capability
       // therefore means ordinary Ask, never an unfinishable read-back binding.
       playHostText: deps.playHostText ?? (async () => ({ status: 'unavailable', code: 'host_text_playback_unavailable' })),

@@ -5,6 +5,8 @@ import { z } from '../zodRuntimePolicy.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
+import { MachineAgentExecutionStateV1Schema } from '../capabilities/machineAgentInventory.js';
+import { SessionExecutionTargetV1Schema } from '../sessions/creation/sessionExecutionTargetV1.js';
 
 /**
  * One selectable Agent or configured ACP backend projected by
@@ -23,11 +25,15 @@ export const AgentBackendInventoryItemSchema = lazyZodSchema(() => z.strictObjec
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
   backendId: z.optional(z.string().check(z.minLength(1))),
   description: z.optional(z.string().check(z.minLength(1))),
+  /** Present when a Machine was named: its installed/signed-in readiness for this target. */
+  readiness: z.optional(MachineAgentExecutionStateV1Schema),
 }));
 export type AgentBackendInventoryItem = z.output<typeof AgentBackendInventoryItemSchema>;
 
 export const AgentsBackendsListOutputSchema = lazyZodSchema(() => z.strictObject({
   items: z.array(AgentBackendInventoryItemSchema),
   defaultTargetKey: z.optional(z.string().check(z.minLength(1))),
+  /** Exact Machine whose readiness and automatic default this inventory describes. */
+  executionTarget: z.optional(SessionExecutionTargetV1Schema),
 }));
 export type AgentsBackendsListOutput = z.output<typeof AgentsBackendsListOutputSchema>;

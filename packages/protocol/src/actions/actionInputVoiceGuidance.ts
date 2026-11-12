@@ -118,12 +118,12 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
     ],
   },
   'session.spawn_new': {
-    'executionTarget.serverId': [{ text: 'Use listServers to discover the authenticated server scope before choosing an exact target internally', requiresActionIds: ['servers.list'] }],
-    'executionTarget.machineId': [{ text: 'Use listMachines to discover the exact execution machine before creating a Session', requiresActionIds: ['machines.list'] }],
+    'executionTarget.serverId': [{ text: 'Use the supplied admitted executionTarget.serverId; use listServers when the person chooses another Home', requiresActionIds: ['servers.list'] }],
+    'executionTarget.machineId': [{ text: 'Use the supplied admitted executionTarget.machineId; use listMachines when the person chooses another Machine', requiresActionIds: ['machines.list'] }],
     directory: [
       { text: 'Use listRecentPaths when you need a recent path handle', requiresActionIds: ['paths.list_recent'] },
     ],
-    agentTarget: [{ text: 'Use listAgentBackends to discover the exact Agent target before creating a Session', requiresActionIds: ['agents.backends.list'] }],
+    agentTarget: [{ text: 'Omit when no coding Agent was named so the host binds the ready default; use listAgentBackends to resolve an explicitly named Agent to its exact target', requiresActionIds: ['agents.backends.list'] }],
     modelSelection: [{ text: 'Use listAgentModels after choosing the Agent target so you can select a compatible model', requiresActionIds: ['agents.models.list'] }],
   },
   'session.permission.respond': {
@@ -212,8 +212,8 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
   ],
   'session.spawn_new': [
     { text: 'Use listRecentPaths instead of guessing raw paths', requiresActionIds: ['paths.list_recent'] },
-    { text: 'Use listMachines and listServers before choosing the exact execution target', requiresActionIds: ['machines.list', 'servers.list'] },
-    { text: 'Use listAgentBackends before setting agentTarget internally', requiresActionIds: ['agents.backends.list'] },
+    { text: 'Use the admitted Voice execution target when one is supplied; use listMachines and listServers only when choosing a different execution target, and never invent Machine or Home identifiers', requiresActionIds: ['machines.list', 'servers.list'] },
+    { text: 'When the person does not name a coding Agent, omit agentTarget so the host selects the canonical ready default. If using listAgentBackends, use its exact executionTarget and the ready row identified by defaultTargetKey; never choose a coding Agent because it shares the Voice provider name. Preserve an Agent the person explicitly names, and report unavailable when no ready default exists', requiresActionIds: ['agents.backends.list'] },
     { text: 'Use listAgentModels before setting modelSelection internally', requiresActionIds: ['agents.models.list'] },
   ],
   'session.target.primary.set': [

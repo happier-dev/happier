@@ -65,7 +65,7 @@ describe('ElevenLabs public Voice settings declaration', () => {
       'agentId',
     ]);
     expect(declaration.capabilities).toMatchObject({
-      tools: { effectCalls: 'none' },
+      tools: { effectCalls: 'stable_ids' },
     });
     expect(declaration.capabilities).not.toHaveProperty('readiness');
     expect(declaration.credentials).toMatchObject({

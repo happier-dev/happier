@@ -61,7 +61,7 @@ export const ELEVENLABS_PLUGIN = definePlugin({
             exactMessage: true,
             interruptionPolicy: 'disabled',
           },
-          tools: { effectCalls: 'none' },
+          tools: { effectCalls: 'stable_ids' },
         },
         settings: {
           schemaVersion: 2,

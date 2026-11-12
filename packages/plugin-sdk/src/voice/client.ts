@@ -30,7 +30,7 @@ import type {
     VoiceTranscriptLadderMapper,
 } from '@happier-dev/protocol/voice/realtime';
 import { createVoiceTranscriptLadderMapper as canonicalCreateVoiceTranscriptLadderMapper } from '@happier-dev/protocol/voice/realtime/transcriptLadder';
-import { VoiceRealtimeJsonValueSchema as canonicalVoiceRealtimeJsonValueSchema, VoiceRealtimeToolCallV1Schema as canonicalVoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema as canonicalVoiceRealtimeToolResultV1Schema, VoiceTranscriptCanonicalEventV1Schema as canonicalVoiceTranscriptCanonicalEventV1Schema } from '@happier-dev/protocol/voice/realtime/events';
+import { projectVoiceRealtimeToolResultOutput as canonicalProjectVoiceRealtimeToolResultOutput, VoiceRealtimeJsonValueSchema as canonicalVoiceRealtimeJsonValueSchema, VoiceRealtimeToolCallV1Schema as canonicalVoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema as canonicalVoiceRealtimeToolResultV1Schema, VoiceTranscriptCanonicalEventV1Schema as canonicalVoiceTranscriptCanonicalEventV1Schema } from '@happier-dev/protocol/voice/realtime/events';
 import { HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE as canonicalHappierVoiceBindingNonceDynamicVariable, HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE as canonicalHappierVoiceLeaseIdDynamicVariable } from '@happier-dev/protocol/voice/sessionBinding';
 import type { VoiceCredentialAccess, VoiceSchema } from './contracts.js';
 import { projectProtocolValue } from '../protocol/projectProtocolValue.js';
@@ -96,6 +96,10 @@ export const buildVoiceClientToolAgentPrompt: (
 export const VoiceRealtimeJsonValueSchema: VoiceSchema<VoiceRealtimeJsonValue> = canonicalVoiceRealtimeJsonValueSchema;
 export const VoiceRealtimeToolCallV1Schema: VoiceSchema<VoiceRealtimeToolCall> = canonicalVoiceRealtimeToolCallV1Schema;
 export const VoiceRealtimeToolResultV1Schema: VoiceSchema<VoiceRealtimeToolResult> = canonicalVoiceRealtimeToolResultV1Schema;
+
+/** Project an already-redacted host result into the provider's tool-output JSON. */
+export const projectVoiceRealtimeToolResultOutput: (result: VoiceRealtimeToolResult) => VoiceRealtimeJsonValue =
+    /* @__PURE__ */ projectProtocolValue(canonicalProjectVoiceRealtimeToolResultOutput);
 
 export type {
     VoiceClientAuthArtifact,

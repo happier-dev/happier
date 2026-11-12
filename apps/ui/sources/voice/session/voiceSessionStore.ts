@@ -13,6 +13,8 @@ import type { VoiceConversationScopeMetadata } from '@/voice/persistence/voiceCo
 import type { VoiceIdleTarget } from '@/voice/runtime/voiceTargetStore';
 import { createSpokenActionConfirmation, type SpokenActionConfirmation } from '@/voice/tools/spokenActionConfirmation';
 import { resolveRetainedVoiceTarget } from '@/voice/binding/resolveRetainedVoiceTarget';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 
 type VoiceSessionConversationContext = Readonly<{
   accountScope: ServerAccountScope;
@@ -278,6 +280,19 @@ export function getVoiceSessionSnapshot(): VoiceSessionSnapshot {
   }
 
   return finalizeCanonicalSnapshot(DEFAULT_SNAPSHOT);
+}
+
+/** Read the Start-admitted Machine for this exact attempt and Home, never a later preference. */
+export function readAdmittedVoiceSessionExecutionTarget(input: Readonly<{
+  adapterId: string;
+  controlSessionId: string;
+  serverId: string | null | undefined;
+}>): SessionExecutionTargetV1 | null {
+  const snapshot = getVoiceSessionSnapshot();
+  const target = snapshot.recoveryTarget;
+  if (snapshot.adapterId !== input.adapterId || snapshot.sessionId !== input.controlSessionId
+    || !target || !input.serverId || !areServerProfileIdentifiersEquivalent(target.serverId, input.serverId)) return null;
+  return { serverId: target.serverId, machineId: target.machineId };
 }
 
 export function setVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot, binding?: VoiceSessionBinding | null, context?: VoiceSessionConversationContext | null): void {

@@ -1,5 +1,6 @@
 import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
-import { VoiceRealtimeJsonValueSchema, VoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema, type VoiceRealtimeJsonValue, type VoiceRealtimeToolCallV1, type VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
+import { VoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema, type VoiceRealtimeJsonValue, type VoiceRealtimeToolCallV1, type VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 export class RealtimeToolBarrierError extends Error {
   readonly code: 'duplicate_call_id' | 'response_conflict' | 'disposed';
@@ -166,6 +167,30 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   const effectOutcomes = new Map<string, EffectOutcomeRecord>();
   let disposed = false;
 
+  const redactFailure = (
+    call: VoiceRealtimeToolCallV1,
+    status: VoiceRealtimeToolResultV1['status'],
+    errorCode: string,
+    details: unknown,
+  ): VoiceRealtimeToolResultV1 => {
+    try {
+      const projected = deps.redactResult({ ok: false, errorCode,
+        ...(details === undefined ? {} : { details }),
+      }, call);
+      const failure = projected !== null && typeof projected === 'object' && !Array.isArray(projected)
+        ? projected : null;
+      const projectedErrorCode = failure === null ? undefined : Reflect.get(failure, 'errorCode');
+      const errorDetails = failure === null ? undefined : Reflect.get(failure, 'details');
+      return VoiceRealtimeToolResultV1Schema.parse({
+        v: 1, responseId: call.responseId, callId: call.callId, toolName: call.toolName,
+        order: call.order, status, errorCode: projectedErrorCode,
+        ...(errorDetails === undefined ? {} : { errorDetails }),
+      });
+    } catch {
+      return terminalResult(call, 'error', 'redaction_failed');
+    }
+  };
+
   const resetDeliveryController = (record: ResponseRecord): void => {
     record.deliveryController.abort();
     const deliveryController = new AbortController();
@@ -182,11 +207,12 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     results: readonly VoiceRealtimeToolResultV1[],
     calls: readonly VoiceRealtimeToolCallV1[],
   ): readonly VoiceRealtimeToolResultV1[] => Object.freeze(results.map((result, index) => {
-    if (result.status !== 'success') return result;
     const call = calls[index]!;
+    if (result.status !== 'success') {
+      return redactFailure(call, result.status, result.errorCode!, result.errorDetails);
+    }
     try {
-      const output = VoiceRealtimeJsonValueSchema.parse(deps.redactResult(result.output, call));
-      return VoiceRealtimeToolResultV1Schema.parse({ ...result, output });
+      return VoiceRealtimeToolResultV1Schema.parse({ ...result, output: deps.redactResult(result.output, call) });
     } catch {
       return terminalResult(call, 'error', 'redaction_failed');
     }
@@ -253,24 +279,26 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
           const rawResult = effectClass !== 'read_only'
             ? await raceWithAbort(() => deps.executeCall(call, controller.signal), controller.signal)
             : await deps.executeCall(call, controller.signal);
-          let redacted: VoiceRealtimeJsonValue;
           try {
-            redacted = VoiceRealtimeJsonValueSchema.parse(deps.redactResult(rawResult, call));
+            return VoiceRealtimeToolResultV1Schema.parse({
+              v: 1,
+              responseId: call.responseId,
+              callId: call.callId,
+              toolName: call.toolName,
+              order: call.order,
+              status: 'success',
+              output: deps.redactResult(rawResult, call),
+            });
           } catch {
             return terminalResult(call, 'error', 'redaction_failed');
           }
-          return VoiceRealtimeToolResultV1Schema.parse({
-            v: 1,
-            responseId: call.responseId,
-            callId: call.callId,
-            toolName: call.toolName,
-            order: call.order,
-            status: 'success',
-            output: redacted,
-          });
         } catch (error) {
-          if (effectClass !== 'read_only' && (controller.signal.aborted || !(error instanceof RealtimeToolExecutionError))) {
+          const pluginError = isPluginError(error) ? error : null;
+          if (effectClass !== 'read_only' && (controller.signal.aborted || (!(error instanceof RealtimeToolExecutionError) && !pluginError))) {
             return terminalResult(call, 'error', 'outcome_unknown');
+          }
+          if (pluginError) {
+            return redactFailure(call, 'error', pluginError.code, Reflect.get(pluginError.data, 'details'));
           }
           if (error instanceof RealtimeToolExecutionError) {
             return terminalResult(call, error.resultStatus, error.safeCode);

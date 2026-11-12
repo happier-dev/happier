@@ -23,6 +23,18 @@ const TRANSCRIPTION_USAGE = Object.freeze({
 });
 
 describe('OpenAI Realtime protocol adapter', () => {
+  it('preserves typed tool failure details in the provider output', () => {
+    const details = { reason: 'inbox_owner_unavailable', retryable: true };
+    const result = {
+      v: 1 as const, responseId: 'r1', callId: 'c1', toolName: 'inbox_get', order: 0,
+      status: 'error' as const, errorCode: 'inbox_unavailable', errorDetails: details,
+    };
+    expect(encodeOpenAiToolResult(result)).toEqual({
+      type: 'conversation.item.create',
+      item: { type: 'function_call_output', call_id: 'c1', output: JSON.stringify({ ok: false, errorCode: 'inbox_unavailable', details }) },
+    });
+  });
+
   it('preserves generated session.spawn_new tool metadata without a live-value depth quota', () => {
     const spec = getActionSpec('session.spawn_new');
     const parameters = zodSchemaToJsonSchemaObject(spec.inputSchema);
@@ -764,10 +776,11 @@ describe('OpenAI Realtime protocol adapter', () => {
       status: 'success',
       output: {},
     })).toThrow();
-    expect(() => encodeOpenAiToolResult({
+    const largeOutput = { text: 'x'.repeat(64 * 1024 + 1) };
+    expect(encodeOpenAiToolResult({
       v: 1, responseId: 'response-1', callId: 'call-1', toolName: 'tool', order: 0,
-      status: 'success', output: { text: 'x'.repeat(64 * 1024 + 1) },
-    })).toThrow();
+      status: 'success', output: largeOutput,
+    })).toMatchObject({ item: { output: JSON.stringify(largeOutput) } });
     expect(() => encodeOpenAiRealtimeClientEvent({
       type: 'response.cancel',
       response_id: 42,

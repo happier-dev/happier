@@ -359,6 +359,18 @@ describe('xAI Realtime protocol adapter', () => {
     });
   });
 
+  it('preserves typed tool failure details in the provider output', () => {
+    const details = { reason: 'inbox_owner_unavailable', retryable: true };
+    const result = {
+      v: 1 as const, responseId: 'r1', callId: 'c1', toolName: 'inbox_get', order: 0,
+      status: 'error' as const, errorCode: 'inbox_unavailable', errorDetails: details,
+    };
+    expect(encodeXaiToolResult(result)).toEqual({
+      type: 'conversation.item.create',
+      item: { type: 'function_call_output', call_id: 'c1', output: JSON.stringify({ ok: false, errorCode: 'inbox_unavailable', details }) },
+    });
+  });
+
   it('bounds completed response dedupe state for long-running sessions', () => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
     for (let index = 0; index < 513; index += 1) {

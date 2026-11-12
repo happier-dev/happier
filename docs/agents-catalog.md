@@ -39,6 +39,15 @@ remembered Agent. An inventory listing without a Machine also omits that key:
 it cannot establish execution readiness. Preference-only selection without
 Machine readiness still retains the remembered choice for display and repair.
 
+Voice backend listing uses the Start-admitted Machine and Home when tool
+arguments omit the Machine. Realtime and Local consume the same admitted
+attempt snapshot and shared handlers; later execution preferences do not move
+that context. An explicit Machine still takes precedence. Scoped listings
+return their exact `executionTarget` and each row's inventory-owned `readiness`,
+alongside the ready `defaultTargetKey` when available. Unnamed-Agent creation
+omits `agentTarget` so the host binds this default; the Voice Provider's name
+does not select a coding Agent.
+
 ---
 
 ## Kimi background continuations (0.3 development)

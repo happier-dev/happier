@@ -253,10 +253,13 @@ function projectAccountRequestForProvider(value: unknown): unknown {
   const record = value as Readonly<Record<string, unknown>>;
   const request = record.request;
   if (!request || typeof request !== 'object' || Array.isArray(request)) return value;
-  const { status, actionId, summary } = request as Readonly<Record<string, unknown>>;
+  const { status, actionId, qualifiedActionId, summary } = request as Readonly<Record<string, unknown>>;
   // Request sharing admits its presentation and state. Voice still forces
   // raw tool-argument redaction, including previews and stored effect results.
-  return { ...record, request: { status, actionId, summary } };
+  return { ...record, request: { status, summary,
+    ...(actionId === undefined ? {} : { actionId }),
+    ...(qualifiedActionId === undefined ? {} : { qualifiedActionId }),
+  } };
 }
 
 export function isVoiceToolResultBlockedByPrivacy(

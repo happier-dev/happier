@@ -84,8 +84,12 @@ export async function listAgentBackendsWithReadinessV1(
   ctx: ActionExecutorContext,
 ): Promise<AgentsBackendsListOutput> {
   const listed = await deps.agentsBackendsList!(args);
-  if (!args.machineId || !Array.isArray(listed?.items) || listed.items.length === 0) return listed;
-  const readiness = await readAgentTargetReadinessV1(deps, args.machineId, listed.items.map(readInventoryTarget), ctx);
+  if (!args.machineId || !Array.isArray(listed?.items) || listed.items.length === 0
+    || listed.items.every(item => item.readiness !== undefined)) return listed;
+  // Hosts with a composed Agent inventory already own credential readiness.
+  // Acquire raw prerequisites only for catalog rows whose producer has no answer.
+  const readiness = await readAgentTargetReadinessV1(deps, args.machineId,
+    listed.items.map(item => item.readiness === undefined ? readInventoryTarget(item) : null), ctx);
   if (!readiness) return listed;
   return {
     ...listed,

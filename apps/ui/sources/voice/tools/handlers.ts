@@ -4,6 +4,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugin
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import {
   PluginUiJsonValueV1Schema,
@@ -198,6 +199,8 @@ export function createVoiceToolHandlers(
     voiceSessionBinding?: VoiceSessionBinding | null;
     /** Admitted conversation Home when global Voice has no coding Session. */
     currentServerId?: string | null;
+    /** Start-admitted execution context; explicit tool operands still take precedence. */
+    currentExecutionTarget?: SessionExecutionTargetV1 | null;
     currentUiContext?: VoiceCurrentUiToolPort;
     /** Undefined uses Local's host-owned tool-result playback. */
     playHostText?: VoiceHostTextPlayback;
@@ -400,6 +403,11 @@ export function createVoiceToolHandlers(
       : useAwareness ? { ...input, view: 'awareness' } : parameters;
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
+    }
+    if (actionId === 'agents.backends.list' && input && input.machineId === undefined
+      && deps.currentExecutionTarget && serverId
+      && areServerProfileIdentifiersEquivalent(serverId, deps.currentExecutionTarget.serverId)) {
+      actionInput = { ...input, machineId: deps.currentExecutionTarget.machineId };
     }
     let spawnAgentTarget: AgentExecutionTargetV1 | undefined;
     let spawnSelection: Extract<Awaited<ReturnType<typeof bindVoiceSessionSpawnInput>>, { ok: true }> | undefined;

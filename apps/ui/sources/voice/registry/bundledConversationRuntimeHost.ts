@@ -16,7 +16,7 @@ import { isVoiceSdkSafeActionSpec, isVoicePromptHotPathSpec } from '@happier-dev
 import { resolveVoiceActionExecution, VoiceActionExecuteInputSchema, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { VoiceRealtimeJsonValueSchema, type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
+import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -51,6 +51,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { applyVoiceSessionTargetSelection } from '@/voice/binding/applyVoiceSessionTargetSelection';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
+import { readAdmittedVoiceSessionExecutionTarget } from '@/voice/session/voiceSessionStore';
 import {
   bindVoiceRuntimeAttemptBinding,
   createVoiceRuntimeAttemptBindingOwner,
@@ -673,7 +674,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
               // JSON scalar after the host privacy boundary below.
             }
             const privacy = readVoicePrivacySettings(storage.getState().settings);
-            return VoiceRealtimeJsonValueSchema.parse(redactVoiceToolResultForProvider(
+            return StrictJsonValueSchema.parse(redactVoiceToolResultForProvider(
               name,
               value,
               {
@@ -706,7 +707,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             const privacy = readVoicePrivacySettings(storage.getState().settings);
             const result = value && typeof value === 'object' && 'ok' in value && value.ok === false
               ? value : { ok: true, result: value };
-            return VoiceRealtimeJsonValueSchema.parse(redactVoiceActionExecutionResultForProvider(
+            return StrictJsonValueSchema.parse(redactVoiceActionExecutionResultForProvider(
               target.toolName, result, privacy,
             ));
           },
@@ -804,6 +805,9 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         ...deps,
         voiceSessionBinding: binding,
         currentSessionAddress,
+        currentServerId: currentSessionAddress?.serverId ?? null,
+        currentExecutionTarget: readAdmittedVoiceSessionExecutionTarget({ adapterId, controlSessionId,
+          serverId: currentSessionAddress?.serverId }),
         ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
       });
     },

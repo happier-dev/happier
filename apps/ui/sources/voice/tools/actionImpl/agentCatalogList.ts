@@ -48,6 +48,8 @@ import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePr
 import { PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readMachineAgentsForScope, refreshMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { findMachineAgentForBackendTargetKey } from '@/agents/machineAgents/machineAgentCatalog';
+import { resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -389,9 +391,15 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
   const machineAgents = machineId && lifetime ? readMachineAgentsForScope(lifetime, machineId).agents : [];
   const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets, machineAgents });
   const defaultTargetKey = preferred ? buildBackendTargetKeyV2(preferred) : undefined;
+  const scopedItems = machineId ? items.map(item => {
+    const agent = findMachineAgentForBackendTargetKey(machineAgents, item.targetKey);
+    return { ...item, readiness: resolveMachineAgentExecutionStateV1({ inventoryState: agent?.state ?? 'unknown',
+      known: Boolean(agent && !agent.stale) }) };
+  }) : items;
 
   return AgentsBackendsListOutputSchema.parse({
-    items: limit ? items.slice(0, limit) : items,
+    items: limit ? scopedItems.slice(0, limit) : scopedItems,
+    ...(machineId && serverId ? { executionTarget: { serverId, machineId } } : {}),
     ...(items.some(item => item.enabled && item.targetKey === defaultTargetKey) ? { defaultTargetKey } : {}),
   });
 }

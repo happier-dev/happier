@@ -4,6 +4,7 @@ import {
   decodeVoiceToolJsonArguments,
   describeVoiceToolJsonArguments,
   normalizeVoiceFailureCode,
+  projectVoiceRealtimeToolResultOutput,
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,
   type VoiceRealtimeJsonValue,
@@ -304,7 +305,7 @@ export function encodeXaiToolResult(result: VoiceRealtimeToolResultV1): VoiceRea
     item: {
       type: 'function_call_output',
       call_id: result.callId,
-      output: JSON.stringify(result.status === 'success' ? result.output : { ok: false, errorCode: result.errorCode }),
+      output: JSON.stringify(projectVoiceRealtimeToolResultOutput(result)),
     },
   };
 }

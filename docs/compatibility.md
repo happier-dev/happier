@@ -7,8 +7,13 @@ schema; target-unavailable HTTP failures also retain optional, validated
 `failureCause`. Plain Action failures use their existing code/cause shape.
 Matching protocol, Home and client readers load together under the unpublished
 0.3 direct cut; older strict development readers reject the newly recognized
-transport codes. No admission rule, persisted format or retry policy changes.
-The inspected `../0.2` frontier at `57cd3db058af7767335d6d5a4ed44904460c50bb`
+transport codes. Credential-scope denials retain their optional request ID and
+validated nested daemon cause; clients preserve target refusal phases. After
+existing envelope and encryption binding checks, failure extraction uses the
+outer request ID when the execution has none. Response serialization and Account
+content encryption stay unchanged. No admission rule, persisted format or retry
+policy changes.
+The inspected `../0.2` frontier at `91e2afbaca33e8589652c2d2b7e2abfa9a2cf049`
 has no `packages/protocol/src/actions/externalActionHttpError.ts` or scoped
 working changes for that path. No predecessor adapter is added.
 
@@ -288,6 +293,17 @@ existing parser. The inspected `../0.2` frontier at
 runtime/store module paths, including scoped local changes.
 
 ## Managed Provider model observations and restriction copy (unreleased 0.3)
+
+Managed native catalog observations add optional `modelIdPrefix` to their
+closed Agent-source declaration. It has routing meaning: the shared source
+observation decoder admits matching native selectors and removes that prefix
+before publishing Provider descriptors. Omission preserves exact native ids.
+Matching Protocol, CLI and declaring Provider plugins reload together; older
+strict development readers reject the field. This unpublished direct cut adds
+no wire epoch, stored format, capability gate or predecessor adapter. The
+inspected `../0.2` frontier at `4c64c3f1ddfca82db8bcb61e7e8c87f6bd013e69`
+has none of the affected declaration, observation or managed-family paths,
+including scoped working changes.
 
 Managed connected-account purposes may declare localized
 `operationRestriction.summary` and `operationRestriction.sentence`. The existing

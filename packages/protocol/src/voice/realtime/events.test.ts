@@ -7,6 +7,15 @@ import {
 } from './events';
 
 describe('canonical realtime voice events', () => {
+  it('keeps typed failure details as strict JSON without opening the result envelope', () => {
+    const failure = { v: 1, responseId: 'response-1', callId: 'call-1', toolName: 'inbox_get',
+      order: 0, status: 'error', errorCode: 'action_input_invalid', errorDetails: { reason: 'directory_missing' } };
+    expect(VoiceRealtimeToolResultV1Schema.parse(failure)).toEqual(failure);
+    expect(VoiceRealtimeToolResultV1Schema.safeParse({ ...failure, unexpected: true }).success).toBe(false);
+    expect(VoiceRealtimeToolResultV1Schema.safeParse({ ...failure, errorDetails: { unsupported: undefined } }).success).toBe(false);
+    expect(VoiceRealtimeToolResultV1Schema.safeParse({ ...failure, status: 'success', output: {}, errorCode: undefined }).success).toBe(false);
+  });
+
   it('accepts stable transcript updates, finals, and replay provenance', () => {
     expect(VoiceTranscriptCanonicalEventV1Schema.parse({
       v: 1,

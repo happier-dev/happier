@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 
 import {
   decodeVoiceToolJsonArguments,
+  projectVoiceRealtimeToolResultOutput,
   VoiceRealtimeToolCallV1Schema,
   VoiceRealtimeToolResultV1Schema,
   type VoiceRealtimeJsonValue,
@@ -289,7 +290,9 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             // The canonical schema above requires defined output on success;
             // its refinement preserves JSON null but cannot narrow this type.
             if (result.status === 'success') waiter.resolve(result.output!);
-            else waiter.reject(new Error(result.errorCode));
+            else waiter.reject(new Error(result.errorDetails === undefined
+                ? result.errorCode
+                : JSON.stringify(projectVoiceRealtimeToolResultOutput(result))));
         },
         subscribe(listener): () => void {
             if (disposed) return () => {};

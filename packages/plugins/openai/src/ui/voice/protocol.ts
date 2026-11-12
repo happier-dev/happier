@@ -1,6 +1,7 @@
 /** OpenAI Realtime Voice protocol translation. */
 import {
   createVoiceTranscriptLadderMapper,
+  projectVoiceRealtimeToolResultOutput,
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,
   VoiceRealtimeToolResultV1Schema,
@@ -537,11 +538,7 @@ export function encodeOpenAiToolResult(result: VoiceRealtimeToolResultV1): Voice
     item: {
       type: 'function_call_output',
       call_id: parsedResult.callId,
-      output: JSON.stringify(
-        parsedResult.status === 'success'
-          ? parsedResult.output
-          : { ok: false, errorCode: parsedResult.errorCode },
-      ),
+      output: JSON.stringify(projectVoiceRealtimeToolResultOutput(parsedResult)),
     },
   });
 }

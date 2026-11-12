@@ -105,7 +105,8 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(events).toHaveLength(1);
   });
 
-  it('returns real SDK tool errors without closing and accepts the following user turn', async () => {
+  it.each([undefined, { phase: 'redaction', causeCode: 'redaction_policy_unavailable' }])(
+    'returns real SDK tool errors with their safe details without closing and accepts the following user turn (%j)', async (errorDetails) => {
     const { TextConversation } = await vi.importActual<typeof import('@elevenlabs/client')>('@elevenlabs/client');
     let incoming!: (event: unknown) => Promise<void>;
     const sent: unknown[] = [];
@@ -138,6 +139,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
         void driver.sendControl({ type: 'voice.tool_result', result: {
           v: 1, responseId: call.responseId, callId: call.callId,
           toolName: call.toolName, order: call.order, status: 'denied', errorCode: 'voice_action_unavailable',
+          ...(errorDetails === undefined ? {} : { errorDetails }),
         } });
       }, onTransport() {},
       onRemoteClose(reason) { remoteClose(reason); void driver.close(); },
@@ -147,6 +149,8 @@ describe('createElevenLabsConversationHandle event surface', () => {
     } });
     expect(sent).toEqual([expect.objectContaining({
       type: 'client_tool_result', tool_call_id: 'provider-failed-read', is_error: true,
+      result: `Client tool execution failed: ${errorDetails === undefined ? 'voice_action_unavailable'
+        : JSON.stringify({ ok: false, errorCode: 'voice_action_unavailable', details: errorDetails })}`,
     })]);
     expect(remoteClose).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();

@@ -1133,7 +1133,7 @@
             "credential": {
               "catalog": "voices",
               "checklist": [
-                "Open API keys in ElevenLabs",
+                "Open [API keys in ElevenLabs]",
                 "Create a key, then paste it below."
               ],
               "credentialPurpose": "voice.client-auth.elevenlabs",

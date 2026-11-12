@@ -57,3 +57,4 @@ export { decodeVoiceToolJsonArguments } from '../client.js';
 export { isVoiceSdkSafeActionSpec } from '../client.js';
 export { listVoiceSdkSafeToolActionSpecs } from '../client.js';
 export { normalizeVoiceFailureCode } from '../client.js';
+export { projectVoiceRealtimeToolResultOutput } from '../client.js';

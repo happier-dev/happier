@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 const REALTIME_ID_MAX_LENGTH = 256;
@@ -104,8 +105,9 @@ export const VoiceRealtimeToolResultV1Schema = lazyZodSchema(() => z.strictObjec
   toolName: z.string().check(z.trim(), z.minLength(1), z.maxLength(TOOL_NAME_MAX_LENGTH)),
   order: z.number().check(z.int(), z.nonnegative()),
   status: VoiceRealtimeToolResultStatusSchema,
-  output: z.optional(VoiceRealtimeJsonValueSchema),
+  output: z.optional(StrictJsonValueSchema),
   errorCode: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  errorDetails: z.optional(StrictJsonValueSchema),
 }).check(z.superRefine((value, ctx) => {
   if (value.status === 'success') {
     if (value.output === undefined) {
@@ -113,6 +115,9 @@ export const VoiceRealtimeToolResultV1Schema = lazyZodSchema(() => z.strictObjec
     }
     if (value.errorCode !== undefined) {
       ctx.addIssue({ code: 'custom', path: ['errorCode'], message: 'success forbids errorCode' });
+    }
+    if (value.errorDetails !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['errorDetails'], message: 'success forbids errorDetails' });
     }
     return;
   }
@@ -124,3 +129,13 @@ export const VoiceRealtimeToolResultV1Schema = lazyZodSchema(() => z.strictObjec
   }
 })));
 export type VoiceRealtimeToolResultV1 = z.infer<typeof VoiceRealtimeToolResultV1Schema>;
+
+/** Provider wire adapters serialize the host's already-redacted terminal result. */
+export function projectVoiceRealtimeToolResultOutput(result: VoiceRealtimeToolResultV1): VoiceRealtimeJsonValue {
+  if (result.status === 'success') return result.output!;
+  return {
+    ok: false,
+    errorCode: result.errorCode!,
+    ...(result.errorDetails === undefined ? {} : { details: result.errorDetails }),
+  };
+}
