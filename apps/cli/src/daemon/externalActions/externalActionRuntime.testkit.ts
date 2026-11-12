@@ -42,6 +42,7 @@ export function createExternalActionRuntime(
     sessionTarget?: PluginActionContributionV2['sessionTarget'];
     placementBindings?: PluginActionContributionV2['placementBindings'];
     executionTarget?: 'account';
+    operation?: PluginActionContributionV2['operation'];
     hostAccess?: readonly PluginHostAccessRequestV2[];
   }> = {},
 ): ResolvedExecutablePluginRuntimeRegistry & Readonly<{ manifest: LoadedPlugin['manifest'] }> {
@@ -78,6 +79,7 @@ export function createExternalActionRuntime(
             ? { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } }
             : { target: 'daemon' },
           dangerLevel,
+          ...(actionOptions.operation ? { operation: actionOptions.operation } : {}),
           ...(actionOptions.sessionTarget ? { sessionTarget: actionOptions.sessionTarget } : {}),
           ...(actionOptions.placementBindings === undefined ? {} : { placementBindings: actionOptions.placementBindings }),
           ...(actionOptions.overlappingTool && id === 'actions/inspect'

@@ -415,12 +415,18 @@ For each action + surface, you can:
 - optionally require approval (approval-gated execution)
 - choose direct tool exposure for eligible tool-backed surfaces
 
-If a tool is approval-gated, the MCP tool call returns an `approval_request_created` payload (with an `artifactId`).
+For replayable inputs, an approval-gated MCP tool call returns an `approval_request_created` payload (with an `artifactId`).
 This applies both to generic `action_execute` calls and to built-in aliases such as `session_title_set`, because they share the same action + surface policy.
 Use the app's **Inbox** to approve/deny and view the final result:
 
 - [Inbox and approvals](/sessions/inbox-and-approvals)
 - [Happier tools & actions](/extending/happier-tools)
+
+### Long-running operations in 0.3 development
+
+In the 0.3 development source, Actions that already declare an operation return an admission receipt with `status: "accepted"`, `operationId`, and `machineId` to Agent and MCP callers. This applies to both `action_execute` and named tools. Use `action.operations.get` through `action_execute`, with the original invocation Home and the returned Machine and operation identifiers, to read progress and the terminal result. Acceptance means the work was admitted; it does not mean it succeeded.
+
+Ordinary approval requests return their existing `approval_request_created` handle immediately, including Account-target plugin Actions. Inputs declared confidential still use live-only approval custody and can keep a tool call open. Actions without an operation declaration retain their existing completion behavior.
 
 ### Approval decisions require a present user
 

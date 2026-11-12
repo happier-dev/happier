@@ -771,16 +771,17 @@ export async function executeContributedAction(params: Readonly<{
     const sharedRequester = params.approvalContext !== undefined && isSharedRequesterActionV1(params.approvalContext);
     const requestCurrentIntent = params.requestCurrentIntent
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
-          const liveOnly = params.context.approvalInputCustody === 'live_only';
+          const projectedInput = projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? []);
+          // Confidential input already belongs to live custody; it must not
+          // acquire durable replay placement before that owner can retain it.
+          const liveOnly = params.context.approvalInputCustody === 'live_only'
+            || (projectedInput?.confidentialPaths.length ?? 0) > 0;
           const requestedSurface = request.invocationSurface ?? request.surface;
           const deferredSurface = requestedSurface === 'api' || requestedSurface === 'cli'
             || requestedSurface === 'agent' || requestedSurface === 'mcp' ? requestedSurface : null;
-          const createsConfidentialApproval = requestedSurface !== 'ui' && requestedSurface !== 'voice'
-            && (projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? [])?.confidentialPaths.length ?? 0) > 0;
-          const needsApprovalPlacement = (deferredSurface !== null || createsConfidentialApproval || sharedRequester)
+          const needsApprovalPlacement = (deferredSurface !== null || sharedRequester)
             && pluginActionRequiresPresentUserIntent(request.action, requestedSurface, request.action.input);
           if (!liveOnly && !needsApprovalPlacement) return await params.requestCurrentIntent!(request);
-          const projectedInput = projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? []);
           const retainedInput = { action: { pluginId: request.action.pluginId, localId: request.action.localId },
             input: projectedInput?.input ?? request.action.input };
           const requesterAdmission = resolveApprovalRequesterConfirmationV1({ context: params.approvalContext,

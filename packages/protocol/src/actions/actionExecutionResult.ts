@@ -8,6 +8,7 @@ import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.j
 import { ActionErrorClassV1Schema, readActionErrorCodeV1, type ActionErrorClassV1 } from './actionErrorClassV1.js';
 import { isPluginError } from '../plugins/errors.js';
 import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
+import { ActionOperationIdentifierV1Schema } from './operations/identifierV1.js';
 import { ActionIdSchema } from './actionIds.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 
@@ -90,6 +91,14 @@ export const ActionOperationCredentialUseV1Schema = lazyZodSchema(() => z.strict
   }
 })));
 export type ActionOperationCredentialUseV1 = z.infer<typeof ActionOperationCredentialUseV1Schema>;
+
+/** Admission acknowledgement; completion stays with the existing operation owner. */
+export const ActionOperationAcceptedResultSchema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('accepted'),
+  operationId: ActionOperationIdentifierV1Schema,
+  machineId: z.string().check(z.trim(), z.minLength(1)),
+}));
+export type ActionOperationAcceptedResult = z.infer<typeof ActionOperationAcceptedResultSchema>;
 
 /** A policy-deferred Action has not failed or executed; the present user owns the next step. */
 export const ActionApprovalRequestCreatedResultSchema = lazyZodSchema(() => z.strictObject({

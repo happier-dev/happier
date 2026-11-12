@@ -67,7 +67,9 @@ describe('finite host operation custody', () => {
           observation: { kind: 'review_required', code: 'restore_snapshot_not_confirmed', snapshot } });
         return held;
       } };
-    expect(await runtime.runActionOperation(first)).toEqual(held);
+    expect(await runtime.runActionOperation(first)).toMatchObject({ ok: true,
+      result: { status: 'accepted', operationId: 'held-restore' } });
+    await runtime.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, 'held-restore');
     expect(await runtime.runActionOperation(first)).toEqual(held);
     expect(effects).toBe(1);
     const continued = { ...first, input: { ...input, snapshot: false }, execute: async (
@@ -78,9 +80,11 @@ describe('finite host operation custody', () => {
     } };
     expect(await runtime.runActionOperation({ ...continued, input: { ...continued.input, expectedRevision: 2 } }))
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-    const restored = await runtime.runActionOperation(continued);
-    expect(restored).toMatchObject({ ok: true, result: { evidence: { snapshot } } });
-    expect(await runtime.runActionOperation(continued)).toEqual(restored);
+    expect(await runtime.runActionOperation(continued)).toMatchObject({ ok: true,
+      result: { status: 'accepted', operationId: 'held-restore' } });
+    expect(await runtime.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, 'held-restore'))
+      .toMatchObject({ state: 'succeeded', result: { evidence: { snapshot } } });
+    expect(await runtime.runActionOperation(continued)).toMatchObject({ ok: true, result: { evidence: { snapshot } } });
     expect(effects).toBe(2);
     expect(await runtime.handlers.getV2({ operationId: 'held-restore' })).toMatchObject({ kind: 'found',
       operation: { state: 'succeeded', result: { evidence: { snapshot } } } });
@@ -92,8 +96,12 @@ describe('finite host operation custody', () => {
     const { DaemonPluginStructuredMessageActionExecuteResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
     const error = new PluginError({ code: settlement === 'cancelled' ? 'cancelled' : 'channels_connection_required',
       message: 'Set up Channels first', retryable: false,
-      details: { privateProviderFact: 'must-not-cross' },
-      remediation: { kind: 'openSettings', path: '/settings/plugins/happier.channels/connections' } });
+      details: { itemId: 'review-7' },
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
+      // Author details are public contract data. Host diagnostic detail is excluded from finite receipts.
+      diagnostics: [{ code: 'host_private_diagnostic', severity: 'error', details: { privateProviderFact: 'must-not-cross' } }],
+      remediation: { kind: 'openSettings', path: '/settings/plugins/happier.channels/connections' } },
+      { cause: new Error('private-native-cause') });
     const failure = { ok: false as const, errorCode: error.code, error: error.message,
       retryable: error.retryable, data: error.data };
     const direct = projectStructuredMessageActionFailure(failure);
@@ -132,7 +140,9 @@ describe('finite host operation custody', () => {
         expect(replay.ok).toBe(false);
         if (!replay.ok) expect(projectStructuredMessageActionFailure(replay)).toEqual(direct);
       }
-      expect(direct).toMatchObject({ retryable: false, remediation: { kind: 'openSettings' } });
+      expect(direct).toMatchObject({ retryable: false, details: error.details,
+        failureCause: error.data.failureCause, remediation: error.remediation });
+      expect(JSON.stringify(receipt.operation)).not.toContain('private-native-cause');
       expect(JSON.stringify(receipt.operation)).not.toContain('must-not-cross');
     } finally { release(); }
   });
@@ -166,7 +176,9 @@ describe('finite host operation custody', () => {
         return { ok: false as const, errorCode, error: errorCode,
           details: { ...facts, credential: 'private-native-diagnostic' } };
       } };
-    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, errorCode });
+    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: true,
+      result: { status: 'accepted', operationId: 'backup-failure' } });
+    await runtime.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, 'backup-failure');
     const receipt = await runtime.handlers.getV2({ operationId: 'backup-failure' });
     expect(receipt).toMatchObject({ kind: 'found', operation: { state: errorCode === 'cancelled' ? 'cancelled' : 'failed', result: facts } });
     if (receipt.kind === 'found') expect(receipt.operation.result).toEqual(facts);
