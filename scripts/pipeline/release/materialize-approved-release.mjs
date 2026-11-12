@@ -34,7 +34,8 @@ export function materializeApprovedRelease(packet, cwd = process.cwd()) {
   requireThat(inputs.dry_run === 'false', 'Intent must describe a real approved release.');
   buildReleaseNotesBundle(packet.notes.content, { releaseId: packet.releaseId, sourceSha: packet.baseSha, componentVersions: packet.versions });
 
-  const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  // Tree listings and tracked files outgrow Node's 1 MiB default; Git output has no product limit here.
+  const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: Infinity });
   const repoRoot = git('rev-parse', '--show-toplevel').trim();
   requireThat(resolve(cwd) === resolve(repoRoot), 'Materialization must run from the target repository root.');
   const head = git('rev-parse', 'HEAD').trim();
