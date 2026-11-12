@@ -24,20 +24,24 @@ async function renderSelectableTextInScroller(
             <Text selectable>wide content</Text>
         </HorizontalOverflowScrollView>,
     );
-    return screen.findByType('RNText' as any).props.selectable;
+    return {
+        selectable: screen.findByType('RNText' as any).props.selectable,
+        wrapped: screen.findAllByType('HappierHorizontalOverflowContainer' as any).length === 1,
+    };
 }
 
 describe('HorizontalOverflowScrollView (native text selection)', () => {
     it('suppresses native selection of descendant text on Android, where it fights the horizontal drag', async () => {
-        expect(await renderSelectableTextInScroller('android')).toBe(false);
+        const result = await renderSelectableTextInScroller('android');
+        expect(result).toEqual({ selectable: false, wrapped: true });
     });
 
     it('keeps descendant text selectable on iOS and web', async () => {
-        expect(await renderSelectableTextInScroller('ios')).toBe(true);
-        expect(await renderSelectableTextInScroller('web')).toBe(true);
+        expect(await renderSelectableTextInScroller('ios')).toEqual({ selectable: true, wrapped: false });
+        expect(await renderSelectableTextInScroller('web')).toEqual({ selectable: true, wrapped: false });
     });
 
     it('keeps descendant text selectable on Android when the owner opts out of suppression', async () => {
-        expect(await renderSelectableTextInScroller('android', { keepNativeTextSelection: true })).toBe(true);
+        expect(await renderSelectableTextInScroller('android', { keepNativeTextSelection: true })).toEqual({ selectable: true, wrapped: true });
     });
 });

@@ -311,6 +311,21 @@ This changes the local Android handoff only. Encrypted workspace transfers and
 their daemon-owned limits retain their existing wire contracts. Web and iOS
 downloads keep their existing platform actions.
 
+### Android horizontal overflow native runtime (development)
+
+The development UI's shared horizontal overflow scroller requires the compiled
+`HappierHorizontalOverflowContainer` Expo view on Android. Released binaries on
+the `0.2.11-native` OTA runtime do not include it. Non-publicdev lanes use the new
+`0.2.12-native` runtime train for this native surface; publicdev continues to use
+the existing Expo fingerprint policy. Publish a new native build before updates
+for this train, and do not force this JavaScript bundle onto older native runtimes
+using the maintenance override.
+
+Code blocks, Markdown tables, and unwrapped diffs consume the same Android
+gesture owner. iOS and web retain their existing scrollers and text selection.
+This introduces no relay protocol or persisted-data change. Kotlin compilation
+and device gesture validation remain native release checks.
+
 ### Herdr terminal metadata (development)
 
 The released stable UI `ui-web-v0.2.12` and preview
