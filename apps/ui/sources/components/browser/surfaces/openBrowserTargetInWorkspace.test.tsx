@@ -189,7 +189,7 @@ describe('openBrowserTargetInWorkspace', () => {
         const openDetailsTab = vi.fn();
         for (const platform of ['web', 'desktop'] as const) {
             let stored: ApprovalRequest | null = null;
-            const { open, executor, context, dispose } = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails',
+            const { executor, context, dispose } = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails',
                 platform, browserFeatureDecision: enabledBrowserDecision, desktopWebViewAvailability: unembeddableDesktopWebView }, {
                 isActionApprovalRequired: requiresOpeningApproval,
                 // Account-private approval Artifact storage is a system boundary. Its lifecycle,
@@ -197,17 +197,15 @@ describe('openBrowserTargetInWorkspace', () => {
                 approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval_1' }; },
                 approvalsGet: async () => stored,
                 approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
-                approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
             });
-            // UI retains the canonical durable approval flow; it must not open while pending.
-            expect(await open(externalTarget)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            // Automation creates a durable approval; the person's own UI press is already intent.
+            expect(await executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'agent_rejected', target: externalTarget },
+                { ...context, surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
             expect(openDetailsTab).not.toHaveBeenCalled();
             expect(openExternalUrlMock).not.toHaveBeenCalled();
             expect(await executor.execute('approval.request.decide', { artifactId: 'approval_1', decision: 'reject' },
                 { ...context, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true });
-            expect(await executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'agent_rejected', target: externalTarget },
-                { ...context, surface: 'agent', authority: 'account_automation' }))
-                .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+            expect(stored).toMatchObject({ status: 'rejected' });
             dispose();
         }
         expect(openDetailsTab).not.toHaveBeenCalled();
@@ -334,34 +332,32 @@ describe('openBrowserTargetInWorkspace', () => {
             { ...context, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true });
         expect(openDetailsTab).toHaveBeenCalledTimes(1);
     });
-    it('revalidates captured Home and workspace policy after an approval wait', async () => {
+    it('revalidates captured Home and workspace policy on deferred approval replay', async () => {
         openExternalUrlMock.mockClear();
         const openDetailsTab = vi.fn();
         for (const retiredHome of [false, true]) {
-            let approve!: () => void;
-            let waiting!: () => void;
-            const decision = new Promise<void>(resolve => { approve = resolve; });
-            const started = new Promise<void>(resolve => { waiting = resolve; });
+            let stored: ApprovalRequest | null = null;
             let allowExternalUrlBrowsing = true;
             const facts = { scope: 'sessionDetails' as const, platform: 'desktop' as const,
                 browserFeatureDecision: enabledBrowserDecision, desktopWebViewAvailability: unembeddableDesktopWebView };
             const { executor, context, retire, dispose } = createBrowserWorkspaceOpeningFixture({ ...facts, openDetailsTab,
                 readOpenFacts: () => ({ ...facts, allowExternalUrlBrowsing }) }, {
                 isActionApprovalRequired: requiresOpeningApproval,
-                approvalsCreate: async () => ({ artifactId: 'approval_1' }),
-                approvalsWaitForDecision: async ({ request }) => {
-                    waiting(); await decision; return { decision: 'approve', decisionAuthority: 'present_user', request };
-                },
+                // Account-private storage only; deferred decision/replay stays real.
+                approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval_1' }; },
+                approvalsGet: async () => stored,
+                approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
             });
-            const result = executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'agent_wait', target: externalTarget },
-                { ...context, surface: 'agent', authority: 'account_automation' });
-            // Fail visibly if admission settles before reaching the approval port; never wait
-            // indefinitely on a fixture that did not enter the intended real approval path.
-            await Promise.race([started, Promise.resolve(result).then(value => { throw new Error(JSON.stringify(value)); })]);
-            if (retiredHome) retire(); else allowExternalUrlBrowsing = false;
-            approve();
-            expect(await result).toMatchObject({ ok: false });
-            dispose();
+            try {
+                expect(await executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'agent_wait', target: externalTarget },
+                    { ...context, surface: 'agent', authority: 'account_automation' }))
+                    .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                if (retiredHome) retire(); else allowExternalUrlBrowsing = false;
+                const decision = await executor.execute('approval.request.decide', { artifactId: 'approval_1', decision: 'approve' },
+                    { ...context, surface: 'ui', authority: 'present_user' });
+                if (retiredHome) expect(decision).toMatchObject({ ok: false });
+                else expect(stored).toMatchObject({ execution: { ok: false } });
+            } finally { dispose(); }
         }
         expect(openDetailsTab).not.toHaveBeenCalled();
         expect(openExternalUrlMock).not.toHaveBeenCalled();

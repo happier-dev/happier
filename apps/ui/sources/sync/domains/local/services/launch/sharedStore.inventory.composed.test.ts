@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -19,6 +19,11 @@ import { createLocalServiceInventoryRegistry } from '../../../../../../../cli/sr
 import { createLocalServiceInventoryRoutes } from '../../../../../../../cli/src/daemon/local/services/inventory/routes';
 import { getLocalServiceInventoryState, resetLocalServiceInventoryStoreForTests, subscribeLocalServiceInventoryStore } from '../inventory/sharedStore';
 import { getLocalServiceLauncherState, resetLocalServiceLauncherStoreForTests, subscribeLocalServiceLauncherStore } from './sharedStore';
+
+beforeEach(() => {
+    rpc.machine.mockReset();
+    rpc.launcher.mockReset();
+});
 
 afterEach(() => {
     resetLocalServiceLauncherStoreForTests();

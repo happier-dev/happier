@@ -450,7 +450,11 @@ export function createLocalServicesRuntimeActionExecutor(
             onLauncherSnapshot({ machineId, serverId, sessionId,
                 ...(request.workspace ? { scope: 'workspace' as const, workspaceRoot: request.workspace.rootPath } : {}),
                 snapshot: result.response.snapshot });
-            if (result.response.status === 'succeeded') invalidateServiceStores({ machineId, serverId });
+            // The receipt above already publishes the scoped launcher projection and
+            // refreshes its other mounted projections. Only inventory still needs a read.
+            if (result.response.status === 'succeeded' && mayPublishCatalog(serverId)) {
+                invalidateLocalServiceInventoryStore({ machineId, serverId, ...catalogScope });
+            }
             return result.response;
         }
 
