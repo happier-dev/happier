@@ -10,6 +10,9 @@ import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationC
 import { DeploymentControllerAvailabilityV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
+import { DeploymentPendingDeployIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentPendingAdmissionV1Schema } from '@happier-dev/protocol/deployments/deploymentPendingAdmissionV1';
+
 const collectionCoverage = z.optional(z.enum(['complete', 'partial']));
 
 /** Private Environment configuration facts stay with the opened page, never public metadata. */
@@ -54,6 +57,12 @@ export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
         // Custody headers remain available without demanding private link bodies.
         content: z.optional(DeploymentTargetLinkContentV1Schema),
     })),
+    /** Opened protected pending intent, scoped to the Environment detail demand. */
+    pendingDeployment: z.optional(z.discriminatedUnion('status', [
+        z.strictObject({ status: z.literal('ready'), intent: DeploymentPendingDeployIntentV1Schema,
+            admission: DeploymentPendingAdmissionV1Schema }),
+        z.strictObject({ status: z.literal('unavailable'), reason: z.string() }),
+    ])),
     healthAggregate: z.optional(DeploymentEnvironmentHealthAggregateV1Schema),
 });
 export type DeploymentEnvironmentDetailV1 = z.infer<typeof DeploymentEnvironmentDetailV1Schema>;

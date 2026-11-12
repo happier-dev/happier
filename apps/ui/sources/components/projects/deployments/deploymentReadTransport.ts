@@ -1,3 +1,4 @@
+import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
@@ -222,12 +223,29 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const detail = metadata.value;
             // The selected page consumes Environment content and custody headers,
             // not private bodies from every retained TargetLink.
-            const [artifact] = await account.readArtifactContents([detail.environment.contentArtifactId], { signal: options.signal });
+            const [artifact] = await account.readArtifactContents([detail.environment.contentArtifactId], { signal: options.signal,
+                ...(detail.pendingDeploy ? { includeAssociatedContentOpener: true } : {}) });
             if (!artifact || artifact.status === 'rejected') return failure('deployment_content_unavailable');
             const environment = readDeploymentEnvironmentArtifactV1(detail.environment, artifact.value);
             if (!environment.ok) return failure(environment.error);
+            let pendingDeployment: DeploymentEnvironmentDetailV1['pendingDeployment'];
+            if (detail.pendingDeploy) {
+                try {
+                    const opened = await artifact.value?.openAssociatedContent?.(detail.pendingDeploy);
+                    const intent = DeploymentPendingDeployStoredIntentV1Schema.safeParse(opened);
+                    if (!intent.success) pendingDeployment = { status: 'unavailable', reason: 'deployment_content_unavailable' };
+                    else if (!detail.pendingAdmission) pendingDeployment = { status: 'unavailable', reason: 'operation_unavailable' };
+                    else if (intent.data.actionOperationId !== detail.pendingAdmission.actionOperationId
+                        || intent.data.requestKey !== detail.pendingAdmission.requestKey) {
+                        pendingDeployment = { status: 'unavailable', reason: 'deployment_conflict' };
+                    } else pendingDeployment = { status: 'ready', intent: intent.data, admission: detail.pendingAdmission };
+                } catch {
+                    pendingDeployment = { status: 'unavailable', reason: 'deployment_content_unavailable' };
+                }
+            }
             const targetLinks = detail.targetLinks.map(targetLink => ({ targetLink }));
             return { ok: true, value: { environment: detail.environment, content: environment.content, targetLinks,
+                ...(pendingDeployment === undefined ? {} : { pendingDeployment }),
                 ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
                 ...(detail.controller ? { controller: detail.controller } : {}) } };
         }),

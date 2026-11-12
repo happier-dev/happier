@@ -3,6 +3,7 @@ import { pick } from 'zod/mini';
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { TokenStorage, areCredentialsEqual, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
 import { admitHomeCredential, readHomeAccountDepartures, retainsHomeAccountCredential, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -64,8 +65,10 @@ function readableRawArtifactHeader(artifact: DecryptedArtifact | null): Readonly
 const artifactAccessProjectionSchema = pick(ArtifactAccessRecipientCensusResponseV1Schema, { ownerAccountId: true, access: true });
 type ArtifactCreateOperation = Readonly<{ artifactId?: string; idScope?: ArtifactIdScopeV1; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal }>;
 type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body' | 'savedBy'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null }>;
-type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtifactOperations['read']>[1]> & Readonly<{ includeGrants?: boolean }>;
+type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtifactOperations['read']>[1]> & Readonly<{ includeGrants?: boolean; includeAssociatedContentOpener?: boolean }>;
 type ArtifactContentRead = NonNullable<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>> & Readonly<{
+    /** Local capability bound to this admitted resource's exact mode/key; never serialized. */
+    openAssociatedContent?: (content: Readonly<{ t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>) => Promise<unknown>;
     ownerDisplayName?: DecryptedArtifact['ownerDisplayName'];
     publicAudience?: DecryptedArtifact['publicAudience'];
     grants?: ArtifactAccessGrantsListResponseV1['grants'] | null;
@@ -151,8 +154,8 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             }> => artifactUnavailable(),
             openArtifactContents: async (_artifacts: Parameters<typeof openArtifactsWithBodiesFromApi>[0]['artifacts'], _options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]):
                 Promise<PromiseSettledResult<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>>[]> => artifactUnavailable(),
-            readArtifactContents: async (_ids: readonly string[], _options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]):
-                Promise<PromiseSettledResult<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>>[]> => artifactUnavailable(),
+            readArtifactContents: async (_ids: readonly string[], _options?: ArtifactContentReadOptions):
+                Promise<PromiseSettledResult<ArtifactContentRead | null>[]> => artifactUnavailable(),
             createArtifact: async (_header: Readonly<Record<string, unknown>>, _body: string) => unavailable(),
             createArtifactDocument: async (_input: ArtifactCreateOperation) => artifactUnavailable(),
             updateArtifactDocument: async (_input: ArtifactUpdateOperation) => artifactUnavailable(),
@@ -621,7 +624,21 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 const audience = options?.includeGrants ? await readGrants().catch(() => null) : null;
                 assertCurrent();
                 throwIfAborted(options?.signal);
+                const associatedDataKey = options?.includeAssociatedContentOpener ? artifactDataKeys.get(artifactId)?.dataKey : undefined;
                 return { artifactId: artifact.id, header, body: artifact.body,
+                    ...(options?.includeAssociatedContentOpener ? { openAssociatedContent: async (content: Readonly<
+                        { t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>): Promise<unknown> => {
+                        assertCurrent(); throwIfAborted(options?.signal);
+                        if (content.t === 'plain') {
+                            if (artifact.storageMode !== 'plain') throw artifactContentUnavailable();
+                            return content.v;
+                        }
+                        if (artifact.storageMode !== 'e2ee' || !associatedDataKey) throw artifactContentUnavailable();
+                        const opened = await new ArtifactEncryption(associatedDataKey).decryptHeaderRaw(content.c);
+                        assertCurrent(); throwIfAborted(options?.signal);
+                        if (opened === null) throw artifactContentUnavailable();
+                        return opened;
+                    } } : {}),
                     ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
                     ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: artifact.sharedTeamIds }),
                     provenance: artifact.provenance, updatedAt: artifact.updatedAt,
@@ -633,7 +650,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
         };
         const readArtifactDocument = async (publish: boolean, artifactId: string, options?: ArtifactContentReadOptions) =>
             projectArtifactDocument(await (publish ? fetchArtifact : readArtifact)(artifactId, options), options);
-        const readArtifactContents = async (artifactIds: readonly string[], options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]) => {
+        const readArtifactContents = async (artifactIds: readonly string[], options?: ArtifactContentReadOptions) => {
             assertCurrent(); throwIfAborted(options?.signal);
             const results = await withArtifactReadSignal(options?.signal, async borrowerSignal =>
                 fetchArtifactsWithBodiesFromApi({ ...await artifactParams(), artifactIds, signal: borrowerSignal }));

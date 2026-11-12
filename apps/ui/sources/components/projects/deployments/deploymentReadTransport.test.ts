@@ -35,6 +35,65 @@ describe('deployment scoped read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
 
+    it.each(['plain', 'e2ee'] as const)('opens the exact %s protected pending request without blanking the Environment', async mode => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(11);
+        const serverId = await homes.addHome({ name: 'Pending request', serverUrl: 'https://pending-deployments.test', accountId: 'account-owner',
+            accountEncryptionMode: mode, ...(mode === 'e2ee' ? { credentials: { token, secret: encodeBase64(secret, 'base64url') } } : {}) });
+        if (mode === 'e2ee') homes.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-fingerprint',
+            contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint),
+            updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+        } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { DeploymentPendingDeployIntentV1Schema } = await import('@happier-dev/protocol/deployments/storedAppInputV1');
+        const { ArtifactEncryption } = await import('@/sync/encryption/artifactEncryption');
+        const account = await captureLazyActionAccountContext(serverId);
+        const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+        try {
+            await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }, body: JSON.stringify(detail.content) });
+            const intent = DeploymentPendingDeployIntentV1Schema.parse({ sourceIntent: { kind: 'repository',
+                projectSourceId: detail.environment.projectSourceId, sourceRevision: 1, sha: 'b'.repeat(40) },
+                requestKey: 'latest-request', targetLinkId: detail.environment.runtimeTargetLinkId, actionOperationId: 'latest-operation' });
+            const resource = await account.readArtifactPublicLinkResource(detail.environment.contentArtifactId);
+            if (!resource) throw new Error('Missing fixture resource');
+            const pendingDeploy = mode === 'plain' ? { t: 'plain', v: intent } : { t: 'encrypted',
+                c: await new ArtifactEncryption(resource.dataKey!).encryptHeader(intent) };
+            const pendingAdmission = { requesterAccountId: 'account-owner', serverId, requestKey: intent.requestKey,
+                actionOperationId: intent.actionOperationId, controller: { machineId: 'machine-a', installationId: 'installation-a' }, environmentRevision: 1 };
+            const answer = (pending: unknown, admission: unknown = pendingAdmission) => homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`,
+                { body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink), pendingDeploy: pending, pendingAdmission: admission ?? undefined } });
+            answer(pendingDeploy);
+            const transport = createDeploymentReadTransport(account.accountLifetime);
+            const controller = createDeploymentReadControllerV1({ scope: account.accountLifetime.scope, transport });
+            const lease = controller.acquireEnvironment(detail.environment.id, { mounted: true, visible: true, focused: true });
+            const before = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
+            try {
+                await lease.refresh();
+                expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { content: detail.content,
+                    pendingDeployment: { status: 'ready', intent, admission: pendingAdmission } } });
+                expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').length - before).toBe(1);
+                answer(mode === 'plain' ? { t: 'encrypted', c: 'wrong-mode' } : { t: 'plain', v: intent });
+                await lease.refresh();
+                expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { content: detail.content,
+                    pendingDeployment: { status: 'unavailable', reason: 'deployment_content_unavailable' } } });
+                answer(pendingDeploy, { ...pendingAdmission, actionOperationId: 'other-operation' });
+                await lease.refresh();
+                expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { content: detail.content,
+                    pendingDeployment: { status: 'unavailable', reason: 'deployment_conflict' } } });
+                answer(pendingDeploy, null);
+                await lease.refresh();
+                expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { content: detail.content,
+                    pendingDeployment: { status: 'unavailable', reason: 'operation_unavailable' } } });
+                answer(undefined);
+                await lease.refresh();
+                expect(lease.getSnapshot().value).not.toHaveProperty('pendingDeployment');
+            } finally { lease.release(); controller.retire(); }
+        } finally { account.dispose(); }
+    });
+
     it('opens only requested data-link choices through one Artifact batch and retains their saved titles', async () => {
         const serverId = await homes.addHome({ name: 'Data choices', serverUrl: 'https://data-choices.test', accountId: 'alice' });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
