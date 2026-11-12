@@ -18,7 +18,7 @@ describe('portable dedicated daemon bootstrap', () => {
       serviceMode: 'user', role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } });
     const phases: string[] = [];
     const backend: MachineSetupBackend = {
-      observe: async step => ({ stepId: step.id, status: 'satisfied',
+      observe: async (step): Promise<MachineSetupStepObservationV1> => ({ stepId: step.id, status: 'satisfied',
         facts: step.kind === 'user' ? { present: true, uid: 1002 } : {} }),
       apply: async () => { throw new Error('Satisfied native state needs no mutation'); },
     };

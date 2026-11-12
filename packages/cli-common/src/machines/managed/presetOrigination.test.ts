@@ -8,10 +8,11 @@ import { bindManagedPresetAcquireOriginV1 } from './presetOrigination';
 
 describe('fixed-controller preset origination', () => {
     const selection = { kind: 'preset', homeId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN', id: 'qa-m-catalog-docker-1111', revision: 0 } as const;
+    const retention = { kind: 'until-delete' } as const;
     const input = ManagedAcquireInputV1Schema.parse({
         selection,
         enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
-        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        retention, wakeOnAcceptedMessage: false,
     });
     const controller = { machineId: 'team-controller', installationId: 'installation' };
     const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'docker', title: 'Docker', icon: 'server', resourceKind: 'container', schemaVersion: 1,
@@ -22,9 +23,9 @@ describe('fixed-controller preset origination', () => {
     const launch = { provider: { pluginId: 'fixture.docker', localId: 'docker' }, schemaVersion: 1, name: 'Docker', choices: {} };
     const reviewedFacts = buildManagedConfigurationFactsV1({ choicesSchema: PluginJsonValueV2Schema, launch, controller,
         optionStatus: 'current', prerequisites: [], billing: provisioner.billing, retentionCapabilities: provisioner.retention,
-        preset: { id: selection.id, revision: selection.revision, retention: input.retention } });
+        preset: { id: selection.id, revision: selection.revision, retention } });
     const preset = ManagedMachinePresetV1Schema.parse({ id: selection.id, homeId: selection.homeId, revision: 0, name: 'Docker',
-        owner: { kind: 'team', teamId: 'team' }, launch, controller, retention: input.retention, teamAcquireDelegated: true,
+        owner: { kind: 'team', teamId: 'team' }, launch, controller, retention, teamAcquireDelegated: true,
         delegatedAcquire: { kind: 'ready', provisioner, reviewedFacts } });
     const resolvePool = async () => { throw new Error('Fixed presets never select a pool'); };
 
