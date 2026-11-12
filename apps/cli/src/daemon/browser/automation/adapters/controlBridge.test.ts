@@ -1143,7 +1143,7 @@ describe('control adapter automation transport bridge', () => {
       payload: { from: '#missing', to: '#also-missing' } })).toEqual({ ok: false, errorCode: 'selector_not_found' });
     expect(await bridge.dispatchInputCommand?.({ ...view, actionKind: 'drag', navigationGeneration: 0,
       payload: { from: { x: 20, y: 30 }, to: { x: 60, y: 80 } } })).toEqual({ ok: true });
-    expect(calls.at(-1)?.params).toMatchObject({ type: 'mouseReleased', x: 60, y: 80, buttons: 0 });
+    expect(calls.at(-1)).toMatchObject({ method: 'Input.dispatchDragEvent', params: { type: 'drop', x: 60, y: 80 } });
     adapter.dispose();
   });
   it('holds the streamed pointer across commands and releases on cancel or owner cleanup', async () => {
@@ -1344,7 +1344,7 @@ describe('control adapter automation transport bridge', () => {
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     const { surface, calls } = fakeContextCapture((method, params) => {
       if (method === 'Runtime.evaluate') return cdpEvaluateValue({ x: 60, y: 40 });
-      if (params?.type === 'mousePressed' || params?.type === 'keyDown') {
+      if (params?.type === 'mousePressed' || params?.type === 'keyDown' || params?.type === 'dragEnter') {
         entered();
         return blocked;
       }
@@ -1375,7 +1375,8 @@ describe('control adapter automation transport bridge', () => {
     const effectsAtAck = calls.length;
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(calls).toHaveLength(effectsAtAck);
-    expect(calls.at(-1)?.params?.type).toBe(actionKind === 'press' ? 'keyUp' : 'mouseReleased');
+    expect(calls.at(-1)?.params?.type).toBe(actionKind === 'press' ? 'keyUp' : actionKind === 'drag' ? 'dragEnter' : 'mouseReleased');
+    if (actionKind === 'drag') expect(calls.some(call => call.params?.type === 'drop')).toBe(false);
     expect(service.getStatus(view).controller).toBe('human');
   });
 

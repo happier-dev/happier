@@ -41,6 +41,8 @@ function harness(attach?: () => Promise<unknown>, controls?: Map<string, Surface
     async function open() {
         expect(await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, browserSessionId: 'browser', viewId: 'opener',
             platform: 'web', target: { kind: 'externalUrl', targetId: 'intent', url: 'https://example.test/' } })).toMatchObject({ status: 'dispatched' });
+        // The opener publishes its own viewOpened event. Observe only subsequent popup effects.
+        events.length = 0;
     }
     function emit(notification: BrowserSidecarCdpEventNotification) { for (const listener of [...listeners]) listener(notification); }
     function popup(targetId = 'popup-target', openerId = 'opener-target', url = 'https://example.test/popup') {

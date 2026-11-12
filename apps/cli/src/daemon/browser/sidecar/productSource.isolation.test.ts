@@ -155,7 +155,10 @@ describe('product browser session isolation', () => {
                 .toMatchObject({ ok: true, media: { width: 1, height: 1 } });
             const mediaRoot = join(root, '.happier', 'uploads', 'artifacts');
             expect(await readdir(mediaRoot)).toEqual(['happier_session_a']);
-            const mediaDirectory = join(mediaRoot, 'happier_session_a', 'browser_context_view_0');
+            const sessionMediaDirectory = join(mediaRoot, 'happier_session_a');
+            const mediaBuckets = await readdir(sessionMediaDirectory);
+            expect(mediaBuckets).toHaveLength(1);
+            const mediaDirectory = join(sessionMediaDirectory, mediaBuckets[0]!);
             const mediaFiles = await readdir(mediaDirectory);
             expect(mediaFiles).toHaveLength(1);
             expect(await readFile(join(mediaDirectory, mediaFiles[0]!))).toEqual(Buffer.from(pngBase64, 'base64'));

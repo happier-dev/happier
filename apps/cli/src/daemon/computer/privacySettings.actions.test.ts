@@ -21,13 +21,13 @@ describe('computer privacy settings Action execution', () => {
   it.each([
     ['capture', 'Privacy_ScreenCapture'],
     ['input', 'Privacy_Accessibility'],
-  ] as const)('opens the %s pane only for an approved request on the addressed Mac', async (permission, pane) => {
+  ] as const)('opens the %s pane for an admitted request on the addressed Mac', async (permission, pane) => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const routes = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry() });
     const execute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ computer: routes }),
       resolveServerFeaturesSnapshot: () => undefined });
     const input = { machineId: 'machine', permission };
-    const context = { authority: 'account_automation' as const, defaultSessionId: 'session' };
+    const context = { authority: 'account_automation' as const, defaultSessionId: 'session', bypassApprovals: true };
     const launched: string[] = [];
     vi.mocked(execFileWithDeadline).mockImplementation(async (command, args) => {
       expect(command).toBe('/usr/bin/open');
@@ -35,13 +35,11 @@ describe('computer privacy settings Action execution', () => {
       return { stdout: '', stderr: '' };
     });
     try {
-      expect(await execute({ actionId: 'computer.permissions.openSettings', input, context }))
-        .toMatchObject({ ok: false, errorCode: 'approval_required' });
+      // Action admission owns approval; this runtime seam consumes its admitted context.
       expect(await execute({ actionId: 'computer.permissions.openSettings', input: { ...input, machineId: 'other' },
-        context: { ...context, bypassApprovals: true } })).toMatchObject({ ok: false, errorCode: 'computer_machine_mismatch' });
+        context })).toMatchObject({ ok: false, errorCode: 'computer_machine_mismatch' });
       expect(launched).toEqual([]);
-      const result = await execute({ actionId: 'computer.permissions.openSettings', input,
-        context: { ...context, bypassApprovals: true } });
+      const result = await execute({ actionId: 'computer.permissions.openSettings', input, context });
       assertActionOutputContract('computer.permissions.openSettings', result);
       expect(result).toEqual({ status: 'dispatched' });
       expect(launched).toEqual([`x-apple.systempreferences:com.apple.preference.security?${pane}`]);

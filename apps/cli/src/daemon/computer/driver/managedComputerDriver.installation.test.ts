@@ -15,7 +15,7 @@ describe.skipIf(process.platform !== 'linux')('computer driver first-use policy'
     try {
       expect(await routes.dispatch('computer.targets.list', { machineId: 'machine' },
         { authority, defaultSessionId: 'first-use', bypassApprovals: true }))
-        .toMatchObject({ ok: false, errorCode: 'driver_unavailable' });
+        .toMatchObject({ ok: false, errorCode: 'computer_provider_unavailable' });
       expect(download).not.toHaveBeenCalled();
       expect(native.instances).toHaveLength(0);
     } finally { await routes.dispose(); }

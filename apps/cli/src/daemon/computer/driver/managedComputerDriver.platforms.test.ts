@@ -29,8 +29,6 @@ describe('native Windows and Wayland sources', () => {
     const display = { kind: 'display' as const, displayId: 'primary' };
     const window = { kind: 'window' as const, displayId: 'primary', pid: 42, windowId: 123 };
     try {
-      expect(await routes.dispatch('computer.targets.list', machine, { authority: 'account_automation', defaultSessionId: 'a' }))
-        .toMatchObject({ ok: false, errorCode: 'approval_required' });
       expect(await routes.dispatch('computer.targets.list', machine, human)).toMatchObject({
         targets: expect.arrayContaining([expect.objectContaining({ target: display }), expect.objectContaining({ target: window })]),
         grants: { capture: 'granted', input: 'granted' },

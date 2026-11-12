@@ -12,29 +12,9 @@ const native = vi.hoisted(() => ({ instances: [] as Array<{
 
 export { native };
 
-// The subprocess/MCP transport is the system boundary; adapter parsing and admission stay real.
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  getDefaultEnvironment: () => ({ PATH: '/fixture/bin' }),
-  StdioClientTransport: class {
-    onmessage?: (message: JSONRPCMessage) => void;
-    onclose?: () => void;
-    close = vi.fn(async () => { await native.close(this); });
-    start = vi.fn(async () => {});
-    send = vi.fn(async (message: JSONRPCMessage) => {
-      if (!('id' in message) || !('method' in message)) return;
-      if (message.method === 'initialize') {
-        this.onmessage?.({ jsonrpc: '2.0', id: message.id, result: await native.initialize(this) });
-        return;
-      }
-      if (message.method !== 'tools/call') return;
-      const call = message.params as { name: string; arguments: Record<string, unknown> };
-      native.tools.push(call);
-      const result = await native.call(call, this);
-      this.onmessage?.({ jsonrpc: '2.0', id: message.id, result });
-    });
-    constructor(readonly parameters: { command: string; args?: string[]; env?: Record<string, string> }) { native.instances.push(this); }
-  },
-}));
+// A redirect mock preserves simultaneous native connections. Vitest's manual
+// factory mock shares its import callstack and can bypass the fake for one import.
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js');
 
 export const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
 export const png = 'iVBORw0KGgoAAAANSUhEUgAAAMgAAABk';
@@ -47,10 +27,7 @@ export function captureResult() {
   } };
 }
 
-beforeEach(async () => {
-  // Resolve the process-boundary mock before concurrent connections import it.
-  // Vitest's concurrent dynamic-import interception can otherwise load the real subprocess transport.
-  await import('@modelcontextprotocol/sdk/client/stdio.js');
+beforeEach(() => {
   native.instances.length = 0; native.tools.length = 0; native.call.mockReset();
   native.initialize.mockReset().mockResolvedValue({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'cua-driver', version: COMPUTER_CUA_DRIVER_VERSION } });
   native.close.mockReset().mockImplementation(async (transport: { onclose?: () => void }) => { transport.onclose?.(); }); });

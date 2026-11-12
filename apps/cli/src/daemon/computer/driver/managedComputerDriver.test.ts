@@ -724,7 +724,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       { authority: 'present_user', defaultSessionId: sessionId });
     try {
       const results = await Promise.all([select('session-a'), select('session-b')]);
-      expect(results).toEqual(expect.arrayContaining([
+      expect(results, JSON.stringify({ transports: native.instances.map(instance => instance.parameters), tools: native.tools })).toEqual(expect.arrayContaining([
         expect.objectContaining({ selectedTarget: target, consentGranted: false }),
         expect.objectContaining({ ok: false, errorCode: 'computer_target_in_use' }),
       ]));

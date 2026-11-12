@@ -1,3 +1,4 @@
+import '../../../../../ui/sources/dev/vitestSetup';
 import { afterEach, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';

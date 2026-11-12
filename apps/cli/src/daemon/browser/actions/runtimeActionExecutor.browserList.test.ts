@@ -29,7 +29,7 @@ describe('browser view discovery Action', () => {
       expect(JSON.stringify(result)).not.toContain('private-session');
       expect(commands).toBe(before);
       expect(await execute({ actionId: 'browser.view.list', input: { machineId: 'machine', browserSessionId: 'other' },
-        context: { defaultSessionId: 'session' } })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        context: { defaultSessionId: 'session' } })).toMatchObject({ ok: false, errorCode: 'permission_denied' });
       expect(commands).toBe(before);
     } finally { unregister(); adapter.dispose(); }
   });
