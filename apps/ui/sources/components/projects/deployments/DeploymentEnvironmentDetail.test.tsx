@@ -131,20 +131,6 @@ async function selectEnvironmentTab(screen: Awaited<ReturnType<typeof renderScre
   });
 }
 
-// Temporary bounded replay diagnostics; removed after the deciding result.
-function detailPressDiagnostic(screen: Awaited<ReturnType<typeof renderScreen>>) {
-  const deploy = screen.findByTestId('project-deployments.environment.deploy');
-  return JSON.stringify({
-    deployPresent: deploy !== null,
-    deployDisabled: deploy ? Boolean(deploy.props.disabled) : null,
-    machineOffline: screen.findByTestId('project-deployments.environment.offline') !== null,
-    noRuntimeTarget: screen.findByTestId('project-deployments.environment.unavailable.noTarget') !== null,
-    approvalPresented: screen.findByTestId('project-deployments.outcome.approval') !== null,
-    diagnosticCodes: [...new Set(screen.root.findAll(node => typeof node.props.diagnosticCode === 'string')
-      .map(node => String(node.props.diagnosticCode)))],
-  });
-}
-
 const scope = {
   serverId: 'home',
   accountId: 'account-owner',
@@ -541,8 +527,8 @@ describe('Project deployments page', () => {
 
   it('starts Move through the saved Workflow owner and opens the admitted Run with the exact serving source', async () => {
     const { ModalProvider } = await import('@/modal');
-    const { storage } = await import('@/sync/domains/state/storage');
     const { createMachineFixture } = await import('@/dev/testkit');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const { Switch } = await import('@/components/ui/forms/Switch');
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -559,7 +545,11 @@ describe('Project deployments page', () => {
     const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
     const { resolveAbsolutePath } = await import('@/utils/path/pathUtils');
     const { createWorkflowRunRoute } = await import('@/sync/domains/workflows/workflowRunRoute');
-    const { controller, detail } = controllerFor({});
+    const base = environmentDetailForHome();
+    const { controller, detail } = controllerFor({ detail: { ...base,
+      targetLinks: base.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+        activeDeploymentId: 'serving-move-deployment' } })),
+    } });
     const captured = await captureLazyActionAccountContext(scope.serverId);
     const definitions = createWorkflowDefinitionActions({ artifactStore: captured.workflowArtifacts,
       encodeListCursor: captured.encodeArtifactListCursor, assertDefinitionWriteAllowed: () => { throw new Error('Run admission does not rewrite the saved definition'); } });
@@ -588,10 +578,10 @@ describe('Project deployments page', () => {
       execute: input => owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse(input),
         context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
           externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } }) });
-    storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
-    storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a' }),
-      createMachineFixture({ id: 'destination', installationId: 'destination-install' })], true,
-      { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    await publishMachineInventoryForTest(scope, [
+      createMachineFixture({ id: 'machine-a', installationId: 'installation-a', activeAt: Date.now() }),
+      createMachineFixture({ id: 'destination', installationId: 'destination-install', activeAt: Date.now() }),
+    ]);
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
@@ -1125,6 +1115,9 @@ describe('Project deployments page', () => {
   });
 
   it('shows the running Secret revision in Variables and sends its Deploy through the page approval continuation', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'machine-a', activeAt: Date.now() })]);
     const base = environmentDetailForHome();
     const binding = createDeploymentSecretVariableBindingV1({ name: 'TOKEN', phase: 'runtime', resourceId: 'credential', resourceRevision: 2 });
     const detail = { ...base, content: { ...base.content, bindings: [binding] },
@@ -1153,7 +1146,6 @@ describe('Project deployments page', () => {
       const notice = 'project-deployments.environment.variables.rotated';
       await waitForContent(screen, notice);
       expect(deploy).not.toHaveBeenCalled();
-      expect(screen.findByTestId(`${notice}.action`), detailPressDiagnostic(screen)).not.toBeNull();
       await screen.pressByTestIdAsync(`${notice}.action`);
       expect(deploy).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
       expect(requested).toHaveBeenCalledExactlyOnceWith('secret-approval');
@@ -1544,6 +1536,9 @@ describe('Project deployments page', () => {
     controller.retire();
   });
   it('deploys the runtime link by ids and hands a held review to the page\'s approval continuation', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'machine-a', activeAt: Date.now() })]);
     const { controller, detail } = controllerFor({});
     const { HappyError } = await import('@/utils/errors/errors');
     const deploy = vi.fn(async () => {
@@ -1567,7 +1562,7 @@ describe('Project deployments page', () => {
       />,
     );
     await screen.pressByTestIdAsync('project-deployments.environment.deploy');
-    expect(deploy, detailPressDiagnostic(screen)).toHaveBeenCalledWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
+    expect(deploy).toHaveBeenCalledWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
     expect(requested).toEqual(['approval-a']);
     // While that review is open, the page says so and offers it again instead of a second Deploy.
     expect(screen.findByTestId('project-deployments.outcome.approval')).not.toBeNull();
