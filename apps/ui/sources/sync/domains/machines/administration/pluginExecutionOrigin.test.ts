@@ -154,6 +154,19 @@ function candidate(input: Readonly<{
 }
 
 describe('resolvePluginMachineExecutionOriginState', () => {
+    it('acquires an establishing portable installation without granting execution before its source answers', () => {
+        const installed = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-c4', materializationId: 'installed',
+            sourceClass: 'versionedArchive', validation: { kind: 'rejected', reason: 'source_not_ready' } });
+        const params = { pluginId: 'acme.plugin', storedOrigin: null, candidates: [installed] };
+        const state = resolvePluginMachineExecutionOriginState(params);
+        expect(state.kind).toBe('unavailable');
+        expect(executionOrigins.resolvePluginMachineProjectionTarget({ ...params, state }))
+            .toEqual({ serverIdentityId: 'srv_one', machineId: 'machine-c4' });
+        expect(executionOrigins.resolvePluginMachineProjectionTarget({ ...params, state, autoPick: false })).toBeNull();
+        const admitted = { ...installed, validation: { kind: 'admitted' as const } };
+        expect(resolvePluginMachineExecutionOriginState({ ...params, candidates: [admitted] }).kind).toBe('selected');
+    });
+
     it('retains unknown contributor coverage instead of treating a thin incumbent as proven empty', () => {
         const a = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'a' });
         const b = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'b' });

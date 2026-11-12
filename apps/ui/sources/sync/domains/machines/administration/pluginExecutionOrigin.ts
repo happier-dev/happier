@@ -757,13 +757,15 @@ export function resolvePluginMachineProjectionTarget(params: Parameters<typeof r
         const target = targetOf(candidate);
         return params.automaticTarget?.serverIdentityId === target.serverIdentityId && params.automaticTarget.machineId === target.machineId;
     };
-    // Nonportable Account rows and establishing exact sources both describe
-    // placement before current execution admission. Keep the incumbent in
-    // this ranking when its runtime answers with a visible refusal.
+    // Establishing installations, including portable releases, need a read
+    // target before their source can answer. Nonportable rows describe the
+    // same placement intent. Neither grants current execution admission.
+    // Keep the incumbent when its runtime answers with a visible refusal.
     const descriptors = params.state.candidates.filter(candidate =>
-        (matchesTarget(candidate) || ('source' in candidate || !candidate.materialization.portableRelease)
-            && candidate.validation.kind === 'rejected'
-            && (candidate.validation.reason === 'non_portable' || candidate.validation.reason === 'source_not_ready'))
+        (matchesTarget(candidate) || candidate.validation.kind === 'rejected'
+            && (candidate.validation.reason === 'source_not_ready'
+                || candidate.validation.reason === 'non_portable'
+                    && ('source' in candidate || !candidate.materialization.portableRelease)))
         && (!params.renderedVersion || getPluginExecutionOriginCandidateVersion(candidate) === params.renderedVersion));
     const candidate = rankPluginMachineExecutionOriginCandidates(params, descriptors, descriptors.find(matchesTarget));
     return candidate ? targetOf(candidate) : null;
