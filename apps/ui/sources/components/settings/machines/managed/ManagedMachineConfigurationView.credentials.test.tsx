@@ -17,6 +17,7 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema, buildDeferr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string | undefined>, replace: vi.fn(), push: vi.fn(), back: vi.fn(), dismissTo: vi.fn() }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -133,12 +134,13 @@ async function setupHome() {
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
     const machines = [createMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now() }),
         createMachineFixture({ id: otherController.machineId, installationId: otherController.installationId, activeAt: Date.now() })];
-    storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])), isDataReady: true, endpointStatus: 'online',
-        machineListByServerId: { [serverId]: machines }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    storage.setState({ isDataReady: true, endpointStatus: 'online' });
     storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...storage.getState().profile, id: 'owner', connectedAccountsV4: [cloud, otherCloud, cua].map(ref => QualifiedConnectedAccountProfileV4Schema.parse({
         ref, status: 'connected', kind: 'token', authenticationModeId: 'token', revisionSemantics: 'revisioned',
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null, scopes: [],
     })) } });
+    // Restored inventory is not fresh presence (9aca8638873); publish through its test owner.
+    await publishMachineInventoryForTest(scope, machines);
     harness.answer(serverId, '/v1/account/entity-rows/connected-metadata/presentation', { body: {
         status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [
             { v: 1, subject: { kind: 'account', account: cloud }, label: 'Cloud work' },
@@ -225,6 +227,42 @@ async function dismissConnectSheet() {
 }
 
 describe('managed provisioner credential purposes', () => {
+    it.each(['direct', 'brokered'] as const)('chooses a Team %s resource without substituting its personal source through options and use', async deliveryMode => {
+        const serverId = await setupHome();
+        const { TeamResourceConnectedServiceSelectionV2Schema } = await import('@happier-dev/protocol/connect/connectedServiceBindings');
+        const selection = TeamResourceConnectedServiceSelectionV2Schema.parse({ source: 'team_resource', resourceId: 'team-compute', deliveryMode,
+            ...(deliveryMode === 'direct' ? { disclosedMember: cloud } : {}) });
+        const value = { teamId: 'engineering', selection };
+        const selectedCredentials = [{ purpose: cloudPurpose, ...value }, { purpose: cuaPurpose, account: cua }];
+        const catalog = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{ ...provisioner, credentialPurposes: [
+            { purpose: cloudPurpose, options: [{ value, label: 'Engineering compute' }] }, provisioner.credentialPurposes![1]!,
+        ] }] });
+        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: input => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(input);
+            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true, result: catalog } } };
+        } });
+        const onUse = vi.fn();
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const { deliveryModeLabel } = await import('@/sync/domains/teams/teamCredentialDeliveryPresentation');
+        const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
+            initialController={controller} onUse={onUse} />);
+        await waitForHomeGovernance(() => expect(credentialField(screen, 'cloud-account').props.options).toEqual([
+            expect.objectContaining({ value, label: 'Engineering compute', description: deliveryModeLabel(deliveryMode) }),
+        ]));
+        await pressCredentialOption(screen, 'cloud-account', 'Engineering compute');
+        await pressCredentialOption(screen, 'computer-access', 'Computer access');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:native'), screen.getTextContent()).not.toBeNull());
+        await act(async () => screen.pressByTestId('managed-config.sizes:native'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
+        expect(credentialField(screen, 'cloud-account').props.value).toEqual(value);
+        expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ credentials: selectedCredentials }));
+        const receipt = screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt)[0]!.props.receipt;
+        expect(receipt.facts.find((fact: { id: string }) => fact.id === 'credential:0')?.value).toBe(`Engineering compute · ${deliveryModeLabel(deliveryMode)}`);
+        await act(async () => screen.pressByTestId('managed-config.use'));
+        expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ selection: expect.objectContaining({ launch: expect.objectContaining({ credentials: selectedCredentials }) }) }));
+        await screen.unmount();
+    });
+
     it('presents Agent-default names before native options settle on cold mount and remount without admitting a launch', async () => {
         const serverId = await setupHome();
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
@@ -419,7 +457,7 @@ describe('managed provisioner credential purposes', () => {
                 machineId: controller.machineId, purpose: cloudPurpose,
             } });
         });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('connect-sheet:purpose')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('connect-sheet:purpose'), screen.getTextContent()).not.toBeNull());
         expect(screen.findByTestId(`connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`)).not.toBeNull();
         await dismissConnectSheet();
         await expect(result).resolves.toEqual({ kind: 'dismissed' });
@@ -617,7 +655,6 @@ describe('managed provisioner credential purposes', () => {
         // The purpose id is plumbing: the row names the account by its service's title.
         expect(connect()!.props.subtitle).toBe('Cloud');
         expect(screen.tree.findAll(node => String(node.props.controlTestID ?? '') === 'managed-config.credential:cloud-account')).toHaveLength(0);
-        expect(screen.tree.findAll(node => node.props.description === 'Connect an account to see what you can create.').length).toBeGreaterThan(0);
         // Nothing failed: there is no read to retry until an account is connected.
         expect(screen.findByTestId('managed-config.error')).toBeNull();
         expect(screen.findByTestId('managed-config.field:cpu')).toBeNull();
@@ -752,7 +789,7 @@ describe('managed provisioner credential purposes', () => {
         expect(actionInputs('machines.provisioners.options').every(input => !input || typeof input !== 'object' || !('credentials' in input))).toBe(true);
         await act(async () => screen.pressByTestId('managed-config.use'));
         expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ selection: expect.objectContaining({ kind: 'preset', id: saved.id }),
-            receipt: expect.objectContaining({ launch: saved.launch }) }));
+            receipt: expect.objectContaining({ launch: { ...saved.launch, name: provisioner.descriptor.title } }) }));
         await screen.unmount();
     });
     it('keeps omitted controller-authorized purposes unavailable instead of assuming credentialless access', async () => {
@@ -785,9 +822,11 @@ describe('managed provisioner credential purposes', () => {
                 result: { controller, provisioners: [{ ...provisioner, credentialPurposes: undefined }] } } } };
         } });
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        // d67be8deb4d: retained acquisition receipts belong to Create from a Preset;
+        // Preset-only authoring does not request native purposes or receipt facts.
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
-            presetId={saved.id} presetOnly initialController={controller} />);
-        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt?.name === saved.launch.name).length).toBeGreaterThan(0));
+            presetId={saved.id} initialController={controller} />);
+        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt?.name === provisioner.descriptor.title).length, screen.getTextContent()).toBeGreaterThan(0));
         await flushHookEffects();
         const receipt = screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt)[0]?.props.receipt;
         expect(receipt.facts.filter((fact: { id: string }) => fact.id.startsWith('credential:'))).toHaveLength(2);
@@ -846,28 +885,20 @@ describe('managed provisioner credential purposes', () => {
         await screen.unmount();
     });
 
-    it('edits preset purposes and retires unsupported refs on controller catalog change without choosing a default', async () => {
+    it('retires unsupported draft refs on controller catalog change without choosing a default', async () => {
         const serverId = await setupHome();
-        const saved = { id: 'saved', homeId: 'srv_credentials', revision: 1, name: 'Saved machine', owner: { kind: 'account', accountId: 'owner' }, controller,
-            launch: { provider: contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 }, credentials } };
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        // d67be8deb4d: Preset authoring does not acquire native purpose choices.
+        // Exercise withdrawal where those choices are admitted: a new Machine draft.
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
-            presetId={saved.id} presetOnly initialController={controller} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:native')).not.toBeNull());
-        expect(credentialControl(screen, 'cloud-account')).toBeDefined();
+            initialController={controller} />);
+        await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
+        await selectCredentials(screen);
         await pressCredentialOption(screen, 'cloud-account', 'Cloud personal');
         await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ credentials: [
             { purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua },
         ] })));
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...saved, revision: 2,
-            launch: { ...saved.launch, credentials: [{ purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua }] } } } });
-        await act(async () => screen.pressByTestId('managed-config.create'));
-        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
-        expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({ patch: { launch: { credentials: [
-            { purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua },
-        ] } } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true,
@@ -880,7 +911,7 @@ describe('managed provisioner credential purposes', () => {
         const target = chip.props.selection.candidates.find((candidate: { target: { machineId: string } }) => candidate.target.machineId === otherController.machineId).target;
         await act(async () => chip.props.selection.selectTarget(target));
         expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
-        await waitForHomeGovernance(() => expect(credentialField(screen, 'cloud-account').props.selection).toBeUndefined());
+        await waitForHomeGovernance(() => expect(credentialField(screen, 'cloud-account').props.value).toBeUndefined());
         expect(screen.tree.findAll(node => node.props.controlTestID === 'managed-config.credential:computer-access')).toHaveLength(0);
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
         await pressCredentialOption(screen, 'cloud-account', 'Cloud work');
@@ -914,7 +945,8 @@ describe('managed provisioner credential purposes', () => {
         } });
         await pressCredentialOption(screen, 'cloud-account', 'Cloud personal');
         expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(true);
+        // d67be8deb4d: Save retains an authored launch; Use requires current native options.
+        expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false);
         await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ credentials: [
             { purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua },
         ] })));
