@@ -72,7 +72,7 @@ it('re-admits an encrypted cold pending intent through compact Deploy and clears
             httpCalls.push(`${request.method} ${path}`);
             if (request.method === 'GET' && path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
             if (request.method === 'GET' && path === `/v1/deployments/environments/${environment.id}`) return { status: 200, data: {
-                ok: true, environment: { ...environment, revision }, targetLinks: [{ ...link, machines: [machineId],
+                ok: true, environment: { ...environment, revision }, secretScope: detail.secretScope, targetLinks: [{ ...link, machines: [machineId],
                     members: [{ ...link.members[0]!, machineId, installationId }] }],
                 ...(pendingDeploy ? { pendingDeploy, pendingAdmission: { requesterAccountId: accountId, serverId,
                     requestKey: input.requestKey, actionOperationId: operationId, controller: { machineId, installationId },

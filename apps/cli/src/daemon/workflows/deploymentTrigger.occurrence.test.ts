@@ -50,7 +50,11 @@ describe('normalized deployment trigger occurrence', () => {
   });
   it('uses the merge event SHA and PR number without inventing its absent base branch', () => {
     const input = occurrence({ action: 'closed', repository: push.repository,
-      pull_request: { id: 99, number: 12, merged: true, merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-28T12:00:00Z' } }, 'pull_request');
+      pull_request: { id: 99, number: 12, merged: true, merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-28T12:00:00Z',
+        user: { id: 99, login: 'octocat', type: 'User' },
+        head: { sha: 'a'.repeat(40), ref: 'preview', repo: push.repository },
+        base: { ref: 'release', repo: push.repository } } }, 'pull_request');
+    expect(input.evidence.payload).not.toHaveProperty('pullRequest.baseRef');
     expect(resolveDeploymentTriggerOccurrence(input)).toMatchObject({ kind: 'available', occurrence: {
       kind: 'merge', sha: 'c'.repeat(40), pullRequestNumber: 12, trigger: { branch: 'release' },
     } });

@@ -63,7 +63,8 @@ it.each([
                     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
             }
             if (request.method === 'GET' && path === `/v1/deployments/environments/${environment.id}`) return { status: 200, data: {
-                ok: true, environment, targetLinks: [{ ...link, machines: [machineId], members: [{ ...link.members[0]!, machineId, installationId }] }],
+                ok: true, environment, secretScope: detail.secretScope,
+                targetLinks: [{ ...link, machines: [machineId], members: [{ ...link.members[0]!, machineId, installationId }] }],
                 pendingDeploy: { t: 'plain', v: { sourceIntent: retained, requestKey: input.requestKey,
                     targetLinkId: link.id, actionOperationId: operationId,
                     ...(sourceMethod ? { sourceMethod } : {}) } },

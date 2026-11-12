@@ -55,7 +55,8 @@ describe('native deployment builder availability', () => {
         });
         vi.spyOn(axios, 'request').mockImplementation(async request => ({ status: 200, data:
             new URL(request.url!).pathname.endsWith('/deployments') ? { ok: true, items: [], nextCursor: null }
-                : { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(row => row.targetLink) } }));
+                : { ok: true, environment: environment.environment, secretScope: environment.secretScope,
+                    targetLinks: environment.targetLinks.map(row => row.targetLink) } }));
         const acquire = vi.fn(async () => { throw new Error('Unexpected native effect'); });
         const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
             serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
     DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { DeploymentTargetVariablesReadResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetVariablesV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -22,9 +23,11 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime', previewInput = f
             actions: (['inspect', 'link', 'deploy', 'observe', 'cancel', 'read'] as const).map(id => ({
                 id, title: id, scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
                 inputSchema: id === 'read' ? role === 'data'
-                    ? DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema : closed
+                    ? DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema
+                    : DeploymentTargetRoleInputProtocolSchemasV1['variables.read'].jsonSchema
                     : DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
-                resultSchema: id === 'read' ? closed : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+                resultSchema: id === 'read' ? role === 'data' ? closed : DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
+                    : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 dangerLevel: ['inspect', 'observe', 'read'].includes(id) ? 'safe' : 'writesLocal',
                 ...(id === 'read' ? { readOnly: true } : {}),
             })),

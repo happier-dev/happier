@@ -138,7 +138,7 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
                 provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
                 repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } }));
     app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
-        environment: environment.environment, targetLinks: [row.targetLink] }));
+        environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
     app.get('/v1/deployments/receipts/:deploymentId', async () => ({ ok: true, deployment: receipt }));
     app.get('/v1/deployments/environments/:environmentId/deployments', async request => ({ ok: true,
         items: (request.query as { inProgressOnly?: string }).inProgressOnly === 'true'
@@ -160,7 +160,7 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
         runtimeOptions: { connectedAccounts: purposeOwner, actionFormConnectedAccounts: purposeOwner,
             accountExecution: { credentials, serverUrl: origin, serverId, serverIdentityId, machineId: 'machine-a', isCurrent: async () => true },
             resolveCurrentMachineId: () => 'machine-a' },
-        plugins: [{ manifest: vercel.manifest, files: { '.happier-plugin/daemon.js': 'export function activate() {}' },
+        plugins: [{ manifest: vercel.manifest, files: { [vercel.manifest.entrypoints!.daemon!]: 'export function activate() {}' },
             instantiateCommittedModule: () => ({ activate: vercel.activate }) }],
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
