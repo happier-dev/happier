@@ -73,6 +73,8 @@ function projectRefusal(code: string, error?: unknown): Extract<OpenProjectResul
   logger.warnLocalFile('[Project Open] Refused', { code, ...privateExecutionDiagnostic(error, code) });
   if (error && typeof error === 'object') {
     const result = OpenProjectResultV1Schema.safeParse({ kind: 'refused', code,
+      ...('details' in error && error.details && typeof error.details === 'object' && 'destinationReview' in error.details
+        ? { destinationReview: error.details.destinationReview } : {}),
       failureCause: normalizeActionExecutorThrownError(error, 'projects.open').failureCause,
       ...('retryNotBeforeMs' in error && error.retryNotBeforeMs !== undefined ? { retryNotBeforeMs: error.retryNotBeforeMs } : {}),
       ...('remediation' in error && error.remediation !== undefined ? { remediation: error.remediation } : {}),

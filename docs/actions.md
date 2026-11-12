@@ -1054,8 +1054,16 @@ automation safety default. Designed local reviews and destructive confirmations
 remain declaration-owned. Account and profile Ask settings govern automation and
 other-person requests; the person's own UI admission answers those settings too.
 Agent, CLI and MCP callers retain their declared defaults, and unknown
-surfaces fail closed. Present-user UI authority comes from a host-mediated control,
-excluding external credentials and Session RPC authority. Home may relay that
+surfaces fail closed. Present-user UI authority comes from a host-mediated control:
+`Action.Control`, or a host-created committing control with a declarative Action
+binding in matching 0.3 development SDK and host source. The bound controls are
+Menu items, PropertyList editors and name tones, RelationList additions and removals, IconButton,
+Form submit and Toggle. They share Action.Control's invocation owner; registering,
+changing props or editing a draft never supplies a gesture. External credentials
+and Session RPC authority remain excluded. A binding declares one Action reference
+or a named map of references, then preparation selects a declared key; the shared
+host owner rejects an undeclared selection as `invalid_action` without execution.
+Home may relay that
 exact Account UI press to its Machine with the same present-user default. A raw plugin
 `hostApi.executeAction` call retains plugin/automation authority, including when
 a plugin click handler starts it; declaring a direct UI policy does not upgrade
@@ -1079,14 +1087,24 @@ active-join and retained-receipt semantics, not a new durable replay ledger.
 `executor/approvalReview.ts` records the
 same `presentUserApproval` used by an authenticated deferred decision. A native
 review has no Artifact id and does not manufacture an approval Artifact.
-For an own-UI press received without a native confirmation presenter, the executor
-returns its prepared review and `reviewDigest` with `action_interactive_review_required`.
+For an own-UI press that still needs review, a receiving executor without a native
+confirmation presenter returns its prepared review and `reviewDigest` with `action_interactive_review_required`.
 The originating UI presents that review and binds a fresh invocation's confirmation
 to its digest. The receiving executor recognizes the press from the existing
-Home-admitted Account binding, rebuilds the review, and refuses missing or changed
-digests with the fresh review before any effect. A digest without a readable preview
+Home-admitted Account binding and rebuilds the review for a digest-bearing confirmation,
+refusing a changed digest with the fresh review before any effect. Existing valid
+input-bound in-flow confirmations without a review digest retain their admission.
+A request still requiring confirmation receives the review-carrying refusal.
+A digest without a readable preview
 keeps the refusal in the UI. This is unreleased 0.3 behavior; no self-approval
 Artifact or caller-asserted presentation marker is required.
+In unreleased 0.3 source, a member's Source clone with an unprepared destination
+returns `workspace_private_checkout_review_required` and the native owner's
+`destinationReview`. Open carries the prepared private path through this same
+review and digest. The UI shows that destination and resubmits the reviewed
+arguments after confirmation, including when an initial Open confirmation
+preceded native preparation. Cancel sends no replacement request; the native
+owner still requires the member's exact prepared path on resubmission.
 Private prepared admission retains the answered review through operation
 dispatch. Internal children consume the existing reviewed-parent issuer without
 another per-step policy read; confirmation does not replace their ordinary

@@ -91,7 +91,9 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
     workspaceRefs: input.workspaceRefs, ...(existing ? { workspaceRefId: input.existingWorkspaceRefId } : {}),
     createId: () => materialization.kind === 'clone' ? materialization.destinationDirectoryName
       : materialization.kind === 'sync' ? basename(materialization.targetPath) : refuse() });
-  if (!attach) admitPrivateProjectCheckoutDestination({ prepared, materialization });
+  if (!attach) admitPrivateProjectCheckoutDestination({ prepared, materialization,
+    reviewIdentity: { accountId: selected.requester.accountId, serverId: snapshot.memberIdentity.homeServerIdentityId!,
+      machineId: selected.requester.machineId } });
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
   retainedRegistry = lease;
   let assertPluginCurrent = () => {};

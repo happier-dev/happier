@@ -5,7 +5,11 @@ import { completeActionResult } from '../resultProjection.js';
 import { isProjectActionIdV1 } from '../../projectActionIdsV1.js';
 import { isProjectDefinitionActionId } from '../../projectDefinitionActionFamily.js';
 import type { ProjectContextUpdateInputV1Schema } from '../../../projects/projectContextV1.js';
-import { type OpenProjectInputV1Schema } from '../../../projects/openProjectV1.js';
+import { OpenProjectResultV1Schema, type OpenProjectInputV1Schema } from '../../../projects/openProjectV1.js';
+import { prepareApprovalRequest } from '../approvalPreparation.js';
+import { computeActionReviewDigestV1 } from '../../decisionAuthority.js';
+import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation } from '../../invocationAuthority.js';
+import { projectNativeJsonValueForTransport } from '../../../json/strictJsonValue.js';
 import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../../rpc/errors.js';
 import { isPluginError } from '../../../plugins/errors.js';
 import { type ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../../projects/projectOrganizationV1.js';
@@ -86,7 +90,23 @@ export async function dispatchProjectsDispatch2(inv: Pick<CoreInvocation, 'actio
           const input = data as z.infer<typeof OpenProjectInputV1Schema>;
           if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
           try {
-            return completeActionResult(await deps.projectsOpen(input, ctx));
+            const result = await deps.projectsOpen(input, ctx);
+            const opened = OpenProjectResultV1Schema.safeParse(result);
+            if (opened.success && opened.data.kind === 'refused'
+              && opened.data.code === 'workspace_private_checkout_review_required' && opened.data.effectAttempted === false
+              && opened.data.destinationReview && input.materialization.kind === 'clone' && ctx.surface === 'ui'
+              && (isPresentUserHostInvocation(ctx) || isHomeAdmittedPresentUserHostInvocation(ctx, actionId))) {
+              const destination = opened.data.destinationReview;
+              const reviewedInput = { ...input, materialization: { ...input.materialization,
+                destinationParentPath: destination.destinationParentPath, destinationDirectoryName: destination.destinationDirectoryName } };
+              // The native owner supplies only its requester's prepared destination. Reuse the same
+              // approval builder and digest that the receiving executor checks on the new invocation.
+              const review = await prepareApprovalRequest({ deps, actionId, input: reviewedInput, actionArgs: reviewedInput, context: ctx });
+              if (review && 'ok' in review) return review;
+              if (review) return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+                details: { review: projectNativeJsonValueForTransport(review), reviewDigest: computeActionReviewDigestV1(actionId, review) } };
+            }
+            return completeActionResult(result);
           } catch (error) {
             const code = readRpcErrorCode(error);
             // These acknowledgements prove refusal before the handler can execute.

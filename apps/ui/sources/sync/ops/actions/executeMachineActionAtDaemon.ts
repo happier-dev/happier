@@ -4,6 +4,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** Runs the Machine-owned Action; a review digest means the person confirmed the review the Machine carried back. */
 type ExecuteAction = (input: unknown, reviewDigest?: string) => Promise<unknown>;
@@ -12,21 +13,21 @@ type ConfirmPresentUserAction = NonNullable<ActionExecutorDeps['presentUserActio
 const REVIEW_DIGEST = /^[A-Za-z0-9_-]{43}$/u;
 
 /** The exact review a receiving executor carried back with its refusal, if it carried one. */
-function readCarriedReview(result: Extract<ActionExecuteResult, { ok: false }>): Readonly<{ preview: unknown; reviewDigest: string }> | null {
+function readCarriedReview(result: Extract<ActionExecuteResult, { ok: false }>): Readonly<{ actionArgs: unknown; preview: unknown; reviewDigest: string }> | null {
     const details = result.details;
     if (!details || typeof details !== 'object') return null;
     const { review, reviewDigest } = details as { review?: unknown; reviewDigest?: unknown };
     const preview = review && typeof review === 'object' ? (review as { preview?: unknown }).preview : undefined;
     // The digest binds consequences the person must see: without the preview there is nothing to confirm (fail closed).
     if (typeof reviewDigest !== 'string' || !REVIEW_DIGEST.test(reviewDigest) || !preview || typeof preview !== 'object') return null;
-    return { preview, reviewDigest };
+    return { actionArgs: (review as { actionArgs?: unknown }).actionArgs, preview, reviewDigest };
 }
 
 /**
  * A receiving executor without a presenter (the daemon, an Environment's controller) refuses a present person's own
  * UI press before any effect and carries back the exact review its approval builder produced. The person's
- * executor owns the confirmation host (docs/actions.md): it presents that review once and re-executes exactly the
- * refused input with a confirmation bound to the review's digest; the receiving executor admits it only while those
+ * executor owns the confirmation host (docs/actions.md): it presents that review and re-executes the reviewed input
+ * (including Open's host-prepared private destination) with a confirmation bound to its digest; the receiving executor admits it only while those
  * consequences still hold. It never creates a self-approval request. A press that already carried a confirmation,
  * a refusal without a carried review, or any request that is not the person's own (Agent, Session, plugin, another
  * person) keeps the refusal and its own approval path.
@@ -38,12 +39,23 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
         || context.interactivePresentation === 'unavailable' || !isPresentUserHostInvocation(context)
         || context.presentUserConfirmation) return result;
     const review = readCarriedReview(result);
-    const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
+    // Open's native owner can offer the prepared private destination after refusing
+    // the caller's path. The new invocation still receives ordinary host admission.
+    const parsed = getActionSpec(actionId).inputSchema.safeParse(actionId === 'projects.open' ? review?.actionArgs : input);
     if (!review || !parsed.success) return result;
     const confirmed = await confirm({ actionId, input: parsed.data, context, preview: review.preview });
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
-    return await executeConfirmed(parsed.data, review.reviewDigest);
+    const executed = await executeConfirmed(parsed.data, review.reviewDigest);
+    // A first confirmation may precede native destination preparation. Present a
+    // changed destination through this same surface; an unchanged refusal stays refused.
+    if (actionId === 'projects.open' && !executed.ok && executed.errorCode === 'action_interactive_review_required') {
+        const next = readCarriedReview(executed);
+        if (next && !sameStrictJsonValue(next.actionArgs, parsed.data)) {
+            return confirmOwnUiRefusal(actionId, parsed.data, context, executed, confirm, executeConfirmed);
+        }
+    }
+    return executed;
 }
 
 /** The daemon admits the Action; the originating UI presents the review it carries back when it cannot present it. */

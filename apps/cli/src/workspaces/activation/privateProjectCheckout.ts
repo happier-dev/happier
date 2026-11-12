@@ -1,22 +1,23 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { join } from 'node:path';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import type { WorkspaceActivationRequestV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import type { WorkspaceActivationRequestV1, OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { readAgentIsolationMemberWorkspaceRoot } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 
 type MemberRoot = Awaited<ReturnType<typeof readAgentIsolationMemberWorkspaceRoot>>;
+type DestinationReview = NonNullable<Extract<OpenProjectResultV1, { kind: 'refused' }>['destinationReview']>;
 
 export type PrivateProjectCheckoutRefusalReason = 'workspace_private_checkout_required'
   | 'workspace_private_checkout_review_required' | 'workspace_git_metadata_shared' | 'workspace_private_checkout_retired';
 
 /** One private checkout refusal vocabulary; outer owners log its non-content
  * diagnostic without widening Open's strict public result. */
-export function privateProjectCheckoutRefusal(reason: PrivateProjectCheckoutRefusalReason = 'workspace_private_checkout_required'): PluginError {
+export function privateProjectCheckoutRefusal(reason: PrivateProjectCheckoutRefusalReason = 'workspace_private_checkout_required', destinationReview?: DestinationReview): PluginError {
   return new PluginError({ code: reason === 'workspace_private_checkout_review_required' ? reason : 'workspace_private_checkout_required',
     message: 'Private checkout is unavailable', retryable: false,
-    details: { reason, phase: 'native_execution_admission' } });
+    details: { reason, phase: 'native_execution_admission', ...(destinationReview ? { destinationReview } : {}) } });
 }
 
 export type PrivateProjectCheckout = Readonly<{
@@ -74,6 +75,7 @@ export function preparePrivateProjectCheckout(input: PreparePrivateProjectChecko
 export function admitPrivateProjectCheckoutDestination(input: Readonly<{
   prepared: PrivateProjectCheckout;
   materialization: WorkspaceActivationRequestV1;
+  reviewIdentity?: Pick<DestinationReview, 'accountId' | 'serverId' | 'machineId'>;
 }>): void {
   const choice = input.materialization;
   const matches = choice.kind === 'sync'
@@ -81,6 +83,8 @@ export function admitPrivateProjectCheckoutDestination(input: Readonly<{
     : choice.kind === 'clone' && choice.destinationParentPath === input.prepared.destinationParentPath
       && choice.destinationDirectoryName === input.prepared.destinationDirectoryName;
   if (!matches) {
-    throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
+    throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required', choice.kind === 'clone' && input.reviewIdentity
+      ? { ...input.reviewIdentity, destinationParentPath: input.prepared.destinationParentPath,
+        destinationDirectoryName: input.prepared.destinationDirectoryName } : undefined);
   }
 }

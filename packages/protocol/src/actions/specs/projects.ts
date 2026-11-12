@@ -196,6 +196,12 @@ function createProjectContextActionSpecs() {
     cli: { commands: [{ path: ['projects', 'open'], visibility: 'canonical' }], acceptsServerId: true, requiresServerId: true },
     inputSchema: OpenProjectInputV1Schema,
     outputSchema: OpenProjectResultV1Schema,
+    approvalPresentation: { summary: (input: unknown) => {
+      const parsed = OpenProjectInputV1Schema.safeParse(input);
+      if (!parsed.success || parsed.data.materialization.kind !== 'clone') return null;
+      const choice = parsed.data.materialization;
+      return `Clone on Machine ${parsed.data.machineId}. Destination folder: ${choice.destinationParentPath}; checkout: ${choice.destinationDirectoryName}. Project setup requires separate approval.`;
+    } },
     inputHints: {
       title: 'Open a project',
       fields: [

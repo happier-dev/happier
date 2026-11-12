@@ -16,6 +16,11 @@ import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
 import { readSettings, readStoredCredentials, readStoredCredentialsForServerId, updateSettings } from '@/persistence';
 import { registerProjectOpenRpcHandlers } from './registerProjectOpenRpcHandlers';
+import { dispatchProjectsDispatch2 } from '../../../../../../packages/protocol/src/actions/executor/projects/dispatch';
+import { confirmOwnUiRefusal } from '../../../../../../apps/ui/sources/sync/ops/actions/executeMachineActionAtDaemon';
+import { computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { prepareApprovalRequest } from '../../../../../../packages/protocol/src/actions/executor/approvalPreparation';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
@@ -1120,6 +1125,64 @@ describe('Project Open RPC', () => {
         .toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable', effectAttempted: false });
       expect(post).not.toHaveBeenCalled();
       expect(nativeBoundary.runAsUsers).toEqual([]);
+      if (!syncing && mode === 'plain') {
+        const sharedSource = { ...source, createdByAccountId: 'requester', audience: [{ principal: { kind: 'team' as const, teamId: 'team-source' }, level: 'view' as const }] };
+        vi.mocked(axios.request).mockImplementation(async request => {
+          assertBobHeaders(request.headers);
+          return { status: 200, data: { ok: true, source: sharedSource, canManage: false } };
+        });
+        const clone = { ...input, source: { kind: 'source' as const, id: sharedSource.id, revision: sharedSource.revision,
+          selector: sharedSource.repository }, materialization: { kind: 'clone' as const,
+          destinationParentPath: '/tmp', destinationDirectoryName: 'replay131-g-compose' } };
+        expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(clone, context)).toMatchObject({
+          kind: 'refused', code: 'workspace_private_checkout_review_required', effectAttempted: false,
+          destinationReview: { accountId: 'bob', serverId: homeId, machineId: 'machine',
+            destinationParentPath: member.workspaceRoot, destinationDirectoryName: 'replay131-g-compose' },
+        });
+        const press: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: homeId, runtimeAccountId: 'bob', actionRequestId: 'clone-review' };
+        const deps = { projectsOpen: async (next: OpenProjectInputV1) =>
+          OpenProjectResultV1Schema.parse(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(next, context)) } satisfies ActionExecutorDeps;
+        const carried = await dispatchProjectsDispatch2({ actionId: 'projects.open', data: clone, deps, ctx: press });
+        expect(carried).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        if (!carried || carried.ok) throw new Error('Expected a carried private destination review');
+        let confirmedDestination: unknown;
+        const confirmed = await confirmOwnUiRefusal('projects.open', clone, press, carried, async request => {
+          expect(request.preview).toMatchObject({ actionArgs: { materialization: {
+            destinationParentPath: member.workspaceRoot, destinationDirectoryName: 'replay131-g-compose' } } });
+          expect(JSON.stringify(request.preview)).toContain(member.workspaceRoot);
+          expect(request.preview).toMatchObject({ summary: expect.stringContaining(member.workspaceRoot) });
+          return true;
+        }, async (next, digest) => {
+          confirmedDestination = next;
+          const review = await prepareApprovalRequest({ deps, actionId: 'projects.open', input: next, actionArgs: next, context: press });
+          if (!review || 'ok' in review) throw new Error('Expected the canonical review');
+          expect(digest).toBe(computeActionReviewDigestV1('projects.open', review));
+          // The originating UI's next HTTP dispatch is the boundary here. The native
+          // destination handback above ran through the installed Open receiver.
+          return { ok: true, result: { kind: 'opened' } };
+        });
+        expect(confirmed.ok).toBe(true);
+        expect(confirmedDestination).toMatchObject({ source: clone.source, materialization: {
+          kind: 'clone', destinationParentPath: member.workspaceRoot, destinationDirectoryName: 'replay131-g-compose' } });
+        expect(await confirmOwnUiRefusal('projects.open', clone, press, carried, async () => false,
+          async () => { throw new Error('Cancel must not resubmit'); })).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        const initialReview = await prepareApprovalRequest({ deps, actionId: 'projects.open', input: clone, actionArgs: clone, context: press });
+        if (!initialReview || 'ok' in initialReview) throw new Error('Expected the original Open review');
+        const confirmations: unknown[] = [];
+        const submissions: unknown[] = [];
+        const chained = await confirmOwnUiRefusal('projects.open', clone, press, {
+          ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+          details: { review: initialReview, reviewDigest: computeActionReviewDigestV1('projects.open', initialReview) },
+        }, async request => { confirmations.push(request.input); return true; }, async next => {
+          submissions.push(next);
+          return submissions.length === 1 ? carried : { ok: true, result: { kind: 'opened' } };
+        });
+        expect(chained.ok).toBe(true);
+        expect(confirmations).toEqual([clone, confirmedDestination]);
+        expect(submissions).toEqual(confirmations);
+        expect(nativeBoundary.runAsUsers).toEqual([]);
+      }
       if (syncing && input.materialization.kind === 'sync') {
         for (const [denied, code] of [[{ ...input, materialization: { ...input.materialization,
           targetPath: join(member.workspaceRoot, '..', 'other-member', 'foreign-checkout') } }, 'workspace_private_checkout_review_required'],
