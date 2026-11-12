@@ -9,6 +9,7 @@ import type { DaemonLocalServiceInventoryRefreshResponseV1, DaemonLocalServiceIn
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { RpcHandler } from '@/api/rpc/types';
 
 import type { LocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
@@ -313,6 +314,8 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                     error: 'Local service Action policy executor is unavailable' };
                 const result = await handler(request, context);
                 if (result && typeof result === 'object' && 'ok' in result && result.ok === false) return result;
+                const deferredApproval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+                if (deferredApproval.success) return deferredApproval.data;
                 return DaemonLocalServiceActionExecuteResponseV1Schema.parse({
                     protocolVersion: 1,
                     result,

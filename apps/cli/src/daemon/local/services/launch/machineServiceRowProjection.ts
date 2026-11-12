@@ -59,7 +59,8 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             const previous = observed.get(handle);
             const identity = previous?.identity ?? (handle.kind === 'environment' ? handle.identity
                 : handle.kind === 'adopted' ? watchIdentity(handle.watch, handle.machineId) : undefined);
-            const name = handle.kind === 'adopted' ? handle.watch.name : handle.kind === 'environment' ? handle.composeService : snapshot.id;
+            const name = handle.kind === 'adopted' ? handle.watch.name : handle.kind === 'environment' ? handle.composeService
+                : handle.declaration.selection.kind === 'manifest' ? handle.declaration.selection.name : handle.declaration.selection.source.target;
             const endpoint = readManagedServiceEndpointUrl(snapshot.baseUrl, {
                 hostPolicy: managedServiceEndpointHostPolicyForMode(snapshot.mode),
             });
