@@ -4,7 +4,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createTempFixture } from '../../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
-import { buildNodeAddon, resolveArtifactName, resolveRustTarget } from './build-node-addon.mjs';
+import { buildNodeAddon, resolveArtifactName, resolveRustTarget, resolveSessionHolderArtifactName, resolveSessionTargetHolderArtifactName, SESSION_TARGET_HOLDER_RUST_TARGETS } from './build-node-addon.mjs';
 
 test('native addon uses an explicitly shared Cargo target for compilation and artifact discovery', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-iroh-shared-target-' });
@@ -12,7 +12,7 @@ test('native addon uses an explicitly shared Cargo target for compilation and ar
   await mkdir(bin);
   // Cargo is the external process boundary; its fixture emits a real file at
   // the requested target so the real build script must discover that output.
-  await writeFile(join(bin, 'cargo'), `#!/bin/sh\n[ "$CARGO_TARGET_DIR" = "$EXPECTED_CARGO_TARGET" ] || exit 23\nwhile [ "$1" != --target ]; do shift; done\nshift\nmkdir -p "$CARGO_TARGET_DIR/$1/release"\nprintf fixture > "$CARGO_TARGET_DIR/$1/release/libhappier_iroh_node.${process.platform === 'darwin' ? 'dylib' : 'so'}"\n`, { mode: 0o755 });
+  await writeFile(join(bin, 'cargo'), `#!/bin/sh\n[ "$CARGO_TARGET_DIR" = "$EXPECTED_CARGO_TARGET" ] || exit 23\ncase "$*" in *happier-session-holder*) out=happier-session-holder ;; *) out=libhappier_iroh_node.${process.platform === 'darwin' ? 'dylib' : 'so'} ;; esac\nwhile [ "$1" != --target ]; do shift; done\nshift\nmkdir -p "$CARGO_TARGET_DIR/$1/release"\nprintf fixture > "$CARGO_TARGET_DIR/$1/release/$out"\necho fixture-cargo-stdout\n`, { mode: 0o755 });
   // Run copies of the real builder and its toolchain helper in scratch so no
   // package-native output is replaced by a fixture.
   const scriptDir = join(root, 'package', 'scripts');
@@ -24,7 +24,12 @@ test('native addon uses an explicitly shared Cargo target for compilation and ar
     encoding: 'utf8', env: { ...process.env, PATH: bin + ':' + process.env.PATH, CARGO_TARGET_DIR: target, EXPECTED_CARGO_TARGET: target },
   });
   assert.equal(result.status, 0, result.stderr);
+  // The source-runtime producer imports buildNodeAddon and parses its own stdout
+  // as JSON, so Cargo output is diagnostic and must stay on stderr.
+  assert.ok(!result.stdout.includes('fixture-cargo-stdout'), 'Cargo output must not reach stdout');
   await access(join(root, 'package', 'native', `happier-iroh-native-lifecycle.${process.platform}-${process.arch}.node`));
+  await access(join(root, 'package', 'native', `happier-session-holder.${process.platform}-${process.arch}`));
+  for (const arch of ['x64', 'arm64']) await access(join(root, 'package', 'native', resolveSessionTargetHolderArtifactName(arch)));
 });
 
 for (const [platform, arch, rustTarget, dylib] of [
@@ -39,18 +44,43 @@ for (const [platform, arch, rustTarget, dylib] of [
   const artifactDir = join(root, 'runtime/native');
   const cargoTargetDir = join(root, 'cargo');
   const bytes = Buffer.from([0, 255, 4, 128]);
+  const holderBytes = Buffer.from([7, 7, 7]);
+  const holderRustFlags = [];
+  const targetHolderBuilds = [];
   const artifact = await buildNodeAddon({ packageDir, artifactDir, cargoTargetDir, platform, arch,
+    prepareTargetToolchain: () => undefined,
     runCommand: async (command, args, options) => {
       assert.equal(command, 'cargo');
       assert.equal(options.cwd, packageDir);
-      assert.equal(args[args.indexOf('--target') + 1], rustTarget);
+      const requested = args[args.indexOf('--target') + 1];
+      if (requested.endsWith('-linux-musl')) {
+        // Container-target holders: static musl for both Linux architectures, linked by the toolchain's own lld on every host.
+        targetHolderBuilds.push([requested, options.env.RUSTFLAGS]);
+        const output = join(cargoTargetDir, requested, 'release', 'happier-session-holder');
+        await mkdir(dirname(output), { recursive: true });
+        await writeFile(output, Buffer.from(requested));
+        return;
+      }
+      assert.equal(requested, rustTarget);
       assert.equal(options.env.CARGO_TARGET_DIR, cargoTargetDir);
-      const output = join(cargoTargetDir, rustTarget, 'release', dylib);
+      const holder = args.includes('happier-session-holder');
+      if (holder) holderRustFlags.push(options.env.RUSTFLAGS ?? '');
+      else assert.equal(options.env.RUSTFLAGS, undefined);
+      const output = join(cargoTargetDir, rustTarget, 'release',
+        holder ? `happier-session-holder${platform === 'win32' ? '.exe' : ''}` : dylib);
       await mkdir(dirname(output), { recursive: true });
-      await writeFile(output, bytes);
+      await writeFile(output, holder ? holderBytes : bytes);
     } });
   assert.equal(artifact, join(artifactDir, resolveArtifactName(platform, arch)));
   assert.deepEqual(await readFile(artifact), bytes);
+  // The holder ships beside the addon; it is static wherever the libc is not
+  // guaranteed (gnu, msvc), and macOS keeps its system libSystem link.
+  assert.deepEqual(await readFile(join(artifactDir, resolveSessionHolderArtifactName(platform, arch))), holderBytes);
+  assert.deepEqual(holderRustFlags, [platform === 'darwin' ? '' : '-C target-feature=+crt-static']);
+  assert.deepEqual(targetHolderBuilds, Object.values(SESSION_TARGET_HOLDER_RUST_TARGETS).map(target => [target, '-C linker=rust-lld -C link-self-contained=yes']));
+  for (const [targetArch, target] of Object.entries({ x64: 'x86_64-unknown-linux-musl', arm64: 'aarch64-unknown-linux-musl' })) {
+    assert.deepEqual(await readFile(join(artifactDir, resolveSessionTargetHolderArtifactName(targetArch))), Buffer.from(target));
+  }
 });
 
 test('a Cargo failure never publishes an addon', async t => {

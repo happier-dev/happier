@@ -116,13 +116,13 @@ export function prepareRustToolchain({ platform, channel, env = process.env }) {
     const executable = command === 'rustup'
       ? rustup
       : command;
-    const result = spawnSync(executable, args, { env, stdio: 'inherit' });
+    const result = spawnSync(executable, args, { env, stdio: ['inherit', 2, 'inherit'] });
     if (result.status !== 0) {
       throw new Error(`${command} ${args.join(' ')} failed with status ${result.status ?? result.error}`);
     }
   }
   if (platform === 'host') {
-    const compiler = spawnSync(rustup, ['run', channel, 'rustc', '--version'], { env, stdio: 'inherit' });
+    const compiler = spawnSync(rustup, ['run', channel, 'rustc', '--version'], { env, stdio: ['inherit', 2, 'inherit'] });
     if (compiler.status !== 0) throw new Error(`Rust ${channel} is unavailable after preparation`);
   }
 }

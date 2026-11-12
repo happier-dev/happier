@@ -99,9 +99,10 @@ test('native host setup finds user-local rustup off PATH, verifies the pin and r
   await writeFile(join(cargoHome, 'bin/rustup'), `#!/bin/sh
 case "$*" in
   --version) echo fixture-rustup ;;
-  'run ${channel} rustc --version') [ -f "$CARGO_HOME/ready" ] ;;
+  'run ${channel} rustc --version') [ -f "$CARGO_HOME/ready" ] && echo fixture-rustc ;;
   'toolchain install ${channel} --profile minimal')
     printf '%s\\n' "$*" >> "$CARGO_HOME/installs"
+    echo fixture-install-progress
     [ "\${TEST_FAIL_RUST:-0}" = 1 ] || printf ready > "$CARGO_HOME/ready" ;;
   *) exit 79 ;;
 esac
