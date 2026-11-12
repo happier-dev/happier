@@ -1,7 +1,7 @@
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSchema, ExternalActionMachineBootstrapV1Schema,
     ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1, projectExternalActionHttpFailureV1, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
@@ -365,7 +365,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if ((foreignCustody || finite || params.invocation || retainedResource) && !row.installationId) return failure('content_unavailable');
     if ((foreignCustody || params.invocation) && !row.installationPublicKey) return failure('content_unavailable');
     if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
-    return await executeOriginalAccountActionTransport({ account, input: params.input, authority: params.authority,
+    const input = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        ? projectSessionSpawnNewApiRequest(params.input).input : params.input;
+    return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),
         ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
         ...(pluginInvocation ? { pluginInvocation } : {}),

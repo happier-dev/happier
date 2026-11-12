@@ -1,4 +1,4 @@
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   API_TOKEN_FULL_GRANT_V1,
   computeExternalActionRequestEnvelopeDigestV1,
@@ -300,12 +300,14 @@ describe('registerExternalActionRpcHandler', () => {
   it('refuses a replaced installation during the final awaited Home check', async () => {
     const { handlers, registrar } = registerHandlerForTest();
     const sessionSpawnNew = vi.fn(async () => SESSION_SPAWN_PENDING_RESULT);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew });
+    const execute = vi.spyOn(executor, 'execute');
     let installationId = 'installation-1';
     registerExternalActionRpcHandler(registrar, {
       machineId: 'machine-1', currentServerId: 'home-profile',
       resolveAccountId: async () => 'account-1', resolveInstallationId: () => installationId,
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'daemon-token', encryption: null } }),
-      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      executor,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
       // Home verification is the network boundary. Installation replacement
       // while it is awaited must still prevent the reached host effect.
@@ -326,15 +328,18 @@ describe('registerExternalActionRpcHandler', () => {
     expectPreparedRelayResponse(result, { v: 1, actionId: 'session.spawn_new', requestId: 'installation-replaced',
       execution: { ok: false, effectAttempted: false, errorCode: 'not_authenticated', error: 'not_authenticated' } });
     expect(sessionSpawnNew).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('refuses a foreign Account root without private requester custody even with a current Home proof', async () => {
     const { handlers, registrar } = registerHandlerForTest();
+    const executor = createActionExecutor(createUnavailableActionTransportDeps());
+    const execute = vi.spyOn(executor, 'execute');
     registerExternalActionRpcHandler(registrar, {
       machineId: 'machine-1', currentServerId: 'home-profile',
       resolveAccountId: async () => 'alice', resolveInstallationId: () => 'alice-installation',
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'alice-daemon-token', encryption: null } }),
-      executor: createActionExecutor(createUnavailableActionTransportDeps()),
+      executor,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
       verifyExecutionAuthorization: async () => true,
     });
@@ -361,23 +366,28 @@ describe('registerExternalActionRpcHandler', () => {
     });
     expectPreparedRelayResponse(replaced, { v: 1, actionId: 'session.spawn_new', requestId: 'bob-start',
       execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local', details: { phase: 'target_installation' } } });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('admits only the server-stamped exact-machine dispatch into the canonical ingress', async () => {
     const { handlers, registrar } = registerHandlerForTest();
-    const resolveTarget = vi.fn<ResolveExternalActionTarget>(async () => (
-      { kind: 'machine', machineId: 'machine-1' }
-    ));
-    const execute = vi.fn<ExternalActionExecutor['execute']>(async () => (
-      { ok: true, result: SESSION_SPAWN_PENDING_RESULT }
-    ));
-    const executor = { execute } satisfies ExternalActionExecutor;
+    // Session creation is the process boundary. Target selection, public input
+    // binding and full Action admission run through their production owners.
+    const sessionSpawnNew = vi.fn(async () => SESSION_SPAWN_PENDING_RESULT);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew });
+    const execute = vi.spyOn(executor, 'execute');
+    const spawn = projectSessionSpawnNewApiRequest({
+      creationKey: 'canonical-ingress-start',
+      executionTarget: { serverId: 'server-reserved-rpc', machineId: 'machine-1' },
+      directory: { kind: 'managed' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    });
     registerExternalActionRpcHandler(registrar, {
       machineId: 'machine-1',
       currentServerId: 'server-reserved-rpc',
       resolveAccountId: async () => 'account-1',
       ...currentInstallationBoundary,
-      resolveTarget,
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'daemon-token', encryption: null } }),
       executor,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
     });
@@ -391,8 +401,8 @@ describe('registerExternalActionRpcHandler', () => {
       envelope: {
         v: 1,
         requestId: 'request-1',
-        target: { kind: 'machine', machineId: 'machine-1' },
-        input: { sessionId: 'session-1' },
+        target: spawn.target,
+        input: spawn.input,
       },
       principal: {
         accountId: 'account-1',
@@ -415,17 +425,14 @@ describe('registerExternalActionRpcHandler', () => {
       requestId: 'request-1',
       execution: { ok: true, result: SESSION_SPAWN_PENDING_RESULT },
     });
-    expect(resolveTarget).toHaveBeenCalledWith(expect.objectContaining({
-      actionId: 'session.spawn_new',
-      currentMachineId: 'machine-1',
-      signal,
-    }));
-    expect(executor.execute).toHaveBeenCalledWith('session.spawn_new', { sessionId: 'session-1' }, expect.objectContaining({
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith('session.spawn_new', spawn.input, expect.objectContaining({
       surface: 'api',
       authority: 'account_automation',
       serverId: 'server-reserved-rpc',
       signal,
     }));
+    expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
   });
 
   it('preserves a verified Session envelope target through the reserved server-origin ingress', async () => {

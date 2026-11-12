@@ -92,7 +92,7 @@ export function prepareMachineRows(params: MachineRowsReadOptions) {
         async read(machineIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, MachinePublishedRowV1 | null>> {
             try {
                 return await reservation.run(machineIds,
-                    (ids, sharedSignal) => readMachineRowsBatch(params.readTransport, ids, sharedSignal), signal);
+                    (ids, sharedSignal) => readMachineRowsBatch(params, ids, sharedSignal), signal);
             } finally { reservation.release(); }
         },
     };
@@ -100,11 +100,16 @@ export function prepareMachineRows(params: MachineRowsReadOptions) {
 
 export type PreparedMachineRows = ReturnType<typeof prepareMachineRows>;
 
-export async function readMachineRows(params: MachineRowsReadOptions & Readonly<{ machineIds: readonly string[] }>): Promise<ReadonlyMap<string, MachinePublishedRowV1 | null>> {
-    return await prepareMachineRows(params).read(params.machineIds);
+type MachineRowsRequest = (path: string, init: RequestInit) => Promise<Response>;
+type MachineRowsSource = Readonly<{ readTransport: CapturedServerReadTransport; request?: MachineRowsRequest }>
+    | Readonly<{ readTransport?: CapturedServerReadTransport; request: MachineRowsRequest }>;
+
+export async function readMachineRows(params: MachineRowsSource & Readonly<{ machineIds: readonly string[]; signal?: AbortSignal; fresh?: boolean }>): Promise<ReadonlyMap<string, MachinePublishedRowV1 | null>> {
+    if (!params.readTransport) return readMachineRowsBatch(params, params.machineIds, params.signal);
+    return await prepareMachineRows({ ...params, readTransport: params.readTransport }).read(params.machineIds);
 }
 
-async function readMachineRowsBatch(readTransport: CapturedServerReadTransport, ids: readonly string[], signal: AbortSignal) {
+async function readMachineRowsBatch(source: MachineRowsSource, ids: readonly string[], signal?: AbortSignal) {
     const emptyBody = { machineIds: [] as string[] };
     const batches: string[][] = [];
     let budget = createServerHttpRequestBodyItemBudgetV1(emptyBody);
@@ -123,12 +128,17 @@ async function readMachineRowsBatch(readTransport: CapturedServerReadTransport, 
     const result = new Map<string, MachinePublishedRowV1 | null>();
     for (const machineIds of batches) {
         const input = MachineReadBatchRequestV1Schema.parse({ machineIds });
-        const body = await readTransport.read('/v1/machines/read-batch', {
+        const init = {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
-        }, undefined, async response => {
+        };
+        const consume = async (response: Response) => {
             assertMachineReadResponse(response);
             return MachineReadBatchResponseV1Schema.parse(await response.json());
-        });
+        };
+        const body = source.readTransport
+            ? await source.readTransport.read('/v1/machines/read-batch', init, undefined, consume)
+            // Request-only API-token/embed Accounts have no shared read transport.
+            : await consume(await source.request!('/v1/machines/read-batch', init));
         const expected = new Set(machineIds);
         for (const row of body.results) {
             if (!expected.delete(row.machineId) || (row.status === 'found' && row.machine.id !== row.machineId)) {

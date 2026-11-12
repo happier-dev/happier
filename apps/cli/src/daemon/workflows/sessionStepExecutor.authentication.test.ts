@@ -10,7 +10,9 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createProductionFreshWorkflowSessionConversation } from './sessionStepExecutor';
+import { createAdmittedFreshWorkflowSessionConversation as createProductionFreshWorkflowSessionConversation } from './workflowSessionStartup.testkit';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 
@@ -36,6 +38,7 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
     vi.spyOn(axios, 'get').mockImplementation(async input => {
       const path = new URL(String(input)).pathname;
       if (path === '/v2/account/settings') return { status: 200, data: { version: 9, content: { t: 'plain', v: {} } } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       if (path === '/v1/account/entity-rows/connected-accounts/purposes') return { status: 200,
         data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 3,
@@ -54,7 +57,19 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
       throw new Error('Unexpected Home mutation');
     });
     const admitted: unknown[] = [];
-    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async ({ method, request }) => {
+    const machineBoundary: typeof machineRpc.callExactMachineRpc = async ({ method, request }) => {
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+        return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+          claude: { id: 'claude', title: 'Claude', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+        } } };
+      }
+      if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { 'cli.claude': {
+        ok: true, checkedAt: 1, data: { installed: true, version: null, latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+          platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
+      } } };
+      if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) return prepareSessionCreationTarget({
+        request: SessionCreationTargetPreparationRequestV1Schema.parse(request) });
       if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error('Unexpected Machine method');
       admitted.push(request);
       birthMetadata = buildCommittedLaunchMetadata({ options: SpawnDaemonSessionRequestSchema.parse(request),
@@ -67,7 +82,9 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
       return { type: 'success', sessionId: 'connected-child', sessionCreationOutcome: {
         disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
       } };
-    });
+    };
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(machineBoundary);
+    vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(machineBoundary);
     const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1', machineId: 'machine-1',
       workDepth: 0, originRunId: 'workflow-run', machineAdmissionTransport: async () => ({ status: 'accepted', localId: 'unused' }),
     });

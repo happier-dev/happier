@@ -516,6 +516,28 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(storage.getState().sessions['cold-session']).toBeUndefined();
     expect(homes.requestsFor('/v2/sessions/cold-session/pending')).toHaveLength(1);
   });
+  it('keeps attachment preflight guidance through the real wrapper and Action consumer', async () => {
+    const sessionId = 'attachment-preflight';
+    installSession(sessionId, { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
+    const { createSessionDraftMessageExecute } = await import('@/components/sessions/composer/submitSessionDraft');
+    const { describeUploadFailure } = await import('@/components/transfers/describeUploadFailure');
+    const { readSessionComposerMessagingOutcome } = await import('@/components/sessions/composer/sessionComposerMessaging');
+    const { t } = await import('@/text');
+    const execute = createSessionDraftMessageExecute({
+      sessionTarget: { serverId, accountId: 'alice', sessionId },
+      sourceComposerRef: { kind: 'session', sessionId }, originalMessage: 'Inspect this', isCurrent: () => true,
+      drafts: [{ id: 'oversized', status: 'pending', source: { kind: 'memory', name: 'note.txt', bytes: new Uint8Array(2) } }],
+      config: { uploadLocation: 'workspace', workspaceRelativeDir: '.happier/uploads',
+        vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false, maxFileBytes: 1 },
+    });
+    const result = await execute('session.message.send', { sessionId, message: 'Inspect this', reply: 'none',
+      localId: 'attachment-input', requestedAction: { v: 1, kind: 'send_now' },
+      structuredInput: { v: 1, sessionAttachments: [] } }, context());
+    expect(result).toMatchObject({ ok: false, errorCode: 'attachment_too_large' });
+    expect(readSessionComposerMessagingOutcome(result)).toEqual({ kind: 'unaccepted',
+      error: describeUploadFailure('tooLarge', t('common.machine')) });
+    expect(homes.requestsFor(`/v2/sessions/${sessionId}/pending`)).toHaveLength(0);
+  });
   it('retires default ACP metadata publication while the captured Session body is held', async () => {
     const sessionId = 'retired-acp-body';
     installSession(sessionId, { path: '/private/captured-account', flavor: 'opencode' });
@@ -1044,6 +1066,9 @@ describe('default Action executor mode and catalog contracts', () => {
       if (!actionResult) throw new Error('Composer must publish its Action result');
       return actionResult;
     };
+    // Account bootstrap deliberately refreshes the complete Machine census;
+    // measure only the sends after that fixture-owned acquisition has settled.
+    const machineListReadsBeforeSend = homes.requests.filter(request => request.path.split('?')[0] === '/v1/machines').length;
     const result = client === 'composer' || client === 'composer_wait' || group ? await composerSubmit() : surface === 'voice'
       ? JSON.parse(await (await import('@/voice/tools/handlers')).createVoiceToolHandlers({
           resolveSessionId: explicit => explicit ?? 'origin-session', currentSessionAddress: { serverId, sessionId: 'origin-session' },
@@ -1156,6 +1181,11 @@ describe('default Action executor mode and catalog contracts', () => {
       const send = () => createDefaultActionExecutor().execute('session.message.send', { ...input, localId: `ask-input-${++sendNumber}` }, context());
       for (const sent of await Promise.all([send(), send()])) expect(sent).toEqual({ ok: true, result: outcome });
       expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(3);
+      // Repeated waited sends know their host: no Machine census per input.
+      expect(homes.requests.filter(request => request.path.split('?')[0] === '/v1/machines')).toHaveLength(machineListReadsBeforeSend);
+      const selectedReads = homes.requestsFor('/v1/machines/read-batch');
+      expect(selectedReads.length).toBeGreaterThan(0);
+      for (const read of selectedReads) expect(read.input).toEqual({ machineIds: ['machine-a'] });
       expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(1);
       const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
       publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-a' }, 'authority');

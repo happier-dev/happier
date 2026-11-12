@@ -38,6 +38,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLifecycleActions';
 import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
 import { ChildProcess } from 'node:child_process';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { createOnChildExited } from '@/daemon/sessions/onChildExited';
 import { formatSessionRunnerFailureCause, readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
 import type { TrackedSession } from '@/daemon/types';
@@ -100,6 +101,7 @@ function installWorkflowLaunchProfileAccount(
   const read = readiness.get.getMockImplementation()!;
   // Only the Home HTTP boundary is supplied; Profile opening and start admission stay real.
   readiness.get.mockImplementation(async (url: string) => {
+    if (new URL(url).pathname === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, []) };
     if (url.endsWith(PROFILE_ROWS_ROUTE_V1)) return { status: 200, data: page };
     if (url.endsWith(PROFILE_REFERENCE_GUARD_ROUTE_V1)) return { status: 200, data: { status: 'ready', revision: 1 } };
     if (url.endsWith(PROFILE_TRANSFER_ROUTE_V1)) return { status: 200, data: { status: 'absent' } };
