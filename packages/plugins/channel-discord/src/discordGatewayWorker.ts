@@ -415,10 +415,14 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
         async run(taskSignal) {
           const admissionSignal = taskSignal ?? signal;
           const channel = await readForAdmission(() => input.api.getChannel({ channelId }, { signal: admissionSignal }), admissionSignal);
-          if (channel === null) throw new Error('Discord Gateway message channel is no longer available.');
-          if (channel.kind === 'notReady') throw new DiscordGatewayLookupFailure(channel);
-          if (channel.kind !== 'direct' && channel.kind !== 'shared' && channel.kind !== 'thread') {
-            throw new Error(`Discord Gateway message channel kind '${channel.kind}' is unsupported.`);
+          // A deleted or non-message channel refuses this dispatch, not the connection.
+          if (channel === null || channel.kind === 'permissionParent') return {
+            kind: 'notReady', reason: 'unsupported',
+            diagnostic: 'Discord Gateway message channel is unavailable or unsupported.',
+          } satisfies DiscordApiFailure;
+          if (channel.kind === 'notReady') {
+            if (channel.reason === 'unsupported') return channel;
+            throw new DiscordGatewayLookupFailure(channel);
           }
           const messageGuildId = guildId(effect.payload);
           const roleMentionGuildId = messageGuildId && hasRoleMention(effect.payload)
@@ -482,7 +486,13 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
         },
       });
       const tracked = task.then(
-        () => undefined,
+        result => {
+          if (result === undefined) return;
+          input.logger?.info('[Discord Gateway] Message refused', {
+            phase: 'messageRefused', connectionId: input.connection.connectionId, event,
+            resultKind: result.kind, reason: result.reason,
+          });
+        },
         (error: unknown) => {
           if (isDiscordGatewayLookupFailure(error)) {
             closeForAdmissionLoss(error.failure);

@@ -96,6 +96,50 @@ function sentGatewayOpcodeCount(
 }
 
 describe('Discord Gateway worker', () => {
+  it.each([2, 15, 'deleted'] as const)('refuses only a message in channel kind %s and keeps the gateway admitting later messages', async channelKind => {
+    vi.useFakeTimers();
+    try {
+      const message = (id: string, channelId: string, event: 'MESSAGE_CREATE' | 'MESSAGE_UPDATE') => ({
+        op: 0, s: Number(id), t: event, d: { id, channel_id: channelId,
+          timestamp: '2024-01-01T00:00:00.000Z', edited_timestamp: '2024-01-01T00:00:01.000Z',
+          type: 0, content: 'hello', author: { id: 'human-1', bot: false }, attachments: [], embeds: [] },
+      });
+      const socket = socketUntilClosed([
+        { op: 10, d: { heartbeat_interval: 60_000 } },
+        { op: 0, s: 1, t: 'READY', d: { session_id: 'retained', resume_gateway_url: 'wss://gateway.discord.gg' } },
+        message('2', 'channel-1', 'MESSAGE_CREATE'), message('3', 'channel-1', 'MESSAGE_UPDATE'),
+        message('4', 'channel-1', 'MESSAGE_CREATE'), message('5', 'channel-2', 'MESSAGE_CREATE'),
+      ]);
+      let channelReads = 0;
+      const request = vi.fn(async ({ url }: Readonly<{ url: string }>) => {
+        const unavailable = url.endsWith('/channels/channel-1') && ++channelReads <= 2;
+        const value = url.endsWith('/gateway/bot') ? { url: 'wss://gateway.discord.gg',
+          session_start_limit: { total: 1000, remaining: 1000, reset_after: 86400000, max_concurrency: 1 } }
+          : unavailable ? { id: 'channel-1', type: channelKind, guild_id: 'guild-1', permission_overwrites: [] }
+          : { id: url.endsWith('/channel-1') ? 'channel-1' : 'channel-2', type: 1 };
+        return { status: unavailable && channelKind === 'deleted' ? 404 : 200, finalUrl: url,
+          headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(value)) };
+      });
+      const admitObservation = vi.fn(async () => undefined);
+      const logger = { info: vi.fn() };
+      const worker = startDiscordGatewayWorker({
+        connection: { connectionId: 'retained', authorityEpoch: 8, applicationId: 'application-1', botUserId: 'bot-1',
+          token: 'bot-token', runtime: { requiresFullSharedMessageContent: false },
+          applicationMessageContentIntentPermission: { kind: 'disabled', source: 'flags' } },
+        api: createDiscordBotApi({ token: 'bot-token', http: { request } }),
+        webSockets: { openWebSocket: async () => socket }, admitObservation, logger, signal: new AbortController().signal,
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(admitObservation.mock.calls).toHaveLength(2);
+        expect(socket.close).not.toHaveBeenCalled();
+        expect(sentGatewayOpcodeCount(socket, 2)).toBe(1);
+        expect(logger.info.mock.calls.filter(([, facts]) => facts?.resultKind === 'notReady' && facts?.reason === 'unsupported')).toHaveLength(2);
+      } finally { worker.stop(); }
+      await expect(worker.result).resolves.toEqual({ kind: 'stopped', unprovenContinuity: true });
+    } finally { vi.useRealTimers(); }
+  });
+
   it.each(['channel', 'role'] as const)('retries an HTTP 429 %s lookup after the provider delay within the retained admission', async lookup => {
     vi.useFakeTimers();
     try {

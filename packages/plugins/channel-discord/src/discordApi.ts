@@ -447,7 +447,10 @@ export function createDiscordBotApi(input: Readonly<{
       if (response.status === 404) return null;
       if (response.status < 200 || response.status >= 300) return failureFromResponse(response.status, response.body);
       const channel = parseKnownChannel(response.body, channelId);
-      return channel !== null && channel !== 'unsupported' ? channel : {
+      if (channel === 'unsupported') return {
+        kind: 'notReady', reason: 'unsupported', diagnostic: 'Discord channel kind is unsupported.',
+      };
+      return channel !== null ? channel : {
         kind: 'notReady',
         reason: 'invalidConfiguration',
         diagnostic: 'Discord returned an invalid channel response.',

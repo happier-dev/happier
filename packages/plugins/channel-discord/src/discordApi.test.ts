@@ -303,12 +303,18 @@ describe('Discord channel lookup', () => {
       http: { request: vi.fn(async () => response({ message: 'Unknown Channel' }, 404)) },
     });
     await expect(absent.getChannel({ channelId: 'channel-1' })).resolves.toBeNull();
+    const unsupported = createDiscordBotApi({
+      token: 'bot-token',
+      http: { request: vi.fn(async () => response({ id: 'channel-1', type: 2 })) },
+    });
+    await expect(unsupported.getChannel({ channelId: 'channel-1' })).resolves.toMatchObject({
+      kind: 'notReady', reason: 'unsupported',
+    });
 
     const malformedResponses = [
       ['mismatched channel id', { id: 'other-channel', type: 1 }],
       ['missing channel id', { type: 1 }],
       ['missing channel type', { id: 'channel-1' }],
-      ['unsupported channel type', { id: 'channel-1', type: 2 }],
       ['thread without a usable parent', { id: 'channel-1', type: 11, parent_id: '' }],
       [
         'malformed permission overwrites',
