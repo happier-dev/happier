@@ -217,7 +217,7 @@ function readViewportRoom(node: unknown): WidgetBodyPresentation['geometry'] | n
     const measure = (node as { getBoundingClientRect?: () => { width: number; height: number } } | null)?.getBoundingClientRect;
     if (typeof measure !== 'function') return null;
     const { width, height } = measure.call(node);
-    return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : null;
+    return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height >= 0 ? { width, height } : null;
 }
 
 export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFrameProps) {
@@ -259,7 +259,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const [geometry, setGeometry] = React.useState<WidgetBodyPresentation['geometry']>();
     const onViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
-        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height < 0) return;
         setGeometry(previous => previous?.width === width && previous.height === height ? previous : { width, height });
     }, []);
     const widgetPresentation = React.useMemo(() => props.widgetPresentation
@@ -267,7 +267,8 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         [props.widgetPresentation, geometry, inheritedPresentation]);
     // A widget lays itself out from its measured room (columns, strips, plot height). On the web a layout event
     // reaches it only after the first paint, and a busy page can hold that event for seconds, so the first commit
-    // reads the room itself: nothing paints in a layout it is about to leave.
+    // reads the room itself: nothing paints in a layout it is about to leave. A deferred body already
+    // has useful width at zero height; retry an unavailable room when that body activates.
     const viewportContentRef = React.useRef<View | null>(null);
     const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
     // Inside a group nothing clips (A6): a grid cell keeps its rows' room and grows; a phone's stack is its content.
@@ -286,7 +287,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         ? props.viewportHeight ?? rows * rowHeight : declaredBodyHeight;
     const onBodyBoxLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
-        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height < 0) return;
         const room = Math.max(height, declaredRoomHeight);
         setGeometry(previous => previous?.width === width && previous.height === room ? previous : { width, height: room });
     }, [declaredRoomHeight]);
@@ -297,7 +298,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         const room = readViewportRoom(bodyHeight !== 'fixed' && props.widgetPresentation ? content
             : content?.closest?.(`[data-testid="${props.testID}.viewport"]`) ?? null);
         if (room) setGeometry(bodyHeight !== 'fixed' ? { ...room, height: Math.max(room.height, declaredRoomHeight) } : room);
-    }, [geometry, props.testID, props.widgetPresentation, bodyHeight, declaredRoomHeight]);
+    }, [geometry, props.testID, props.widgetPresentation, props.body, bodyHeight, declaredRoomHeight]);
     // A fixed body whose rows run past it fades at the cut edge, so no line reads as cut off mid-height.
     const bodyFades = useScrollEdgeFades({ enabledEdges: FIXED_BODY_FADE_EDGES });
     const onFixedViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {

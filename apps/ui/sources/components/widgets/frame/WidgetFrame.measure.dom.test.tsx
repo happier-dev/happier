@@ -124,3 +124,68 @@ it('hands a web widget its measured room in the first commit, before any layout 
         container.remove();
     }
 });
+
+
+it('gives a deferred width-dependent body its room on its only activation layout', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let active = false;
+    // The OS layout boundary has width before deferred content gives the body height.
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+        x: 0, y: 0, width: 330, height: active ? 240 : 0,
+        top: 0, left: 0, right: 330, bottom: active ? 240 : 0, toJSON: () => ({}),
+    }));
+    const layouts: Array<number | undefined> = [];
+    function Body() {
+        const width = useWidgetPresentation()?.geometry?.width;
+        React.useLayoutEffect(() => { layouts.push(width); });
+        return <div style={{ height: width === 330 ? 240 : 664 }}>Width-dependent rows</div>;
+    }
+    const render = () => <WidgetFrame testID="deferred-room" frameStyle="card" placement="home" title="Capacity"
+        bodyHeight="content"
+        widgetPresentation={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular', width: 'half' } }}
+        body={{ kind: 'content', children: active ? <Body /> : <div style={{ height: 0 }} /> }} />;
+    try {
+        await act(async () => root.render(render()));
+        expect(layouts).toEqual([]);
+        active = true;
+        await act(async () => root.render(render()));
+        expect(layouts).toEqual([330]);
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
+
+
+it('retries an unavailable room when a deferred body activates with unchanged presentation', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let active = false;
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+        x: 0, y: 0, width: active ? 330 : 0, height: active ? 240 : 0,
+        top: 0, left: 0, right: active ? 330 : 0, bottom: active ? 240 : 0, toJSON: () => ({}),
+    }));
+    const presentation = { size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular', width: 'half' } } as const;
+    let width: number | undefined;
+    function Body() {
+        width = useWidgetPresentation()?.geometry?.width;
+        return <>Width-dependent rows</>;
+    }
+    const render = () => <WidgetFrame testID="unavailable-room" frameStyle="card" placement="home" title="Capacity"
+        bodyHeight="content" widgetPresentation={presentation}
+        body={{ kind: 'content', children: active ? <Body /> : <div /> }} />;
+    try {
+        await act(async () => root.render(render()));
+        active = true;
+        await act(async () => root.render(render()));
+        expect(width).toBe(330);
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
