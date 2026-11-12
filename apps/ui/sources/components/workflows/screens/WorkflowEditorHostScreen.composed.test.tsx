@@ -12,7 +12,7 @@ import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { editWorkflowTriggerDraft } from '../triggers/workflowTriggerDraft';
 import { flattenTestStyle, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { ModalProvider as RealModalProvider, useModal } from '@/modal/ModalProvider';
-import type { AlertModalConfig, ConfirmModalConfig, CustomModalConfig } from '@/modal/types';
+import type { AlertModalConfig, CustomModalConfig } from '@/modal/types';
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowRunStartRequestV1Schema, type WorkflowDefinitionCreateRequestV1, type WorkflowDefinitionGetRequestV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionUpdateRequestV1, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowDefinitionV1Schema} from '@happier-dev/protocol/workflows/workflowV1';
 import { type ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
@@ -25,7 +25,9 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { readNewSessionDraftProjectionFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { refreshMachineAgents } from '@/agents/machineAgents/useMachineAgents';
+import { WorkflowPageNavigation } from '../navigation/WorkflowNavigationViews';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -104,7 +106,9 @@ let modals: ReturnType<typeof useModal>['state']['modals'] = [];
 function ObserveModals() { modals = useModal().state.modals; return null; }
 function visibleModals() { return modals.filter(modal => 'visible' in modal && modal.visible === true); }
 function readAlert() { return visibleModals().reverse().find((modal): modal is AlertModalConfig => modal.type === 'alert'); }
-function readConfirmation() { return visibleModals().reverse().find((modal): modal is ConfirmModalConfig => modal.type === 'confirm'); }
+function visibleConfirmations() { return visibleModals().filter(modal => modal.type === 'confirm'
+    || (modal.type === 'custom' && modal.chrome?.testID === 'actions.confirmation-review.modal')); }
+function readConfirmation() { return visibleConfirmations().at(-1); }
 function readCustomModal(testID: string) { return visibleModals().reverse().find((modal): modal is CustomModalConfig =>
     modal.type === 'custom' && modal.chrome?.testID === testID); }
 async function pressAlertButton(style: 'cancel' | 'destructive') {
@@ -117,7 +121,10 @@ async function pressAlertButton(style: 'cancel' | 'destructive') {
 }
 async function pressConfirmation(confirmed: boolean) {
     if (!editorScreen || !readConfirmation()) throw new Error('Expected a real confirmation dialog');
-    await editorScreen.pressByTestIdAsync(confirmed ? 'web-modal-confirm' : 'web-modal-cancel');
+    const review = readCustomModal('actions.confirmation-review.modal');
+    await editorScreen.pressByTestIdAsync(review
+        ? (confirmed ? 'actions.confirmation-review.decision-approve' : 'actions.confirmation-review.decision-reject')
+        : (confirmed ? 'web-modal-confirm' : 'web-modal-cancel'));
 }
 async function runDirectWorkflowAction<T>(run: () => Promise<T>): Promise<T> {
     let result!: T;
@@ -348,6 +355,7 @@ const guardedDirtyStates = vi.hoisted(() => [] as boolean[]);
 const issuedIds = vi.hoisted(() => ({ next: 0 }));
 
 /** Whether the selected Machine's daemon projection has resolved, and to what. */
+const readyEditorInventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude Code' }]);
 const daemonProjection = vi.hoisted(() => ({
     resolves: false,
 }));
@@ -384,13 +392,11 @@ installDisconnectedServerSocketBoundary((socket) => {
             // The admitting daemon owns the child's caller policy; this fixture refuses it.
             return { ok: true, result: { v: 1, execution: { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' } } };
         }
+        if (daemonProjection.resolves && method === RPC_METHODS.CAPABILITIES_DETECT) return { ok: true, result: readyEditorInventory.capabilities };
+        if (daemonProjection.resolves && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, result: { jobs: [] } };
         if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE && daemonProjection.resolves) {
             return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
-                protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
-                    claude: { id: 'claude', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
-                        title: 'Claude Code', channel: 'plugin', isBuiltIn: true, catalogAgentId: 'claude',
-                        providerOwnedEnvironmentKeys: [] },
-                } },
+                protocolVersion: 1, projection: readyEditorInventory.projection,
             }) };
         }
         return { ok: false, error: 'Fixture daemon does not serve this method', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
@@ -1179,8 +1185,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         nativeRouteBoundary.width = phone ? 390 : 1280;
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         if (phone) {
-            // The bar has no ⋯ of its own (FIN-DESIGN-REVIEW-1107 F14 on M4): the value rows open Workflow settings.
-            await screen.pressByTestIdAsync('workflow-editor-where-row');
+            // Where chooses the target in place; Settings belongs to the mounted navigation.
+            await act(async () => screen.findByType(WorkflowPageNavigation).props.onSelect('settings'));
         } else {
             await screen.pressByTestIdAsync('workflowEditor-companion:settings');
         }
@@ -1599,6 +1605,12 @@ describe('WorkflowEditorHostScreen composition', () => {
             const { scope } = boundary;
             getStorage().setState({ profile: { ...getStorage().getState().profile!, id: scope.accountId } });
             setEditorMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
+            const acquiredMachines = Object.values(getStorage().getState().machines);
+            setEditorMachines([]);
+            // Full HTTP row arrival publishes the activity answer before reverse-RPC membership reads it.
+            getStorage().getState().applyMachines(acquiredMachines, true, {
+                sourceServerId: scope.serverId, sourceAccountId: scope.accountId,
+            });
             type Handler = Parameters<typeof apiSocket.registerMachineScopedRpcHandler>[2];
             const editorMethods = new Map<string, Handler>();
             // Only the socket registration/delivery boundary is substituted. The real
@@ -1639,7 +1651,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             if (!read.ok) throw new Error(read.error);
             const { WorkflowDraftGetResultV1Schema } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
             const result = WorkflowDraftGetResultV1Schema.parse(read.result);
-            if (result.status !== 'available') throw new Error(`Mounted editor is unavailable; methods: ${[...editorMethods.keys()].join(', ')}`);
+            if (result.status !== 'available') throw new Error(`Mounted editor is unavailable; methods: ${[...editorMethods.keys()].join(', ')}; fixture: ${JSON.stringify({ machineIds: Object.keys(getStorage().getState().machines), profileScope: getStorage().getState().profileScope, activeHome: getActiveServerSnapshot().serverId, accountId: getStorage().getState().profile?.id })}`);
             const editTool = listActionSpecs().find(spec => spec.bindings?.mcpToolName === 'workflow_authoring_draft_edit')!;
             await act(async () => {
                 expect(await caller.execute(editTool.id, { scope, draftId: original.draftId,
@@ -2026,7 +2038,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         // (Actions owner a4a360ea3c); only explicit deferred requests create Artifacts.
         for (const confirmed of [false, true]) {
             await act(async () => { readBodyProps()!.onSave!(); });
-            await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
+            await vi.waitFor(() => expect(readConfirmation(), JSON.stringify(visibleModals().map(modal => ({ type: modal.type, ...('title' in modal ? { title: modal.title } : {}), ...('message' in modal ? { message: modal.message } : {}), ...('chrome' in modal ? { chrome: modal.chrome?.testID } : {}) })))).toBeDefined());
             expect(boundary.creates).toHaveLength(0);
             expect(boundary.automationCreates).toHaveLength(0);
             const staged = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
@@ -2056,7 +2068,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 pending = removeWorkflowTrigger({ automationId: initial.set.automationId });
                 void pending.catch(() => undefined);
             });
-            await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
+            await vi.waitFor(() => expect(readConfirmation(), JSON.stringify(visibleModals().map(modal => ({ type: modal.type, ...('title' in modal ? { title: modal.title } : {}), ...('message' in modal ? { message: modal.message } : {}), ...('chrome' in modal ? { chrome: modal.chrome?.testID } : {}) })))).toBeDefined());
             expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]?.triggers).toHaveLength(1);
             await pressConfirmation(confirmed);
             await act(async () => {
@@ -2447,11 +2459,11 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect(flattenTestStyle(portal!.props.style).opacity).toBe(1);
         });
         await screen.pressByTestIdAsync('workflow-editor-menu-delete');
-        await vi.waitFor(() => expect(visibleModals().filter(modal => modal.type === 'confirm')).toHaveLength(1));
+        await vi.waitFor(() => expect(visibleConfirmations()).toHaveLength(1));
         expect(screen.findHostByTestId('workflow-editor-menu-delete')).toBeNull();
-        expect(screen.findHostByTestId('web-modal-confirm')).not.toBeNull();
+        expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
         expect(definitionActions.delete).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync('web-modal-confirm');
+        await pressConfirmation(true);
         await vi.waitFor(() => expect(definitionActions.delete).toHaveBeenCalledOnce());
         expect(screen.findHostByTestId('workflow-editor-deleting')).not.toBeNull();
         expect(routerSpy.replace).not.toHaveBeenCalled();
@@ -2498,7 +2510,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const destinations: string[] = [];
         routerSpy.replace.mockImplementation(href => runGuardedNavigation(() => { destinations.push(String(href)); }));
         await act(async () => { void readBodyProps()!.menuActions?.find(action => action.id === 'delete')?.onSelect(); });
-        expect(visibleModals().filter(modal => modal.type === 'confirm')).toHaveLength(1);
+        expect(visibleConfirmations()).toHaveLength(1);
         await pressConfirmation(true);
         expect(definitionActions.delete).toHaveBeenCalledOnce();
         expect(readAlert()).toBeUndefined();
@@ -3547,10 +3559,16 @@ describe('WorkflowEditorHostScreen composition', () => {
                 const entry = readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-a' });
                 expect(entry?.kind, JSON.stringify(entry && { kind: entry.kind, ...('reason' in entry ? { reason: entry.reason } : {}) })).toBe('ready');
             });
+            if (daemonProjection.resolves) {
+                const accountLifetime = captureActiveServerAccountScopeLifetime();
+                if (!accountLifetime) throw new Error('Expected the contextual Agent Account');
+                // The editor observes readiness already acquired by the ordinary Machine inventory.
+                await act(async () => refreshMachineAgents({ serverId: 'server-a', machineId: 'machine-1', accountLifetime, agentId: 'claude' }));
+            }
         };
 
         beforeEach(() => {
-            setEditorMachines([createMachineFixture({ metadata: {
+            setEditorMachines([createMachineFixture({ activeAt: Date.now(), metadata: {
                 host: 'tester.local', happyCliVersion: '0.0.0-test', happyHomeDir: '/Users/tester/.happy-dev',
                 homeDir: '/Users/me', platform: 'darwin',
             } })]);

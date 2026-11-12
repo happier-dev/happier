@@ -375,7 +375,7 @@ it.each([
     });
     await screen.pressByTestIdAsync('new-session-composer-send');
     await vi.waitFor(() => expect(spawnedSessionId).toBe(createdSessionId));
-    await vi.waitFor(() => expect(modals.some(modal => modal.id === authoringSheet.id)).toBe(false));
+    await vi.waitFor(() => expect(modals.some(modal => modal.id === authoringSheet.id && 'visible' in modal && modal.visible)).toBe(false));
     const pathname = source === 'new' ? '/workflows/new' : `/workflows/${savedId}`;
     if (hosted) await act(async () => workspace!.openHref(pathname));
     route.pathname = pathname;

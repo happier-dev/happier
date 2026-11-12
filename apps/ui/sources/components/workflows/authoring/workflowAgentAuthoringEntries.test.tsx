@@ -24,6 +24,8 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { createSessionFixture, createTestSessionTranscriptSource, renderScreen: renderTestScreen, standardCleanup, wrapWithSessionTranscriptSource } = await import('@/dev/testkit');
 const { ModalProvider, useModal } = await import('@/modal/ModalProvider');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+let authCredentials: React.ComponentProps<typeof InjectedAuthProvider>['credentials'] = null;
 const { WorkflowAgentAuthoringDraft } = await import('./useWorkflowAgentAuthoring');
 type ModalEntries = ReturnType<typeof useModal>['state']['modals'];
 let modalEntries: ModalEntries = [];
@@ -32,7 +34,7 @@ function ObserveModals() {
     return null;
 }
 function ModalCustody({ children }: React.PropsWithChildren) {
-    return <ModalProvider><ObserveModals />{children}</ModalProvider>;
+    return <InjectedAuthProvider credentials={authCredentials}><ModalProvider><ObserveModals />{children}</ModalProvider></InjectedAuthProvider>;
 }
 function renderScreen(content: React.ReactElement) {
     return renderTestScreen(content, { wrapper: ModalCustody });
@@ -81,6 +83,7 @@ beforeEach(async () => {
     } });
     const credentials = await TokenStorage.getCredentialsForServerUrl('https://repeatable.test');
     if (!credentials) throw new Error('Test Home must be signed in');
+    authCredentials = credentials;
     await restoreConnectionToActiveServer(credentials);
     modalEntries = [];
     getStorage().setState({ profileScope: { serverId: state.serverId, accountId: 'account-a' }, settings: settingsDefaults });
@@ -202,8 +205,12 @@ it.each([
     const source = createTestSessionTranscriptSource({ sessionId: session.id, serverId: server.id });
     const content = () => wrapWithSessionTranscriptSource(<><MountedComposer composer={composer} scope={scope} focused={focused} /><HeaderEntry /></>, source);
     const screen = await renderScreen(content());
+    const repeatableMenu = () => screen.root.findAllByType(DropdownMenu)
+        .find(menu => menu.props.testID === 'plugin-message-actions-overflow-menu');
+    const hasRepeatableItem = (messageId: string) => repeatableMenu()?.props.items
+        .some((item: { testID?: string }) => item.testID === `transcript-message-repeatable:${messageId}`) === true;
     if (entry === 'message') {
-        expect(screen.findHostByTestId('transcript-message-repeatable:message-7')).not.toBeNull();
+        expect(hasRepeatableItem('message-7')).toBe(true);
         for (const text of ['The successful audit continued', 'The final successful audit']) {
             const before = bodyRender.mock.calls.length;
             message.text = text;
@@ -214,8 +221,9 @@ it.each([
         message.id = 'recycled-message';
         message.text = 'The recycled successful audit';
         await screen.update(content());
-        expect(screen.findHostByTestId('transcript-message-repeatable:message-7')).toBeNull();
-        await screen.pressByTestIdAsync(`transcript-message-repeatable:${message.id}`);
+        expect(hasRepeatableItem('message-7')).toBe(false);
+        expect(hasRepeatableItem(message.id)).toBe(true);
+        await act(async () => repeatableMenu()!.props.onSelect('makeRepeatable'));
     }
     else {
         expect(screen.root.findByType('button').props.disabled).toBe(false);
@@ -234,7 +242,7 @@ it.each([
     expect(Object.keys(getStorage().getState().sessions)).toEqual([session.id]);
     if (entry === 'message') {
         await act(async () => getStorage().getState().applySettingsLocal({ transcriptMessageMakeRepeatableActionEnabled: false }));
-        expect(screen.findHostByTestId(`transcript-message-repeatable:${message.id}`)).toBeNull();
+        expect(hasRepeatableItem(message.id)).toBe(false);
     }
     // The ordinary composer remains the editable owner after prefilling.
     await act(async () => screen.root.findByType(MultiTextInput).props.onChangeText(`${appended}\nMy change`));

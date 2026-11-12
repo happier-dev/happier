@@ -100,7 +100,7 @@ function expectNoWorkflowWrites(): void {
         if (request.input === null || !(request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'))) return false;
         const input = request.input;
         const runRead = request.path === '/v3/automations/runs/workflow-storage' && typeof input === 'object'
-            && input !== null && 'operation' in input && ['get', 'invocations.list', 'run-key.census'].includes(String(input.operation));
+            && input !== null && 'operation' in input && ['get', 'invocations.list', 'run-key.census', 'summaries'].includes(String(input.operation));
         const triggerRead = request.path === '/v3/automations/query';
         return !runRead && !triggerRead;
     }).map(({ path, input }) => ({ path, input }))).toEqual([]);
@@ -305,7 +305,7 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         const { WorkflowBlockListEditor } = await import('../editor/WorkflowBlockListEditor');
         const reopened = editor.findAllByType(WorkflowBlockListEditor).find(row => row.props.list.kind === 'root');
         expect(reopened?.props.blocks).toEqual(authored.blocks);
-        expect(reopened?.props.draftStore.get().inputs).toEqual(authored.inputs);
+        expect(reopened?.props.draft.inputs).toEqual(authored.inputs);
     });
     it('reviews an authorized Discussion capture before editor handoff and retains source attribution on save', async () => {
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');

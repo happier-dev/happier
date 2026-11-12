@@ -1820,20 +1820,24 @@ describe('workflow editor body', () => {
         // This case exercises three columns together. At narrower widths F3
         // deliberately folds Flow when the Settings companion opens.
         viewport.window = { width: 1920, height: 1080 };
+        // Compact reading width gives spare canvas to Flow; full width permits all three columns.
+        getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, uiContentWidthMode: 'full' } });
         const screen = await renderBody(harness, {
             onRunNow: () => {},
             onSave: () => {},
             projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
             projectMachines: [{ id: 'machine-1', metadata: { displayName: 'Mac Studio', homeDir: '/Users/me' } }],
             onChangeProjectTarget: () => {},
-        });
+        }, { createNodeMock: element => {
+            // The pane host browser measurement matches this wide viewport.
+            if (element.type !== 'View' || typeof element.props.onLayout !== 'function' || element.props.testID !== undefined) return null;
+            return {
+                addEventListener() {}, removeEventListener() {},
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 1920, height: 1080 }),
+                measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 0, 1920, 1080),
+            };
+        } });
         const host = screen.findByType(AppPaneScopeHost);
-        // Test Renderer has no DOM layout: feed the actual pane host its wide
-        // measured boundary, rather than the generic 600px popover-anchor mock.
-        await act(async () => {
-            host.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0]!
-                .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1920, height: 1080 } } });
-        });
         expect(host.props.scopeId).toBe('workflow-editor');
         expect(host.props.mainMinWidthPx).toBe(420);
         expect(host.props.rightPaneBuiltinAdapter.destinationIds).toEqual(['workflow-flow']);
@@ -1860,7 +1864,7 @@ describe('workflow editor body', () => {
         ];
         expect(renderedOrder(screen, order)).toEqual(order);
         await selectColumnTab('side', 'flow');
-        expect(screen.findHostByTestId('workflow-editor-flow-node-analyze')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-flow-node-analyze'), JSON.stringify({ right: paneUiState.readAll()?.['workflow-editor']?.right, settingsVisible: screen.findHostByTestId('workflow-editor-settings-pane') !== null })).toBeNull();
         expect(screen.findHostByTestId('workflow-editor-settings-pane')).not.toBeNull();
         expect(paneUiState.readAll()?.['workflow-editor']?.right.isOpen).toBe(false);
     });

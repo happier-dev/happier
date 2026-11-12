@@ -293,11 +293,11 @@ describe('editor workflow composer', () => {
             home.answer(appliedHome.serverId, '/v1/account/encryption/currentness', { body: {
                 mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
             } });
-            home.answer(appliedHome.serverId, 'GET /v1/kv/workspace%3Atabs%3Av1', { select: () => {
+            home.answer(appliedHome.serverId, 'POST /v1/kv/bulk', { select: () => {
                 kvReadVersion = remoteVersion;
-                return { body: {
+                return { body: { values: [{
                     key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: remoteRecord }), version: remoteVersion,
-                } };
+                }] } };
             } });
             home.answer(appliedHome.serverId, 'POST /v1/kv', { select: input => {
                 const parsed = (input as { mutations: { key: string; value: string }[] }).mutations[0];
@@ -1266,6 +1266,8 @@ describe('editor workflow composer', () => {
         expectNoWorkflowWrites();
         expect(home.requests.filter(request => request.path === '/v1/actions/session.spawn_new')).toHaveLength(0);
         await screen.pressByTestIdAsync(`workflow-editor-step-${readStep().id}-customize`);
+        // Step options lead with the step; engine overrides live on its Agent subpage.
+        await screen.pressByTestIdAsync('workflow-editor-inspector-agent-row');
         const { WorkflowStepInspector } = await import('../editor/WorkflowStepInspector');
         const inspector = screen.root.findByType(WorkflowStepInspector);
         await screen.pressByTestIdAsync(`${inspector.props.testIDPrefix}-agentTarget-reset`);
@@ -1338,7 +1340,10 @@ describe('editor workflow composer', () => {
                     } } } } } });
             const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
             await seedSavedDefinition(definitionId);
-            const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
+            const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+            const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} />, {
+                wrapper: await createMountedCurrentUiContextWrapper(),
+            });
             expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
             const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
             await screen.pressByTestIdAsync(`workflow-editor-step-${screen.root.findByType(WorkflowEditorBody).props.draftStore.get().blocks[0].id}-summary-prompt`);
