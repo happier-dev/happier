@@ -27,7 +27,7 @@ export type ManagedMachinesActionInputById = {
             machineId: string;
             installationId: string;
         };
-        credentials?: undefined | {
+        credentials?: ({
             purpose: {
                 consumer: {
                     pluginId: string;
@@ -42,7 +42,32 @@ export type ManagedMachinesActionInputById = {
                 };
                 accountId: string;
             };
-        }[];
+        } | {
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            teamId: string;
+            selection: {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            };
+        })[] | undefined;
         selectors?: unknown;
     };
     readonly "machines.provisioners.options": {
@@ -56,7 +81,7 @@ export type ManagedMachinesActionInputById = {
             machineId: string;
             installationId: string;
         };
-        credentials?: undefined | {
+        credentials?: ({
             purpose: {
                 consumer: {
                     pluginId: string;
@@ -71,7 +96,32 @@ export type ManagedMachinesActionInputById = {
                 };
                 accountId: string;
             };
-        }[];
+        } | {
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            teamId: string;
+            selection: {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            };
+        })[] | undefined;
     };
     readonly "machines.managed.acquire": {
         selection: {
@@ -85,7 +135,7 @@ export type ManagedMachinesActionInputById = {
                 schemaVersion: number;
                 name: string;
                 choices: unknown;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -100,7 +150,32 @@ export type ManagedMachinesActionInputById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             retention: {
                 kind: 'deadline';
@@ -271,6 +346,9 @@ export type ManagedMachinesActionInputById = {
                         url?: string | undefined;
                         mimeType?: string | undefined;
                         label?: string | undefined;
+                        sha256?: string | undefined;
+                        sizeBytes?: number | undefined;
+                        provenance?: Record<string, unknown> | undefined;
                     }[];
                     browserContext?: undefined | {
                         contexts: ({
@@ -1017,19 +1095,6 @@ export type ManagedMachinesActionInputById = {
                 sourceMessageId: string;
             };
             roleId?: string | undefined;
-            modelSelection?: undefined | {
-                v: 1;
-                ref: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                updatedAt: number;
-            };
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -1090,6 +1155,19 @@ export type ManagedMachinesActionInputById = {
                         accountId: string;
                     };
                 }> | undefined;
+            };
+            modelSelection?: undefined | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             approvalProfileId?: null | string | undefined;
@@ -1190,17 +1268,6 @@ export type ManagedMachinesActionInputById = {
                     providerTicket: string;
                 };
             })[] | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
             promptStack?: undefined | {
                 id: string;
                 ref: {
@@ -1226,6 +1293,17 @@ export type ManagedMachinesActionInputById = {
             discussionParticipant?: undefined | {
                 discussionId: string;
                 participantSlotId: string;
+            };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
             };
             creationKey?: string | undefined;
             machineSetupPlanInput?: undefined | {
@@ -1837,6 +1915,7 @@ export type ManagedMachinesActionInputById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             runsAs?: undefined | {
@@ -1862,6 +1941,7 @@ export type ManagedMachinesActionInputById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -1905,6 +1985,7 @@ export type ManagedMachinesActionInputById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: string | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -1967,7 +2048,7 @@ export type ManagedMachinesActionInputById = {
                 schemaVersion: number;
                 name: string;
                 choices: unknown;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -1982,7 +2063,32 @@ export type ManagedMachinesActionInputById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -2207,6 +2313,7 @@ export type ManagedMachinesActionInputById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -2499,6 +2606,9 @@ export type ManagedMachinesActionInputById = {
                         url?: string | undefined;
                         mimeType?: string | undefined;
                         label?: string | undefined;
+                        sha256?: string | undefined;
+                        sizeBytes?: number | undefined;
+                        provenance?: Record<string, unknown> | undefined;
                     }[];
                     browserContext?: undefined | {
                         contexts: ({
@@ -3245,19 +3355,6 @@ export type ManagedMachinesActionInputById = {
                 sourceMessageId: string;
             };
             roleId?: string | undefined;
-            modelSelection?: undefined | {
-                v: 1;
-                ref: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                updatedAt: number;
-            };
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -3318,6 +3415,19 @@ export type ManagedMachinesActionInputById = {
                         accountId: string;
                     };
                 }> | undefined;
+            };
+            modelSelection?: undefined | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             approvalProfileId?: null | string | undefined;
@@ -3418,17 +3528,6 @@ export type ManagedMachinesActionInputById = {
                     providerTicket: string;
                 };
             })[] | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
             promptStack?: undefined | {
                 id: string;
                 ref: {
@@ -3454,6 +3553,17 @@ export type ManagedMachinesActionInputById = {
             discussionParticipant?: undefined | {
                 discussionId: string;
                 participantSlotId: string;
+            };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
             };
             creationKey?: string | undefined;
             machineSetupPlanInput?: undefined | {
@@ -4065,6 +4175,7 @@ export type ManagedMachinesActionInputById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             runsAs?: undefined | {
@@ -4090,6 +4201,7 @@ export type ManagedMachinesActionInputById = {
                             engine?: undefined | {
                                 agentTargetKey: string;
                                 modelId?: string | undefined;
+                                providerConnectionId?: (string) | undefined;
                                 effort?: string | undefined;
                             };
                             profileId?: string | undefined;
@@ -4133,6 +4245,7 @@ export type ManagedMachinesActionInputById = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: string | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -4195,7 +4308,7 @@ export type ManagedMachinesActionInputById = {
                 schemaVersion: number;
                 name: string;
                 choices: unknown;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -4210,7 +4323,32 @@ export type ManagedMachinesActionInputById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -4435,6 +4573,7 @@ export type ManagedMachinesActionInputById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -4925,10 +5064,51 @@ export type ManagedMachinesActionInputById = {
                                 role: 'readOnlyPassword';
                             };
                         })[];
-                        data: {
+                        data: ({
                             targetLinkId: string;
-                            kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                        }[];
+                            kind: 'createEmpty';
+                            provision: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input: Record<string, unknown>;
+                            };
+                        } | {
+                            targetLinkId: string;
+                            kind: 'omit';
+                        } | {
+                            targetLinkId: string;
+                            kind: 'restoreBackup';
+                        } | {
+                            targetLinkId: string;
+                            kind: 'reuse';
+                            bindings?: ({
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            })[] | undefined;
+                        })[];
                         retainPreviousDeployments?: 'copy' | 'default' | undefined;
                     };
                 };
@@ -5006,6 +5186,22 @@ export type ManagedMachinesActionInputById = {
                         role: 'readOnlyPassword';
                     })[];
                     sourceRuntimeTargetLinkId?: string | undefined;
+                    data?: undefined | {
+                        targetLinkId: string;
+                        targetId: string;
+                        targetKind: string;
+                        contribution: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        provision: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: Record<string, unknown>;
+                        };
+                    }[];
                 };
                 copyIntentCommitment?: string | undefined;
             };
@@ -5489,10 +5685,51 @@ export type ManagedMachinesActionInputById = {
                                     role: 'readOnlyPassword';
                                 };
                             })[];
-                            data: {
+                            data: ({
                                 targetLinkId: string;
-                                kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                            }[];
+                                kind: 'createEmpty';
+                                provision: {
+                                    action: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    input: Record<string, unknown>;
+                                };
+                            } | {
+                                targetLinkId: string;
+                                kind: 'omit';
+                            } | {
+                                targetLinkId: string;
+                                kind: 'restoreBackup';
+                            } | {
+                                targetLinkId: string;
+                                kind: 'reuse';
+                                bindings?: ({
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                })[] | undefined;
+                            })[];
                             retainPreviousDeployments?: 'copy' | 'default' | undefined;
                         };
                     };
@@ -5570,6 +5807,22 @@ export type ManagedMachinesActionInputById = {
                             role: 'readOnlyPassword';
                         })[];
                         sourceRuntimeTargetLinkId?: string | undefined;
+                        data?: undefined | {
+                            targetLinkId: string;
+                            targetId: string;
+                            targetKind: string;
+                            contribution: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            provision: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input: Record<string, unknown>;
+                            };
+                        }[];
                     };
                     copyIntentCommitment?: string | undefined;
                 };
@@ -5891,8 +6144,6 @@ export type ManagedMachinesActionInputById = {
                             hostAddress: string;
                             hostPort: number;
                             protocol: 'tcp' | 'udp';
-                            providerId?: undefined;
-                            networkIdentity?: undefined;
                             containerPort?: number | undefined;
                         } | {
                             exposure: 'privateNetwork';
@@ -5904,6 +6155,25 @@ export type ManagedMachinesActionInputById = {
                             protocol: 'tcp' | 'udp';
                             containerPort?: number | undefined;
                         })[] | undefined;
+                        caddyObservation?: undefined | {
+                            privateNetworks: {
+                                provider: {
+                                    kind: 'builtin';
+                                    id: string;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                networkIdentity: null | string;
+                                displayName: null | string;
+                                dnsName: null | string;
+                                addresses: string[];
+                                state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                interfaceName: null | string;
+                                sourceRanges: string[];
+                                magicDnsEnabled: boolean | null;
+                            }[];
+                        };
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -6784,8 +7054,6 @@ export type ManagedMachinesActionInputById = {
                             hostAddress: string;
                             hostPort: number;
                             protocol: 'tcp' | 'udp';
-                            providerId?: undefined;
-                            networkIdentity?: undefined;
                             containerPort?: number | undefined;
                         } | {
                             exposure: 'privateNetwork';
@@ -6797,6 +7065,25 @@ export type ManagedMachinesActionInputById = {
                             protocol: 'tcp' | 'udp';
                             containerPort?: number | undefined;
                         })[] | undefined;
+                        caddyObservation?: undefined | {
+                            privateNetworks: {
+                                provider: {
+                                    kind: 'builtin';
+                                    id: string;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                networkIdentity: null | string;
+                                displayName: null | string;
+                                dnsName: null | string;
+                                addresses: string[];
+                                state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                interfaceName: null | string;
+                                sourceRanges: string[];
+                                magicDnsEnabled: boolean | null;
+                            }[];
+                        };
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -7825,10 +8112,51 @@ export type ManagedMachinesActionInputById = {
                                     role: 'readOnlyPassword';
                                 };
                             })[];
-                            data: {
+                            data: ({
                                 targetLinkId: string;
-                                kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                            }[];
+                                kind: 'createEmpty';
+                                provision: {
+                                    action: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    input: Record<string, unknown>;
+                                };
+                            } | {
+                                targetLinkId: string;
+                                kind: 'omit';
+                            } | {
+                                targetLinkId: string;
+                                kind: 'restoreBackup';
+                            } | {
+                                targetLinkId: string;
+                                kind: 'reuse';
+                                bindings?: ({
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                })[] | undefined;
+                            })[];
                             retainPreviousDeployments?: 'copy' | 'default' | undefined;
                         };
                     };
@@ -7906,6 +8234,22 @@ export type ManagedMachinesActionInputById = {
                             role: 'readOnlyPassword';
                         })[];
                         sourceRuntimeTargetLinkId?: string | undefined;
+                        data?: undefined | {
+                            targetLinkId: string;
+                            targetId: string;
+                            targetKind: string;
+                            contribution: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            provision: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input: Record<string, unknown>;
+                            };
+                        }[];
                     };
                     copyIntentCommitment?: string | undefined;
                 };
@@ -8220,8 +8564,6 @@ export type ManagedMachinesActionInputById = {
                         hostAddress: string;
                         hostPort: number;
                         protocol: 'tcp' | 'udp';
-                        providerId?: undefined;
-                        networkIdentity?: undefined;
                         containerPort?: number | undefined;
                     } | {
                         exposure: 'privateNetwork';
@@ -8233,6 +8575,25 @@ export type ManagedMachinesActionInputById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    caddyObservation?: undefined | {
+                        privateNetworks: {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            networkIdentity: null | string;
+                            displayName: null | string;
+                            dnsName: null | string;
+                            addresses: string[];
+                            state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                            interfaceName: null | string;
+                            sourceRanges: string[];
+                            magicDnsEnabled: boolean | null;
+                        }[];
+                    };
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -9115,8 +9476,6 @@ export type ManagedMachinesActionInputById = {
                     hostAddress: string;
                     hostPort: number;
                     protocol: 'tcp' | 'udp';
-                    providerId?: undefined;
-                    networkIdentity?: undefined;
                     containerPort?: number | undefined;
                 } | {
                     exposure: 'privateNetwork';
@@ -9128,6 +9487,25 @@ export type ManagedMachinesActionInputById = {
                     protocol: 'tcp' | 'udp';
                     containerPort?: number | undefined;
                 })[] | undefined;
+                caddyObservation?: undefined | {
+                    privateNetworks: {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        networkIdentity: null | string;
+                        displayName: null | string;
+                        dnsName: null | string;
+                        addresses: string[];
+                        state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                        interfaceName: null | string;
+                        sourceRanges: string[];
+                        magicDnsEnabled: boolean | null;
+                    }[];
+                };
                 requiredFacts?: ({
                     kind: 'administrator';
                 } | {
@@ -10085,6 +10463,7 @@ export type ManagedMachinesActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -10123,6 +10502,24 @@ export type ManagedMachinesActionResultById = {
                             localId: string;
                         };
                         accountId: string;
+                    } | {
+                        teamId: string;
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
                     };
                     label: string;
                 }[];
@@ -11165,7 +11562,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -11181,7 +11578,32 @@ export type ManagedMachinesActionResultById = {
                         accountId: string;
                     };
                     configurationRevision?: null | string | undefined;
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             creationState: 'active' | 'canceled';
@@ -11240,7 +11662,7 @@ export type ManagedMachinesActionResultById = {
                     schemaVersion: number;
                     name: string;
                     choices: PluginJsonValueV2;
-                    credentials?: undefined | {
+                    credentials?: ({
                         purpose: {
                             consumer: {
                                 pluginId: string;
@@ -11255,7 +11677,32 @@ export type ManagedMachinesActionResultById = {
                             };
                             accountId: string;
                         };
-                    }[];
+                    } | {
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        teamId: string;
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                    })[] | undefined;
                 };
                 optionStatus: 'current' | 'loading' | 'unavailable';
                 billing: {
@@ -11480,6 +11927,7 @@ export type ManagedMachinesActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -11903,7 +12351,7 @@ export type ManagedMachinesActionResultById = {
             schemaVersion: number;
             name: string;
             choices: PluginJsonValueV2;
-            credentials?: undefined | {
+            credentials?: ({
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -11919,7 +12367,32 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
                 configurationRevision?: null | string | undefined;
-            }[];
+            } | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            })[] | undefined;
         };
         allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
         creationState: 'active' | 'canceled';
@@ -11978,7 +12451,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -11993,7 +12466,32 @@ export type ManagedMachinesActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -12218,6 +12716,7 @@ export type ManagedMachinesActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -12672,7 +13171,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -12688,7 +13187,32 @@ export type ManagedMachinesActionResultById = {
                         accountId: string;
                     };
                     configurationRevision?: null | string | undefined;
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             creationState: 'active' | 'canceled';
@@ -12747,7 +13271,7 @@ export type ManagedMachinesActionResultById = {
                     schemaVersion: number;
                     name: string;
                     choices: PluginJsonValueV2;
-                    credentials?: undefined | {
+                    credentials?: ({
                         purpose: {
                             consumer: {
                                 pluginId: string;
@@ -12762,7 +13286,32 @@ export type ManagedMachinesActionResultById = {
                             };
                             accountId: string;
                         };
-                    }[];
+                    } | {
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        teamId: string;
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                    })[] | undefined;
                 };
                 optionStatus: 'current' | 'loading' | 'unavailable';
                 billing: {
@@ -12987,6 +13536,7 @@ export type ManagedMachinesActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -13461,7 +14011,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -13477,7 +14027,32 @@ export type ManagedMachinesActionResultById = {
                         accountId: string;
                     };
                     configurationRevision?: null | string | undefined;
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             creationState: 'active' | 'canceled';
@@ -13536,7 +14111,7 @@ export type ManagedMachinesActionResultById = {
                     schemaVersion: number;
                     name: string;
                     choices: PluginJsonValueV2;
-                    credentials?: undefined | {
+                    credentials?: ({
                         purpose: {
                             consumer: {
                                 pluginId: string;
@@ -13551,7 +14126,32 @@ export type ManagedMachinesActionResultById = {
                             };
                             accountId: string;
                         };
-                    }[];
+                    } | {
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        teamId: string;
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                    })[] | undefined;
                 };
                 optionStatus: 'current' | 'loading' | 'unavailable';
                 billing: {
@@ -13776,6 +14376,7 @@ export type ManagedMachinesActionResultById = {
                         kind: 'native';
                         exec: string;
                         putFile: string;
+                        stream?: string | undefined;
                     };
                     bootstrapCredential?: undefined | {
                         kind: 'native-token' | 'ssh';
@@ -14222,7 +14823,7 @@ export type ManagedMachinesActionResultById = {
             schemaVersion: number;
             name: string;
             choices: PluginJsonValueV2;
-            credentials?: undefined | {
+            credentials?: ({
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -14238,7 +14839,32 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
                 configurationRevision?: null | string | undefined;
-            }[];
+            } | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            })[] | undefined;
         };
         allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
         creationState: 'active' | 'canceled';
@@ -14297,7 +14923,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -14312,7 +14938,32 @@ export type ManagedMachinesActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -14537,6 +15188,7 @@ export type ManagedMachinesActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -15177,8 +15829,6 @@ export type ManagedMachinesActionResultById = {
                         hostAddress: string;
                         hostPort: number;
                         protocol: 'tcp' | 'udp';
-                        providerId?: undefined;
-                        networkIdentity?: undefined;
                         containerPort?: number | undefined;
                     } | {
                         exposure: 'privateNetwork';
@@ -15190,6 +15840,25 @@ export type ManagedMachinesActionResultById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    caddyObservation?: undefined | {
+                        privateNetworks: {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            networkIdentity: null | string;
+                            displayName: null | string;
+                            dnsName: null | string;
+                            addresses: string[];
+                            state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                            interfaceName: null | string;
+                            sourceRanges: string[];
+                            magicDnsEnabled: boolean | null;
+                        }[];
+                    };
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -16074,8 +16743,6 @@ export type ManagedMachinesActionResultById = {
                         hostAddress: string;
                         hostPort: number;
                         protocol: 'tcp' | 'udp';
-                        providerId?: undefined;
-                        networkIdentity?: undefined;
                         containerPort?: number | undefined;
                     } | {
                         exposure: 'privateNetwork';
@@ -16087,6 +16754,25 @@ export type ManagedMachinesActionResultById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    caddyObservation?: undefined | {
+                        privateNetworks: {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            networkIdentity: null | string;
+                            displayName: null | string;
+                            dnsName: null | string;
+                            addresses: string[];
+                            state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                            interfaceName: null | string;
+                            sourceRanges: string[];
+                            magicDnsEnabled: boolean | null;
+                        }[];
+                    };
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -17141,10 +17827,51 @@ export type ManagedMachinesActionResultById = {
                                 role: 'readOnlyPassword';
                             };
                         })[];
-                        data: {
+                        data: ({
                             targetLinkId: string;
-                            kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                        }[];
+                            kind: 'createEmpty';
+                            provision: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input: Record<string, JsonValue>;
+                            };
+                        } | {
+                            targetLinkId: string;
+                            kind: 'omit';
+                        } | {
+                            targetLinkId: string;
+                            kind: 'restoreBackup';
+                        } | {
+                            targetLinkId: string;
+                            kind: 'reuse';
+                            bindings?: ({
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            })[] | undefined;
+                        })[];
                         retainPreviousDeployments?: 'copy' | 'default' | undefined;
                     };
                 };
@@ -17222,6 +17949,22 @@ export type ManagedMachinesActionResultById = {
                         role: 'readOnlyPassword';
                     })[];
                     sourceRuntimeTargetLinkId?: string | undefined;
+                    data?: undefined | {
+                        targetLinkId: string;
+                        targetId: string;
+                        targetKind: string;
+                        contribution: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        provision: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: Record<string, JsonValue>;
+                        };
+                    }[];
                 };
                 copyIntentCommitment?: string | undefined;
             };
@@ -17423,6 +18166,17 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'hex-bytes';
                         bytes: number;
+                    } | {
+                        kind: 'hex-characters';
+                        parts: (number | string)[];
+                    } | {
+                        kind: 'jwt-hs256';
+                        secretKey: string;
+                        payload: {
+                            role: 'anon' | 'service_role';
+                            iss: 'supabase';
+                            exp: number;
+                        };
                     } | {
                         kind: 'lowercase-alphanumeric-characters';
                         characters: number;
@@ -17783,8 +18537,6 @@ export type ManagedMachinesActionResultById = {
                         hostAddress: string;
                         hostPort: number;
                         protocol: 'tcp' | 'udp';
-                        providerId?: undefined;
-                        networkIdentity?: undefined;
                         containerPort?: number | undefined;
                     } | {
                         exposure: 'privateNetwork';
@@ -17796,6 +18548,25 @@ export type ManagedMachinesActionResultById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    caddyObservation?: undefined | {
+                        privateNetworks: {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            networkIdentity: null | string;
+                            displayName: null | string;
+                            dnsName: null | string;
+                            addresses: string[];
+                            state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                            interfaceName: null | string;
+                            sourceRanges: string[];
+                            magicDnsEnabled: boolean | null;
+                        }[];
+                    };
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -18748,8 +19519,6 @@ export type ManagedMachinesActionResultById = {
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                providerId?: undefined;
-                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
                             } | {
                                 exposure: 'privateNetwork';
@@ -18761,6 +19530,25 @@ export type ManagedMachinesActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            caddyObservation?: undefined | {
+                                privateNetworks: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    networkIdentity: null | string;
+                                    displayName: null | string;
+                                    dnsName: null | string;
+                                    addresses: string[];
+                                    state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                    interfaceName: null | string;
+                                    sourceRanges: string[];
+                                    magicDnsEnabled: boolean | null;
+                                }[];
+                            };
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -19645,8 +20433,6 @@ export type ManagedMachinesActionResultById = {
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                providerId?: undefined;
-                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
                             } | {
                                 exposure: 'privateNetwork';
@@ -19658,6 +20444,25 @@ export type ManagedMachinesActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            caddyObservation?: undefined | {
+                                privateNetworks: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    networkIdentity: null | string;
+                                    displayName: null | string;
+                                    dnsName: null | string;
+                                    addresses: string[];
+                                    state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                    interfaceName: null | string;
+                                    sourceRanges: string[];
+                                    magicDnsEnabled: boolean | null;
+                                }[];
+                            };
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -20712,10 +21517,51 @@ export type ManagedMachinesActionResultById = {
                                         role: 'readOnlyPassword';
                                     };
                                 })[];
-                                data: {
+                                data: ({
                                     targetLinkId: string;
-                                    kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                                }[];
+                                    kind: 'createEmpty';
+                                    provision: {
+                                        action: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        input: Record<string, JsonValue>;
+                                    };
+                                } | {
+                                    targetLinkId: string;
+                                    kind: 'omit';
+                                } | {
+                                    targetLinkId: string;
+                                    kind: 'restoreBackup';
+                                } | {
+                                    targetLinkId: string;
+                                    kind: 'reuse';
+                                    bindings?: ({
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    })[] | undefined;
+                                })[];
                                 retainPreviousDeployments?: 'copy' | 'default' | undefined;
                             };
                         };
@@ -20793,6 +21639,22 @@ export type ManagedMachinesActionResultById = {
                                 role: 'readOnlyPassword';
                             })[];
                             sourceRuntimeTargetLinkId?: string | undefined;
+                            data?: undefined | {
+                                targetLinkId: string;
+                                targetId: string;
+                                targetKind: string;
+                                contribution: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                provision: {
+                                    action: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    input: Record<string, JsonValue>;
+                                };
+                            }[];
                         };
                         copyIntentCommitment?: string | undefined;
                     };
@@ -20994,6 +21856,17 @@ export type ManagedMachinesActionResultById = {
                             } | {
                                 kind: 'hex-bytes';
                                 bytes: number;
+                            } | {
+                                kind: 'hex-characters';
+                                parts: (number | string)[];
+                            } | {
+                                kind: 'jwt-hs256';
+                                secretKey: string;
+                                payload: {
+                                    role: 'anon' | 'service_role';
+                                    iss: 'supabase';
+                                    exp: number;
+                                };
                             } | {
                                 kind: 'lowercase-alphanumeric-characters';
                                 characters: number;
@@ -21354,8 +22227,6 @@ export type ManagedMachinesActionResultById = {
                                 hostAddress: string;
                                 hostPort: number;
                                 protocol: 'tcp' | 'udp';
-                                providerId?: undefined;
-                                networkIdentity?: undefined;
                                 containerPort?: number | undefined;
                             } | {
                                 exposure: 'privateNetwork';
@@ -21367,6 +22238,25 @@ export type ManagedMachinesActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            caddyObservation?: undefined | {
+                                privateNetworks: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    networkIdentity: null | string;
+                                    displayName: null | string;
+                                    dnsName: null | string;
+                                    addresses: string[];
+                                    state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                    interfaceName: null | string;
+                                    sourceRanges: string[];
+                                    magicDnsEnabled: boolean | null;
+                                }[];
+                            };
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -22396,10 +23286,51 @@ export type ManagedMachinesActionResultById = {
                                     role: 'readOnlyPassword';
                                 };
                             })[];
-                            data: {
+                            data: ({
                                 targetLinkId: string;
-                                kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                            }[];
+                                kind: 'createEmpty';
+                                provision: {
+                                    action: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    input: Record<string, JsonValue>;
+                                };
+                            } | {
+                                targetLinkId: string;
+                                kind: 'omit';
+                            } | {
+                                targetLinkId: string;
+                                kind: 'restoreBackup';
+                            } | {
+                                targetLinkId: string;
+                                kind: 'reuse';
+                                bindings?: ({
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                })[] | undefined;
+                            })[];
                             retainPreviousDeployments?: 'copy' | 'default' | undefined;
                         };
                     };
@@ -22477,6 +23408,22 @@ export type ManagedMachinesActionResultById = {
                             role: 'readOnlyPassword';
                         })[];
                         sourceRuntimeTargetLinkId?: string | undefined;
+                        data?: undefined | {
+                            targetLinkId: string;
+                            targetId: string;
+                            targetKind: string;
+                            contribution: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            provision: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input: Record<string, JsonValue>;
+                            };
+                        }[];
                     };
                     copyIntentCommitment?: string | undefined;
                 };
@@ -22958,7 +23905,7 @@ export type ManagedMachinesActionResultById = {
             schemaVersion: number;
             name: string;
             choices: PluginJsonValueV2;
-            credentials?: undefined | {
+            credentials?: ({
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -22974,7 +23921,32 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
                 configurationRevision?: null | string | undefined;
-            }[];
+            } | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            })[] | undefined;
         };
         allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
         creationState: 'active' | 'canceled';
@@ -23033,7 +24005,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -23048,7 +24020,32 @@ export type ManagedMachinesActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -23273,6 +24270,7 @@ export type ManagedMachinesActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -23768,7 +24766,7 @@ export type ManagedMachinesActionResultById = {
             schemaVersion: number;
             name: string;
             choices: PluginJsonValueV2;
-            credentials?: undefined | {
+            credentials?: ({
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -23784,7 +24782,32 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
                 configurationRevision?: null | string | undefined;
-            }[];
+            } | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            })[] | undefined;
         };
         allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
         creationState: 'active' | 'canceled';
@@ -23843,7 +24866,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -23858,7 +24881,32 @@ export type ManagedMachinesActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -24083,6 +25131,7 @@ export type ManagedMachinesActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';
@@ -24505,7 +25554,7 @@ export type ManagedMachinesActionResultById = {
             schemaVersion: number;
             name: string;
             choices: PluginJsonValueV2;
-            credentials?: undefined | {
+            credentials?: ({
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -24521,7 +25570,32 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
                 configurationRevision?: null | string | undefined;
-            }[];
+            } | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            })[] | undefined;
         };
         allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
         creationState: 'active' | 'canceled';
@@ -24580,7 +25654,7 @@ export type ManagedMachinesActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: undefined | {
+                credentials?: ({
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -24595,7 +25669,32 @@ export type ManagedMachinesActionResultById = {
                         };
                         accountId: string;
                     };
-                }[];
+                } | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                })[] | undefined;
             };
             optionStatus: 'current' | 'loading' | 'unavailable';
             billing: {
@@ -24820,6 +25919,7 @@ export type ManagedMachinesActionResultById = {
                     kind: 'native';
                     exec: string;
                     putFile: string;
+                    stream?: string | undefined;
                 };
                 bootstrapCredential?: undefined | {
                     kind: 'native-token' | 'ssh';

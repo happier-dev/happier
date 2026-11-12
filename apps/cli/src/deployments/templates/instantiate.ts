@@ -1,4 +1,4 @@
-import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import axios from '@/api/client/credentialAxios';
@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInstantiateInputV1,
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
-    DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
+    DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, EnvironmentVariableBindingV1, DeploymentDeployIntentInputV1,
     DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -36,11 +36,11 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { admitStoredComposeDefinition, parseNativeComposeSource, storedComposeDefinitionDigest } from '@/workspaces/projectSetup/nativeComposeSource';
-import { createDeploymentTemplateGeneratedSecretForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
+import { withDeploymentTemplateGeneratedSecretsForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
 import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefaultInputsForHost } from '../readCreationDefaultsForHost';
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
-import { projectDeploymentFailure } from '../deploymentFailure';
+import { deploymentUnavailableError, projectDeploymentFailure } from '../deploymentFailure';
 import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
@@ -62,10 +62,11 @@ function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiat
 }
 function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
     const authorizationFailure = readDeploymentAuthorizationFailure(error);
-    if (authorizationFailure) return { ...authorizationFailure, effectAttempted: false };
-    if (error instanceof DeploymentTemplatePreparationErrorV1 && error.code === errorCode) return { ok: false, effectAttempted: false, errorCode,
-        error: error.message, ...(error.details ? { details: error.details } : {}) };
-    return { ...projectDeploymentFailure(errorCode, error), effectAttempted: false };
+    if (authorizationFailure) return carryActionFailureDiagnostic({ ...authorizationFailure, effectAttempted: false }, authorizationFailure);
+    if (error instanceof DeploymentTemplatePreparationErrorV1 && error.code === errorCode) return carryActionFailureDiagnostic({ ok: false as const, effectAttempted: false, errorCode,
+        error: error.message, ...(error.details ? { details: error.details } : {}) }, error);
+    const projected = projectDeploymentFailure(errorCode, error, 'deployment.template.instantiate');
+    return carryActionFailureDiagnostic({ ...projected, effectAttempted: false }, projected);
 }
 function errorCode(error: unknown): string {
     return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'template_unavailable';
@@ -339,27 +340,29 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (!reviewedChild) return failure('credential_scope_denied');
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
-            const bindings: StoredAppPresetInputV1['bindings'] = [...plan.prepared.bindings];
+            const bindings: EnvironmentVariableBindingV1[] = [...plan.prepared.bindings];
             const generatedSecretAudience = input.generatedSecretAudience
                 ?? buildCatalogAppTemplateBindings(plan.prepareInput.template).generatedSecretAudience;
-            for (const secret of plan.prepared.generatedSecrets) {
-                context.signal?.throwIfAborted();
-                effectIssued = true;
-                try {
-                    const source = await createDeploymentTemplateGeneratedSecretForHost({ name: `${plan.name} · ${secret.name}`, profile: secret.profile,
-                        audience: generatedSecretAudience ?? refuse('invalid_parameters'),
-                        expectedScopeKey: resolveAccountSettingsScopeKey(host.credentials), signal: context.signal ?? new AbortController().signal,
-                        readCredentials: async () => host.credentials,
-                        operationContext: host.savedSecretOperationContext });
-                    savedSecrets.push({ name: secret.name, phase: secret.phase, source });
-                    bindings.push({ purpose: 'variable', name: secret.name, phase: secret.phase, source });
-                } catch (error) {
-                    const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
-                    if (errorCode(error) === 'outcome_unknown' && details && typeof details === 'object'
-                        && 'candidateRef' in details && typeof details.candidateRef === 'string') unknownSecret = { name: secret.name, phase: secret.phase, ref: details.candidateRef };
-                    throw error;
+            await withDeploymentTemplateGeneratedSecretsForHost(async createGeneratedSecret => {
+                for (const secret of plan.prepared.generatedSecrets) {
+                    context.signal?.throwIfAborted();
+                    effectIssued = true;
+                    try {
+                        const source = await createGeneratedSecret({ key: secret.key, phase: secret.phase, name: `${plan.name} · ${secret.name}`, profile: secret.profile,
+                            audience: generatedSecretAudience ?? refuse('invalid_parameters'),
+                            expectedScopeKey: resolveAccountSettingsScopeKey(host.credentials), signal: context.signal ?? new AbortController().signal,
+                            readCredentials: async () => host.credentials,
+                            operationContext: host.savedSecretOperationContext });
+                        savedSecrets.push({ name: secret.name, phase: secret.phase, source });
+                        bindings.push({ purpose: 'variable', name: secret.name, phase: secret.phase, source });
+                    } catch (error) {
+                        const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
+                        if (errorCode(error) === 'outcome_unknown' && details && typeof details === 'object'
+                            && 'candidateRef' in details && typeof details.candidateRef === 'string') unknownSecret = { name: secret.name, phase: secret.phase, ref: details.candidateRef };
+                        throw error;
+                    }
                 }
-            }
+            });
             const finalPrepared = prepareDeploymentTemplateInstantiationV1({ ...plan.prepareInput, bindings });
             const defaults = plan.defaults;
             const storagePreparation = { creationDefaults: defaults, template: plan.review,
@@ -378,7 +381,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             };
             const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update', input: Parameters<Host['storage']>[1]) => {
                 const result = await host.storage(actionId, input, context, storagePreparation);
-                if ('errorCode' in result) return refuse(result);
+                if ('ok' in result && !result.ok && 'errorCode' in result) return refuse(result);
                 const parsedOutput = DeploymentEnvironmentCreateResultV1Schema.safeParse(result);
                 if (!parsedOutput.success) return refuse(deploymentOutputValidationFailure('deployments.environments.commit', undefined, parsedOutput.error));
                 const parsed = parsedOutput.data;
@@ -395,7 +398,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 if (published.kind === 'partial') return { kind: 'partial', phase, errorCode: published.errorCode,
                     environmentId: plan.current!.environment.id, revision: plan.current!.environment.revision,
                     savedSecrets, repositoryChange: published };
-                const current = plan.current ?? refuse('deployment_unavailable');
+                const current = plan.current;
+                if (!current) throw deploymentUnavailableError('deployment.template.instantiate.repository_environment', 'incomplete');
                 environmentId = current.environment.id; revision = current.environment.revision;
                 const merged = new Map(current.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
                 for (const binding of finalPrepared.bindings) merged.set(environmentSecretBindingIdentityV1(binding), binding);
@@ -437,12 +441,13 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     environmentId: environmentId!, expectedRevision: revision!, requestKey: context.actionRequestId!,
                     targetId: 'own-server', role: 'runtime', machines: [{ machineId: input.machineId, installationId: input.target.installationId }],
                     ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) }, context);
-                if ('errorCode' in linked) return refuse(linked);
+                if ('ok' in linked && !linked.ok && 'errorCode' in linked) return refuse(linked);
                 const result = DeploymentTargetLinkResultV1Schema.parse(linked);
                 if (!result.ok) return refuse(result.error);
                 revision = result.revision; targetLinkId = result.targetLinkId;
             }
-            const created = await host.readEnvironment({ environmentId: environmentId ?? refuse('deployment_unavailable'), context });
+            if (environmentId === undefined) throw deploymentUnavailableError('deployment.template.instantiate.environment', 'incomplete');
+            const created = await host.readEnvironment({ environmentId, context });
             targetLinkId = created.environment.runtimeTargetLinkId;
             const selectedTarget = input.target;
             if (selectedTarget && (!targetLinkId || !created.targetLinks.some(item => item.targetLink.id === targetLinkId
@@ -472,7 +477,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 }
                 const result = await host.deploy({ serverId: input.serverId, environmentId: environmentId!, targetLinkId: targetLinkId ?? refuse('target_mismatch'),
                     requestKey: input.deploy.requestKey, sourceIntent: plan.definition }, context, source);
-                if ('errorCode' in result) {
+                if ('ok' in result && !result.ok && 'errorCode' in result) {
                     const retained = DeploymentReceiptSettlementFailureDetailsV1Schema.safeParse(result.details);
                     if (retained.success) {
                         deployment = projectDeploymentReceiptSettlementAcceptedResultV1(retained.data);
@@ -536,7 +541,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(repositoryChange ? { repositoryChange } : {}),
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };
             return authorizationFailure || diagnostic.failureCause || readActionOutputDiagnostic(diagnostic)
-                ? { ...diagnostic, details: partial, effectAttempted: true } : partial;
+                ? carryActionFailureDiagnostic({ ...diagnostic, details: partial, effectAttempted: true }, diagnostic) : partial;
         }
     }
     async function commitTemplateMetadata(content: DeploymentEnvironmentDetailV1['content'], environmentId: string, revision: number,
@@ -568,7 +573,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 return projected.ok ? { ok: true, result: projected } : projected;
             }
             if ('kind' in result && result.kind === 'partial') return { ok: false, effectAttempted: true, errorCode: result.errorCode, error: result.errorCode, details: result };
-            if ('errorCode' in result) return result;
+            if ('ok' in result && !result.ok && 'errorCode' in result) return result;
             return { ok: true, result: projectTemplateResult(result) };
         } };
     }

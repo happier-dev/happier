@@ -51,21 +51,39 @@ PUBLIC_VALUE = "public value"
 filePath = "settings/app.conf"
 content = "hello=\${PUBLIC_VALUE}"
 `;
-function harness(config = template, body = compose) {
+function harness(config = template, body = compose, selectedId = 'example') {
   const calls: string[] = [];
   const source = RegistrySourceDescriptorV1Schema.parse({ id: 'toml-catalog', title: 'Apps', format: 'dokploy-templates', kinds: ['app'],
     url: 'https://github.com/example/templates', enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true });
   const http: RegistryHttpV1 = {
     getJson: async url => { calls.push(url); return { ok: true, fetchedAt: 1, value: url.includes('/commits/') ? { sha: commit }
       : url.includes('/git/trees/') ? { tree: ['meta.json', 'docker-compose.yml', 'template.toml'].map(file => ({
-        path: `blueprints/example/${file}`, mode: '100644', type: 'blob', sha: computeGitBlobShaV1(new TextEncoder().encode(file === 'docker-compose.yml' ? body : file === 'template.toml' ? config : '{}')),
-      })) } : { id: 'example', name: 'Example', description: 'A declarative app', version: '1', tags: ['operations'] } }; },
+        path: `blueprints/${selectedId}/${file}`, mode: '100644', type: 'blob', sha: computeGitBlobShaV1(new TextEncoder().encode(file === 'docker-compose.yml' ? body : file === 'template.toml' ? config : '{}')),
+      })) } : { id: selectedId, name: 'Example', description: 'A declarative app', version: '1', tags: ['operations'] } }; },
     getText: async url => { calls.push(url); return { ok: true, fetchedAt: 2, value: url.endsWith('/template.toml') ? config : body }; },
     getBytes: async () => { throw new Error('Unexpected byte acquisition'); },
   };
   return { calls, source, http, host: createRegistryHostV1({ host: 'node', http, readSources: async () => [source] }) };
 }
 describe('Compose and TOML catalog through the registered owner', () => {
+  it.each(['supabase', 'example'])('admits typed JWT/hash helpers only for the named Supabase exception (%s)', async selectedId => {
+    const { host } = harness("[variables]\njwt_secret = \"${password:32}\"\npayload = '{\"role\":\"anon\",\"iss\":\"supabase\",\"exp\":${timestamps:2030-01-01T00:00:00Z}}'\nanon_key = \"${jwt:jwt_secret:payload}\"\nrealtime_key = \"${hash:16}\"\npublishable = \"sb_publishable_${hash:22}_${hash:8}\"\n[config.env]\nANON_KEY = \"${anon_key}\"\nJWT_SECRET = \"${jwt_secret}\"\nREALTIME = \"${realtime_key}\"\nPUBLISHABLE = \"${publishable}\"\n", "services:\n  web:\n    image: example/app:1\n    environment:\n      ANON_KEY: ${ANON_KEY}\n      JWT_SECRET: ${JWT_SECRET}\n      REALTIME: ${REALTIME}\n      PUBLISHABLE: ${PUBLISHABLE}\n", selectedId);
+    const result = await host.fetchRequest({ op: 'read', kind: 'app', sourceId: 'toml-catalog', itemId: selectedId, version: commit });
+    if (selectedId !== 'supabase') { expect(result).toMatchObject({ op: 'read', item: { payload: { state: 'needs_review' } } }); return; }
+    expect(result).toMatchObject({ op: 'read', item: { payload: { state: 'ready', app: { generatedSecrets: expect.arrayContaining([
+      expect.objectContaining({ key: 'anon_key', profile: { kind: 'jwt-hs256', secretKey: 'jwt_secret', payload: { role: 'anon', iss: 'supabase', exp: 1893456000 } } }),
+      expect.objectContaining({ key: 'realtime_key', profile: { kind: 'hex-bytes', bytes: 8 } }),
+      expect.objectContaining({ key: 'publishable', profile: { kind: 'hex-characters', parts: ['sb_publishable_', 22, '_', 8] } }),
+    ]) } } } });
+  });
+  it('keeps generated Supabase hash content out of public mount files', async () => {
+    const { host } = harness('[variables]\nkey = "${hash:16}"\n[[config.mounts]]\nfilePath = "app.conf"\ncontent = "token=${key}"\n',
+      'services:\n  web:\n    image: example/app:1\n    environment:\n      KEY: ${key}\n    volumes: ["../files/app.conf:/etc/app.conf:ro"]\n', 'supabase');
+    expect(await host.fetchRequest({ op: 'read', kind: 'app', sourceId: 'toml-catalog', itemId: 'supabase', version: commit }))
+      .toMatchObject({ op: 'read', item: { payload: { state: 'needs_review', diagnostics: expect.arrayContaining([
+        { field: 'config.mounts.0', reason: 'secret_content_requires_binding' },
+      ]) } } });
+  });
   it('preserves Dokploy files-root contents and the distinct native writable directory without repairing vendor input', async () => {
     const { host } = harness('[config]\nenv = {}\n[[config.mounts]]\nfilePath = "/files/data"\ncontent = ""\n',
       'services:\n  web:\n    image: example/app:1\n    volumes:\n      - ../files/data:/data\n');

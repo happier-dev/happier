@@ -55,7 +55,7 @@ export type RegistriesActionInputById = {
     readonly "registries.items.list": {
         kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter';
         sourceIds?: string[] | undefined;
-        contributionFamily?: 'accessProviders' | 'accountCollections' | 'actions' | 'agents' | 'atmospherePictures' | 'backgroundServices' | 'backupDestinations' | 'botTemplates' | 'browserActions' | 'browserTargets' | 'captureSources' | 'composerAttachments' | 'composerControls' | 'composerReferences' | 'composerRegions' | 'connectedAccountDescriptors' | 'daemonDatabases' | 'deploymentTargets' | 'dragSources' | 'dropTargets' | 'events' | 'executionRunProfiles' | 'healthCheckKinds' | 'hooks' | 'inputTypes' | 'languageServers' | 'machineProvisioners' | 'machineRecipes' | 'machineSetupPresets' | 'managedDependencies' | 'mcp' | 'notificationChannels' | 'notifications' | 'openableContentViewers' | 'pluginContributionPoints' | 'projectNativeAdapters' | 'promptAssets' | 'providers' | 'registrySources' | 'requestInterceptors' | 'resources' | 'roles' | 'scmBackends' | 'scmHostingProviders' | 'searchProviders' | 'secretSources' | 'sessionHeaderActions' | 'sessionInfoSections' | 'settings' | 'skills' | 'storeKinds' | 'systemTools' | 'targetedPluginContributions' | 'transcriptActivities' | 'ui' | 'voiceModelPacks' | 'voiceProviders' | 'webhooks' | 'workItems' | 'workflows' | undefined;
+        contributionFamily?: 'accessProviders' | 'accountCollections' | 'actions' | 'agents' | 'atmospherePictures' | 'backgroundServices' | 'backupDestinations' | 'botTemplates' | 'browserActions' | 'browserTargets' | 'captureSources' | 'composerAttachments' | 'composerControls' | 'composerReferences' | 'composerRegions' | 'connectedAccountDescriptors' | 'daemonDatabases' | 'deploymentTargets' | 'dragSources' | 'dropTargets' | 'events' | 'executionRunProfiles' | 'healthCheckKinds' | 'hooks' | 'inputTypes' | 'languageServers' | 'machineProvisioners' | 'machineRecipes' | 'machineRoles' | 'machineSetupPresets' | 'managedDependencies' | 'mcp' | 'notificationChannels' | 'notifications' | 'openableContentViewers' | 'pluginContributionPoints' | 'projectNativeAdapters' | 'promptAssets' | 'providers' | 'registrySources' | 'requestInterceptors' | 'resources' | 'roles' | 'scmBackends' | 'scmHostingProviders' | 'searchProviders' | 'secretSources' | 'sessionHeaderActions' | 'sessionInfoSections' | 'settings' | 'skills' | 'storeKinds' | 'systemTools' | 'targetedPluginContributions' | 'transcriptActivities' | 'ui' | 'voiceModelPacks' | 'voiceProviders' | 'webhooks' | 'workItems' | 'workflows' | undefined;
         query?: string | undefined;
         cursor?: null | string | undefined;
         refresh?: boolean | undefined;
@@ -758,6 +758,17 @@ export type RegistriesActionResultById = {
                             kind: 'hex-bytes';
                             bytes: number;
                         } | {
+                            kind: 'hex-characters';
+                            parts: (number | string)[];
+                        } | {
+                            kind: 'jwt-hs256';
+                            secretKey: string;
+                            payload: {
+                                role: 'anon' | 'service_role';
+                                iss: 'supabase';
+                                exp: number;
+                            };
+                        } | {
                             kind: 'lowercase-alphanumeric-characters';
                             characters: number;
                         } | {
@@ -895,6 +906,11 @@ export type RegistriesActionResultById = {
                 ref: {
                     kind: 'content';
                     digest: string;
+                };
+                listing?: undefined | {
+                    version: string;
+                    permissions: string[];
+                    hostPermissions: string[];
                 };
             } | {
                 kind: 'mcpServer';
@@ -1089,7 +1105,6 @@ export type RegistriesActionResultById = {
                     description: string;
                     tags: string[];
                     buildGoal: string;
-                    path?: string | undefined;
                     previewImage?: string | undefined;
                 };
                 ref: {

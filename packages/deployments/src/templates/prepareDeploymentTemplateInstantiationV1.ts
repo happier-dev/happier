@@ -218,7 +218,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
     const variables = new Map(template.variables.map(variable => [variable.key, variable]));
     if (input.bindings.some(binding => !variables.has(binding.name))) return refuse('template_binding_unknown');
     const bindings: EnvironmentVariableBindingV1[] = [];
-    const generatedSecrets: PreparedDeploymentTemplateInstantiationV1['generatedSecrets'] = [];
+    let generatedSecrets: PreparedDeploymentTemplateInstantiationV1['generatedSecrets'] = [];
     for (const variable of template.variables) {
         let selected = input.bindings.find(binding => binding.name === variable.key)
             ?? (upgrading ? input.current?.content.bindings.find((binding): binding is EnvironmentVariableBindingV1 =>
@@ -252,6 +252,17 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         }
         bindings.push({ ...selected, source: selected.source });
     }
+    // Descriptors permit one dependency level: save independent secrets before deriving JWTs.
+    // Existing Saved Secret overrides need the confidential acquisition owner before derivation.
+    const independent = generatedSecrets.filter(secret => secret.profile.kind !== 'jwt-hs256');
+    const signingKeys = new Set(independent.map(secret => secret.phase + ':' + secret.key));
+    const derived = generatedSecrets.filter(secret => secret.profile.kind === 'jwt-hs256');
+    for (const secret of derived) {
+        if (secret.profile.kind === 'jwt-hs256' && !signingKeys.has(secret.phase + ':' + secret.profile.secretKey)) {
+            return refuse('template_needs_review', { key: secret.key, dependency: secret.profile.secretKey });
+        }
+    }
+    generatedSecrets = [...independent, ...derived];
     if (input.connectTo) {
         const services = record(document.services);
         const name = input.connectTo.service;

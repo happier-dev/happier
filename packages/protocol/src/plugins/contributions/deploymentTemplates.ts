@@ -11,7 +11,7 @@ const positive = () => z.number().check(z.int(), z.positive());
 const templateExport = () => z.strictObject({ service: text(), port: port(), scheme: z.optional(text()),
   defaultExposure: z.enum(['internal', 'privateNetwork', 'public']), env: z.optional(z.record(key(), z.string())) });
 
-/** Host-owned CSPRNG profiles, never executable author code or supplied seeds. */
+/** Host-owned entropy and Supabase derivation profiles; never executable author code. */
 export const DeploymentTemplateSecretProfileV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('base64url-32-bytes') }),
   z.strictObject({ kind: z.literal('hex-32-bytes') }),
@@ -21,6 +21,12 @@ export const DeploymentTemplateSecretProfileV1Schema = lazyZodSchema(() => z.dis
   z.strictObject({ kind: z.literal('lowercase-alphanumeric-characters'), characters: positive() }),
   z.strictObject({ kind: z.literal('hex-bytes'), bytes: positive() }),
   z.strictObject({ kind: z.literal('base64-bytes'), bytes: positive() }),
+  // Dokploy hashes count hexadecimal characters, including odd lengths and literal prefixes.
+  z.strictObject({ kind: z.literal('hex-characters'), parts: z.array(z.union([z.string().check(z.regex(/^[A-Za-z0-9_-]+$/u)), positive()])).check(z.minLength(1),
+    z.refine(parts => parts.some(part => typeof part === 'number'), { message: 'Generated hashes require entropy.' })) }),
+  z.strictObject({ kind: z.literal('jwt-hs256'), secretKey: key(), payload: z.strictObject({
+    role: z.enum(['anon', 'service_role']), iss: z.literal('supabase'), exp: positive(),
+  }) }),
 ]));
 export const DeploymentTemplateDataV1Schema = lazyZodSchema(() => z.strictObject({
   engine: z.enum(['postgres', 'mysql', 'mariadb', 'mongo', 'sqlite', 'redis']), version: z.optional(text()),
@@ -75,10 +81,15 @@ export const DeploymentTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   const variables = new Map(template.variables.map(variable => [variable.key, variable]));
   const domains = new Set(template.domains.map(domain => domain.key));
   if (variables.size !== template.variables.length) context.addIssue({ code: 'custom', path: ['variables'], message: 'Variable keys must be unique.' });
-  const generated = new Set<string>();
+  const generated = new Map<string, (typeof template.generatedSecrets)[number]>();
   for (const [index, secret] of template.generatedSecrets.entries()) {
     if (!variables.get(secret.key)?.secret || generated.has(secret.key)) context.addIssue({ code: 'custom', path: ['generatedSecrets', index, 'key'], message: 'Generated secrets require one declared secret variable.' });
-    generated.add(secret.key);
+    generated.set(secret.key, secret);
+  }
+  for (const [index, secret] of template.generatedSecrets.entries()) {
+    if (secret.profile.kind !== 'jwt-hs256') continue;
+    const signing = generated.get(secret.profile.secretKey);
+    if (!signing || signing.profile.kind === 'jwt-hs256') context.addIssue({ code: 'custom', path: ['generatedSecrets', index, 'profile', 'secretKey'], message: 'JWT signing requires an independent generated secret.' });
   }
   for (const [index, variable] of template.variables.entries()) {
     if (variable.secret && variable.default !== undefined) context.addIssue({ code: 'custom', path: ['variables', index, 'default'], message: 'Secret variables cannot contain literal defaults.' });

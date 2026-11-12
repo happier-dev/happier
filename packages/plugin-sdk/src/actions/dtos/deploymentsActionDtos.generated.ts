@@ -156,6 +156,103 @@ export type DeploymentsActionInputById = {
         domainId: string;
         serverId: string;
         environmentId: string;
+    } | {
+        mode: 'preview';
+        targetLinkId: string;
+        expectedRevision: number;
+        expectedTargetLinkRevision: number;
+        requestKey: string;
+        content: {
+            hostname: string;
+            target: {
+                kind: 'provider';
+                zone?: undefined | {
+                    zoneId: string;
+                    name: string;
+                };
+                service?: undefined;
+                containerPort?: undefined;
+                path?: undefined;
+                redirectTo?: undefined;
+            } | {
+                service: string;
+                containerPort: number;
+                kind?: 'native' | undefined;
+                path?: string | undefined;
+                redirectTo?: string | undefined;
+            };
+            providerObservation?: undefined | {
+                v: 1;
+                hostname: string;
+                state: 'active' | 'failed' | 'pending' | 'removed';
+                dns: {
+                    type: string;
+                    name: string;
+                    value: string;
+                }[];
+            };
+            healthCheck?: undefined | {
+                path: string;
+                expectStatus: number;
+            };
+            ingress?: undefined | {
+                provider: {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                config: JsonValue;
+                credentialRefs: {
+                    purpose: string;
+                    credentialRef: {
+                        kind: 'connectedAccount';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'savedSecret';
+                    };
+                }[];
+            };
+            cloudflarePreparation?: undefined | {
+                tunnelId: string;
+                owned: {
+                    hostname: string;
+                    expectedService: string;
+                    path?: string | undefined;
+                }[];
+                dnsOwnership: {
+                    hostname: string;
+                    recordId: string;
+                }[];
+                connectors?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                    imageRef: string;
+                    version: string;
+                    networkName: string;
+                    grantRef: string;
+                }[];
+            };
+            tls?: undefined | {
+                kind: 'custom';
+            } | {
+                kind: 'managed';
+            };
+            basicAuth?: undefined | {
+                username: string;
+            };
+        };
+        serverId: string;
+        environmentId: string;
     };
     readonly "deployments.domains.get": {
         domainId: string;
@@ -165,6 +262,18 @@ export type DeploymentsActionInputById = {
     readonly "deployments.domains.list": {
         serverId: string;
         environmentId: string;
+        cursor?: string | undefined;
+        limit?: number | undefined;
+    };
+    readonly "deployments.domains.page": {
+        serverId: string;
+        projectSourceId?: string | undefined;
+        cursor?: string | undefined;
+        limit?: number | undefined;
+    };
+    readonly "deployments.data.page": {
+        serverId: string;
+        projectSourceId?: string | undefined;
         cursor?: string | undefined;
         limit?: number | undefined;
     };
@@ -2189,6 +2298,14 @@ export type DeploymentsActionInputById = {
                 desiredRevision: number;
                 providerRevision?: string | undefined;
             }[];
+            data?: undefined | {
+                engine: string;
+                version?: string | undefined;
+                providerConsole?: undefined | {
+                    url: string;
+                    label: string;
+                };
+            };
             providerUrl?: string | undefined;
         };
         managedRetention?: 'keep' | 'until-delete' | undefined;
@@ -3334,6 +3451,15 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
             };
+            routedReplicas?: undefined | {
+                source: 'recordedTopology';
+                count: number;
+                replicas: {
+                    machineId: string;
+                    installationId: string;
+                    containerName: string;
+                }[];
+            };
             networkExposure?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -3520,6 +3646,15 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+            };
+            routedReplicas?: undefined | {
+                source: 'recordedTopology';
+                count: number;
+                replicas: {
+                    machineId: string;
+                    installationId: string;
+                    containerName: string;
+                }[];
             };
             networkExposure?: undefined | {
                 machineId: string;
@@ -3708,6 +3843,15 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
             };
+            routedReplicas?: undefined | {
+                source: 'recordedTopology';
+                count: number;
+                replicas: {
+                    machineId: string;
+                    installationId: string;
+                    containerName: string;
+                }[];
+            };
             networkExposure?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -3809,6 +3953,27 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    } | {
+        ok: true;
+        environmentId: string;
+        dnsHealth: {
+            status: 'degraded' | 'down' | 'unknown' | 'up';
+            evidence: {
+                v: 1;
+                items: readonly {
+                    source: {
+                        kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                        label: string;
+                        url?: string;
+                    };
+                    author: {
+                        kind: 'bot' | 'person' | 'process' | 'unknown';
+                        label?: string;
+                    };
+                    text: string;
+                }[];
+            };
+        };
     };
     readonly "deployments.domains.get": {
         domain: {
@@ -3894,6 +4059,15 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+            };
+            routedReplicas?: undefined | {
+                source: 'recordedTopology';
+                count: number;
+                replicas: {
+                    machineId: string;
+                    installationId: string;
+                    containerName: string;
+                }[];
             };
             networkExposure?: undefined | {
                 machineId: string;
@@ -4082,6 +4256,15 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
             };
+            routedReplicas?: undefined | {
+                source: 'recordedTopology';
+                count: number;
+                replicas: {
+                    machineId: string;
+                    installationId: string;
+                    containerName: string;
+                }[];
+            };
             networkExposure?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -4184,6 +4367,424 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    };
+    readonly "deployments.domains.page": {
+        error: 'quota_exceeded';
+        budget: 'account' | 'document';
+        limitBytes: number;
+        usedBytes: number;
+        ok: false;
+    } | {
+        errorCode: 'unsupported_action';
+        error: 'unsupported_action';
+        effectAttempted: false;
+        details: {
+            reason: string;
+            remedy: string;
+            requiredFact?: string | undefined;
+        };
+        failureCause: ActionFailureCauseV1;
+        ok: false;
+        requestId?: string | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+    } | {
+        ok: false;
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+    } | {
+        ok: false;
+        error: 'deployment_in_progress';
+        deploymentId: string;
+        href: string;
+    } | {
+        ok: false;
+        error: 'deployment_invalid';
+        diagnostic?: undefined | {
+            step: 'target_link.associate' | 'target_link.environment_read' | 'target_link.provider_links_read';
+            field: string;
+            rule: 'constraint' | 'invalid_type' | 'invalid_value' | 'path_mismatch' | 'unrecognized_keys';
+        };
+    } | {
+        ok: false;
+        error: 'machine_unavailable';
+        role: 'build' | 'controller' | 'target';
+        machineIds: string[];
+        nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
+        diagnostic?: undefined | {
+            reason: 'machine_installation_missing';
+            requiredFact: 'machine_installation';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_offline';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_replaced';
+            requiredFact: 'current_machine';
+            remedy: 'select_current_machine';
+        } | {
+            reason: 'machine_revoked';
+            requiredFact: 'machine_registration';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_setup_requires_manage';
+            requiredFact: 'machine_manage_role';
+            remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'source_machine_access_missing';
+            requiredFact: 'source_machine_use';
+            remedy: 'share_machine_with_source_owner';
+        };
+        effectAttempted?: false | undefined;
+    } | {
+        ok: true;
+        items: {
+            domain: {
+                createdByAccountId: string;
+                createdAtMs: number;
+                updatedAtMs: number;
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                v: 1;
+                id: string;
+                environmentId: string;
+                targetLinkId: string;
+                revision: number;
+                state: 'active' | 'applying' | 'failed' | 'pending' | 'removing' | 'warning';
+                observedAtMs?: number | undefined;
+                placements?: undefined | {
+                    placement: {
+                        serverId: string;
+                        accountId: string;
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                        machineId: string;
+                        installationId: string;
+                        actionOperationId: string;
+                        requestId: string;
+                        nativeServer: string;
+                    };
+                    content: {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                    desired: boolean;
+                    listener: 'privateOrigin' | 'public';
+                    dockerEngineId?: string | undefined;
+                    retireSharedTunnel?: boolean | undefined;
+                    environmentContent?: undefined | {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                    targetLinkContent?: undefined | {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                }[];
+                provider?: true | undefined;
+                providerPlacement?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    domainId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    actionOperationId: string;
+                    requestId: string;
+                };
+                operationAddress?: undefined | {
+                    serverId: string;
+                    machineId: string;
+                    operationId: string;
+                };
+                dnsHealth?: undefined | {
+                    status: 'degraded' | 'down' | 'unknown' | 'up';
+                    evidence: {
+                        v: 1;
+                        items: readonly {
+                            source: {
+                                kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                                label: string;
+                                url?: string;
+                            };
+                            author: {
+                                kind: 'bot' | 'person' | 'process' | 'unknown';
+                                label?: string;
+                            };
+                            text: string;
+                        }[];
+                    };
+                };
+                routedReplicas?: undefined | {
+                    source: 'recordedTopology';
+                    count: number;
+                    replicas: {
+                        machineId: string;
+                        installationId: string;
+                        containerName: string;
+                    }[];
+                };
+                networkExposure?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                    nativeServer: string;
+                    listener: 'privateOrigin' | 'public';
+                    observation: {
+                        kind: 'ready';
+                        listener: 'privateOrigin' | 'public';
+                        listeners: {
+                            tls: boolean;
+                            automaticHttpsDisabled: boolean;
+                            endpoints: {
+                                audience: 'loopback' | 'other' | 'privateNetwork' | 'wildcard';
+                                hostPort: number;
+                                containerPort: number;
+                                protocol: 'tcp';
+                            }[];
+                        }[];
+                        localOrigin: boolean;
+                        fallback: boolean;
+                    } | {
+                        kind: 'unavailable';
+                        reason: string;
+                        requiredFact?: 'activeDomainMembers' | 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | 'cloudflarePreparation' | 'deploymentActionResult' | 'domainIngress' | 'edgeCaddyMachine' | 'memberCaddyObservation' | 'nativeExecutionResult' | 'networkExposure' | 'privateCaddyListener' | 'publicCaddyListener' | 'publicCaddyObservation' | 'reachabilityPosture' | 'sharedTunnelOrigin' | undefined;
+                        remedy?: string | undefined;
+                    };
+                }[];
+                deletedAtMs?: number | undefined;
+            };
+            environment: {
+                capabilities: {
+                    role: 'deployer' | 'manager' | 'reader';
+                    read: boolean;
+                    deploy: boolean;
+                    manage: boolean;
+                    manageBindings: boolean;
+                    manageTargets: boolean;
+                    delete: boolean;
+                };
+                createdByAccountId: string;
+                createdAtMs: number;
+                updatedAtMs: number;
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                v: 1;
+                id: string;
+                serverId: string;
+                projectSourceId: string;
+                revision: number;
+                owner: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+                protection: 'nonProduction' | 'production';
+                purpose: 'preview' | 'standard';
+                deployerMode: 'chosen' | 'managers' | 'members';
+                controllerMachineId: string;
+                deletedAtMs?: number | undefined;
+                deployerPrincipals?: undefined | {
+                    principalKind: 'account' | 'teamGroup';
+                    principalId: string;
+                }[];
+                buildMachineId?: string | undefined;
+                ingress?: undefined | {
+                    kind: 'cloudflareTunnel';
+                } | {
+                    kind: 'edgeCaddy';
+                    edgeMachineId: string;
+                };
+                runtimeTargetLinkId?: string | undefined;
+                previewTemplateEnvironmentId?: string | undefined;
+                previewRepositoryId?: string | undefined;
+                previewPullRequestId?: string | undefined;
+                previewTargetLinkId?: string | undefined;
+                previewCompanionOfEnvironmentId?: string | undefined;
+            };
+        }[];
+        artifacts: {
+            id: string;
+            ownerAccountId: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            encryptionMode: 'e2ee' | 'plain';
+            header: string;
+            headerVersion: number;
+            body: string;
+            bodyVersion: number;
+            publicAudience: 'none' | 'retained';
+            dataEncryptionKey: string;
+            seq: number;
+            createdAt: number;
+            updatedAt: number;
+            ownerDisplayName?: null | string | undefined;
+            kind?: 'other' | 'plugin_ui' | 'prompt' | 'skill' | 'widget_area_layout' | 'widget_definition' | 'widget_layout_fragment' | 'work_board' | null | undefined;
+            kindHint?: null | string | undefined;
+            sharedTeamIds?: string[] | undefined;
+            provenance?: null | string | undefined;
+            provenanceDataEncryptionKey?: null | string | undefined;
+        }[];
+        nextCursor: null | string;
+        coverage?: 'complete' | 'partial' | undefined;
+    };
+    readonly "deployments.data.page": {
+        error: 'quota_exceeded';
+        budget: 'account' | 'document';
+        limitBytes: number;
+        usedBytes: number;
+        ok: false;
+    } | {
+        errorCode: 'unsupported_action';
+        error: 'unsupported_action';
+        effectAttempted: false;
+        details: {
+            reason: string;
+            remedy: string;
+            requiredFact?: string | undefined;
+        };
+        failureCause: ActionFailureCauseV1;
+        ok: false;
+        requestId?: string | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+    } | {
+        ok: false;
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+    } | {
+        ok: false;
+        error: 'deployment_in_progress';
+        deploymentId: string;
+        href: string;
+    } | {
+        ok: false;
+        error: 'deployment_invalid';
+        diagnostic?: undefined | {
+            step: 'target_link.associate' | 'target_link.environment_read' | 'target_link.provider_links_read';
+            field: string;
+            rule: 'constraint' | 'invalid_type' | 'invalid_value' | 'path_mismatch' | 'unrecognized_keys';
+        };
+    } | {
+        ok: false;
+        error: 'machine_unavailable';
+        role: 'build' | 'controller' | 'target';
+        machineIds: string[];
+        nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
+        diagnostic?: undefined | {
+            reason: 'machine_installation_missing';
+            requiredFact: 'machine_installation';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_offline';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_replaced';
+            requiredFact: 'current_machine';
+            remedy: 'select_current_machine';
+        } | {
+            reason: 'machine_revoked';
+            requiredFact: 'machine_registration';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_setup_requires_manage';
+            requiredFact: 'machine_manage_role';
+            remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'source_machine_access_missing';
+            requiredFact: 'source_machine_use';
+            remedy: 'share_machine_with_source_owner';
+        };
+        effectAttempted?: false | undefined;
+    } | {
+        ok: true;
+        items: {
+            environment: {
+                capabilities: {
+                    role: 'deployer' | 'manager' | 'reader';
+                    read: boolean;
+                    deploy: boolean;
+                    manage: boolean;
+                    manageBindings: boolean;
+                    manageTargets: boolean;
+                    delete: boolean;
+                };
+                createdByAccountId: string;
+                createdAtMs: number;
+                updatedAtMs: number;
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                v: 1;
+                id: string;
+                serverId: string;
+                projectSourceId: string;
+                revision: number;
+                owner: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+                protection: 'nonProduction' | 'production';
+                purpose: 'preview' | 'standard';
+                deployerMode: 'chosen' | 'managers' | 'members';
+                controllerMachineId: string;
+                deletedAtMs?: number | undefined;
+                deployerPrincipals?: undefined | {
+                    principalKind: 'account' | 'teamGroup';
+                    principalId: string;
+                }[];
+                buildMachineId?: string | undefined;
+                ingress?: undefined | {
+                    kind: 'cloudflareTunnel';
+                } | {
+                    kind: 'edgeCaddy';
+                    edgeMachineId: string;
+                };
+                runtimeTargetLinkId?: string | undefined;
+                previewTemplateEnvironmentId?: string | undefined;
+                previewRepositoryId?: string | undefined;
+                previewPullRequestId?: string | undefined;
+                previewTargetLinkId?: string | undefined;
+                previewCompanionOfEnvironmentId?: string | undefined;
+            };
+        }[];
+        artifacts: {
+            id: string;
+            ownerAccountId: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            encryptionMode: 'e2ee' | 'plain';
+            header: string;
+            headerVersion: number;
+            body: string;
+            bodyVersion: number;
+            publicAudience: 'none' | 'retained';
+            dataEncryptionKey: string;
+            seq: number;
+            createdAt: number;
+            updatedAt: number;
+            ownerDisplayName?: null | string | undefined;
+            kind?: 'other' | 'plugin_ui' | 'prompt' | 'skill' | 'widget_area_layout' | 'widget_definition' | 'widget_layout_fragment' | 'work_board' | null | undefined;
+            kindHint?: null | string | undefined;
+            sharedTeamIds?: string[] | undefined;
+            provenance?: null | string | undefined;
+            provenanceDataEncryptionKey?: null | string | undefined;
+        }[];
+        nextCursor: null | string;
+        coverage?: 'complete' | 'partial' | undefined;
     };
     readonly "deployments.publish.prepare": {
         kind: 'prepared';
@@ -4308,6 +4909,17 @@ export type DeploymentsActionResultById = {
                 } | {
                     kind: 'hex-bytes';
                     bytes: number;
+                } | {
+                    kind: 'hex-characters';
+                    parts: (number | string)[];
+                } | {
+                    kind: 'jwt-hs256';
+                    secretKey: string;
+                    payload: {
+                        role: 'anon' | 'service_role';
+                        iss: 'supabase';
+                        exp: number;
+                    };
                 } | {
                     kind: 'lowercase-alphanumeric-characters';
                     characters: number;
@@ -5423,6 +6035,14 @@ export type DeploymentsActionResultById = {
                         desiredRevision: number;
                         providerRevision?: string | undefined;
                     }[];
+                    data?: undefined | {
+                        engine: string;
+                        version?: string | undefined;
+                        providerConsole?: undefined | {
+                            url: string;
+                            label: string;
+                        };
+                    };
                     providerUrl?: string | undefined;
                 };
                 managedRetention?: 'keep' | 'until-delete' | undefined;
@@ -5486,6 +6106,17 @@ export type DeploymentsActionResultById = {
                 } | {
                     kind: 'hex-bytes';
                     bytes: number;
+                } | {
+                    kind: 'hex-characters';
+                    parts: (number | string)[];
+                } | {
+                    kind: 'jwt-hs256';
+                    secretKey: string;
+                    payload: {
+                        role: 'anon' | 'service_role';
+                        iss: 'supabase';
+                        exp: number;
+                    };
                 } | {
                     kind: 'lowercase-alphanumeric-characters';
                     characters: number;
@@ -7718,6 +8349,17 @@ export type DeploymentsActionResultById = {
                         kind: 'hex-bytes';
                         bytes: number;
                     } | {
+                        kind: 'hex-characters';
+                        parts: (number | string)[];
+                    } | {
+                        kind: 'jwt-hs256';
+                        secretKey: string;
+                        payload: {
+                            role: 'anon' | 'service_role';
+                            iss: 'supabase';
+                            exp: number;
+                        };
+                    } | {
                         kind: 'lowercase-alphanumeric-characters';
                         characters: number;
                     } | {
@@ -7942,7 +8584,7 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
-        replayed?: true | undefined;
+        replayed?: boolean | undefined;
         runtimeTargetLinkId?: string | undefined;
         previewDataTargets?: undefined | {
             templateDataTargetLinkId: string;
@@ -8216,7 +8858,7 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
-        replayed?: true | undefined;
+        replayed?: boolean | undefined;
         runtimeTargetLinkId?: string | undefined;
         previewDataTargets?: undefined | {
             templateDataTargetLinkId: string;
@@ -8435,6 +9077,14 @@ export type DeploymentsActionResultById = {
                     desiredRevision: number;
                     providerRevision?: string | undefined;
                 }[];
+                data?: undefined | {
+                    engine: string;
+                    version?: string | undefined;
+                    providerConsole?: undefined | {
+                        url: string;
+                        label: string;
+                    };
+                };
                 providerUrl?: string | undefined;
             };
             managedRetention?: 'keep' | 'until-delete' | undefined;
@@ -11319,6 +11969,7 @@ export type DeploymentsActionResultById = {
         activity?: undefined | {
             running: boolean;
             failed: boolean;
+            attentionCount?: number | undefined;
         };
         coverage?: 'complete' | 'partial' | undefined;
     };

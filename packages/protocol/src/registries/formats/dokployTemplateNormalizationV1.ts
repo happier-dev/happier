@@ -1,6 +1,6 @@
 import { parse as parseToml } from 'smol-toml';
 import { parseDocument, stringify } from 'yaml';
-import { DeploymentTemplateV1Schema, type DeploymentTemplateSecretProfileV1 } from '../../plugins/contributions/deploymentTemplates.js';
+import { DeploymentTemplateV1Schema, DeploymentTemplateSecretProfileV1Schema, type DeploymentTemplateSecretProfileV1 } from '../../plugins/contributions/deploymentTemplates.js';
 import { normalizeComposeTemplateV1, templateRecordV1, type NormalizedComposeTemplateV1, type TemplateDiagnosticV1 } from './composeTemplateNormalizationV1.js';
 import { DeploymentComposePublicFilesV1Schema } from '../../deployments/storedAppInputV1.js';
 
@@ -8,7 +8,7 @@ type Binding = { expression: string; profile?: DeploymentTemplateSecretProfileV1
 
 /** Interpret the declarative Dokploy dialect; helpers become host-owned secret
  * profiles, never evaluated code. Common Compose admission remains the owner. */
-export function normalizeDokployTemplateV1(input: Parameters<typeof normalizeComposeTemplateV1>[0] & Readonly<{ template: string }>): NormalizedComposeTemplateV1 {
+export function normalizeDokployTemplateV1(input: Parameters<typeof normalizeComposeTemplateV1>[0] & Readonly<{ template: string; templateId?: string }>): NormalizedComposeTemplateV1 {
   const diagnostics: TemplateDiagnosticV1[] = [];
   const issue = (field: string, reason: string) => diagnostics.push({ field, reason });
   let template: Record<string, unknown>;
@@ -24,6 +24,11 @@ export function normalizeDokployTemplateV1(input: Parameters<typeof normalizeCom
   const variables = templateRecordV1(template.variables) ?? {};
   const config = templateRecordV1(template.config) ?? {};
   for (const key of Object.keys(config)) if (!['domains', 'env', 'mounts'].includes(key)) issue(`config.${key}`, 'unsupported_configuration');
+  const jwtHelper = /^\$\{jwt:([A-Za-z_][A-Za-z0-9_]*):([A-Za-z_][A-Za-z0-9_]*)\}$/;
+  const payloadVariables = new Set(input.templateId === 'supabase' ? Object.values(variables).flatMap(value => {
+    const match = typeof value === 'string' ? jwtHelper.exec(value) : null;
+    return match ? [match[2]!] : [];
+  }) : []);
   const bindings = new Map<string, Binding>();
   const resolving = new Set<string>();
   const reference = (key: string) => '${' + key + '}';
@@ -35,9 +40,37 @@ export function normalizeDokployTemplateV1(input: Parameters<typeof normalizeCom
     let result: Binding = { expression: reference(key) };
     if (typeof raw !== 'string') issue(`variables.${key}`, 'unsupported_variable');
     else {
+      const jwt = input.templateId === 'supabase' ? jwtHelper.exec(raw) : null;
+      const hashes = input.templateId === 'supabase' && /\$\{hash:\d+\}/.test(raw) ? [...raw.matchAll(/\$\{hash:(\d+)\}/g)] : [];
       const helper = /^\$\{(password|base64|username|uuid|domain)(?::(\d+))?\}$/.exec(raw);
       const alias = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(raw);
-      if (alias && alias[1] !== key && Object.hasOwn(variables, alias[1]!)) result = bind(alias[1]!, variables[alias[1]!]);
+      if (jwt) {
+        const signing = bind(jwt[1]!, variables[jwt[1]!]);
+        const rawPayload = variables[jwt[2]!];
+        try {
+          if (!signing.profile || signing.profile.kind === 'jwt-hs256' || typeof rawPayload !== 'string') throw new Error('unsupported_jwt');
+          const payload: unknown = JSON.parse(rawPayload.replace(/\$\{timestamps:([^}]+)\}/g, (_whole, date: string) => {
+            if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(date)) throw new Error('unsupported_timestamp');
+            const timestamp = Date.parse(date) / 1000;
+            if (!Number.isSafeInteger(timestamp)) throw new Error('unsupported_timestamp');
+            return String(timestamp);
+          }));
+          result.profile = DeploymentTemplateSecretProfileV1Schema.parse({ kind: 'jwt-hs256', secretKey: signing.expression.slice(2, -1), payload });
+        } catch { issue(`variables.${key}`, 'unsupported_helper'); }
+      } else if (hashes.length) {
+        const parts: (string | number)[] = []; let offset = 0;
+        for (const hash of hashes) {
+          if (hash.index! > offset) parts.push(raw.slice(offset, hash.index));
+          const characters = Number(hash[1]);
+          if (!Number.isSafeInteger(characters) || characters < 1) issue(`variables.${key}`, 'unsupported_helper');
+          parts.push(characters); offset = hash.index! + hash[0].length;
+        }
+        if (offset < raw.length) parts.push(raw.slice(offset));
+        if (parts.some(part => typeof part === 'string' && part.includes('${'))) issue(`variables.${key}`, 'unsupported_helper');
+        const count = parts.length === 1 ? parts[0] : undefined;
+        result.profile = typeof count === 'number' && count % 2 === 0
+          ? { kind: 'hex-bytes', bytes: count / 2 } : { kind: 'hex-characters', parts };
+      } else if (alias && alias[1] !== key && Object.hasOwn(variables, alias[1]!)) result = bind(alias[1]!, variables[alias[1]!]);
       else if (helper) {
         const size = helper[2] === undefined ? undefined : Number(helper[2]);
         if (size !== undefined && (!Number.isSafeInteger(size) || size < 1)) issue(`variables.${key}`, 'unsupported_helper');
@@ -48,6 +81,7 @@ export function normalizeDokployTemplateV1(input: Parameters<typeof normalizeCom
         else if (helper[1] === 'uuid') result.profile = { kind: 'uuid-v4' };
         else result.domain = true;
       } else if (alias && Object.hasOwn(variables, alias[1]!)) result = bind(alias[1]!, variables[alias[1]!]);
+      else if (payloadVariables.has(key)) { /* Payload is consumed only by its typed JWT profile. */ }
       else if (/\$\{[^}]*:|\$\{(?:jwt|hash|randomPort|timestamp|timestamps|timestampms|email)\}/.test(raw)) issue(`variables.${key}`, 'unsupported_helper');
       else if (raw.includes('${')) {
         if ([...raw.matchAll(/\$\{([^}]+)\}/g)].some(match => !Object.hasOwn(variables, match[1]!))) issue(`variables.${key}`, 'unsupported_helper');

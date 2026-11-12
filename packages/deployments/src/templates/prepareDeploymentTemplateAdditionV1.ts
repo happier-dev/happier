@@ -104,7 +104,8 @@ export function prepareDeploymentTemplateAdditionV1(input: DeploymentTemplateIns
             ...(template.data && entry.key === template.data.variables?.host && entry.default === template.data.service
                 ? { default: service(entry.default) } : {}),
             sites: entry.sites.map(site => ({ ...site, service: service(site.service) })) })),
-        generatedSecrets: template.generatedSecrets.map(entry => ({ ...entry, key: variable(entry.key) })),
+        generatedSecrets: template.generatedSecrets.map(entry => ({ ...entry, key: variable(entry.key),
+            ...(entry.profile.kind === 'jwt-hs256' ? { profile: { ...entry.profile, secretKey: variable(entry.profile.secretKey) } } : {}) })),
         domains: template.domains.map(entry => ({ ...entry, service: service(entry.service) })),
         volumes: template.volumes.map(entry => ({ ...entry, id: resourceNames.volumes.get(entry.id) ?? entry.id, service: service(entry.service) })),
         ...(template.health ? { health: template.health.map(entry => ({ ...entry, service: service(entry.service) })) } : {}),

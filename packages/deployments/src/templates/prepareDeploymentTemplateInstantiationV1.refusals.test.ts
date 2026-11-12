@@ -27,3 +27,22 @@ it('keeps the declared generator profile available without generating secret byt
         profile: { kind: 'hex-32-bytes' } }]);
     expect(prepared.bindings).toEqual([]);
 });
+
+// Supabase derived generators consume the same admitted signing key, regardless of variable order.
+it('orders JWT generation after its signing secret and refuses an ungenerated signing dependency before effects', () => {
+    const template = { ...input.template,
+        variables: [{ ...input.template.variables[0]!, key: 'TOKEN' }, input.template.variables[0]!],
+        generatedSecrets: [{ key: 'TOKEN', purpose: 'token', label: 'Token', profile: { kind: 'jwt-hs256' as const,
+            secretKey: 'APP_PASSWORD', payload: { role: 'anon' as const, iss: 'supabase' as const, exp: 1893456000 } } }, ...input.template.generatedSecrets] };
+    const bindings = ['TOKEN', 'APP_PASSWORD'].map(name => ({ purpose: 'variable' as const, name, phase: 'runtime' as const,
+        source: { kind: 'generated' as const, key: name } }));
+    expect(prepareDeploymentTemplateInstantiationV1({ ...input, template, bindings }).generatedSecrets.map(secret => secret.key))
+        .toEqual(['APP_PASSWORD', 'TOKEN']);
+    const renamed = prepareDeploymentTemplateInstantiationV1({ ...input, template, bindings, reservedVariableNames: ['APP_PASSWORD'] });
+    expect(renamed.generatedSecrets).toMatchObject([
+        { key: 'APP_PASSWORD_2' }, { key: 'TOKEN_2', profile: { kind: 'jwt-hs256', secretKey: 'APP_PASSWORD_2' } },
+    ]);
+    expect(() => prepareDeploymentTemplateInstantiationV1({ ...input, template, bindings: [bindings[0]!, {
+        purpose: 'variable', name: 'APP_PASSWORD', phase: 'runtime', source: { kind: 'secret', ref: 'happier:shared-secret:v1:existing' },
+    }] })).toThrowError(expect.objectContaining({ code: 'template_needs_review', details: { key: 'TOKEN', dependency: 'APP_PASSWORD' } }));
+});

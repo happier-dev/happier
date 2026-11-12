@@ -1,5 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1, EnvironmentSecretBindingV1,
-    EnvironmentVariableBindingV1 } from '@happier-dev/protocol';
+    EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -15,7 +15,7 @@ import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { normalizeStoredComposeDefinitionInput, parseNativeComposeSource } from '@/workspaces/projectSetup/nativeComposeSource';
-import { createDeploymentTemplateGeneratedSecretForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
+import { withDeploymentTemplateGeneratedSecretsForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
 import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -32,7 +32,7 @@ export type PreviewTemplateCreationPlanForHost = Readonly<{
     preparations: readonly Readonly<{ input: DeploymentTemplateInstantiationPreparationInputV1; prepared: Preparation }>[];
     selections: readonly Selection[];
     explicitBindings?: readonly EnvironmentVariableBindingV1[];
-    serviceExports?: DeploymentEnvironmentContentV1['ownServer']['serviceExports'];
+    serviceExports?: NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports'];
     backup?: Selection['destinationBackup'];
 }>;
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
@@ -228,15 +228,17 @@ export async function materializePreviewTemplateBindingsForHost(plan: PreviewTem
     const custody = templateCustody(context, host);
     const bindings = new Map<string, EnvironmentSecretBindingV1>();
     for (const step of plan.preparations) {
-        const generated: EnvironmentVariableBindingV1[] = [];
-        for (const secret of step.prepared.generatedSecrets) {
-            const source = await createDeploymentTemplateGeneratedSecretForHost({ name: `${plan.name} · ${secret.name}`,
-                profile: secret.profile, audience: { accountGrants: [], teamGrants: [], groupGrants: [] },
-                expectedScopeKey: resolveAccountSettingsScopeKey(custody.credentials),
-                signal: context.signal ?? new AbortController().signal, readCredentials: async () => custody.credentials,
-                operationContext: custody.operation });
-            generated.push({ purpose: 'variable', name: secret.name, phase: secret.phase, source });
-        }
+        const generated: StoredAppPresetInputV1['bindings'] = [];
+        await withDeploymentTemplateGeneratedSecretsForHost(async createGeneratedSecret => {
+            for (const secret of step.prepared.generatedSecrets) {
+                const source = await createGeneratedSecret({ key: secret.key, phase: secret.phase, name: `${plan.name} · ${secret.name}`,
+                    profile: secret.profile, audience: { accountGrants: [], teamGrants: [], groupGrants: [] },
+                    expectedScopeKey: resolveAccountSettingsScopeKey(custody.credentials),
+                    signal: context.signal ?? new AbortController().signal, readCredentials: async () => custody.credentials,
+                    operationContext: custody.operation });
+                generated.push({ purpose: 'variable', name: secret.name, phase: secret.phase, source });
+            }
+        });
         const prepared = prepareDeploymentTemplateInstantiationV1({ ...step.input, bindings: generated });
         for (const binding of prepared.bindings) bindings.set(`${binding.phase}:${binding.name}`, binding);
     }
