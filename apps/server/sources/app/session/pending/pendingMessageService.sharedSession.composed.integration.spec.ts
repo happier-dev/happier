@@ -263,7 +263,7 @@ describe("pendingMessageService (shared sessions)", () => {
             launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "Guest", choices: {} },
             resource: { contributionRef: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, value: { id: "retained-native" } },
             retention: { kind: "until-delete" }, wakeOnAcceptedMessage: true,
-            observation: { observedAt: 1, availability: "present", power: "stopped" },
+            observation: { observedAt: 1, availability: "present", power: "stopped", storage: "retained" },
         } });
         return { owner, session, homeId, controllerKeys, controller, guest, managed };
     };
@@ -1887,7 +1887,7 @@ describe("pendingMessageService (shared sessions)", () => {
             .toMatchObject({ ok: true, didMaterialize: true, message: { localId: 'next-input' } });
     });
 
-    it.each(['detached', 'reattached', 'overlapping follower', 'provider accepted'] as const)("retires an obsolete retained Follow attachment before dispatch (%s)", async state => {
+    it.each(['detached', 'reattached', 'overlapping follower', 'provider accepted'] as const)("rejoins an admitted retained Follow original after attachment changes (%s)", async state => {
         harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true' });
         const owner = await createAccount('retained-follow-attachment');
         const source = await createSession(owner.id);
@@ -1948,21 +1948,28 @@ describe("pendingMessageService (shared sessions)", () => {
         let result: unknown;
         await getSocketHandler(socket, 'session-pending-admission-settlement-v1')({ v: 1,
             sessionId: receiver.id, localId, decision: settlement.decision }, (response: unknown) => { result = response; });
-        if (state === 'provider accepted' || state === 'overlapping follower') {
-            expect(result).toMatchObject({ v: 1, result: { status: 'alreadyAccepted', localId } });
-            return;
-        }
-        expect(result).toMatchObject({ v: 1, result: { status: 'rejected', code: 'session_input_cancelled' } });
-        expect(await db.session.findUniqueOrThrow({ where: { id: receiver.id }, select: { pendingCount: true, pendingBlockedCount: true } }))
-            .toEqual({ pendingCount: 0, pendingBlockedCount: 0 });
+        // 45c081072bc / docs/session-collaboration.md: admitted originals finish;
+        // attachment withdrawal affects the next admission, not exact custody rejoin.
+        expect(result).toMatchObject({ v: 1, result: { status: 'alreadyAccepted', localId } });
         expect(await settlePendingInputAdmission(settlement)).toMatchObject({ ok: true,
-            result: { status: 'rejected', code: 'session_input_cancelled' } });
+            result: { status: 'alreadyAccepted', localId } });
         expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } }))
-            .toMatchObject({ content, deliveryResolution: null, turnStartWitnessId: null });
-        expect(await enqueuePendingMessage({ actorUserId: owner.id, targetMachineId: publisher.machineId,
-            sessionId: receiver.id, localId: 'next-human-input', content })).toMatchObject({ ok: true });
-        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: receiver.id, publisherAuthority: publisher }))
-            .toMatchObject({ ok: true, didMaterialize: true, message: { localId: 'next-human-input' } });
+            .toMatchObject({ content, inputAdmissionReceipt: pending.inputAdmissionReceipt });
+        if (state === 'detached') {
+            // Withdrawal applies at the next admission (45c081072bc), through
+            // Pending's real Follow relation owner rather than settlement rechecks.
+            const freshDelivery = { ...delivery, original: { sourceSessionId: source.id,
+                sourceRequests: { agentStateVersion: 2, requests: [{ requestId: 'new-question', createdAt: 2 }] } },
+                requestEvents: [{ requestId: 'new-question', event: { kind: 'needs_you' as const, type: 'decision' as const } }] };
+            const freshLocalId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: receiver.id,
+                original: freshDelivery.original });
+            expect(await enqueuePendingMessage({ actorUserId: owner.id, targetMachineId: publisher.machineId,
+                sessionId: receiver.id, localId: freshLocalId, content, followDeliveryV1: freshDelivery,
+                followRelations: [{ relation: 'manager', attachedAt: edge.attachedAt.getTime() }] }))
+                .toEqual({ ok: false, error: 'forbidden' });
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: receiver.id, localId: freshLocalId } })).toBe(0);
+            expect(await db.sessionMessage.count({ where: { sessionId: receiver.id, localId: freshLocalId } })).toBe(0);
+        }
     });
 
     it("rejects an edit that changes the authored recipient of an exact target row", async () => {
@@ -7111,6 +7118,25 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await listPendingMessages({ actorUserId: owner.id, sessionId: session.id, includeDiscarded: true }))
             .toMatchObject({ ok: true, pending: [{ localId, status: "queued", content: { t: "encrypted", c: "cipher-a-1" } }] });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(1);
+    });
+
+    it('reports explicit steering held on managed compute after activation is cancelled and can rearm the same input', async () => {
+        const { owner, session, controller, guest } = await createManagedPendingFixture();
+        const localId = `managed-steer-${randomUUID()}`;
+        const requestedAction = { v: 1, kind: 'steer_now' } as const;
+        await expect(enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id, sourceMachineId: controller.id,
+            targetMachineId: guest.id, sessionId: session.id, localId,
+            content: { t: 'encrypted', c: 'private-input' }, requestedAction }))
+            .resolves.toMatchObject({ status: 'accepted' });
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+            .toMatchObject({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
+        await updatePendingRequestedAction({ actorUserId: owner.id, sessionId: session.id, localId,
+            requestedAction, resumeWhenAvailable: false });
+        expect(await listPendingMessages({ actorUserId: owner.id, sessionId: session.id }))
+            .toMatchObject({ ok: true, pending: [{ localId, requestedAction, activationHoldReason: 'resume_not_requested' }] });
+        await updatePendingRequestedAction({ actorUserId: owner.id, sessionId: session.id, localId, requestedAction });
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+            .toMatchObject({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
     });
 
     it("retains only the protected accepted target for managed wake and clears it on confirmed withdrawal", async () => {

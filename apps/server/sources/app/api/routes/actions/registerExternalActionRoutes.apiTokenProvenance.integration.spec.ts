@@ -12,8 +12,10 @@ import { decodeBase64 } from "privacy-kit";
 import { ApiTokenGrantV1Schema } from "@happier-dev/protocol/auth/apiTokenGrant";
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1,
+    EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     type ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions/externalActionApi";
-import { computeExternalActionRequestEnvelopeDigestV1 } from "@happier-dev/protocol/actions/externalActionExecutionAuthorization";
+import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 } from "@happier-dev/protocol/actions/externalActionExecutionAuthorization";
 import { Server } from "socket.io";
 import tweetnacl from 'tweetnacl';
 import { signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -39,6 +41,7 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 import { registerExternalActionRoutes } from "./registerExternalActionRoutes";
+import { registerAutomationV3Routes } from "../automations/registerAutomationV3Routes";
 import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
 import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -346,10 +349,12 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
     it("admits exactly the granted Automation through HTTP and the real signed relay", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const machineId = crypto.randomUUID();
+        const installationId = crypto.randomUUID();
+        const installationKeys = tweetnacl.sign.keyPair();
         await db.machine.create({ data: { id: machineId, accountId: account.id,
             metadata: encodePlainMachineStoredContent({ host: "grant-test", platform: "linux" }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
-            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(32), active: true,
+            installationId, installationPublicKey: installationKeys.publicKey, active: true,
             operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
         } });
@@ -369,7 +374,30 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             expect(await auth.verifyExternalActionExecutionAuthorization(authorization.token)).toEqual(authorization.binding);
             expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).not.toBeNull();
             expect(authorization.binding.requestEnvelopeDigest).toBe(computeExternalActionRequestEnvelopeDigestV1(request.envelope));
-            expect(authorization.binding.automationId).toBe("brief");
+            // Missing selection is pre_open (SEC-AUDIT-RED-1112 C3c). The
+            // exact effect route must still enforce the persisted PAT grant.
+            const runEffect = async (automationId: string) => {
+                const method = "POST";
+                const path = `/v3/automations/${encodeURIComponent(automationId)}/run-now`;
+                return app.inject({ method, url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: request.actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: request.actionId,
+                        target: authorization.binding.target, installationId,
+                        requestId: authorization.binding.requestId, method, path,
+                        privateKey: installationKeys.secretKey,
+                    }),
+                } });
+            };
+            const otherEffect = await runEffect("other");
+            expect(otherEffect.statusCode, otherEffect.body).toBe(401);
+            const grantedEffect = await runEffect("brief");
+            // This fixture has no Automation definition: reaching its real
+            // handler proves authorization passed without scheduling a run.
+            expect(grantedEffect.statusCode, grantedEffect.body).toBe(404);
+            expect(grantedEffect.json()).toMatchObject({ error: "automation_not_found" });
             signed = request;
             admitted.push("brief");
             const result = AutomationV3RunMutationResponseSchema.parse({ run: {
@@ -385,7 +413,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             })) };
         };
         const io = new Server();
-        const app = createTestApp(createExternalActionDaemonDispatcher({ io, forwardRpc }));
+        const app = createTestApp(createExternalActionDaemonDispatcher({ io, forwardRpc }), registerAutomationV3Routes);
         io.attach(app.server);
         await app.listen({ host: "127.0.0.1", port: 0 });
         try {
@@ -399,13 +427,16 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             const allowed = await send("brief");
             expect(allowed.status).toBe(200);
             expect(await allowed.json()).toMatchObject({ execution: { ok: true, result: { run: { automationId: "brief", state: 'queued' } } } });
-            for (const automationId of ["other", undefined]) {
-                const denied = await send(automationId);
-                expect(denied.status).toBe(403);
-                expect(await denied.json()).toMatchObject({ error: "credential_scope_denied" });
-            }
-            expect(admitted).toEqual(["brief"]);
-            expect(signed).not.toBeNull();
+            expect(ExternalActionDaemonDispatchRequestSchema.parse(signed).executionAuthorization?.binding.automationId).toBe("brief");
+            const denied = await send("other");
+            const deniedBody = await denied.json();
+            expect(denied.status, JSON.stringify(deniedBody)).toBe(403);
+            expect(deniedBody).toMatchObject({ error: "credential_scope_denied" });
+            const preOpen = await send(undefined);
+            expect(preOpen.status).toBe(200);
+            expect(await preOpen.json()).toMatchObject({ execution: { ok: true, result: { run: { automationId: "brief", state: 'queued' } } } });
+            expect(admitted).toEqual(["brief", "brief"]);
+            expect(ExternalActionDaemonDispatchRequestSchema.parse(signed).executionAuthorization?.binding.automationId).toBeUndefined();
         } finally {
             await new Promise<void>(resolve => { io.close(() => resolve()); });
             await app.close();
@@ -559,7 +590,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         } finally { await app.close(); }
     });
 
-    it.each(['account', 'terminal'] as const)('preserves client absence instead of invalid_token for an authenticated original Widget Refresh (%s)', async kind => {
+    it.each(['account', 'terminal'] as const)('refuses unexposed client-only placement for an authenticated original Widget Refresh (%s)', async kind => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const token = await auth.createToken(account.id, undefined, { kind,
             authority: kind === 'account' ? 'present_user' : 'account_automation' });
@@ -590,8 +621,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             const response = await app.inject({ method: 'POST', url: '/v1/actions/widgets.item.refresh', headers,
                 payload: { v: 1, requestId: crypto.randomUUID(), input } });
             expect({ status: response.statusCode, body: response.json(), dispatches: dispatch.mock.calls.length })
-                .toMatchObject({ status: 200, dispatches: 1,
-                    body: { execution: clientActionUnavailable('widgets.item.refresh') } });
+                .toMatchObject({ status: 403, dispatches: 0, body: { error: 'credential_scope_denied' } });
         } finally {
             await app.close();
         }
@@ -698,14 +728,19 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
                     headers: { authorization: `Bearer ${bearer}` },
                     payload: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
                         input: inputs[actionId] } });
-                return { forwards: forwarded.slice(before), ok: response.json().execution?.ok };
+                return { forwards: forwarded.slice(before), status: response.statusCode, body: response.json() };
             };
             for (const actionId of Object.keys(inputs) as Array<keyof typeof inputs>) {
                 for (const kind of ['account', 'terminal'] as const) {
-                    expect({ actionId, kind, ...await send(actionId, await token(grantee.id, kind)) })
-                        .toEqual({ actionId, kind, forwards: [], ok: false });
-                    expect({ actionId, kind, ...await send(actionId, await token(owner.id, kind)) })
-                        .toEqual({ actionId, kind, forwards: [{ actionId, requester: owner.id }], ok: true });
+                    const clientOnly = actionId === 'localServices.actions.copyUrl';
+                    expect(await send(actionId, await token(grantee.id, kind)))
+                        .toMatchObject(clientOnly
+                            ? { forwards: [], status: 403, body: { error: 'credential_scope_denied' } }
+                            : { forwards: [], status: 200, body: { execution: { ok: false } } });
+                    expect(await send(actionId, await token(owner.id, kind)))
+                        .toMatchObject(clientOnly
+                            ? { forwards: [], status: 403, body: { error: 'credential_scope_denied' } }
+                            : { forwards: [{ actionId, requester: owner.id }], status: 200, body: { execution: { ok: true } } });
                 }
             }
         } finally {
