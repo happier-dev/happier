@@ -14,12 +14,12 @@ import {
   Path,
   Pattern,
   Rect,
-  Svg,
   Text as SvgText,
   TextPath,
   TSpan,
 } from 'react-native-svg';
 
+import { HappierDecorativeSvg as Svg } from '../content/DecorativeSvg.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import {
@@ -555,7 +555,7 @@ export function Sunburst(props: HappierSunburstProps) {
       {...webHandlers}
     >
       <Animated.View style={{ opacity: fade }}>
-        <Svg accessible={false} aria-hidden width={width} height={height}>
+        <Svg width={width} height={height}>
           <Defs>
             <Pattern
               id={`${id}-hatch`}

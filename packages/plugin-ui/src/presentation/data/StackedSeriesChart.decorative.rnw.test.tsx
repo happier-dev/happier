@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { SURFACE_CONTEXT_THEME_FIXTURE as theme } from '../../../../plugin-sdk/src/ui/surfaceContext.fixture.js';
 import { StackedSeriesChart } from './StackedSeriesChart.js';
@@ -17,6 +17,21 @@ function renderedElements(count: number): number {
 }
 
 describe('decorative series chart', () => {
+  it('hides SVG ink without forwarding native accessibility props to the DOM', () => {
+    const errors = vi.spyOn(console, 'error');
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="CPU" series={line(10)}
+      variant="line" size="inline" width={56} viewportHeight={14} decorative />);
+    try {
+      expect(errors.mock.calls.filter(args => args.some(arg => String(arg).includes('non-boolean attribute')))).toEqual([]);
+      const drawings = mount.container.querySelectorAll('svg');
+      expect(drawings.length).toBeGreaterThan(0);
+      for (const drawing of drawings) {
+        expect(drawing.getAttribute('aria-hidden')).toBe('true');
+        expect(drawing.hasAttribute('accessible')).toBe(false);
+      }
+    } finally { mount.unmount(); errors.mockRestore(); }
+  });
+
   it('draws a summary line without a node per sample', () => {
     // A row's sparkline is a picture: its owner states the values, so the chart adds no per-bucket hit layer.
     expect(renderedElements(150)).toBe(renderedElements(10));

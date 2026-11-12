@@ -1,6 +1,6 @@
-import { Path, Pattern, Defs, Rect, Svg } from 'react-native-svg';
+import { Path, Pattern, Defs, Rect } from 'react-native-svg';
 import { useId } from 'react';
-import { Platform } from 'react-native';
+import { HappierDecorativeSvg as Svg } from './DecorativeSvg.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 
 /**
@@ -13,7 +13,7 @@ export function HappierDataHatch(props: Readonly<{ theme: HappierUiTheme; color?
   const step = props.density === 'fine'
     ? (props.theme.spacing.xsmall + props.theme.spacing.small) / 2
     : props.theme.spacing.small;
-  return <Svg width="100%" height="100%" aria-hidden accessible={Platform.OS === 'web' ? undefined : false}>
+  return <Svg width="100%" height="100%">
     <Defs><Pattern id={id} width={step} height={step} patternUnits="userSpaceOnUse">
       <Path d={`M-${step / 2},${step / 2} L${step / 2},-${step / 2} M0,${step} L${step},0 M${step / 2},${step * 1.5} L${step * 1.5},${step / 2}`}
         stroke={props.color ?? props.theme.colors.secondaryText} strokeWidth={1} />

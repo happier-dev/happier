@@ -10,6 +10,7 @@
  *   presentation → React/RN + environment only
  *   adapters     → presentation + plugin-sdk/ui
  */
+export { HappierDecorativeSvg } from './content/DecorativeSvg.js';
 export { ChartDatum, ChartMark, ChartInteractionProvider, type HappierChartDatum, type HappierChartDatumRenderer, type HappierChartDatumInteraction, type HappierChartDatumTrigger } from './data/ChartDatum.js';
 export type {
   HappierFocusable,

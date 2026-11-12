@@ -14,11 +14,11 @@ import {
   Path,
   Pattern,
   Rect,
-  Svg,
   Text as SvgText,
   TSpan,
 } from 'react-native-svg';
 
+import { HappierDecorativeSvg as Svg } from '../content/DecorativeSvg.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
@@ -252,7 +252,7 @@ export function Treemap(props: HappierTreemapProps) {
       {...webHandlers}
     >
       <Animated.View style={{ opacity: fade }}>
-        <Svg accessible={false} aria-hidden width={width} height={height}>
+        <Svg width={width} height={height}>
           <Defs>
             <Pattern
               id={`${id}-hatch`}

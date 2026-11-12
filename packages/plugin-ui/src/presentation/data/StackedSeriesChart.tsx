@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Easing, Platform, StyleSheet, View, type ViewStyle } from 'react-native';
-import { Circle, ClipPath, Defs, Path, Pattern, Rect, Svg } from 'react-native-svg';
+import { Circle, ClipPath, Defs, Path, Pattern, Rect } from 'react-native-svg';
 
+import { HappierDecorativeSvg as Svg } from '../content/DecorativeSvg.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { useOptionalHappierUiAccessibility, useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { useHappierNativeMinimumInteractiveTargetSize } from '../../environment/interactiveTarget.js';
@@ -160,7 +161,7 @@ function HatchPattern(props: Readonly<{ id: string; color: string }>) {
 
 function HatchSwatch(props: Readonly<{ ink: string }>) {
   const id = `hatch-${useId().replace(/:/gu, '')}`;
-  return <Svg accessible={false} aria-hidden width="100%" height="100%"><Defs><HatchPattern id={id} color={props.ink} /></Defs>
+  return <Svg width="100%" height="100%"><Defs><HatchPattern id={id} color={props.ink} /></Defs>
     <Rect width="100%" height="100%" fill={`url(#${id})`} /></Svg>;
 }
 
@@ -583,13 +584,13 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const showGrid = props.showGrid ?? !inline;
   const hasAreaHatch = props.variant === 'area' && props.series.some(entry => entry.fillPattern === 'hatch');
   const pathInk = props.variant === 'line' && props.renderLinePath
-    ? <>{bandPaths.length ? <Svg accessible={false} aria-hidden width={plotWidth} height={height}>{bandPaths}</Svg> : null}{paths}</>
-    : <Svg accessible={false} aria-hidden width={plotWidth} height={height}>{hasAreaHatch ? <Defs><HatchPattern id={patternId} color={props.theme.colors.surface} /></Defs> : null}{bandPaths}{paths}</Svg>;
-  const thresholdInk = thresholdPaths.length ? <Svg accessible={false} aria-hidden width={plotWidth} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>
+    ? <>{bandPaths.length ? <Svg width={plotWidth} height={height}>{bandPaths}</Svg> : null}{paths}</>
+    : <Svg width={plotWidth} height={height}>{hasAreaHatch ? <Defs><HatchPattern id={patternId} color={props.theme.colors.surface} /></Defs> : null}{bandPaths}{paths}</Svg>;
+  const thresholdInk = thresholdPaths.length ? <Svg width={plotWidth} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>
     <Defs><ClipPath id={thresholdId}><Rect testID={props.testID ? `${props.testID}-threshold-clip` : undefined}
       x={0} y={0} width={plotWidth} height={thresholdY} /></ClipPath></Defs>{thresholdPaths}
   </Svg> : null;
-  const liveEndpoints = props.liveMotion && props.liveMotion.active !== false && geometry.buckets.length ? <Svg accessible={false} aria-hidden width={plotWidth} height={height}
+  const liveEndpoints = props.liveMotion && props.liveMotion.active !== false && geometry.buckets.length ? <Svg width={plotWidth} height={height}
     style={{ position: 'absolute', left: 0, top: 0 }}>
     {geometry.buckets[geometry.buckets.length - 1]!.values.map((entry, index) => entry.value === null ? null : <Circle key={entry.seriesId}
       testID={props.testID ? `${props.testID}-endpoint-${index}` : undefined}
