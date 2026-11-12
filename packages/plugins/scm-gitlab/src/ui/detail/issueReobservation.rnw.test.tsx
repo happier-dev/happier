@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -123,6 +123,13 @@ describe('the composed GitLab issue write and exact-read owner', () => {
       resourceCapability: { readable: true, dynamic: true },
       contributorTargetedContributions: { target: { pluginId: source.pluginId, occurrenceId: contributor.occurrenceId, sourceCustody: contributor.sourceCustody }, points: [] } };
     const operands: unknown[] = [];
+    const controls = createPluginUiActionControlTestHost(async ({ action, input, signal }) => {
+      if (typeof action === 'string' || action.pluginId !== GITLAB_PLUGIN_ID) {
+        throw new Error('Expected a GitLab host Action control.');
+      }
+      if (action.localId === GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign) operands.push(input);
+      return { ok: true, result: await gitlab.invokeAction(action.localId, input, { surface: 'ui', signal }) };
+    });
     const mountedSourceUpdates: unknown[] = [];
     let shell: Awaited<ReturnType<typeof createPluginUiTestkit>> | undefined;
     try {
@@ -138,9 +145,11 @@ describe('the composed GitLab issue write and exact-read owner', () => {
                 mountedSourceUpdates.push(TriageDetailSurfaceInputV1Schema.parse(launchInput).observation.sourceUpdatedAtMs);
                 return renderSurface({ ...context, launchInput, activity: { active: true } }) as React.ReactElement;
               } } }),
-          handlers: { executeAction: async request => {
+          handlers: { actionControl: controls.handler, executeAction: async request => {
             if (typeof request.action !== 'string' && request.action.pluginId === GITLAB_PLUGIN_ID) {
-              if (request.action.localId === GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign) operands.push(request.input);
+              if (request.action.localId === GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign) {
+                throw new Error('A press write must execute through the host Action control.');
+              }
               return gitlab.invokeAction(request.action.localId, request.input!, { surface: 'ui', signal: request.signal });
             }
             const id = typeof request.action === 'string' ? request.action : request.action.localId;
@@ -152,7 +161,7 @@ describe('the composed GitLab issue write and exact-read owner', () => {
             if (id === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
               const input = TriageReobserveEntryInputV1Schema.parse(request.input);
               const result = await reobserveTriageEntry({ ...input, lastKnownLocator: { v: 1, routingToken: route } }, {
-                readConfiguredInstance: async () => instance, readAdmittedSources: async () => admitted, signal: request.signal,
+                readConfiguredInstance: async () => instance, readSourceSnapshot: async () => ({ contributions: admitted }), signal: request.signal,
                 executeGet: async (_operation, getInput, options) => gitlab.invokeAction(GITLAB_TRIAGE_ACTION_IDS.get, getInput,
                   { surface: 'ui', signal: options?.signal }), nowMs: () => Date.now() });
               if (result.kind !== 'observed') return result;
@@ -168,7 +177,9 @@ describe('the composed GitLab issue write and exact-read owner', () => {
             throw new Error(`Unexpected composed GitLab Action: ${id}`);
           } } });
       });
-      await shell!.getByText('The original issue description.');
+      await vi.waitFor(async () => {
+        expect(document.body.textContent ?? '').toContain('The original issue description.');
+      });
       await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'More actions' })); });
       await act(async () => { await shell!.press(await shell!.getByRole('menuitem', { name: 'Change on GitLab' })); });
       await shell!.getByRole('textbox', { label: 'Assignee username' });
@@ -177,12 +188,12 @@ describe('the composed GitLab issue write and exact-read owner', () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, 'our-assignee');
         field.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'Add assignees' })); });
+      await act(async () => { await controls.press('Add assignees'); });
       await vi.waitFor(() => expect(changed).toBe(true));
       await vi.waitFor(() => expect(mountedSourceUpdates).toContain(Date.parse(after)));
       await vi.waitFor(() => expect(document.body.textContent?.includes('End of confirmed issue description.')).toBe(true));
       expect(document.body.textContent).toContain('concurrent-label');
-      await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'Remove assignees' })); });
+      await act(async () => { await controls.press('Remove assignees'); });
       await vi.waitFor(() => expect(removed).toBe(true));
       expect(operands).toMatchObject([{ observedRevision: before, operation: 'add' }, { observedRevision: after, operation: 'remove' }]);
       expect(transport.requests.filter(request => request.method === 'POST')).toHaveLength(2);

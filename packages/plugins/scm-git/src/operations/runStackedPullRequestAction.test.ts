@@ -75,7 +75,7 @@ describe('run stacked pull request action', () => {
                     ok: !throttled, status: throttled ? 403 : 200, statusText: throttled ? 'Forbidden' : 'OK',
                     headers: new Headers(throttled ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' } : {}),
                     json: async () => throttled ? { message: 'API rate limit exceeded.' } : [],
-                    text: async () => '',
+                    text: async () => JSON.stringify(throttled ? { message: 'API rate limit exceeded.' } : []),
                 };
             },
         });
