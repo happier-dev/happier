@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Settings } from '@/sync/domains/settings/settings';
 
@@ -79,6 +79,7 @@ vi.mock('@/components/sessions/agentInput/subscribeToIosHardwareShiftEnter', () 
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    afterEach(() => vi.unstubAllGlobals());
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
@@ -92,6 +93,63 @@ describe('KeyboardShortcutProvider', () => {
         };
         nativeKeyboardState.subscribe.mockReturnValue({ remove: vi.fn() });
         installKeyboardWindowMock();
+    });
+
+    it('focuses the current Windows composer for unhandled typing without cancelling the first character', async () => {
+        vi.stubGlobal('navigator', { platform: 'Win32' });
+        vi.stubGlobal('document', { querySelector: () => null });
+        testState.settings = { ...testState.settings, keyboardShortcutsV2Enabled: false };
+        const { renderScreen } = await import('@/dev/testkit');
+        const module = await import('./KeyboardShortcutProvider');
+        let focused = '';
+        function Composer({ name }: { name: string }) {
+            module.useKeyboardShortcutHandlers({ 'composer.focus': () => { focused = name; } });
+            return <Child />;
+        }
+        const screen = await renderScreen(<module.KeyboardShortcutProvider handlers={{}}><Composer name="first" /></module.KeyboardShortcutProvider>);
+        const firstKey = createKeyboardEvent({ key: 'H', shiftKey: true });
+        window.dispatchEvent(firstKey);
+        expect(focused).toBe('first');
+        expect(firstKey.preventDefault).not.toHaveBeenCalled();
+        expect(firstKey.stopPropagation).not.toHaveBeenCalled();
+        await screen.update(<module.KeyboardShortcutProvider handlers={{}}><Composer name="second" /></module.KeyboardShortcutProvider>);
+        window.dispatchEvent(createKeyboardEvent({ key: '!' }));
+        expect(focused).toBe('second');
+        focused = '';
+        window.dispatchEvent(createKeyboardEvent({ key: 'a', target: {
+            tagName: 'BUTTON',
+            closest: (selector: string) => selector.includes('button') ? {} : null,
+        } as unknown as EventTarget }));
+        expect(focused).toBe('second');
+    });
+
+    it('preserves input ownership, overlays, composition, shortcuts and other platforms when typing', async () => {
+        vi.stubGlobal('navigator', { platform: 'Win32' });
+        const querySelector = vi.fn((): object | null => null);
+        vi.stubGlobal('document', { querySelector });
+        const focus = vi.fn();
+        const { renderScreen } = await import('@/dev/testkit');
+        const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
+        await renderScreen(<KeyboardShortcutProvider handlers={{ 'composer.focus': focus }}><Child /></KeyboardShortcutProvider>);
+        for (const event of [
+            { key: 'a', ctrlKey: true }, { key: 'a', metaKey: true }, { key: 'a', altKey: true },
+            { key: 'a', isComposing: true }, { key: 'Dead' }, { key: 'Enter' },
+            { key: 'ArrowDown' }, { key: ' ', target: { closest: () => ({}) } },
+            { key: '?', shiftKey: true },
+            { key: 'a', target: { tagName: 'INPUT' } },
+            { key: 'a', target: { tagName: 'TEXTAREA' } },
+            { key: 'a', target: { isContentEditable: true } },
+            { key: 'a', target: { closest: () => ({}) } },
+            { key: 'a', defaultPrevented: true },
+        ]) {
+            window.dispatchEvent(createKeyboardEvent(event as Partial<KeyboardEvent>));
+        }
+        querySelector.mockReturnValue({});
+        window.dispatchEvent(createKeyboardEvent({ key: 'a' }));
+        querySelector.mockReturnValue(null);
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        window.dispatchEvent(createKeyboardEvent({ key: 'a' }));
+        expect(focus).not.toHaveBeenCalled();
     });
 
     it('invokes the current scoped command from an explicit action even when shortcuts are disabled', async () => {

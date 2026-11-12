@@ -252,9 +252,24 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
                     isComposing: event.isComposing === true,
                 }),
             });
-            if (!dispatcher(normalizeKeyboardEvent(event))) return;
-            event.preventDefault();
-            event.stopPropagation();
+            if (dispatcher(normalizeKeyboardEvent(event))) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
+            // Focus during keydown and leave its default action intact: the browser
+            // inserts the first character into the newly focused composer as well.
+            if (typeof navigator === 'undefined' || !/Win/i.test(navigator.platform)) return;
+            if (event.isComposing || event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+            if (readKeyboardContextFromEventTarget(event.target).isEditableTarget) return;
+            const target = event.target as HTMLElement | null;
+            if (target?.closest?.('[role="menu"], [role="listbox"], [role="combobox"], [role="dialog"], dialog')) return;
+            if (event.key === ' ' && target?.closest?.('button, a, [role="button"]')) return;
+            if (typeof document !== 'undefined' && document.querySelector(
+                '[role="dialog"], dialog[open], [aria-modal="true"], [role="menu"], [role="listbox"]',
+            )) return;
+            latestShortcutRuntime.handlers['composer.focus']?.();
         };
 
         window.addEventListener('keydown', handleKeyDown);
