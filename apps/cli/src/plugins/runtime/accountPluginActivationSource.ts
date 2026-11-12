@@ -60,9 +60,10 @@ function snapshotIntentRead(pluginId: string, response: PluginAvailabilityIntent
     });
 }
 
-async function readIntent(input: AccountReadBinding & Readonly<{ pluginId: string }>) {
+async function readIntent(input: AccountReadBinding & Readonly<{ pluginId: string; omitDeclarations?: true }>) {
     const response = PluginAvailabilityIntentReadActionOutputV1Schema.parse(await postAvailability(input,
-        PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], { pluginId: input.pluginId }));
+        PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], { pluginId: input.pluginId,
+            ...(input.omitDeclarations ? { omitDeclarations: true } : {}) }));
     return snapshotIntentRead(input.pluginId, response);
 }
 
@@ -215,7 +216,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                 retired.add(pluginId);
                 return false;
             }
-            const read = await readIntent({ ...input, pluginId, ...(signal ? { signal } : {}) });
+            const read = await readIntent({ ...input, pluginId, omitDeclarations: true, ...(signal ? { signal } : {}) });
             const next = resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead: read,
                 ...(admitted.bundled ? { bundled: admitted.bundled } : {}) });
             if (await input.isCredentialCurrent?.() === false || !isCurrent(pluginId) || next.kind !== 'available'

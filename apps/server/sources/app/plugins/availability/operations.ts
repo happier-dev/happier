@@ -2077,6 +2077,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
     }>) {
         const input = params.selection.kind === "read" ? params.selection.input : undefined;
         const list = params.selection.kind === "list" ? params.selection.input : undefined;
+        const omitDeclarations = input?.omitDeclarations === true || list?.omitDeclarations === true;
         const [capability, current] = await Promise.all([
             // A hosting failure still refuses each selected plugin without
             // preventing an empty list or hiding the Account-not-found error.
@@ -2099,7 +2100,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ...(list?.cursor ? { after: list.cursor } : {}),
                     ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
                     ...(list ? { list: true } : {}),
-                    ...(list?.omitDeclarations ? { omitDeclarations: true } : {}),
+                    ...(omitDeclarations ? { omitDeclarations: true } : {}),
                 });
                 const account = capturedRows[0];
                 if (!account) throw new PluginAvailabilityOperationError('plugin_account_not_found');
@@ -2112,7 +2113,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 const readPluginIds = list ? candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) : candidates;
                 const pageIds = new Set(readPluginIds);
                 const intentRows = rows.filter(row => pageIds.has(row.pluginId));
-                const listDeclarations: Awaited<ReturnType<typeof readIntentListDeclarations>> = list?.omitDeclarations
+                const listDeclarations: Awaited<ReturnType<typeof readIntentListDeclarations>> = omitDeclarations
                     ? new Map()
                     : await readIntentListDeclarations(tx, params.accountId, intentRows);
                 const coordinates = intentRows.flatMap(row => row.desiredVersion
@@ -2174,7 +2175,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             const intent = intentRow ? intentFromRow(intentRow) : null;
             const capturedDeclaration = current.listDeclarations.get(pluginId);
             const listDeclaration = capturedDeclaration ? decodeIntentListDeclaration(capturedDeclaration) : undefined;
-            const machineDeclarations = list?.omitDeclarations ? []
+            const machineDeclarations = omitDeclarations ? []
                 : listDeclaration?.machineDeclarations ?? readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
             // Releases written before package assets have no immutable descriptor.
             // They are intentionally unavailable to the current release-facts ABI
@@ -2191,7 +2192,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 hostingCapability: hosting.value,
                 intent,
                 release: facts,
-                ...(list?.omitDeclarations ? {} : {
+                ...(omitDeclarations ? {} : {
                     currentDeclaration: listDeclaration ? listDeclaration.currentDeclaration
                         : readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
                 }),

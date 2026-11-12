@@ -2299,8 +2299,14 @@ existing native Session picker in reference-only mode. The admitted Account
 supplies the Home; plugins cannot provide a Home override or Session inventory.
 The result is `{kind:'sessionAddress',session:ActionSessionAddressV1}` or the
 existing cancellation/typed Host API failure. It creates and sends nothing and
-grants no Action authority; the subsequent Action rechecks its chosen target.
-Account retirement and cancellation close the picker. These are development
+grants no Action authority. In unreleased 0.3 source, the host retains the
+chosen qualified tuple privately for that plugin and captured Account lifetime.
+A contributed Action may pass it as `options.sessionAddress`; the canonical
+Session-target owner validates its declared exact operand and caller access,
+then supplies host-admitted `sessionTargetsV1` to the handler. Nested calls may
+retain the exact containing Action's admitted target as routing proof; each child
+receives its own admission. Plugins cannot supply that snapshot or an unrelated
+tuple. Account retirement and cancellation close the picker. These are development
 source contracts, pending package and loaded-runtime validation.
 
 The unreleased notification destination selection uses the same finite form
@@ -4637,7 +4643,12 @@ does not issue one HTTP request per plugin or maintain another freshness cache.
 Individual unreadable projections appear in `failedPluginIds`. A caller that consumes
 only intent and release facts sends `omitDeclarations: true`: the CLI execution-selection
 reads get no `currentDeclaration` or `machineDeclarations` (11 KB instead of 8.3 MB for 29
-plugins on a scratch Account), and exact `intent.read` is unchanged. The reader follows
+plugins on a scratch Account). Exact `intent.read` accepts the same optional
+projection: Account activation-source revalidation sends `omitDeclarations: true`
+because it compares intent, release and captured bundled custody without reading
+Machine declarations. The common server read owner omits those bodies from SQL
+and HTTP output; ordinary declaration and managed-resource readers keep the full
+projection. The reader follows
 `nextCursor` before treating the census as complete and sends only the current
 page's known-id window plus one lookahead, using the same server page-size owner.
 A failed or non-advancing
@@ -6930,6 +6941,118 @@ Unsupported hosts omit the negotiated
 `actionControl` method; authors retain an unavailable explanation rather than falling
 back to a person-stamped raw call. This is an unreleased source contract.
 
+
+Inline commits in matching 0.3 development SDK and host source use
+`PluginUiActionBinding<Value, Key extends string = string>` from
+`@happier-dev/plugin-sdk/ui`. The common case declares one `action` reference
+and `prepare(value, { signal })` returns `{ input }` or `null`. A binding may instead declare
+`actions: { set: referenceA, clear: referenceB }`, with preparation returning
+`{ action: 'set' | 'clear', input }` or `null`. The `action` and `actions` forms
+are mutually exclusive; both support synchronous or Promise preparation,
+optional `accessibilityLabel` and `signal`, and required `onSettled(execution)` returning
+`unknown`. The shared host owner accepts only an own declared key; an invalid
+selection settles `invalid_action` without execution. Preparation derives input
+from the committed value; settlement receives the original host execution envelope.
+Neither callback receives an executor. `Action.Control` also accepts an optional
+`accessibilityLabel` independently of its visible title; use it for a button-shaped
+Action rather than adding a separate binding to Button.
+
+The existing committing controls accept this binding at their own interaction:
+`MenuItem.action` receives the selected string id; `PropertyEditor.action`
+receives its typed committed value; `PropertyNameTones.action` receives
+`{ name: string; colorToken: string | null }`; `RelationList.add.action` receives
+the selected string id; `RelationListEntry.removeAction` receives the entry's
+string `id` and is mutually exclusive with local `onRemove`. Relation removal
+uses the existing host-created IconButton path. `IconButton.action` receives `undefined`;
+`Form.action` receives normalized `Record<string, unknown>` fields; and
+`Toggle.action` receives a boolean. Each host-created control enters the same
+invocation owner as Action.Control. Choices, name tones and relation additions
+commit on selection, without another Save; typed property editors retain their
+existing Save and validation. A prop update, keystroke or registration does not
+invoke the bound Action. Raw executeAction remains automation, including calls
+from preparation or settlement callbacks.
+
+All bound components use that same reference-selection contract. For example,
+PropertyNameTones can declare set-color and clear-color references under `set`
+and `clear`, then choose `clear` when `colorToken === null`. The component passes
+the committed value; it does not route Action ids or implement another executor.
+The lifecycle and generic type live in
+`packages/cli-common/src/plugins/ui/actionBinding.ts`; the public SDK type aliases
+that owner. App hosts and the public RNW test adapter share the physical-control
+factory in `packages/plugin-ui/src/presentationHost/actionBindingPresentation.tsx`
+and the existing MenuRows commit bridge. The supplied executor retains admission
+and authority decisions.
+
+PropertyList keeps its draft, pending state and existing `usePropertyCommit`
+notice. Settlement may return a boolean (`false` retains the draft), or the
+existing envelope or domain refused, failed or uncertain result for that notice;
+otherwise the binding uses the original host envelope.
+When migrating an existing write owner, split input validation and beginning its
+busy state into preparation, then pass the untouched execution
+envelope into its settlement path. Preserve that owner's pending approval,
+uncertain write, created-record and created-Session handling instead of reducing
+the envelope to a success boolean. An unknown write is never replayed.
+
+The host captures the gesture once, waits for preparation, and checks its existing
+mount and captured-binding cancellation before dispatch. If Action.Control unmounts
+after execution was admitted, the original preparing controller still receives
+that execution's settlement exactly once; unmounting grants no future press and
+must not resurrect a cancelled draft.
+Preparation receives the host AbortSignal so async work can stop when its control
+retires. The optional binding `signal` represents the person's explicit Stop and
+is forwarded to the configured host Action's existing cancellation owner;
+automatic control withdrawal does not cancel admitted work.
+Direct `hostApi.actionControl` options separate these lifetimes too: `signal`
+means explicit Stop, while `withdrawalSignal` or handle disposal retires the
+control without cancelling admitted work. Stop settles once with the existing
+typed `aborted` result; it does not promise a later successful execution response.
+The mounted surface's own lifetime remains a cancellation boundary.
+
+Inline bindings require the native or same-realm RNW private presentation host.
+Hosted HTML deliberately has no inline binding bridge, and unsupported hosts keep
+bound commits disabled or read-only, without a raw-call fallback. Action.Control
+continues to use its host slot outside the hosted HTML iframe.
+
+For author tests, `createPluginUiActionControlTestHost(execute)` from
+`@happier-dev/plugin-sdk/testing` supplies the host gesture/executor boundary.
+Pass its `handler` as the existing UI testkit's `actionControl` handler, mount
+the real Action.Control and author controller, wait for `presentation(title)`,
+then await `press(title)`. A successfully registered Action.Control renders
+`null` in the author tree: searching that tree for a Run button or calling
+`prepare` directly does not test its host gesture. Keep the SDK bind, prepare
+and settlement transport real beneath the helper.
+The helper also exposes `subscribe(listener)` and `getSnapshot()` for an
+observable test host slot. Snapshots are immutable `{ id, presentation }[]`
+values with stable identity until the slot changes; `pressById(id)` targets a
+specific registered control when titles repeat.
+
+For a public RNW author fixture, keep two bindings distinct. Render observable
+plain slots beside the author component inside the fixture's `defineUiSurface`
+wrapper: subscribe to the helper's snapshot, render public `Button` controls
+using `presentation.accessibilityLabel ?? presentation.title`, and route their
+presses to `actionHost.pressById(id)`. Supply `actionHost.handler` as the
+testkit's `actionControl` handler.
+For inline controls, import `createPluginUiRnwSemanticSurfaceAdapter` from
+`@happier-dev/plugin-ui/testing` and pass
+`{ overlays: true, actionBindings: actionHost }`, where `actionHost` is the same
+SDK test host. Its `commit` uses the canonical binding lifecycle, and physical
+Menu/PropertyList/IconButton/Form/Toggle/relation presses reach that boundary.
+Without `actionBindings`, bound controls remain disabled. This fixture's
+configured executor supplies test decisions; it does not confer runtime own-UI
+authority. Prop-only updates still must produce no invocation.
+
+The composed RNW host test mounts the real `MountedPluginActionControls` action
+slot and physically presses its rendered button. Check the accessible name from
+`presentation.accessibilityLabel`, falling back to the visible `presentation.title`.
+Inline binding tests mount
+`createPluginUiPrivatePresentationHost(undefined, { actionControls })` with the
+real mounted Action-control owner, install it at the host provider boundary,
+and render author controls under the public PluginUiProvider. Physically press
+the rendered committing control and assert the original settlement and Action
+effect; a prop-only rerender must produce no invocation. Never substitute a direct
+callback call or raw executeAction for that interaction. These private host
+imports belong in host integration tests, never plugin author code.
+
 ### File viewers and media (0.3 development)
 
 Plugins open workspace files through `workspace.tabs.open` with its `file` arm,
@@ -9209,9 +9332,12 @@ calls. Its existing developer context tells the agent to read the request within
 the sharing policy, say that it cannot approve or deny there, and direct the person
 to tap the request or switch to Local Voice. The preference does not widen its
 tool surface or the attached Agent's authority.
-ElevenLabs still declares `effectCalls: 'none'` until
-the loaded approval/effect-custody proof is complete; callback identity alone is
-not permission to enable effects.
+ElevenLabs declares `effectCalls: 'stable_ids'`. Its installed SDK delivers the
+provider's `client_tool_call` event before invoking the registered callback with
+the same parameters object. The runtime captures that event's `tool_call_id` and
+requires that provenance before emitting a canonical tool call. The shared host
+barrier owns effect admission, duplicate replay and Action approval; missing or
+conflicting custody fails closed.
 
 ### Batch speech output (0.3 development)
 

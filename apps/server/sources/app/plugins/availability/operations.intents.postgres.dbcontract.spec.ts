@@ -196,6 +196,19 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         try {
             // Session creation's Account census consumes enablement, not the
             // retained Account's 490 declaration bodies or their JSONB identity projection.
+            // Exact custody revalidation uses the same SQL projection as the census.
+            captured.length = 0;
+            physicalStatements = 0;
+            declarationStatements = 0;
+            const custody = await operations.readIntent({ accountId: account.id,
+                input: { pluginId, omitDeclarations: true } });
+            const custodyRows = JSON.stringify(captured, (_key, value) => typeof value === "bigint" ? String(value) : value);
+            expect(physicalStatements).toBe(1);
+            expect(declarationStatements).toBe(0);
+            expect(custodyRows).not.toContain(bodyMarker);
+            expect(custody.intent?.enabled).toBe(true);
+            expect(custody).not.toHaveProperty("currentDeclaration");
+            expect(custody).not.toHaveProperty("machineDeclarations");
             const census = await read(true);
             expect(census.declarationStatements).toBe(0);
             expect(census.statements).toBe(1);

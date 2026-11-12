@@ -564,6 +564,9 @@ describe("plugin Availability operations", () => {
             expect(entry.response).not.toHaveProperty('machineDeclarations');
             const { currentDeclaration: _full, machineDeclarations: _machines, ...kept } = listed.intentReads.find(other => other.pluginId === entry.pluginId)!.response;
             expect(entry.response).toEqual(kept);
+            const exactWithoutDeclarations = await service.readIntent({ accountId: ACCOUNT_ID,
+                input: { pluginId: entry.pluginId, omitDeclarations: true } });
+            expect(exactWithoutDeclarations).toEqual(kept);
         }
         // Exercise Fastify's real route and its default operations owner, not
         // the operation stub used by the separate route admission unit tests.

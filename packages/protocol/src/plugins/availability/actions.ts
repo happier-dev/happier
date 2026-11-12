@@ -82,6 +82,8 @@ export type PluginAvailabilityActionHttpPathV1 =
 
 export const PluginAvailabilityIntentReadActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   pluginId: asProtocolZod(PluginIdSchema),
+  /** The caller needs intent and release facts without Machine declaration bodies or digests. */
+  omitDeclarations: z.optional(z.literal(true)),
   includeManagedResources: z.optional(z.literal(true)),
   controller: mini.optional(ManagedControllerV1Schema),
   homeId: z.optional(z.string().check(z.trim(), z.minLength(1))),

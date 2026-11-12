@@ -8052,6 +8052,43 @@ changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `agents.backends.list` results add optional `executionTarget`
+through the existing closed `SessionExecutionTargetV1` schema. The result,
+its rows and nested routing/Agent identities remain closed; unknown fields
+are rejected and no unknown data gains routing meaning. Omission preserves
+Account-only browsing without Machine readiness. Scoped Voice listings return
+the exact Machine whose readiness and default they describe. Matching Protocol,
+UI and SDK readers reload together under the unpublished 0.3 direct cut;
+earlier strict development readers reject the field. No new wire epoch,
+capability gate, persistence format or compatibility shim is introduced. The
+scoped-clean `../0.2` frontier `4c64c3f1ddfca82db8bcb61e7e8c87f6bd013e69`
+has no `actions/agentBackendInventory.ts` contract.
+
+Unreleased 0.3 Account Availability exact `intent.read` accepts optional
+`omitDeclarations: true`, reusing the list projection that omits
+`currentDeclaration` and `machineDeclarations`. Account activation-source
+revalidation requests this projection; intent, release facts, authorization and
+custody comparison are unchanged. Matching Protocol, server and CLI readers
+reload together: earlier strict development servers reject the new input field.
+Omission retains the full response. This direct development cut adds no epoch,
+persistence migration or predecessor fallback. The inspected `../0.2` frontier
+`4c64c3f1ddfca82db8bcb61e7e8c87f6bd013e69` has no Availability actions module
+at `packages/protocol/src/plugins/availability/actions.ts` and no scoped working
+changes to that path.
+
+Unreleased 0.3 realtime Voice tool results validate owner-produced, privacy-projected
+output with the canonical strict JSON value schema. The provider-call input
+limits are unchanged; they no longer impose collection, string or nesting quotas
+on tool output. The closed V1 result envelope accepts optional `errorDetails`
+for non-success results, carrying the existing structured PluginError details
+through the same privacy projection as output. Success still forbids error
+fields, and unknown envelope fields remain rejected. Matching Protocol, UI and
+bundled Provider readers reload together because earlier strict development
+readers reject the new field. This is an unpublished direct development cut,
+without a new epoch, persistence migration or predecessor adapter. The inspected
+`../0.2` frontier `4c64c3f1ddfca82db8bcb61e7e8c87f6bd013e69` has no
+`packages/protocol/src/voice/realtime/events.ts` contract.
+
 Unreleased 0.3 Connected Account modes add optional `accessOnlyExport`, a closed
 declaration of access-token, expiry and public-metadata credential keys. The
 existing closed `directExportContract` persistence/mutation field accepts its
@@ -10969,6 +11006,8 @@ protocol-epoch change.
 ## Chrome Web Store registry format (unreleased 0.3)
 
 `chrome-web-store` is a new registry format id for the built-in browser-extension source. It uses the store's private batchexecute listing and detail reads and the existing update2 content digest check; acquisition remains the daemon browser-extension owner. Older strict development clients reject the unknown format id at source admission, so the source is omitted until the client is upgraded. Paste-link/ID installation remains available.
+
+The optional browser-extension payload `listing` carries upstream display version, declared permissions and website patterns; summary publisher comes from the Store detail organization or Offered-by name, falling back to a supplied manifest author. The existing content ref and summary version remain the package digest. These facts are informational: acquired-manifest permission review remains the browser owner's mutation contract. This unreleased 0.3 closed development contract loads matching daemon, Protocol and UI readers together; an older strict reader can reject the new field. No persisted format, epoch or compatibility adapter is introduced. The inspected `../0.2` frontier at `57cd3db058af7767335d6d5a4ed44904460c50bb` has no corresponding registry-item schema.
 
 ## Native startup failure diagnostics (unreleased 0.3)
 
