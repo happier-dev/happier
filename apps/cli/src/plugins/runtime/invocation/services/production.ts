@@ -1128,7 +1128,6 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
                     );
                 }
             } finally {
-                secretRedactor.retireGeneration(occurrenceId, pluginId);
                 invocationGenerationScopes.delete(managedGenerationKey(occurrenceId, pluginId));
                 resourceOwnersByGenerationKey.delete(
                     managedGenerationKey(occurrenceId, pluginId),
@@ -1139,9 +1138,6 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
             disposePromise ??= (async () => {
                 const invocationScopes = [...invocationGenerationScopes.values()];
                 invocationGenerationScopes.clear();
-                for (const scope of invocationScopes) {
-                    secretRedactor.retireGeneration(scope.occurrenceId, scope.pluginId);
-                }
                 const resources = [
                     ...resourceOwnersByGenerationKey.values(),
                 ].flatMap(({ occurrenceId, pluginId, owners }) =>

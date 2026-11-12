@@ -135,19 +135,6 @@ describe('stable invocation logger service', () => {
         expect(secretRedactor.redact(scope, 'late-registration-must-not-recreate'))
             .toBe('late-registration-must-not-recreate');
         secretRedactor.completeInvocation(siblingScope);
-        const retiredScope = {
-            pluginId: invocationSeed.plugin.id,
-            occurrenceId: invocationSeed.occurrenceId,
-            correlationId: 'retired-occurrenceId',
-        };
-        secretRedactor.beginInvocation(retiredScope, invocationSeed.signal);
-        secretRedactor.registerRaw(retiredScope, 'registered-before-retirement');
-        secretRedactor.retireGeneration(invocationSeed.occurrenceId, invocationSeed.plugin.id);
-        secretRedactor.registerRaw(retiredScope, 'late-after-occurrenceId-retirement');
-        expect(secretRedactor.redact(retiredScope, 'registered-before-retirement'))
-            .toBe('registered-before-retirement');
-        expect(secretRedactor.redact(retiredScope, 'late-after-occurrenceId-retirement'))
-            .toBe('late-after-occurrenceId-retirement');
     });
 
     it('injects immutable host identity and preserves every severity exactly', () => {

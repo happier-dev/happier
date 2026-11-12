@@ -16,7 +16,6 @@ export function createPluginInvocationLifetime(
     const redactionController = new AbortController();
     const abortFromParent = () => {
         if (!contextController.signal.aborted) contextController.abort(parentSignal?.reason);
-        if (!redactionController.signal.aborted) redactionController.abort(parentSignal?.reason);
     };
     parentSignal?.addEventListener('abort', abortFromParent, { once: true });
     if (parentSignal?.aborted) abortFromParent();

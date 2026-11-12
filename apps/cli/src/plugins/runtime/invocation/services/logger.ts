@@ -60,7 +60,6 @@ export type PluginInvocationSecretRedactor = Readonly<{
     containsRegisteredValue(scope: PluginInvocationSecretRedactionScope, value: string): boolean;
     redact(scope: PluginInvocationSecretRedactionScope, value: string): string;
     completeInvocation(scope: PluginInvocationSecretRedactionScope): void;
-    retireGeneration(occurrenceId: string, pluginId: string): void;
 }>;
 
 function secretRedactionScopeKey(scope: PluginInvocationSecretRedactionScope): string {
@@ -176,13 +175,6 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
             return state.redactor.redact(value);
         },
         completeInvocation,
-        retireGeneration(occurrenceId, pluginId): void {
-            for (const state of [...statesByScope.values()]) {
-                if (state.scope.occurrenceId === occurrenceId && state.scope.pluginId === pluginId) {
-                    completeInvocation(state.scope);
-                }
-            }
-        },
     });
 }
 

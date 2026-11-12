@@ -1368,10 +1368,6 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
             });
         },
     });
-    const invocationScopes = new Map<
-        string,
-        Readonly<{ occurrenceId: string; pluginId: string }>
-    >();
     let disposeOwnersPromise: Promise<void> | null = null;
     const owners: RunnerLocalPluginInvocationServiceOwners = Object.freeze({
         createOperationServices(seed, operation) {
@@ -1384,13 +1380,6 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
             secretRedactor.beginInvocation(
                 scope,
                 seed.redactionLifetimeSignal ?? seed.signal,
-            );
-            invocationScopes.set(
-                `${seed.occurrenceId}\u0000${seed.plugin.id}`,
-                Object.freeze({
-                    occurrenceId: seed.occurrenceId,
-                    pluginId: seed.plugin.id,
-                }),
             );
             try {
                 const services = createPluginInvocationServicesFactory({
@@ -1448,14 +1437,6 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
         dispose() {
             if (disposeOwnersPromise) return disposeOwnersPromise;
             const attempt = (async () => {
-                const scopes = [...invocationScopes.values()];
-                invocationScopes.clear();
-                for (const scope of scopes) {
-                    secretRedactor.retireGeneration(
-                        scope.occurrenceId,
-                        scope.pluginId,
-                    );
-                }
                 const results = await Promise.allSettled([
                     managedServicesOwner.dispose(),
                 ]);

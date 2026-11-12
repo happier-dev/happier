@@ -33,7 +33,6 @@ import {
 import type { HostCurrentSessionPresentationService } from '@/agent/runtime/state/currentSessionUiTypes';
 
 import { createTargetActionInvocationRegistry } from './targetActionRegistry';
-import { logger } from '@/ui/logger';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { StoredTargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -2278,7 +2277,6 @@ describe('target action invocation registry', () => {
         }
 
         registry.dispose();
-        secretRedactor.retireGeneration('7', 'acme.alpha');
     });
 
     it('admits safe actions without prompting and fails closed for unresolved policy inputs', async () => {
