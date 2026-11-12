@@ -17,6 +17,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 
 afterEach(() => vi.restoreAllMocks());
@@ -124,6 +125,7 @@ function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; product
                 contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 } } };
         if (request.method === 'GET' && path === '/v1/deployments/environments/fork-child') return { status: 200,
             data: { ok: true, environment: forkEnvironment,
+                secretScope: { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 0, missingGrantCount: 0 },
                 targetLinks: template.targetLinks.map(row => ({ ...row.targetLink, environmentId: 'fork-child' })) } };
         if (request.method === 'GET' && path === '/v1/deployments/environments/fork-child/deployments') return { status: 200,
             data: { ok: true, items: [], nextCursor: null } };
@@ -243,6 +245,39 @@ it('requires a new approval for a new fork head', async () => {
     ]);
     expect(mutations).toEqual([]);
     expect(native).not.toHaveBeenCalled();
+});
+
+it('carries fork consent through the existing UI review and rejects that review for another head', async () => {
+    const { executor, root, context, approvals, mutations, native } = fixture({ inventory: 'complete',
+        productionPage: 0, allowCreate: true, privateForkSelections: true });
+    const ui = { ...context, surface: 'ui' as const, interactivePresentation: 'unavailable' as const };
+    const review = await executor.execute('deployments.environments.create', root, ui);
+    expect(review, JSON.stringify(review)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+        details: { review: expect.anything(), reviewDigest: expect.any(String) } });
+    if (review.ok || !review.details || typeof review.details.reviewDigest !== 'string') throw new Error('Expected fork review');
+    expect(mutations).toEqual([]);
+    expect(approvals).toEqual([]);
+    expect(native).not.toHaveBeenCalled();
+    const confirmation = { actionId: 'deployments.environments.create' as const,
+        inputDigest: computeActionInputApprovalDigestV1('deployments.environments.create', root),
+        reviewDigest: review.details.reviewDigest, requestId: ui.actionRequestId!, accountId: 'owner', serverId: 'home',
+        target: ui.externalActionTarget! };
+    const changed = { ...root, requestKey: 'fork-create-b', contentArtifactId: 'fork-content-next' };
+    const stale = await executor.execute('deployments.environments.create', changed, { ...ui,
+        presentUserConfirmation: { ...confirmation,
+            inputDigest: computeActionInputApprovalDigestV1('deployments.environments.create', changed) } });
+    expect(stale, JSON.stringify(stale)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    expect(mutations).toEqual([]);
+    expect(native).not.toHaveBeenCalled();
+    const accepted = await executor.execute('deployments.environments.create', root, { ...ui, presentUserConfirmation: confirmation });
+    expect(native, JSON.stringify(accepted)).toHaveBeenCalledTimes(1);
+    expect(native.mock.calls[0]?.[1]).toMatchObject({ content: {
+        bindings: [{ purpose: 'variable', phase: 'runtime', name: 'PREVIEW_LABEL',
+            source: { kind: 'value', value: 'reviewed-public-value' } }],
+    } });
+    expect(native.mock.calls[0]?.[1]).not.toMatchObject({ content: { template: expect.anything() } });
+    expect(mutations.filter(path => path.endsWith('/bindings'))).toEqual(['POST /v1/deployments/environments/fork-child/bindings']);
+    expect(approvals).toEqual([]);
 });
 
 it.each([
