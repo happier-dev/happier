@@ -34,14 +34,19 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import { createDeferred } from '@/testkit/async/deferred';
+import { buildMachineSetupWorkflow } from '@/machines/setup/composeMachineSetup';
+import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { refreshActivePromptLibraryCatalog } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { WorkflowDefinitionV1Schema, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const machineRpc = vi.hoisted(() => vi.fn());
 // Only HTTP and authenticated Machine RPC are substituted system boundaries.
-vi.mock('axios', () => ({ default: { get: http.get, post: http.post,
-    isAxiosError: (value: unknown) => Boolean(value && typeof value === 'object' && 'response' in value) } }));
+vi.mock('axios', async importOriginal => {
+    const actual = await importOriginal<typeof import('axios')>();
+    return { ...actual, default: { ...actual.default, get: http.get, post: http.post,
+        isAxiosError: (value: unknown) => Boolean(value && typeof value === 'object' && 'response' in value) } };
+});
 vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(), callMachineRpc: machineRpc,
 }));
@@ -115,13 +120,14 @@ const encryptedTransport = { mode: 'e2ee' as const, cipher: {
 } };
 
 async function createBoundaryHarness(holdRetainedSource?: () => Promise<void>, savedDefinition: WorkflowDefinitionV1 = waitDefinition,
-    encryptedMachineTransport = false) {
+    encryptedMachineTransport = false, receivingMachine: boolean | string = false) {
     resetInMemoryAccountSettingsContextForTests();
     const directory = await mkdtemp(join(tmpdir(), 'workflow-rpc-project-'));
     temporaryDirectories.push(directory);
     const project = { machineId: 'machine-1', directory };
     const serverUrl = 'https://workflow-rpc-home.test';
-    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 1,
+        provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
     const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({
         runId, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
@@ -259,6 +265,9 @@ async function createBoundaryHarness(holdRetainedSource?: () => Promise<void>, s
     const canonicalExecutor = createCliActionExecutor({ token, credentials, sessionId: 'cli-global',
         mode: 'plain', ctx: null,
         serverId: 'server-1', serverHttpBaseUrl: serverUrl, resolveServerFeaturesSnapshot: features,
+        ...(receivingMachine ? { machineActionDirectTargetTransport: { machineId: typeof receivingMachine === 'string' ? receivingMachine : project.machineId,
+            invoke: async (method, request) => await machineRpc({ machineId: project.machineId, method, request }),
+        } } : {}),
     });
     const received: Array<Readonly<{ input: unknown; context: unknown }>> = [];
     const executor: typeof canonicalExecutor = {
@@ -359,6 +368,107 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         }
     });
 
+    it.each([true, false])('freezes receiving Setup contracts without requiring a second local terminal credential (%s)', async available => {
+        const setup = MachineSetupApplyInputV1Schema.parse({ homeId: 'server-1', machineId: 'machine-1', targets: [{
+            homeId: 'server-1', machineId: 'machine-1', desiredRevision: 0,
+            sources: [{ kind: 'direct', setup: { items: [], scripts: [{ body: 'printf setup-fixture' }] } }], recipePlans: [],
+        }] });
+        const definition = buildMachineSetupWorkflow(setup);
+        const boundary = await createBoundaryHarness(undefined, definition, false, true);
+        if (!available) {
+            const readHttp = http.get.getMockImplementation()!;
+            http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
+                if (new URL(String(args[0])).pathname === '/v2/account/settings') return { status: 200, data: {
+                    content: { t: 'plain', v: { actionsSettingsV1: { v: 1, actions: { 'machines.setup.apply': { enabled: false } } } } }, version: 2,
+                } };
+                return await readHttp(...args);
+            });
+            await runWithServerHttpBaseUrl(boundary.serverUrl, () => bootstrapAccountSettingsContext({
+                credentials: boundary.credentials, mode: 'blocking', refresh: 'force',
+            }));
+        }
+        // Only the extra local daemon HTTP boundary is unavailable. The
+        // receiving factory already holds its requester credentials and exact
+        // installed host; its catalog and Workflow admission remain real.
+        const terminal = vi.spyOn(daemonControlClient, 'requestDaemonSignedRootActionExecution')
+            .mockResolvedValue({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+        const response = await boundary.handlers.get('workflow.run.start')!({ v: 1, kind: 'targeted_action_rpc',
+            input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
+            target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
+        });
+        if (!available) {
+            expect(WorkflowActionFailureV1Schema.parse(response)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(boundary.readCommittedEnvelope()).toBeUndefined();
+            expect(http.post.mock.calls.some(([url]) => new URL(String(url)).pathname === '/v1/actions/action.spec.get')).toBe(false);
+            expect(terminal).not.toHaveBeenCalled();
+            return;
+        }
+        expect(response, JSON.stringify({ observations: boundary.boundaryObservations, terminalCalls: terminal.mock.calls })).toEqual({ run, admission: 'created' });
+        const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            envelope: parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!)!,
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+        });
+        expect(accepted).toMatchObject({ kind: 'available', content: { authoredDefinition: definition,
+            materializedLeaves: [{ kind: 'action', blockId: 'setup-0', actionId: 'machines.setup.apply',
+                actionInput: { targets: setup.targets }, actionContract: {
+                    inputSchema: actionSpecToActionDefinitionV1(getActionSpec('machines.setup.apply'),
+                        { surface: 'cli', includeOutputSchema: true }).inputSchema,
+                } }],
+        } });
+        expect(terminal).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])('reads an exact remote Setup catalog through Home and preserves availability (%s)', async available => {
+        const definition = buildMachineSetupWorkflow(MachineSetupApplyInputV1Schema.parse({
+            homeId: 'server-1', machineId: 'machine-1', targets: [{ homeId: 'server-1', machineId: 'machine-1', desiredRevision: 0,
+                sources: [{ kind: 'direct', setup: { items: [], scripts: [{ body: 'printf remote-setup-fixture' }] } }], recipePlans: [] }],
+        }));
+        const boundary = await createBoundaryHarness(undefined, definition, false, 'machine-relay');
+        const readHttp = http.get.getMockImplementation()!;
+        http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
+            if (new URL(String(args[0])).pathname === `/v1/machines/${boundary.project.machineId}`) return { status: 200, data: { machine: {
+                id: boundary.project.machineId, active: true, activeAt: Date.now(), kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+                access: { custodian: { accountId: 'account-1', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            } } };
+            return await readHttp(...args);
+        });
+        const nativeCatalog = createActionExecutor({ isActionApprovalRequired: () => false });
+        const writeHttp = http.post.getMockImplementation()!;
+        const catalogTargets: unknown[] = [];
+        http.post.mockImplementation(async (...args: Parameters<typeof writeHttp>) => {
+            if (new URL(String(args[0])).pathname !== '/v1/actions/action.spec.get') return await writeHttp(...args);
+            const request = args[1] as Readonly<{ requestId: string; input: unknown; target: unknown }>;
+            expect(new URL(String(args[0])).origin).toBe(boundary.serverUrl);
+            expect(args[2].headers.Authorization).toBe(`Bearer ${boundary.credentials.token}`);
+            catalogTargets.push(request.target);
+            return { status: 200, data: { v: 1, actionId: 'action.spec.get', requestId: request.requestId,
+                execution: available ? await nativeCatalog.execute('action.spec.get', request.input, {
+                    surface: 'cli', authority: 'account_automation',
+                }) : { ok: false, errorCode: 'action_disabled', error: 'action_disabled' },
+            } };
+        });
+        const terminal = vi.spyOn(daemonControlClient, 'requestDaemonSignedRootActionExecution')
+            .mockResolvedValue({ ok: false, errorCode: 'target_not_local', error: 'target_not_local' });
+        const response = await boundary.handlers.get('workflow.run.start')!({ v: 1, kind: 'targeted_action_rpc',
+            input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
+            target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
+        });
+        expect(terminal, JSON.stringify({ response, observations: boundary.boundaryObservations })).not.toHaveBeenCalled();
+        expect(catalogTargets.length, JSON.stringify({ response, observations: boundary.boundaryObservations })).toBeGreaterThan(0);
+        expect(catalogTargets).toEqual(catalogTargets.map(() => ({ kind: 'machine', machineId: boundary.project.machineId, project: boundary.project })));
+        if (available) {
+            expect(response).toEqual({ run, admission: 'created' });
+            const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                envelope: parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!)!,
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
+            expect(accepted).toMatchObject({ kind: 'available', content: { materializedLeaves: [{ kind: 'action',
+                actionId: 'machines.setup.apply', actionContract: { inputSchema: expect.any(Object) } }] } });
+        } else {
+            expect(WorkflowActionFailureV1Schema.parse(response)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(boundary.readCommittedEnvelope()).toBeUndefined();
+        }
+    });
+
     it('admits the saved Action-only For-each using the actual credentialed CLI materializer and native catalog', async () => {
         const actionId = 'action.spec.get';
         const actionInput = { id: 'workflow.starters.list', includeOutputSchema: true };
@@ -369,20 +479,10 @@ describe('UI Workflow targeted Action RPC boundary', () => {
                 id: { kind: 'literal', value: actionInput.id }, includeOutputSchema: { kind: 'literal', value: true },
             } }],
         }] });
-        const boundary = await createBoundaryHarness(undefined, definition);
-        const nativeCatalog = createActionExecutor({ isActionApprovalRequired: () => false });
+        const boundary = await createBoundaryHarness(undefined, definition, false, true);
         const completeContract = actionSpecToActionDefinitionV1(getActionSpec(actionId), { surface: 'cli', includeOutputSchema: true });
-        const projectedContract = await nativeCatalog.execute('action.spec.get', { id: actionId, includeOutputSchema: true },
-            { surface: 'cli', authority: 'account_automation' });
-        expect(projectedContract).toMatchObject({ ok: true, result: { schemaSections: expect.arrayContaining([
-            expect.objectContaining({ path: expect.stringMatching(/^\/outputSchema\/definitions\//) }),
-        ]) } });
-        // Only the authenticated local daemon HTTP hop is substituted. Its
-        // answering Action executor and the caller's materializer stay real.
-        vi.spyOn(daemonControlClient, 'requestDaemonSignedRootActionExecution').mockImplementation(async (request) => {
-            if (request.actionId !== 'action.spec.get') throw new Error('unexpected_daemon_action');
-            return await nativeCatalog.execute(request.actionId, request.input, { surface: 'cli', authority: 'account_automation' });
-        });
+        const terminal = vi.spyOn(daemonControlClient, 'requestDaemonSignedRootActionExecution')
+            .mockResolvedValue({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
         const response = await boundary.handlers.get('workflow.run.start')!({
             v: 1, kind: 'targeted_action_rpc',
             input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
@@ -401,6 +501,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
                 outputSchema: completeContract.outputSchema,
             },
         }] });
+        expect(terminal).not.toHaveBeenCalled();
     });
 
     it('delivers a late saved-Workflow refusal through UI, server and daemon instead of abandoning a missing Run', async () => {

@@ -22,7 +22,7 @@ import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import { freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { createWorkflowHostActionContractReader, type ReadLocalWorkflowActionSpec } from './workflowHostActionContract';
 import type { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import type { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
 import { configuration } from '@/configuration';
@@ -70,6 +70,7 @@ import type { SessionPullRequestBindingResultV1 } from '@happier-dev/channels-pr
 import type { WorkflowIngressContextV1 } from '@happier-dev/protocol';
 
 export type CliWorkflowFamilyHost = Readonly<{
+  readLocalActionSpec: ReadLocalWorkflowActionSpec;
   nativeAccount?: Parameters<typeof createCliWorkflowTriggerActions>[0]['nativeAccount'];
   deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']>;
   roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;
@@ -149,19 +150,7 @@ export function createCliWorkflowFamily(
       savedSecretOperationContext: params.savedSecretOperationContext,
       ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
       callMachineAction,
-      readHostActionContract: async (actionId, target) => {
-        const action = await readCompleteActionSpecV1({ actionId, ...(target.signal ? { signal: target.signal } : {}),
-          read: async input => {
-            const { requestDaemonSignedRootActionExecution } = await import("@/daemon/controlClient");
-            const result = await requestDaemonSignedRootActionExecution({ actionId: 'action.spec.get', input,
-              target: { kind: 'machine', machineId: target.machineId, project: { machineId: target.machineId, directory: target.directory } },
-            }, target.signal ? { signal: target.signal } : {});
-            if (!result.ok) throw new Error('action_contract_unavailable');
-            return result.result;
-          },
-        });
-        return freezeWorkflowActionContractV1(action);
-      },
+      readHostActionContract: createWorkflowHostActionContractReader({ ...params, credentials: params.credentials }, host.readLocalActionSpec),
       readWorkflowDefinition: (ref, signal) => resolveWorkflowDefinitionRefV1(formatWorkflowDefinitionRefV1(ref), {
         readPluginWorkflows: workflowDefinitions.readPluginWorkflows,
         readArtifact: (definitionId, readSignal) => workflowDefinitions.get({ definitionId, ...(readSignal ? { signal: readSignal } : {}) }),

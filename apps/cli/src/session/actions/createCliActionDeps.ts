@@ -815,6 +815,16 @@ export function createCliActionDeps(params: CliActionDepsParams,
     : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
   const workflowFamilyHost: CliWorkflowFamilyHost = {
+    readLocalActionSpec: async (input, target) => {
+      const installedMachineId = localMachineId ?? (await readCurrentMachineControlIdentity()).machineId;
+      if (target.machineId !== installedMachineId) return null;
+      return createActionExecutor(readEffectiveDeps?.() ?? actionDeps).execute('action.spec.get', input, {
+        surface: 'cli', authority: 'account_automation',
+        externalActionTarget: { kind: 'machine', machineId: target.machineId,
+          project: { machineId: target.machineId, directory: target.directory } },
+        ...(target.signal ? { signal: target.signal } : {}),
+      });
+    },
     ...(nativeAccount ? { nativeAccount } : {}), deploymentAction: (...args) => actionDeps.deploymentAction!(...args),
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
   };
@@ -1487,6 +1497,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     machineReboot: machineResourceDeps.machineReboot,
     machineRebootReferences,
     machineResourcesPolicyAction: machineResourceDeps.machineResourcesPolicyAction,
+    machineRolesAction: machineResourceDeps.machineRolesAction,
     machineGuardAction: machineResourceDeps.machineGuardAction,
     usageSourceAction: machineResourceDeps.usageSourceAction,
     projectsOpen: projectDeps.projectsOpen,
