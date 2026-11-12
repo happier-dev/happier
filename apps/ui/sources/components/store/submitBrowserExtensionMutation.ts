@@ -31,12 +31,12 @@ export async function submitBrowserExtensionMutation(params: Readonly<{
         if (result.status === 'needs_review') {
             const { showStoreBrowserExtensionReview } = await import('./StoreSoftwareReview');
             if (!await showStoreBrowserExtensionReview({ review: result.review, restartRequired: result.restartRequired === true,
-                confirmText: params.confirmText, signal: params.signal })) return { ok: false };
+                confirmText: params.confirmText, signal: params.signal })) return { ok: false, cancelled: true };
             input = { ...input, reviewedPermissions: result.review };
         } else {
             if (!await Modal.confirm(t('capabilities.store.browserExtensionInstall.restartTitle'),
                 t('capabilities.store.browserExtensionInstall.restartBody'),
-                { confirmText: t('common.continue'), signal: params.signal })) return { ok: false };
+                { confirmText: t('common.continue'), signal: params.signal })) return { ok: false, cancelled: true };
             input = { ...input, restartConfirmed: true };
         }
     }

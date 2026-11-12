@@ -155,7 +155,25 @@ describe('ActionInputFormModal', () => {
         });
     });
 
-    it('presents the deciding source refusal from a real form submission through the shared reason presenter', async () => {
+    it('keeps a declined consent editable without announcing a submission failure', async () => {
+        const form = createActionInputForm({
+            presentation: failedForm().presentation,
+            initialInput: { profileId: 'work' },
+            submit: async () => ({ ok: false, cancelled: true } as const),
+        });
+        const setChrome = vi.fn();
+        const onClose = vi.fn();
+        const screen = await renderScreen(<ActionInputFormModal form={form} onClose={onClose} setChrome={setChrome} />);
+        const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+        if (!submit) throw new Error('Expected real form submit');
+        await act(async () => { submit.props.onPress?.(); await Promise.resolve(); });
+        expect(screen.findAllByTestId('plugin-contributed-action-form-error')).toHaveLength(0);
+        expect(onClose).not.toHaveBeenCalled();
+        expect(form.getInput()).toEqual({ profileId: 'work' });
+        await act(async () => { form.retire(); });
+    });
+
+    it.each([undefined, 'artifact'] as const)('presents the deciding source refusal with optional layer %s through the shared reason presenter', async (layer) => {
         const { createPluginAccountAvailabilityReaderStore } = await import('@/sync/domains/plugins/availability/reader');
         const { resolveReasonCopy } = await import('@/sync/domains/surfaces/copy/resolveReasonCopy');
         const scope = { serverId: 'form-home', accountId: 'form-account' };
@@ -165,7 +183,7 @@ describe('ActionInputFormModal', () => {
         const form = createActionInputForm({ presentation: failedForm().presentation, submit: async () => {
             const result = reader.readCurrentArtifact({ pluginId: 'acme.form', contributionId: 'run', tier: 'reactNative', platform: 'web' });
             if (result.kind !== 'unavailable') throw new Error('Expected missing selected slot');
-            return { ok: false, code: result.code, layer: 'artifact' as const, phase: 'admission' as const, retryable: false };
+            return { ok: false, code: result.code, ...(layer ? { layer } : {}), phase: 'admission' as const, retryable: false };
         } });
         const setChrome = vi.fn();
         const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);

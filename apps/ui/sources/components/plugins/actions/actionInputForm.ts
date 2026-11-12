@@ -16,7 +16,11 @@ export type ActionInputFormPresentation = Readonly<{
     choosesConnectedAccount?: true;
 }>;
 
-export type ActionInputFormSubmissionResult = Readonly<{ ok: boolean }
+export type ActionInputFormSubmissionResult = Readonly<{
+    ok: boolean;
+    /** A declined review leaves the form editable without announcing a failure. */
+    cancelled?: true;
+}
     & Partial<Pick<PluginUiHostApiErrorPayloadV1, 'code' | 'layer' | 'phase' | 'retryable'>>>;
 
 /**

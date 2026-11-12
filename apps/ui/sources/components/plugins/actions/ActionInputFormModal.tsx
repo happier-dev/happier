@@ -124,7 +124,10 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 if (outcome.kind === 'unavailable' && outcome.reason === 'submission_in_flight') {
                     return;
                 }
-                setError(outcome.kind === 'settled' && outcome.outcome.layer && outcome.outcome.code
+                if (outcome.kind === 'settled' && outcome.outcome.cancelled) {
+                    return;
+                }
+                setError(outcome.kind === 'settled' && outcome.outcome.code
                     ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: outcome.outcome.code }).body
                     : t('pluginRuntime.unavailableGeneric'));
             } catch {
