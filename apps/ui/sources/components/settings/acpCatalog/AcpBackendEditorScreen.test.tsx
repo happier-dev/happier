@@ -5,8 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AcpBackendDefinitionV1, AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { AgentsAcpBackendsUpsertOutputV1Schema } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { renderSettingsView, type SettingsViewHarness } from '@/dev/testkit/harness/settingsViewHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -22,9 +21,8 @@ import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScope
 import { AcpCatalogRowMutationV1Schema, ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createDeferred } from '@/dev/testkit';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -39,6 +37,7 @@ const shared = vi.hoisted(() => ({
     modalAlertSpy: vi.fn(),
     settingsState: { value: { v: 2, backends: [] } as AcpCatalogSettingsV1 },
     writes: [] as AcpCatalogSettingsV1[],
+    mutations: [] as ReturnType<typeof AcpCatalogRowMutationV1Schema.parse>[],
     settingsVersion: 1 as number | null,
     refuse: false,
     holdReceipt: false,
@@ -56,7 +55,7 @@ let receipt: ReturnType<typeof createDeferred<void>>;
 let rowRead: ReturnType<typeof createDeferred<void>>;
 let revision = 1;
 let artifacts: ReturnType<typeof createArtifactStoreBoundary>;
-let interleaveBeforeTerminalArtifact: (() => Promise<void>) | null = null;
+let interleaveBeforeAcknowledgement: (() => Promise<void>) | null = null;
 let commandChecks: string[] = [];
 let unknownCommandAvailable = false;
 let commandMachineInventory: ReturnType<typeof createMachineFixture>[] = [];
@@ -66,7 +65,7 @@ await vi.hoisted(async () => {
     installAcpCatalogSettingsCommonModuleMocks({
         modal: async () => {
             const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-            return createModalModuleMock({ confirmResult: true, spies: { alert: shared.modalAlertSpy } }).module;
+            return createModalModuleMock({ confirmResult: true, renderCustomModals: true, spies: { alert: shared.modalAlertSpy } }).module;
         },
         text: async () => {
             const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -87,6 +86,8 @@ await vi.hoisted(async () => {
     });
 });
 await import('./AcpBackendEditorScreen');
+const { Modal, ModalProvider } = await import('@/modal');
+const pendingSaves: Promise<void>[] = [];
 
 const EDITOR = 'settings.acpCatalog.backendEditor';
 
@@ -112,6 +113,35 @@ async function press(screen: SettingsViewHarness, testID: string) {
     });
 }
 
+// 02102e614e1 / docs/actions.md:9134: own-UI Ask uses native review, never a self-approval Artifact.
+async function startNativeSaveReview(screen: SettingsViewHarness) {
+    await waitForHomeGovernance(async () => { await flushHookEffects(); expectSaveEnabled(screen); });
+    let saving!: Promise<void>;
+    await act(async () => { saving = screen.pressByTestIdAsync(`${EDITOR}.save`); });
+    pendingSaves.push(saving);
+    await waitForHomeGovernance(async () => {
+        await flushHookEffects();
+        expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
+    });
+    const approve = screen.findAll(node => node.props.testID === 'actions.confirmation-review.decision-approve'
+        && typeof node.props.onPress === 'function')[0]?.props.onPress as (() => void) | undefined;
+    const reject = screen.findAll(node => node.props.testID === 'actions.confirmation-review.decision-reject'
+        && typeof node.props.onPress === 'function')[0]?.props.onPress as (() => void) | undefined;
+    const modal = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+    if (!approve || !reject || !modal) throw new Error('Missing native review controls');
+    expect(artifacts.list()).toEqual([]);
+    expectSavePending(screen, true);
+    return { saving, approve, reject, dismiss: () => modal.onRequestClose?.() };
+}
+
+async function finishNativeSaveReview(review: Awaited<ReturnType<typeof startNativeSaveReview>>, decision: 'approve' | 'reject' | 'cancel') {
+    await act(async () => {
+        if (decision === 'cancel') review.dismiss();
+        else review[decision]();
+        await review.saving;
+    });
+}
+
 function expectSaveEnabled(screen: SettingsViewHarness) {
     const control = screen.findHostByTestId(`${EDITOR}.save`);
     expect(control).not.toBeNull();
@@ -122,7 +152,8 @@ function expectSaveEnabled(screen: SettingsViewHarness) {
 function expectSavePending(screen: SettingsViewHarness, pending: boolean) {
     const control = screen.findHostByTestId(`${EDITOR}.save`);
     expect(control?.props.accessibilityState?.busy).toBe(pending);
-    if (pending) expect(control?.props.disabled).toBe(true);
+    // 32238eec816d: busy web openers retain focus; the shared press guard and accessibility state refuse activation.
+    if (pending) expect(control?.props.accessibilityState?.disabled).toBe(true);
 }
 
 async function waitForSaveSettled(screen: SettingsViewHarness) {
@@ -141,7 +172,7 @@ async function renderEditor(backendId: string | null) {
         status: 'ready', revision, record: { v: 1, definitions: shared.settingsState.value.backends },
     }, true);
     const { AcpBackendEditorScreen } = await import('./AcpBackendEditorScreen');
-    return renderSettingsView(React.createElement(AcpBackendEditorScreen, { backendId }));
+    return renderSettingsView(React.createElement(AcpBackendEditorScreen, { backendId }), { wrapper: ModalProvider });
 }
 
 const existingKiro = {
@@ -164,6 +195,8 @@ const existingKiro = {
 beforeEach(async () => {
     shared.settingsState.value = { v: 2, backends: [] };
     shared.writes = [];
+    shared.mutations = [];
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
     shared.settingsVersion = 1;
     shared.refuse = false;
     shared.holdReceipt = false;
@@ -177,7 +210,7 @@ beforeEach(async () => {
     receipt = createDeferred<void>();
     rowRead = createDeferred<void>();
     revision = 1;
-    interleaveBeforeTerminalArtifact = null;
+    interleaveBeforeAcknowledgement = null;
     commandChecks = [];
     unknownCommandAvailable = false;
     commandMachineInventory = [];
@@ -194,7 +227,7 @@ beforeEach(async () => {
             if (machineId === 'unknown' && !unknownCommandAvailable) return { ok: false, error: 'RPC method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
             const definition = request.params.requests[0]!.params.definitions[0]!;
             return { ok: true, result: { protocolVersion: 1, results: { 'tool.acpAgentInventory': {
-                ok: true, checkedAt: 1, data: { items: [MachineAgentInventoryItemSchema.parse({ agentId: 'custom-acp', definitionId: definition.definitionId,
+                ok: true, checkedAt: 1, data: { items: [MachineAgentInventoryItemSchema.parse({ agentId: buildConfiguredAcpAgentSelectionV1(definition.definitionId).agentId, definitionId: definition.definitionId,
                     title: definition.title, installed: machineId !== 'missing', managed: false,
                     fit: { kind: 'can_run', via: 'command' }, version: null, latestVersion: null,
                     update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
@@ -230,6 +263,7 @@ beforeEach(async () => {
         if (path === ACP_CATALOG_ROWS_ROUTE_V1) {
             if (init?.method === 'POST') {
                 const mutation = AcpCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                shared.mutations.push(mutation);
                 if (mutation.expectedRevision !== revision) return Response.json({ status: 'conflict', revision });
                 if (shared.refuse) return Response.json({ status: 'conflict', revision });
                 expect(mutation.content.t).toBe('plain');
@@ -238,11 +272,13 @@ beforeEach(async () => {
                 if (shared.holdReceipt) await receipt.promise;
                 shared.settingsState.value = shared.writes.at(-1)!;
                 revision += 1;
-                if (interleaveBeforeTerminalArtifact) {
-                    artifacts.beforeNextUpdate(interleaveBeforeTerminalArtifact);
-                    interleaveBeforeTerminalArtifact = null;
+                const acknowledgedRevision = revision;
+                if (interleaveBeforeAcknowledgement) {
+                    const interleave = interleaveBeforeAcknowledgement;
+                    interleaveBeforeAcknowledgement = null;
+                    await interleave();
                 }
-                return Response.json({ status: 'updated', revision, cursor: revision });
+                return Response.json({ status: 'updated', revision: acknowledgedRevision, cursor: acknowledgedRevision });
             }
             if (shared.failAcknowledgedRefresh && shared.writes.length > 0) return new Response(null, { status: 503 });
             if (shared.holdRowRead) await rowRead.promise;
@@ -262,6 +298,12 @@ beforeEach(async () => {
 afterEach(async () => {
     receipt.resolve();
     rowRead.resolve();
+    await act(async () => {
+        for (const [modal] of vi.mocked(Modal.show).mock.calls) modal.onHostUnmount?.();
+        Modal.hideAll();
+        await Promise.allSettled(pendingSaves.splice(0));
+    });
+    vi.mocked(Modal.show).mockClear();
     shared.routerPushSpy.mockReset();
     shared.routerReplaceSpy.mockReset();
     shared.routerBackSpy.mockReset();
@@ -274,9 +316,11 @@ afterEach(async () => {
 describe('AcpBackendEditorScreen', () => {
     it('checks the unsaved command on each machine through the Action, preserves unknown/offline, and retries without writing', async () => {
         const now = Date.now();
-        const machines = ['found', 'missing', 'unknown', 'offline'].map(id => createMachineFixture({
-            id, active: id !== 'offline', activeAt: id === 'offline' ? 1 : now,
-            metadata: { ...createMachineFixture().metadata!, host: id, displayName: id, platform: 'linux', arch: 'x64' },
+        // 3089ddfca4bb: hydrated Plain RPC rows carry admitted content mode and owner access.
+        const machines = ['found', 'missing', 'unknown', 'offline'].map(id => createHydratedPlainMachineFixture({
+            id, accountId: 'account-a', machine: { active: id !== 'offline', activeAt: id === 'offline' ? 1 : now,
+                metadata: { ...createMachineFixture().metadata!, host: id, displayName: id, platform: 'linux', arch: 'x64' },
+            },
         }));
         commandMachineInventory = machines;
         // Focused-Home presentation reads the admitted active roster, not its saved-Home fallback.
@@ -294,8 +338,9 @@ describe('AcpBackendEditorScreen', () => {
         await press(screen, `${EDITOR}.machines:action`);
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(screen.findRow(`${EDITOR}.machines:machine:found`)?.props.subtitle).toBe('settingsAgents.customAcp.commandFound');
+            expect(commandChecks.sort()).toEqual(['found', 'missing', 'unknown']);
         });
+        expect(screen.findRow(`${EDITOR}.machines:machine:found`)?.props.subtitle).toBe('settingsAgents.customAcp.commandFound');
         expect(screen.findRow(`${EDITOR}.machines:machine:missing`)?.props.subtitle).toBe('settingsAgents.customAcp.commandMissing');
         expect(screen.findRow(`${EDITOR}.machines:machine:unknown`)?.props.subtitle).toBe('common.unknown');
         expect(screen.findRow(`${EDITOR}.machines:machine:offline`)?.props.subtitle).toBe('capabilities.status.offline');
@@ -322,7 +367,7 @@ describe('AcpBackendEditorScreen', () => {
         })).resolves.toMatchObject({ ok: true, result: { backend: { id: 'kiro' }, revision: 2 } });
         expect(shared.writes).toHaveLength(1);
     });
-    it.each(['updated', 'conflict'] as const)('keeps the authored draft pending until its actual approval settles (%s)', async (outcome) => {
+    it.each(['updated', 'conflict'] as const)('keeps the authored draft pending until its native review settles (%s)', async (outcome) => {
         const approvalPolicy = ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'agents.acp.backends.upsert': { approvalRequiredSurfaces: ['ui'] },
         } });
@@ -331,20 +376,18 @@ describe('AcpBackendEditorScreen', () => {
         const screen = await renderEditor(null);
         await type(screen, `${EDITOR}.title`, 'Approved agent');
         await type(screen, `${EDITOR}.command`, 'review');
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
-        const artifactId = artifacts.list()[0]!.id;
+        const review = await startNativeSaveReview(screen);
         expect(shared.writes).toHaveLength(0);
         expectSavePending(screen, true);
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Approved agent');
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
-        expect(shared.routerPushSpy).toHaveBeenCalledWith(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(scope.serverId)}`);
+        expect(shared.routerPushSpy).not.toHaveBeenCalled();
         if (outcome === 'conflict') {
             revision = 2;
             shared.settingsState.value = { v: 2, backends: [existingKiro] };
             await act(async () => { await refreshAcpCatalog(scope); });
         }
-        await act(async () => { await decideApprovalAsInbox(scope.serverId, artifactId, 'approve'); });
+        await finishNativeSaveReview(review, 'approve');
         await waitForHomeGovernance(() => expectSavePending(screen, false));
         if (outcome === 'updated') {
             expect(shared.writes).toHaveLength(1);
@@ -379,7 +422,7 @@ describe('AcpBackendEditorScreen', () => {
         expect(reopened.findByTestId(toggleId)?.props.value).toBe(!initialSupport);
     });
 
-    it.each(['reject', 'cancel'] as const)('releases the pending editor without writing or losing its draft when approval is %s', async (decision) => {
+    it.each(['reject', 'cancel'] as const)('releases the pending editor without writing or losing its draft when native review is %s', async (decision) => {
         const approvalPolicy = ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'agents.acp.backends.upsert': { approvalRequiredSurfaces: ['ui'] },
         } });
@@ -388,17 +431,16 @@ describe('AcpBackendEditorScreen', () => {
         const screen = await renderEditor(null);
         await type(screen, `${EDITOR}.title`, 'Canceled approval draft');
         await type(screen, `${EDITOR}.command`, 'review');
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
+        const review = await startNativeSaveReview(screen);
         expectSavePending(screen, true);
-        await act(async () => { await decideApprovalAsInbox(scope.serverId, artifacts.list()[0]!.id, decision); });
+        await finishNativeSaveReview(review, decision);
         await waitForHomeGovernance(() => expectSavePending(screen, false));
         expect(shared.writes).toHaveLength(0);
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Canceled approval draft');
         expectSaveEnabled(screen);
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
     });
-    it.each(['ordinary ACK', 'interleaved later writer'] as const)('preserves newer editable draft changes when the originally submitted approval is acknowledged (%s)', async (scenario) => {
+    it.each(['ordinary ACK', 'interleaved later writer'] as const)('preserves newer editable draft changes when the natively reviewed write is acknowledged (%s)', async (scenario) => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         expect(lifetime?.scope).toEqual(scope);
         expect(lifetime?.isCurrent()).toBe(true);
@@ -410,9 +452,7 @@ describe('AcpBackendEditorScreen', () => {
         shared.settingsState.value = { v: 2, backends: [existingKiro] };
         const screen = await renderEditor('kiro');
         await type(screen, `${EDITOR}.title`, 'Originally submitted title');
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
-        const artifactId = artifacts.list()[0]!.id;
+        const review = await startNativeSaveReview(screen);
         expectSavePending(screen, true);
         expect(shared.writes).toHaveLength(0);
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
@@ -420,23 +460,20 @@ describe('AcpBackendEditorScreen', () => {
         await type(screen, `${EDITOR}.title`, 'Newer uncommitted title');
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Newer uncommitted title');
         if (scenario === 'interleaved later writer') {
-            // The original row ACK precedes its terminal Artifact. A separate real writer
-            // publishes revision 3 while the Artifact's persistence boundary is still open.
-            interleaveBeforeTerminalArtifact = async () => {
+            // A separate real writer publishes revision 3 while the original revision-2
+            // HTTP acknowledgement is still in flight.
+            interleaveBeforeAcknowledgement = async () => {
                 expect(revision).toBe(2);
                 const { writeAcpCatalogRecord } = await import('@/sync/api/account/apiAcpCatalog');
                 const other = await writeAcpCatalogRecord(scope, { expectedRevision: 2,
                     record: { v: 1, definitions: [{ ...existingKiro, title: 'Other writer title' }] } });
                 expect(other).toMatchObject({ status: 'updated', revision: 3 });
+                // A durable receipt invalidates the projection; await its real refresh before delivering the older ACK.
+                await refreshAcpCatalog(scope);
                 expect(getAcpCatalogSnapshot(scope)?.catalog).toMatchObject({ status: 'ready', revision: 3 });
             };
         }
-        await act(async () => { await decideApprovalAsInbox(scope.serverId, artifactId, 'approve'); });
-        const terminalBody = artifacts.readPlainBody(artifactId);
-        if (terminalBody === null) throw new Error('Missing durable approval body');
-        const terminal = StoredApprovalRequestSchema.parse(JSON.parse(terminalBody));
-        expect(terminal).toMatchObject({ status: 'executed', execution: { ok: true } });
-        expect(AgentsAcpBackendsUpsertOutputV1Schema.parse(terminal.execution?.result)).toMatchObject({ revision: 2 });
+        await finishNativeSaveReview(review, 'approve');
         expect(lifetime?.isCurrent()).toBe(true);
         await waitForHomeGovernance(() => expectSavePending(screen, false));
         const interleaved = scenario === 'interleaved later writer';
@@ -450,27 +487,17 @@ describe('AcpBackendEditorScreen', () => {
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
 
         // A preserved draft is usable only if the first ACK also advanced its CAS authority.
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(2));
-        expectSavePending(screen, true);
+        const newerReview = await startNativeSaveReview(screen);
         expect(shared.writes).toHaveLength(interleaved ? 2 : 1);
-        const newerArtifactId = artifacts.list()[1]!.id;
-        const newerBody = artifacts.readPlainBody(newerArtifactId);
-        if (newerBody === null) throw new Error('Missing second approval body');
-        const newerApproval = StoredApprovalRequestSchema.parse(JSON.parse(newerBody));
-        expect(newerApproval.actionArgs).toMatchObject({ expectedRevision: 2 });
-        await act(async () => { await decideApprovalAsInbox(scope.serverId, newerArtifactId, 'approve'); });
+        await finishNativeSaveReview(newerReview, 'approve');
+        if (!interleaved) expect(shared.mutations.at(-1)).toMatchObject({ expectedRevision: 2 });
         await waitForHomeGovernance(() => expectSavePending(screen, false));
         expect(shared.writes).toHaveLength(2);
         expect(revision).toBe(3);
         expect(shared.settingsState.value.backends[0]?.title).toBe(interleaved ? 'Other writer title' : 'Newer uncommitted title');
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Newer uncommitted title');
         if (interleaved) {
-            const failedBody = artifacts.readPlainBody(newerArtifactId);
-            if (failedBody === null) throw new Error('Missing failed approval body');
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(failedBody))).toMatchObject({
-                status: 'failed', execution: { ok: false, errorCode: 'acp_catalog_conflict' },
-            });
+            expect(errorText(screen, EDITOR)).toBe('common.unavailable');
             expectSaveEnabled(screen);
         } else {
             expect(errorText(screen, EDITOR)).toBeNull();
@@ -504,17 +531,13 @@ describe('AcpBackendEditorScreen', () => {
         shared.failAcknowledgedRefresh = publication === 'refresh unavailable';
         await type(screen, `${EDITOR}.title`, 'Submitted agent');
         await type(screen, `${EDITOR}.command`, 'review');
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
+        const review = await startNativeSaveReview(screen);
         await type(screen, `${EDITOR}.title`, 'Later agent title');
         await press(screen, `${EDITOR}.args.add`);
         await type(screen, `${EDITOR}.args.item.0`, ' later argument ');
         await press(screen, `${EDITOR}.args.add`);
-        await act(async () => { await decideApprovalAsInbox(scope.serverId, artifacts.list()[0]!.id, 'approve'); });
+        await finishNativeSaveReview(review, 'approve');
         await waitForHomeGovernance(() => {
-            const body = artifacts.readPlainBody(artifacts.list()[0]!.id);
-            if (body === null) throw new Error('Missing first approval body');
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(body))).toMatchObject({ status: 'executed', execution: { ok: true } });
             // A hidden editor is the defect under test, so let the next field assertion expose it.
             if (screen.findByTestId(`${EDITOR}.save`)) expectSavePending(screen, false);
         });
@@ -528,15 +551,11 @@ describe('AcpBackendEditorScreen', () => {
         expectSaveEnabled(screen);
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
 
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(2));
-        const secondArtifact = artifacts.list()[1]!.id;
-        const secondBody = artifacts.readPlainBody(secondArtifact);
-        if (secondBody === null) throw new Error('Missing second approval body');
-        expect(StoredApprovalRequestSchema.parse(JSON.parse(secondBody))).toMatchObject({
-            actionArgs: { expectedRevision: 2, backend: { id: 'submitted-agent', title: 'Later agent title', launch: { args: [' later argument ', ''] } } },
+        const newerReview = await startNativeSaveReview(screen);
+        await finishNativeSaveReview(newerReview, 'approve');
+        expect(shared.mutations.at(-1)).toMatchObject({ expectedRevision: 2,
+            content: { t: 'plain', v: { definitions: [{ id: 'submitted-agent', title: 'Later agent title', launch: { args: [' later argument ', ''] } }] } },
         });
-        await act(async () => { await decideApprovalAsInbox(scope.serverId, secondArtifact, 'approve'); });
         await waitForHomeGovernance(() => expectSavePending(screen, false));
         expect(shared.settingsState.value.backends).toEqual([expect.objectContaining({ id: 'submitted-agent', title: 'Later agent title', launch: expect.objectContaining({ args: [' later argument ', ''] }) })]);
         expect(revision).toBe(3);
@@ -597,7 +616,7 @@ describe('AcpBackendEditorScreen', () => {
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Policy retained draft');
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
     });
-    it('releases original Home approval custody and retains its draft without enabling save after another Home becomes ready', async () => {
+    it('releases original Home native review and retains its draft without enabling save after another Home becomes ready', async () => {
         const approvalPolicy = ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'agents.acp.backends.upsert': { approvalRequiredSurfaces: ['ui'] },
         } });
@@ -606,16 +625,7 @@ describe('AcpBackendEditorScreen', () => {
         const screen = await renderEditor(null);
         await type(screen, `${EDITOR}.title`, 'Old Account draft');
         await type(screen, `${EDITOR}.command`, 'review');
-        await press(screen, `${EDITOR}.save`);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
-        expectSavePending(screen, true);
-        const artifactId = artifacts.list()[0]!.id;
-        const body = artifacts.readPlainBody(artifactId);
-        if (body === null) throw new Error('Missing original Home approval body');
-        expect(StoredApprovalRequestSchema.parse(JSON.parse(body))).toMatchObject({
-            actionArgs: { expectedRevision: 1 },
-            executionOriginV1: { serverId: scope.serverId, accountId: scope.accountId },
-        });
+        const review = await startNativeSaveReview(screen);
         const replacementWrites: string[] = [];
         const other = await restoreServerAccountForTest({ serverUrl: 'https://other-acp-editor.test', accountId: 'account-b',
             request: async (url, init) => {
@@ -637,12 +647,14 @@ describe('AcpBackendEditorScreen', () => {
                 getStorage().setState({ settingsScope: nextScope });
                 applyAcpCatalogSnapshot(nextScope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
             });
+            // Even an affirmative answer from the retired Home cannot write into either Account.
+            await finishNativeSaveReview(review, 'approve');
             await waitForHomeGovernance(() => expectSavePending(screen, false));
             expect(input(screen, `${EDITOR}.title`).props.value).toBe('Old Account draft');
             expect(screen.findByTestId(`${EDITOR}.save`)?.props.disabled).toBe(true);
             expect(shared.writes).toHaveLength(0);
             expect(replacementWrites).toHaveLength(0);
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({ status: 'open' });
+            expect(artifacts.list()).toEqual([]);
             expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
         } finally { await other.dispose(); }
     });
@@ -798,12 +810,21 @@ describe('AcpBackendEditorScreen', () => {
         await type(screen, `${EDITOR}.title`, 'Unsaved Kiro');
         await waitForHomeGovernance(async () => { await flushHookEffects(); expectSaveEnabled(screen); });
         const { Modal } = await import('@/modal');
-        vi.mocked(Modal.confirm).mockClear().mockResolvedValue(false);
         shared.modalAlertSpy.mockClear();
         const menu = screen.findAll((node) => node.props?.testID === `${EDITOR}.menu`
             && typeof node.props?.onSelect === 'function')[0];
-        await act(async () => { await menu?.props.onSelect('delete'); });
-        expect(Modal.confirm).toHaveBeenCalledOnce();
+        let deleting!: Promise<void>;
+        await act(async () => { deleting = menu?.props.onSelect('delete'); });
+        pendingSaves.push(deleting);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findHostByTestId('actions.confirmation-review.decision-reject')).not.toBeNull();
+        });
+        await act(async () => {
+            await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+            await deleting;
+        });
+        expect(artifacts.list()).toEqual([]);
         expect(shared.writes).toEqual([]);
         expect(shared.modalAlertSpy).not.toHaveBeenCalled();
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
