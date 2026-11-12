@@ -7,6 +7,15 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it.each(['credential_unavailable', 'preset_limit_reached'])('prefers authored repair over fallback copy for %s across thrown and returned failures', code => {
+        const data = { code, message: 'Sign in to Docker: run sbx login', retryable: true, remediation: { kind: 'retry' as const } };
+        const expected = `${data.message} ${t('errors.tryAgain')}`;
+        expect(resolveActionExecutionErrorMessage(new PluginError(data), 'fallback')).toBe(expected);
+        const failure = { ok: false, ...data };
+        for (const result of [failure, { ok: true, result: failure }, { ok: true, result: { results: [failure] } }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'fallback')).toBe(expected);
+        }
+    });
     it('explains an unenforceable role policy and offers another Agent', () => {
         const expected = "This Agent cannot enforce this role's access restrictions. Choose another Agent for this role.";
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'role_policy_unenforceable', error: 'role_policy_unenforceable' }, 'fallback')).toBe(expected);

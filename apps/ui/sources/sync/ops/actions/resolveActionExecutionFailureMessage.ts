@@ -97,6 +97,17 @@ export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
 function readFailureMessage(value: unknown, options?: FailurePresentationOptions): string | null {
     const record = asRecord(value);
     if (!record) return null;
+    const pluginError = isPluginError(value);
+    const authoredMessage = pluginError ? value.data.message : !(value instanceof Error) ? record.message : undefined;
+    const message = typeof authoredMessage === 'string' ? authoredMessage.trim() : '';
+    const remediation = pluginError ? readPluginActionFailureAuthorPayload(value.data).remediation
+        : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation).data;
+    const reason = message || readFailureFallbackMessage(record, options);
+    return reason && remediation?.kind === 'retry' ? `${reason} ${t('errors.tryAgain')}` : reason;
+}
+
+/** Host code copy is the fallback when the author supplied no reason. */
+function readFailureFallbackMessage(record: Record<string, unknown>, options?: FailurePresentationOptions): string | null {
     const code = record.errorCode ?? record.code;
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
@@ -156,14 +167,7 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });
     if (sessionInputLabel) return t(sessionInputLabel);
     if (code === 'feature_policy_disabled') return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
-    const authoredMessage = isPluginError(value) ? value.data.message : !(value instanceof Error) ? record.message : undefined;
-    const message = typeof authoredMessage === 'string' ? authoredMessage.trim() : '';
-    const reason = message || (code === 'credential_unavailable' ? t('session.startFailure.cause.credential_unavailable') : '');
-    if (reason) {
-        const remediation = isPluginError(value) ? readPluginActionFailureAuthorPayload(value.data).remediation
-            : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation).data;
-        return remediation?.kind === 'retry' ? `${reason} ${t('errors.tryAgain')}` : reason;
-    }
+    if (code === 'credential_unavailable') return t('session.startFailure.cause.credential_unavailable');
     const error = typeof record.error === 'string' ? record.error.trim() : '';
     if (error.length > 0) return error;
     const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
