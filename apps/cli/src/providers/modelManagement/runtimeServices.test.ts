@@ -1,3 +1,6 @@
+import { createCliActionInventoryDeps } from '@/session/actions/cliActionDeps/createCliActionInventoryDeps';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -399,82 +402,6 @@ function providerSnapshot(
 }
 
 
-it('reads gateway helper models from the addressed current source without probing a gateway or borrowing ambient observations', async () => {
-  const service = { pluginId: 'acme.managed-run', localId: 'accounts' };
-  const fixture = await createManagedRunLaunchFixture({ connectedAccounts: [{ purpose: 'source-models', service: service.localId,
-    required: false, materializationKinds: ['httpHeaders'] }] });
-  try {
-    const base = createBrokerProviderRegistry();
-    const registry = { ...base, agentDefinitionsById: fixture.lease.registry.contributes.agentDefinitionsById,
-      providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
-        definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
-          connectedAccounts: [{ purpose: 'openai-upstream', service,
-            endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
-            catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
-            staticModels: [{ id: 'unverified-static', name: 'Unverified' }] }] } }),
-      }])) };
-    const target = { kind: 'account' as const, account: { service, accountId: 'requester-source' } };
-    const connectionId = 'requester-gateway';
-    const snapshot = providerSnapshot(ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
-      v: 1, id: connectionId, source: { kind: 'contribution', contributionKey: [...registry.providersByContributionKey.keys()][0] },
-      role: 'named', displayName: 'Requester gateway', displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
-      purposeBindingDefaults: { 'openai-upstream': target }, revision: 1, createdAt: 1, updatedAt: 1,
-    }] }));
-    const unavailable = async (): Promise<never> => { throw new Error('Unexpected credential, gateway, mutation or ambient Account read'); };
-    const purposes = createConnectedAccountPurposeBindingOwner({
-      store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
-      selectTarget: unavailable, materializeAccount: unavailable, projectTargetAccounts: unavailable,
-      assertTargetAccountMaterializable: unavailable,
-      resolveTarget: async value => value.kind === 'account' ? { account: value.account, displayName: 'Requester source' } : null,
-    });
-    let current = true;
-    let observed = false;
-    let stale = false;
-    let nativeReads = 0;
-    let explicitRefresh = false;
-    let models = [] as { id: string; name: string; capabilities?: { toolRoundTrips: 'unsupported' } }[];
-    const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, registry,
-      featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: (): never => { throw new Error('Ambient Account read'); },
-      resolveAddresses: unavailable, invokeConnectedAccountNativeModels: unavailable,
-      modelSettingsMutation: unavailable,
-    });
-    const scope = createProviderAccountOperationScope({ getAccountSettingsSnapshot: () => snapshot,
-      resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
-      resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
-      invokeConnectedAccountNativeModels: async request => {
-        nativeReads++;
-        expect(request.params).toMatchObject({ currentOnly: !explicitRefresh, bypassCache: explicitRefresh, connectedServices: { v: 2, bindingsByServiceId: {
-          'acme.managed-run/accounts': { source: 'connected', profileId: 'requester-source' },
-        } } });
-        return observed ? { ok: true, result: { agentId: fixture.agentId, source: 'dynamic', observedAt: 1,
-          refreshError: stale, supportsFreeform: false, availableModels: models } } : { ok: false };
-      }, signal: new AbortController().signal, isCurrent: () => current });
-    const request = { machineId: fixture.machineId, connectionId };
-    expect(DaemonProviderModelsResponseV1Schema.parse(await services.models(request, undefined, scope))).toMatchObject({ status: 'success', models: [],
-      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: false, models: [] }] });
-    observed = true;
-    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],
-      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true, models: [] }] });
-    models = [{ id: 'current-model', name: 'Current', capabilities: { toolRoundTrips: 'unsupported' } }];
-    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success',
-      models: [{ id: 'current-model', descriptor: { capabilities: { toolRoundTrips: 'unsupported' } } }],
-      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true,
-        models: [{ id: 'current-model', descriptor: { capabilities: { toolRoundTrips: 'unsupported' } } }] }] });
-    stale = true;
-    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],
-      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true, models: [] }] });
-    expect(nativeReads).toBe(4);
-    explicitRefresh = true;
-    stale = false;
-    expect(await services.models(request, undefined, { ...scope, forceRefresh: true })).toMatchObject({ status: 'success',
-      models: [{ id: 'current-model' }], sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true }] });
-    expect(nativeReads).toBe(5);
-    current = false;
-    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
-    expect(nativeReads).toBe(5);
-  } finally { await fixture.cleanup(); }
-});
-
 async function registeredProviderProjectionFixture(
   requiredCapabilities: NonNullable<Parameters<typeof createManagedRunLaunchFixture>[0]>['requiredCapabilities'] = { streaming: true },
 ) {
@@ -657,6 +584,72 @@ describe('runtime provider model-management composition', () => {
       expect(native).toMatchObject({ status: 'success', groups: [] });
     } finally { await fixture.cleanup(); }
   });
+  it('projects observed membership for a selected custom upstream with native refs and only the adapter protocol', async () => {
+    const service = { pluginId: 'acme.managed-run', localId: 'accounts' };
+    const fixture = await createManagedRunLaunchFixture({ connectedAccounts: [{ purpose: 'custom-upstream', service: service.localId,
+      materializationKinds: ['httpHeaders'] }] });
+    try {
+      const base = createBrokerProviderRegistry();
+      const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
+        providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
+          definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
+            connectedAccounts: [{ purpose: 'openai-upstream', service,
+              endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
+              catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
+              staticModels: [{ id: 'unentitled-static', name: 'Static compatibility model' }] }] } }),
+        }])) } };
+      const unexpected = async (): Promise<never> => { throw new Error('No credential, mutation or gateway during catalog discovery'); };
+      const purposes = createConnectedAccountPurposeBindingOwner({
+        store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
+        selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+        resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Selected custom account' } : null,
+      });
+      let models = [{ id: 'observed-model', name: 'Observed model' }];
+      let source = 'dynamic';
+      let observations = 0;
+      const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, featureGate: { isEnabled: () => true },
+        acquireRuntimeLease: async () => ({ ...fixture.lease, registry }), getAccountSettingsSnapshot: () => fixture.snapshot,
+        resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+        // Only the installed source capability transport is replaced. The real
+        // declared source, account selection, observer and adapter projection run.
+        invokeConnectedAccountNativeModels: async request => {
+          observations++;
+          expect(request.params).toMatchObject({ connectedServices: { v: 2, bindingsByServiceId: {
+            'acme.managed-run/accounts': { source: 'connected', profileId: 'selected-account' },
+          } } });
+          return { ok: true, result: { agentId: fixture.agentId, source, availableModels: models, supportsFreeform: false } };
+        }, modelSettingsMutation: unexpected,
+      });
+      const request = { machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
+        connectedServices: { v: 2 as const, bindingsByServiceId: {
+          'acme.managed-run/accounts': { source: 'connected' as const, profileId: 'selected-account' },
+        } } };
+      const result = await services.projectModels(request);
+      expect(result.status).toBe('success');
+      if (result.status !== 'success') throw new Error('Expected native account projection');
+      expect(result.groups).toHaveLength(1);
+      expect(result.groups[0]?.rows).toMatchObject([{ confidence: 'probe', descriptor: { id: 'observed-model' },
+        compatibility: { confirmed: true },
+        application: { protocol: 'openai-responses' },
+        ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'observed-model' } }]);
+      expect(observations).toBe(1);
+      const inventory = createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null,
+        callMachineAction: async input => input.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION
+          ? services.projectModels(DaemonProviderModelProjectionRequestV1Schema.parse(input.request))
+          : { ok: false, error: { code: 'agent_startup_model_reconciliation_failed' } },
+      });
+      const actions = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
+      const list = await actions.execute('agents.models.list', { machineId: fixture.machineId, agentId: fixture.agentId,
+        probe: { connectedServices: request.connectedServices } }, { surface: 'cli', authority: 'present_user' });
+      expect(list).toMatchObject({ ok: true, result: { source: 'dynamic', items: [{ id: 'observed-model' }] } });
+      models = [];
+      expect(await services.projectModels(request)).toMatchObject({ status: 'success', groups: [{ catalogObserved: true, rows: [] }] });
+      source = 'static';
+      models = [{ id: 'ambient-static', name: 'Ambient static' }];
+      const unavailable = await services.projectModels(request);
+      expect(unavailable).toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
+    } finally { await fixture.cleanup(); }
+  });
   const unexpectedModelSettingsMutation = async (
     _intent: ProviderModelSettingsMutationIntent,
   ): Promise<never> => {
@@ -746,7 +739,52 @@ describe('runtime provider model-management composition', () => {
     } finally { await fixture.cleanup(); }
   });
 
-  it('projects an admitted Connected Pool source without personal Provider catalog reads and refuses withdrawn sources', async () => {
+
+  it('admits an Action purpose through the real eligibility RPC without a model Provider', async () => {
+    const fixture = await createManagedRunLaunchFixture();
+    let sourceAvailable = true;
+    const unexpected = async (): Promise<never> => { throw new Error('Eligibility must not materialize credentials or mutate bindings'); };
+    const purposes = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected,
+      assertTargetAccountMaterializable: unexpected,
+      resolveTarget: async target => sourceAvailable && target.kind === 'account'
+        ? { account: target.account, displayName: 'Cloud source' } : null,
+    });
+    const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
+      providersByContributionKey: new Map<string, ResolvedProviderContribution>() } };
+    const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId,
+      featureGate: { isEnabled: () => true },
+      getAccountSettingsSnapshot: (): never => { throw new Error('Action eligibility must not read the personal model catalog'); },
+      acquireRuntimeLease: async () => ({ ...fixture.lease, registry }),
+      resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+      modelSettingsMutation: unexpected,
+    });
+    const rpc = new RpcHandlerManager({ scopePrefix: fixture.machineId, encryptionMode: 'plain', logger: () => {} });
+    registerMachineProviderRpcHandlers({ rpcHandlerManager: rpc, machineId: fixture.machineId,
+      featureGate: { isEnabled: () => true }, services: { ...services,
+        probe: (input, waiterLifetime) => services.probe(input, 'manual_refresh', waiterLifetime),
+        ...createRuntimeProviderConnectionServices({ machineId: fixture.machineId, happyHomeDir: fixture.happyHomeDir,
+          credentials: { token: 'custodian', encryption: null }, featureGate: { isEnabled: () => true },
+          runtimeSummary: services.summary }),
+        ...createLegacyProfileMigrationRpcServices({ credentials: { token: 'custodian', encryption: null } }),
+      } });
+    const source = { v: 1, kind: 'connected_account', target: { kind: 'account',
+      account: { service: { pluginId: 'example.cloud', localId: 'cloud' }, accountId: 'selected-source' } },
+      credentialIncarnation: 'credential-1' };
+    const request = { machineId: fixture.machineId, teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 1, source, scope: 'action_purpose',
+      purpose: { consumer: { pluginId: 'example.cloud', localId: 'machine' }, purpose: 'cloud-api' } };
+    try {
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, request))
+        .resolves.toEqual({ status: 'eligible' });
+      sourceAvailable = false;
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, request))
+        .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('keeps unobserved Connected Pool models diagnostic without personal catalog reads and refuses withdrawn sources', async () => {
     // Shipped Codex accepts the broker's raw local capability
     // header; use that declared transport rather than this fixture's bearer-only default.
     const fixture = await createManagedRunLaunchFixture({ acceptedCredentialFormats: ['raw', 'bearer'] });
@@ -850,14 +888,18 @@ describe('runtime provider model-management composition', () => {
       expect(eligibility).toEqual({ status: 'eligible' });
       const source = await services.readSourceModelCatalogs({ machineId: fixture.machineId,
         source: eligibilityRequest.source, refreshPolicy: 'current_only' });
-      if (source.status !== 'success' || !source.catalogs[0]) throw new Error('Expected source-only Pool catalog');
-      expect(source.catalogs).toHaveLength(1);
-      expect(source.catalogs[0].application).not.toHaveProperty('agentTargetKey');
-      expect(source.catalogs[0].rows.map(row => row.descriptor.id)).toEqual(['pool-model']);
+      // Static family declarations remain diagnostic; they do not establish
+      // exact-account membership for source execution (802af67df4b).
+      expect(source).toEqual({ status: 'success', catalogs: [] });
+      const diagnostic = admitTeamCredentialSourceModelRowsV1(response);
+      if (diagnostic.status !== 'success' || !diagnostic.rows[0]) throw new Error('Expected diagnostic Pool model');
+      const produced = diagnostic.rows[0];
+      expect(produced.row).toMatchObject({ confidence: 'account_unverified', sources: { static: true, probe: false } });
       const sourceEligibility = { machineId: fixture.machineId, teamId: 'team', resourceId: 'resource',
-        expectedResourceRevision: 1, source: eligibilityRequest.source, application: source.catalogs[0].application,
-        sourceRevision: source.catalogs[0].sourceRevision, modelId: 'pool-model' };
-      expect(await services.resolveTeamCredentialBrokerEligibility(sourceEligibility)).toEqual({ status: 'eligible' });
+        expectedResourceRevision: 1, source: eligibilityRequest.source, application: produced.row.application,
+        sourceRevision: produced.sourceRevision, modelId: produced.row.descriptor.id };
+      expect(await services.resolveTeamCredentialBrokerEligibility(sourceEligibility))
+        .toEqual({ status: 'unavailable', reason: 'application_unavailable' });
 
       let accountCurrent = true;
       const accountContext = {
@@ -1212,7 +1254,7 @@ describe('runtime provider model-management composition', () => {
 
     // Native discovery can reach this shared projection before its Agent has
     // been admitted. No Provider endpoint has been contacted in that case.
-    await expect(services.projectModels({ machineId: 'machine-a', agentTargetKey: 'agent:acme.missing/missing' }))
+    await expect(services.projectModels({ refreshPolicy: 'current_only', machineId: 'machine-a', agentTargetKey: 'agent:acme.missing/missing' }))
       .resolves.toMatchObject({ status: 'error', error: { code: 'agent_unavailable' } });
 
     if (custody === 'ambient') {
@@ -1224,7 +1266,7 @@ describe('runtime provider model-management composition', () => {
     }
     // Observe real work; do not substitute the catalog owner or connection resolver.
     const nameCatalogReads = vi.spyOn(providerContributions, 'readProviderModelNameCatalog');
-    const result = await services.projectModels({ machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex' });
+    const result = await services.projectModels({ refreshPolicy: 'current_only', machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex' });
     expect(nameCatalogReads).toHaveBeenCalledTimes(1);
     if (custody === 'ambient') expect(result).toMatchObject({ status: 'success', groups: [
       expect.objectContaining({ connectionId, connectionName: 'Current Gateway' }),
@@ -1245,7 +1287,7 @@ describe('runtime provider model-management composition', () => {
           },
           connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint,
         },
-        suppressedConnectedServiceIds: ['openai-codex'],
+        suppressedConnectedServiceIds: ['happier.agent.codex/openai-codex'],
         modelLoadAction: 'descriptor_absent',
         modelLoadPreflightPolicy: null,
         rows: [{
@@ -1260,11 +1302,12 @@ describe('runtime provider model-management composition', () => {
     });
     if (result.status !== 'success') throw new Error('Expected model projection');
     expect(result.groups[0]?.rows[0]).not.toHaveProperty('requestPolicySupport');
-    const requestPolicyProjection = await services.projectModels({
+    const requestPolicyProjection = await services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a',
       agentTargetKey: 'agent:happier.agent.codex/codex',
       includeTeamCredentialRequestPolicySupport: true,
     });
+
     expect(requestPolicyProjection).toMatchObject({
       status: 'success',
       groups: [{
@@ -1294,7 +1337,7 @@ describe('runtime provider model-management composition', () => {
     expect(result.groups[0]?.rows[0]?.descriptor.modelOptions
       ?.find(option => option.id === 'reasoning_effort')).toBeUndefined();
     agentDefinitionsById.set('codex', agentDefinition({ ...support, supportsReasoningEffort: true }));
-    const supportedEffortProjection = await services.projectModels({
+    const supportedEffortProjection = await services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex',
       includeTeamCredentialRequestPolicySupport: true,
     });
@@ -1337,7 +1380,7 @@ describe('runtime provider model-management composition', () => {
       ...sourceBrokerApplication,
       agentTargetKey: 'agent:happier.agent.codex/codex',
     };
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a',
       agentTargetKey: brokerApplication.agentTargetKey,
       providerConnection: {
@@ -1355,7 +1398,7 @@ describe('runtime provider model-management composition', () => {
       endpointTemplateId: 'chat',
       protocol: 'openai-chat' as const,
     };
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a',
       agentTargetKey: directApplication.agentTargetKey,
       providerConnection: {
@@ -1443,7 +1486,7 @@ describe('runtime provider model-management composition', () => {
     // operation's authority. The next operation observes that prepared lease.
     currentLease = preparedLease;
     nameCatalogReads.mockClear();
-    const nextResult = await services.projectModels({
+    const nextResult = await services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a',
       agentTargetKey: 'agent:happier.agent.codex/codex',
       includeTeamCredentialRequestPolicySupport: true,
@@ -1477,7 +1520,11 @@ describe('runtime provider model-management composition', () => {
       status: 'error',
       error: { code: 'provider_compatibility_unverified' },
     });
-    await vi.waitFor(() => expect(transport).toHaveBeenCalled());
+    // Metadata projections keep their captured material. Await the explicit
+    // probe before later reads and cleanup observe its credential refresh.
+    await expect(services.probe({ connectionId, machineId: 'machine-a' }))
+      .resolves.toMatchObject({ status: 'success' });
+    expect(transport).toHaveBeenCalled();
 
     const selection = {
       v: 1 as const, updatedAt: 1,
@@ -1595,7 +1642,7 @@ describe('runtime provider model-management composition', () => {
       error: { code: 'provider_model_not_found', action: 'choose_model' },
     });
 
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a',
       agentTargetKey: 'agent:happier.agent.codex/codex',
       currentSelection: {
@@ -1627,7 +1674,7 @@ describe('runtime provider model-management composition', () => {
       providerConnectionId: connectionId,
       modelId: 'vendor/freeform-only',
     };
-    const freeformProjection = await services.projectModels({
+    const freeformProjection = await services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: freeformSelection,
     });
     expect(freeformProjection).toMatchObject({ status: 'success', currentSelectionRecovery: null });
@@ -1636,7 +1683,7 @@ describe('runtime provider model-management composition', () => {
       .toContain('vendor/freeform-only');
     // The same selection under an Agent that refuses freeform ids stays missing.
     agentDefinitionsById.set('codex', agentDefinition(support));
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: freeformSelection,
     })).resolves.toMatchObject({
       status: 'success',
@@ -1659,7 +1706,7 @@ describe('runtime provider model-management composition', () => {
         ...settings,
         accountGrants: [],
       }), 2);
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
     })).resolves.toMatchObject({
       status: 'success',
@@ -1692,7 +1739,7 @@ describe('runtime provider model-management composition', () => {
     })] });
 
     registry.providersByContributionKey.delete(contributionKey);
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
     })).resolves.toMatchObject({
       status: 'success',
@@ -1709,7 +1756,7 @@ describe('runtime provider model-management composition', () => {
           v: 1, id: connectionId, contributionKey, lastDisplayName: 'Gateway', deletedAt: 3,
         }],
       }), 5);
-    await expect(services.projectModels({
+    await expect(services.projectModels({ refreshPolicy: 'current_only',
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
     })).resolves.toMatchObject({
       status: 'success',
