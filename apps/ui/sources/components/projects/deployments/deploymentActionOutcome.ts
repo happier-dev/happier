@@ -122,7 +122,8 @@ export function readDeploymentActionError(
   const code = (error as { code?: unknown } | null)?.code;
   const failure: ActionExecuteFailure = { ok: false, errorCode: typeof code === 'string' && code ? code : 'unknown_error',
     error: error instanceof Error ? error.message : typeof code === 'string' ? code : 'unknown_error',
-    ...(error instanceof HappyError ? { details: error.details, failureCause: error.failureCause, effectAttempted: error.effectAttempted } : {}) };
+    ...(error instanceof HappyError ? { details: error.details, failureCause: error.failureCause, effectAttempted: error.effectAttempted,
+      ...(error.requestId ? { requestId: error.requestId } : {}) } : {}) };
   const progress = readDeploymentPartialResult(failure);
   return { ...readDeploymentRefusal(failure.errorCode), ...(progress ? { progress } : {}),
     ...(progress || failure.details !== undefined || failure.failureCause !== undefined || failure.effectAttempted !== undefined ? { failure } : {}) };

@@ -67,6 +67,29 @@ it('opens the canonical restore-drill starter for this Home without starting a r
   } finally { await screen.unmount(); route.push.mockClear(); }
 });
 
+it('shows a failed schedule read with its code, request id and Retry, not a bare Unavailable', async () => {
+  const detail = { ...createDeploymentEnvironmentDetailV1(), runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
+    destinationRef: SFTP_BACKUP_DESTINATION_REF_V1, occurrenceId: 'sftp', config: {}, credentialBindings: [],
+    sources: [{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }],
+    ownership: { environmentId: detail.environment.id, prefix: '' }, retention: { kind: 'keepEverything' } });
+  const { HappyError } = await import('@/utils/errors/errors');
+  // The page's actions owner is the injected seam; its read refuses as the Action front door does.
+  const backupScheduleSets = vi.fn(async () => { throw new HappyError('internal_error', false,
+    { code: 'internal_error', requestId: '5b2057fb-request' }); });
+  const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration}
+    actions={{ backupScheduleSets } as never} testID="backups" />);
+  try {
+    const card = () => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'backups.schedule.failed');
+    await vi.waitFor(() => expect(card()).toBeDefined());
+    expect(card()!.props.diagnosticCode).toBe('internal_error');
+    expect(card()!.props.diagnosticDetail).toContain('5b2057fb-request');
+    await act(async () => { card()!.props.action.onPress(); });
+    await vi.waitFor(() => expect(backupScheduleSets).toHaveBeenCalledTimes(2));
+  } finally { await screen.unmount(); }
+});
+
 it('shows unknown local capacity before effects and keeps zero capacity eligible for Keep everything', async () => {
   const initial = createDeploymentEnvironmentDetailV1();
   const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };

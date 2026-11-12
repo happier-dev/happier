@@ -37,6 +37,7 @@ import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { HappyError } from '@/utils/errors/errors';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
@@ -796,13 +797,18 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
 }>) {
   const { actions } = props;
   const [sets, setSets] = React.useState<Awaited<ReturnType<ActionsFactory['backupScheduleSets']>> | null>(null);
-  const [failure, setFailure] = React.useState<string | null>(null);
+  const [failure, setFailure] = React.useState<Readonly<{ reason: string; code: string | null; detail: string | null }> | null>(null);
   const [adding, setAdding] = React.useState(false);
+  const [reads, setReads] = React.useState(0);
+  // The page's one failure presenter: its reason leads, the code and request id stay in Details for support.
   const showFailure = (error: unknown) => {
     const outcome = readDeploymentActionError(error);
-    const presented = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
-      ?? { ok: false, errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
-    setFailure(presented?.reason ?? t('common.error'));
+    const requestId = error instanceof HappyError ? error.requestId : undefined;
+    const code = outcome.kind === 'refused' ? outcome.code : null;
+    const presented = code ? presentActionFailureOutcome({ ...(outcome.kind === 'refused' && outcome.failure
+      ? outcome.failure : { ok: false as const, errorCode: code, error: code }), ...(requestId ? { requestId } : {}) }, 'deployment') : null;
+    setFailure({ reason: presented?.reason ?? t('common.error'), code: presented?.code ?? code,
+      detail: presented?.technicalDetails.filter(line => line.key !== 'failure-code').map(line => `${line.label}: ${line.value}`).join('\n') || null });
   };
   const environmentId = props.detail.environment.id;
   React.useEffect(() => {
@@ -814,7 +820,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
       if (live) { setSets(null); showFailure(error); }
     });
     return () => { live = false; };
-  }, [actions, environmentId]);
+  }, [actions, environmentId, reads]);
   const turnOn = async () => {
     if (!actions || adding) return;
     setAdding(true);
@@ -837,13 +843,16 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
     <Item
       testID={`${props.testID}.schedule`}
       title={t('projects.deployments.settingsSections.scheduleTitle')}
-      subtitle={failure ? `${status} · ${failure}` : status}
+      subtitle={status}
       mode="info"
       rightElement={actions && schedules?.length === 0 ? (
         <SectionActionButton testID={`${props.testID}.schedule.on`}
           title={t('projects.deployments.settingsSections.scheduleTurnOn')} disabled={adding} onPress={turnOn} />
       ) : undefined}
     />
+    {failure ? <SurfaceStateCard testID={`${props.testID}.schedule.failed`} size="line" kind="error" title={failure.reason}
+      diagnosticCode={failure.code} diagnosticDetail={failure.detail}
+      action={{ label: t('common.retry'), onPress: () => setReads(count => count + 1) }} /> : null}
     <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} />
     </>
   );

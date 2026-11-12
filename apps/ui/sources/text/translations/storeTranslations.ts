@@ -60,6 +60,7 @@ export type StoreTranslation = Readonly<{
   pasteCompose: string;
   runImage: string;
   definitionNoProjects: string;
+  definitionProjectsRefused: string;
   catalogLabel: string;
   loadMore: string;
   add: string;
@@ -207,6 +208,7 @@ const en: StoreTranslation = {
   pasteCompose: "Paste a Compose file",
   runImage: "Run an image",
   definitionNoProjects: "Add a project first.",
+  definitionProjectsRefused: "This Home didn’t let you read its projects.",
   catalogLabel: 'Catalog',
   loadMore: 'Load more',
   add: 'Add',
@@ -348,6 +350,7 @@ const ca: StoreTranslation = {
   pasteCompose: "Enganxa un fitxer Compose",
   runImage: "Executa una imatge",
   definitionNoProjects: "Primer afegeix un projecte.",
+  definitionProjectsRefused: "Aquesta Home no t’ha deixat llegir els seus projectes.",
   catalogLabel: 'Catàleg',
   loadMore: 'Carrega’n més',
   add: 'Afegeix',
@@ -488,6 +491,7 @@ const de: StoreTranslation = {
   pasteCompose: "Compose-Datei einfügen",
   runImage: "Image ausführen",
   definitionNoProjects: "Füge zuerst ein Projekt hinzu.",
+  definitionProjectsRefused: "Diese Home hat das Lesen ihrer Projekte nicht erlaubt.",
   catalogLabel: 'Katalog',
   loadMore: 'Mehr laden',
   add: 'Hinzufügen',
@@ -628,6 +632,7 @@ const es: StoreTranslation = {
   pasteCompose: "Pegar un archivo Compose",
   runImage: "Ejecutar una imagen",
   definitionNoProjects: "Añade primero un proyecto.",
+  definitionProjectsRefused: "Esta Home no te dejó leer sus proyectos.",
   catalogLabel: 'Catálogo',
   loadMore: 'Cargar más',
   add: 'Añadir',
@@ -769,6 +774,7 @@ const fr: StoreTranslation = {
   pasteCompose: "Coller un fichier Compose",
   runImage: "Exécuter une image",
   definitionNoProjects: "Ajoutez d’abord un projet.",
+  definitionProjectsRefused: "Cette Home ne vous a pas laissé lire ses projets.",
   catalogLabel: 'Catalogue',
   loadMore: 'Charger plus',
   add: 'Ajouter',
@@ -909,6 +915,7 @@ const it: StoreTranslation = {
   pasteCompose: "Incolla un file Compose",
   runImage: "Esegui un’immagine",
   definitionNoProjects: "Aggiungi prima un progetto.",
+  definitionProjectsRefused: "Questa Home non ti ha permesso di leggere i suoi progetti.",
   catalogLabel: 'Catalogo',
   loadMore: 'Carica altri',
   add: 'Aggiungi',
@@ -1048,6 +1055,7 @@ const ja: StoreTranslation = {
   pasteCompose: "Compose ファイルを貼り付け",
   runImage: "イメージを実行",
   definitionNoProjects: "先にプロジェクトを追加してください。",
+  definitionProjectsRefused: "このHomeのプロジェクトを読み取れませんでした。",
   catalogLabel: 'カタログ',
   loadMore: 'さらに読み込む',
   add: '追加',
@@ -1188,6 +1196,7 @@ const pl: StoreTranslation = {
   pasteCompose: "Wklej plik Compose",
   runImage: "Uruchom obraz",
   definitionNoProjects: "Najpierw dodaj projekt.",
+  definitionProjectsRefused: "Ten Home nie pozwolił odczytać swoich projektów.",
   catalogLabel: 'Katalog',
   loadMore: 'Wczytaj więcej',
   add: 'Dodaj',
@@ -1329,6 +1338,7 @@ const pt: StoreTranslation = {
   pasteCompose: "Colar um arquivo Compose",
   runImage: "Executar uma imagem",
   definitionNoProjects: "Adicione um projeto primeiro.",
+  definitionProjectsRefused: "Esta Home não permitiu ler os seus projetos.",
   catalogLabel: 'Catálogo',
   loadMore: 'Carregar mais',
   add: 'Adicionar',
@@ -1469,6 +1479,7 @@ const ru: StoreTranslation = {
   pasteCompose: "Вставить файл Compose",
   runImage: "Запустить образ",
   definitionNoProjects: "Сначала добавьте проект.",
+  definitionProjectsRefused: "Этот Home не разрешил прочитать его проекты.",
   catalogLabel: 'Каталог',
   loadMore: 'Загрузить ещё',
   add: 'Добавить',
@@ -1607,6 +1618,7 @@ const zhHans: StoreTranslation = {
   pasteCompose: "粘贴 Compose 文件",
   runImage: "运行镜像",
   definitionNoProjects: "请先添加项目。",
+  definitionProjectsRefused: "此 Home 不允许读取其项目。",
   catalogLabel: '目录',
   loadMore: '加载更多',
   add: '添加',
@@ -1745,6 +1757,7 @@ const zhHant: StoreTranslation = {
   pasteCompose: "貼上 Compose 檔案",
   runImage: "執行映像",
   definitionNoProjects: "請先新增專案。",
+  definitionProjectsRefused: "此 Home 不允許讀取其專案。",
   catalogLabel: '目錄',
   loadMore: '載入更多',
   add: '新增',
