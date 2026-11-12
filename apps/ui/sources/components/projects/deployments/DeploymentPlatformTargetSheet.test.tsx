@@ -117,8 +117,12 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
       expect(associations).toHaveLength(0);
       return;
     }
+    await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'off');
     await screen.pressByTestIdAsync('project-deployments.platform.openProvider');
-    expect(browserOpen.mock.calls[0]?.[0]).toBe(providerUrl);
+    expect(browserOpen).not.toHaveBeenCalled();
+    await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'allowed');
+    await screen.pressByTestIdAsync('project-deployments.platform.openProvider');
+    expect(browserOpen.mock.calls.map(call => call[0])).toEqual([providerUrl]);
     await act(async () => recovery()!.props.action.onPress());
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(1); });
     expect(creates).toHaveLength(1);

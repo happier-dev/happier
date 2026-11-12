@@ -6,7 +6,7 @@ import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol
 export { DeploymentAddRefusal, showDeploymentAppSourcesSheet } from './DeploymentAddReview';
 import * as React from 'react';
 import { View } from 'react-native';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 import type {
@@ -672,7 +672,7 @@ export function DeploymentDatabasePage(
             >
               {providerConsole ? <Item testID={`${id}.providerConsole`}
                 title={providerConsole.label}
-                onPress={() => { void openExternalUrl(providerConsole.url); }} /> : null}
+                onPress={() => props.controller && requestOpenExternalUrl(providerConsole.url, { serverId: props.controller.scope.serverId, expectedAccountId: props.controller.scope.accountId })} /> : null}
               {openManaged ? <Item testID={`${id}.manage`} title={t('projects.deployments.managedData.manage')}
                 onPress={openManaged} /> : null}
               <Item

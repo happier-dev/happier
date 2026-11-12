@@ -12,7 +12,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useOperationsRunOutcome } from '@/hooks/workflows/useOperationsRunOutcome';
 import type { OperationsRunOutcomeInput } from '@/sync/domains/workflows/operationsRunOutcome';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { presentOperationsOutcomeRows, type OperationsOutcomeLink } from './operationsOutcomeRows';
 
@@ -46,7 +46,7 @@ export const OperationsOutcomeGroup = React.memo(
     // Each kind opens where it already lives; a receipt on another Home has no page here, so it stays a fact.
     const linkOpener = (link: OperationsOutcomeLink): (() => void) | undefined => {
       switch (link.kind) {
-        case 'pullRequest': return () => void openExternalUrl(link.pullRequest.url);
+        case 'pullRequest': return () => openExternalUrl(link.pullRequest.url);
         case 'approval': return () => router.pushRetainingCurrent(buildApprovalHref(link.artifactId, link.serverId));
         case 'operation': return () => openActionOperationDetail({ serverId: link.serverId, operationId: link.operationId });
         case 'receipt': return openReceipt?.serverId === link.serverId

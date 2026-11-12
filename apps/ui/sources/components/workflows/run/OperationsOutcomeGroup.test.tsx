@@ -8,6 +8,10 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { Modal } from '@/modal';
 
 import { OperationsOutcomeGroup } from './OperationsOutcomeGroup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
 const routerMock = vi.hoisted(() => ({ push: null as null | ReturnType<typeof vi.fn> }));
 
@@ -56,6 +60,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   routerMock.push?.mockClear();
   await standardCleanup();
+  await homes.reset();
 });
 
 describe('OperationsOutcomeGroup', () => {
@@ -83,10 +88,17 @@ describe('OperationsOutcomeGroup', () => {
     expect(onOpenReceipt).toHaveBeenCalledWith('env', 'new');
   });
 
-  it('opens the pull request the proposal row names', async () => {
+  it('opens the pull request the proposal row names only when its Action is allowed', async () => {
+    const serverId = await homes.addHome({ name: 'Workflow outcome', serverUrl: 'https://workflow-outcome.test', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    await storage.getState().activateSettingsScope({ serverId, accountId: 'owner' });
     const open = vi.fn(() => null);
     vi.stubGlobal('open', open);
     const { screen } = await mount();
+    await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'off');
+    await act(async () => { await screen.findByTestId('o.proposal').props.onPress(); });
+    expect(open).not.toHaveBeenCalled();
+    await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'allowed');
     await act(async () => { await screen.findByTestId('o.proposal').props.onPress(); });
     expect(open).toHaveBeenCalledWith('https://example.test/pr/12', '_blank', 'noopener,noreferrer');
     vi.unstubAllGlobals();

@@ -840,3 +840,23 @@ test('the mounted native title bar setting enters its real declared Settings Act
   assert.ok(report.settings.some(site => site.key === 'desktop.nativeTitleBar'));
   assert.ok(report.actions.some(site => site.actionId === 'settings.set'));
 });
+
+
+test('external links in action descriptors and returned row handlers retain Action admission', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Outcome.tsx', content: `
+    import { openExternalUrl } from '@/utils/url/openExternalUrl';
+    const openHelp = () => { void openExternalUrl('https://help.test'); };
+    const linkOpener = (link) => { switch (link.kind) {
+      case 'pullRequest': return () => void openExternalUrl(link.url);
+    } };
+    function Outcome({ row, grantUrl }) {
+      const onPress = row.session ? () => navigate(row.session) : row.opens ? linkOpener(row.opens) : undefined;
+      return <><Card action={{ onPress: () => { void openExternalUrl(grantUrl); } }} />
+        <Disclosure model={{ learnMore: { onPress: openHelp } }} />
+        <Item {...(onPress ? { onPress } : {})} /></>;
+    }
+  ` }], specs, []);
+  assert.deepEqual(report.findings.map(site => site.code), [
+    'direct_external_link', 'direct_external_link', 'direct_external_link',
+  ]);
+});

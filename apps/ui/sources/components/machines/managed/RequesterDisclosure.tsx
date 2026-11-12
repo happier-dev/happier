@@ -7,7 +7,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 /** The published page that explains requester Sessions on another person's Machine (plan 42 §8). */
 const SHARED_MACHINES_HELP_URL = 'https://docs.happier.dev/accounts/session-sharing';

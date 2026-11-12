@@ -784,6 +784,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     const isExternalOpen = (node: ts.Expression) => ts.isIdentifier(node) && externalOpenNames.has(node.text)
       || nativeLinkMethod(node, 'openURL');
     const checkedExternalOpens = new Set<number>();
+    const externalHandlerName = /^(onPress|onOpenUrl|onOpenLink|onDecorationPress)$/;
     function inspectExternalHandler(expression: ts.Expression, seen = new Set<ts.Node>()): void {
       expression = unwrap(expression);
       if (seen.has(expression)) return;
@@ -792,6 +793,16 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const initializer = lookup(expression, expression.text)?.initializer;
         if (initializer) inspectExternalHandler(initializer, seen);
         return;
+      }
+      if (ts.isConditionalExpression(expression)) {
+        inspectExternalHandler(expression.whenTrue, seen);
+        inspectExternalHandler(expression.whenFalse, seen);
+        return;
+      }
+      // Row factories return a callback; follow their local body as well as direct handlers.
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+        const initializer = lookup(expression.expression, expression.expression.text)?.initializer;
+        if (initializer) inspectExternalHandler(initializer, seen);
       }
       if (ts.isCallExpression(expression) && name(expression.expression) === 'useCallback' && expression.arguments[0]) {
         inspectExternalHandler(expression.arguments[0], seen);
@@ -812,9 +823,14 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       walk(expression.body);
     }
     function collectExternalHandlers(node: ts.Node): void {
-      if (ts.isJsxAttribute(node) && /^(onPress|onOpenUrl|onOpenLink|onDecorationPress)$/.test(node.name.getText(source))
+      if (ts.isJsxAttribute(node) && externalHandlerName.test(node.name.getText(source))
         && node.initializer && ts.isJsxExpression(node.initializer) && node.initializer.expression) {
         inspectExternalHandler(node.initializer.expression);
+      }
+      if (ts.isPropertyAssignment(node) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
+        && externalHandlerName.test(node.name.text)) inspectExternalHandler(node.initializer);
+      if (ts.isShorthandPropertyAssignment(node) && externalHandlerName.test(node.name.text)) {
+        inspectExternalHandler(node.name);
       }
       ts.forEachChild(node, collectExternalHandlers);
     }

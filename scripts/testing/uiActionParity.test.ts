@@ -7,6 +7,19 @@ import { buildGuardStopWarningPushDataV1, readGuardStopWarningPushActionV1 } fro
 
 const report = readCurrentUiActionParity();
 
+test('project, machine and workflow explicit links use Action admission', () => {
+  const paths = new Set([
+    'apps/ui/sources/components/projects/deployments/DeploymentDataCard.tsx',
+    'apps/ui/sources/components/projects/deployments/DeploymentDatabasePage.tsx',
+    'apps/ui/sources/components/projects/deployments/DeploymentPlatformTargetSheet.tsx',
+    'apps/ui/sources/components/projects/deployments/DeploymentPlatformInspectState.tsx',
+    'apps/ui/sources/components/projects/starters/NewAppScreen.tsx',
+    'apps/ui/sources/components/machines/managed/RequesterDisclosure.tsx',
+    'apps/ui/sources/components/workflows/run/OperationsOutcomeGroup.tsx',
+  ]);
+  assert.deepEqual(report.findings.filter(site => paths.has(site.filePath)), []);
+});
+
 test('deployment receipt links use agent-visible Action admission', () => {
   const receipt = 'apps/ui/sources/components/projects/deployments/DeploymentReceiptDetail.tsx';
   assert.deepEqual(report.findings.filter(site => site.filePath === receipt), []);

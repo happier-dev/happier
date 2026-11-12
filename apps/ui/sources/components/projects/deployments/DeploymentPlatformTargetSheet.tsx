@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { randomUUID } from '@/platform/randomUUID';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useDeploymentTargetLinkOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 import { StyleSheet } from 'react-native-unistyles';
@@ -770,7 +770,7 @@ export function DeploymentPlatformTargetEditor(
           action={{ label: t('projects.deployments.platformLink.finishLinking'), onPress: () => { void createOrFinish(); }, disabled: busy !== null }} /> : null}
         {providerUrl ? <ItemGroup header="none">
           <Item testID="project-deployments.platform.openProvider" title={t('projects.deployments.platformLink.openProvider')}
-            onPress={() => { void openExternalUrl(providerUrl); }} />
+            onPress={() => requestOpenExternalUrl(providerUrl, { serverId: props.lifetime.scope.serverId, expectedAccountId: props.lifetime.scope.accountId })} />
         </ItemGroup> : null}
         {outcomeUnknown ? <SurfaceStateCard testID="project-deployments.platform.outcomeUnknown" size="line" kind="error"
           title={t('projects.deployments.platformLink.outcomeUnknown')}

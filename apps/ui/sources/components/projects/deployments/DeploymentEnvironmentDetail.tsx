@@ -99,6 +99,7 @@ import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing }
 import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
 import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredDefinitionEditor';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
+import { projectDeploymentConnections, type DeploymentConnection } from './deploymentConnections';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { DeploymentTabState } from './DeploymentTabState';
@@ -150,6 +151,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DeploymentPullRequestDeploy } from './DeploymentPullRequestDeploy';
+import { DeploymentLiveAddressActions, formatDeploymentLiveAddress, resolveDeploymentLiveUrl } from './deploymentLiveAddress';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -436,6 +438,17 @@ export const DeploymentEnvironmentDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const activeReceipt = active.snapshot.value;
     const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
+    // What serves is live at its address; a first deploy that serves ends there (P60 §1 step 5): its address
+    // leads the page and Open is the one primary until the Environment has deployed again.
+    const liveUrl = activeReceipt && (activeReceipt.deployment.state === 'succeeded'
+      || activeReceipt.deployment.state === 'running_unverified')
+      ? resolveDeploymentLiveUrl(activeReceipt, domains.result.items) : null;
+    const historyPage = history.snapshot.status === 'ready' ? history.snapshot.value : null;
+    const firstServing = liveUrl !== null && historyPage !== null && !historyPage.hasNextPage
+      && historyPage.coverage !== 'partial'
+      && historyPage.items.every(receipt => receipt.operation === 'teardown' || receipt.id === activeId);
+    // Declared edges only (#23): the page's one Domains read and the stored template, never a per-resource read.
+    const connections = projectDeploymentConnections(detail, domains.result).items;
     const primaryService = detail.content.definition.kind === 'repository'
       ? detail.content.definition.compose?.primaryService : detail.content.definition.primaryService;
     const adminDomain = primaryService ? domains.result.items.find(item =>
@@ -461,7 +474,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       }),
       ...(composeHosted ? [{ key: 'compose', text: t('projects.deployments.compose') }] : []),
       ...(composeHosted && definition ? [{ key: 'definition', text: definition, mono: true }] : []),
-      ...(domainHost ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
+      // Overview's live row says the address once it serves; elsewhere the header still names where it is reached.
+      ...(domainHost && !(liveUrl && tab === 'overview') ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
     ];
     const environmentEditing: DeploymentEnvironmentEditing | null = props.environmentActions ? {
       actions: props.environmentActions,
@@ -490,9 +504,12 @@ export const DeploymentEnvironmentDetail = React.memo(
       offline ||
       reviewPending ||
       (outcome?.kind === 'refused' && outcome.reason === 'unsupported');
+    const deployDisplay = firstServing ? 'secondary' as const : undefined;
+    const deployTint = firstServing ? theme.colors.text.primary : theme.colors.button.primary.tint;
     const primaryDeploy = ready ? (
       <RoundButton
         testID="project-deployments.environment.deploy"
+        display={deployDisplay}
         size="normal"
         // Beside its chevron the two read as one split control (lab d1 header).
         joinedEdge={liveSha ? 'end' : undefined}
@@ -503,7 +520,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           <Icon
             name="rocket-launch"
             size={14}
-            color={theme.colors.button.primary.tint}
+            color={deployTint}
           />
         }
         loading={deploying}
@@ -524,6 +541,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         <View style={[styles.split, props.phone && styles.phoneSplit]}>
           {primaryDeploy}
           <DeployMoreMenu
+            display={deployDisplay}
+            tint={deployTint}
             disabled={deployBlocked}
             phone={props.phone}
             onRedeploy={() => {
@@ -538,7 +557,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const settledTeardowns = (history.snapshot.value?.items ?? [])
       .filter((receipt) => receipt.operation === 'teardown' && receipt.state === 'succeeded')
       .map((receipt) => receipt.id);
-    const knownHistory = history.snapshot.status === 'ready' ? history.snapshot.value : null;
+    const knownHistory = historyPage;
     const hasNoDeploymentHistory = (targetLinkId: string | null) => knownHistory !== null && !knownHistory.hasNextPage
       && knownHistory.coverage !== 'partial' && !knownHistory.items.some(receipt => receipt.operation !== 'teardown'
         && (!targetLinkId || receipt.targetLinkId === targetLinkId));
@@ -712,6 +731,10 @@ export const DeploymentEnvironmentDetail = React.memo(
     const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
       void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), whenBusy: 'supersede', ...(sourceMethod ? { sourceMethod } : {}) }));
     } : null;
+    const liveActions = (url: string) => (
+      <DeploymentLiveAddressActions url={url} serverId={props.serverId} accountId={props.accountId}
+        testIDPrefix="project-deployments.environment.live" openEmphasis={firstServing ? 'primary' : 'secondary'} />
+    );
     const attentionNotice = (() => {
       switch (attention?.kind) {
         case undefined:
@@ -909,6 +932,15 @@ export const DeploymentEnvironmentDetail = React.memo(
               >
                 {activeReceipt ? (
                   <>
+                    {liveUrl ? (
+                      <Item
+                        testID="project-deployments.environment.live"
+                        title={t('projects.deployments.liveAt', { address: formatDeploymentLiveAddress(liveUrl) })}
+                        showChevron={false}
+                        // A phone keeps only a short control beside a label; the address's actions sit beneath it.
+                        {...(props.phone ? { bottomElement: liveActions(liveUrl) } : { rightElement: liveActions(liveUrl) })}
+                      />
+                    ) : null}
                     <Item
                       testID="project-deployments.environment.serving.receipt"
                       contentAlign="start"
@@ -1072,6 +1104,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     review={review}
                     active={props.demand.mounted && props.demand.visible}
                     onOpenLogs={logsOffered ? openLogs : null}
+                    connections={connections}
                   />
                   {props.lifetime ? (
                     <DeploymentAdminLogin
@@ -1087,7 +1120,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   ) : null}
                 </ItemGroup>
               ) : null}
-              <DeploymentDataCard detail={detail} place={knownMachine(machineIds[0])}
+              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
@@ -1761,6 +1794,9 @@ function DeployMoreMenu(
   props: Readonly<{
     disabled: boolean;
     phone: boolean;
+    /** Deploy's own emphasis, so the split control reads as one. */
+    display: 'secondary' | undefined;
+    tint: string;
     onRedeploy: () => void;
   }>,
 ) {
@@ -1800,6 +1836,7 @@ function DeployMoreMenu(
           testID="project-deployments.environment.deploy.more"
           size="normal"
           joinedEdge="start"
+          display={props.display}
           accessibilityLabel={t('projects.deployments.moreWaysToDeploy')}
           disabled={props.disabled}
           onPress={toggle}
@@ -1807,7 +1844,7 @@ function DeployMoreMenu(
             <Icon
               name="caret-down"
               size={14}
-              color={theme.colors.button.primary.tint}
+              color={props.tint}
             />
           }
         />
@@ -2002,6 +2039,8 @@ function EnvironmentServiceRows(
     active: boolean;
     /** Opens the Logs companion on this service (P11); null where it has nothing to show. */
     onOpenLogs: ((service: string) => void) | null;
+    /** Declared Environment connections; a row names only the edges that name its service. */
+    connections: readonly DeploymentConnection[];
   }>,
 ) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId ?? '',
@@ -2024,10 +2063,22 @@ function EnvironmentServiceRows(
           review={props.review}
           onRestarted={list.refresh}
           onOpenLogs={props.onOpenLogs}
+          connections={describeServiceConnections(props.connections, service.name)}
         />
       ))}
     </>
   );
+}
+
+/** One line for a service's declared Domains and volume mounts; Environment-level edges stay on their own cards. */
+function describeServiceConnections(connections: readonly DeploymentConnection[], service: string): string | null {
+  const hosts = connections.filter(edge => edge.kind === 'domain' && edge.service === service).map(edge => edge.resource);
+  const paths = connections.filter(edge => edge.kind === 'volume' && edge.service === service).map(edge => edge.resource);
+  const parts = [
+    ...(hosts.length ? [t('projects.deployments.overviewStatus.serviceServes', { hosts: hosts.join(', ') })] : []),
+    ...(paths.length ? [t('projects.deployments.overviewStatus.serviceStores', { paths: paths.join(', ') })] : []),
+  ];
+  return parts.length ? parts.join(' · ') : null;
 }
 
 function EnvironmentServiceRow(
@@ -2044,6 +2095,7 @@ function EnvironmentServiceRow(
     review: DeploymentReviewHandle;
     onRestarted: () => Promise<void>;
     onOpenLogs: ((service: string) => void) | null;
+    connections: string | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -2119,9 +2171,13 @@ function EnvironmentServiceRow(
       <Item
         testID={`project-deployments.environment.services.${service.name}`}
         title={service.name}
-        subtitle={service.reference
-          ? <Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>{service.reference}</Text>
-          : t('projects.deployments.serviceBuiltHere')}
+        subtitle={<>
+          {service.reference
+            ? <Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>{service.reference}</Text>
+            : t('projects.deployments.serviceBuiltHere')}
+          {props.connections ? <Text testID={`project-deployments.environment.services.${service.name}.connections`}
+            variant="body" style={styles.factsLine} numberOfLines={1}>{props.connections}</Text> : null}
+        </>}
         mode={items.length > 0 ? undefined : 'info'}
         showChevron={false}
         rightElement={items.length > 0 ? (

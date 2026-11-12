@@ -300,6 +300,7 @@ async function renderDatabase(
   if (input.answers?.missedSchedule) {
     const response = AutomationDefinitionDetailsResponseSchema.parse({ automations: [{
       id: 'nightly-backups', name: 'Nightly backups', description: null, enabled: true,
+      scheduleOccurrences: [],
       targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
       workflowDefinitionId: null, scopeSessionId: null,
       assignments: [{ machineId, enabled: true, priority: 0, updatedAt: 1 }],
@@ -309,7 +310,7 @@ async function renderDatabase(
       executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
         workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
         inlineDefinition: createNightlyBackupsWorkflowV1(),
-        inputs: { backupEnvironment: { environmentId: detail.environment.id, serverId: serverIdentityId },
+        inputs: { backupEnvironment: { environmentId: detail.environment.id, serverId },
           backupPolicy: deploymentBackupPolicyV1(backup), verificationLevel: 'manifestReadBack' },
       } } },
     }], nextCursor: null });
@@ -1570,7 +1571,7 @@ it.each([true, false])('shows the managed engine and only a produced console (co
   const { Item } = await import('@/components/ui/lists/Item');
   const { PageHeader } = await import('@/components/ui/layout/PageHeader');
   const serverId = await homes.addHome({ name: 'Managed identity', serverUrl: 'https://managed-identity.test', serverIdentityId: 'srv_managed_identity', accountId: 'owner', currentAccount: true });
-  const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-identity', role: 'data', targetKind: 'example-provider', machines: [], members: [] });
+  const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-identity', role: 'data', targetKind: 'example-provider', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
   const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }),
     targetLinks: [{ targetLink, content: { data: { engine: 'postgres', version: '17',
       ...(hasConsole ? { providerConsole: { url: 'https://console.example.test/project', label: 'Provider console' } } : {}) } } }] });
@@ -1589,8 +1590,12 @@ it.each([true, false])('shows the managed engine and only a produced console (co
       const open = vi.fn();
       vi.stubGlobal('open', open);
       try {
-        await act(async () => { console.props.onPress(); });
-        expect(open.mock.calls[0]?.[0]).toBe('https://console.example.test/project');
+        await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'off');
+        await act(async () => { await console.props.onPress(); });
+        expect(open).not.toHaveBeenCalled();
+        await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'allowed');
+        await act(async () => { await console.props.onPress(); });
+        expect(open.mock.calls.map(call => call[0])).toEqual(['https://console.example.test/project']);
       } finally { vi.unstubAllGlobals(); }
     }
   } finally { await screen.unmount(); controller.retire(); }

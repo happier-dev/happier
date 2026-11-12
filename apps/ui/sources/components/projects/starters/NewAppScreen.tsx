@@ -46,7 +46,7 @@ import {
 } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
