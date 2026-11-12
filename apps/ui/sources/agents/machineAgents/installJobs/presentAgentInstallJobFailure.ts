@@ -15,6 +15,9 @@ export function presentAgentInstallJobRpcFailure(error: unknown): Readonly<{ cod
     if (code === 'job_not_found') {
         return { code, title: t('agentInstallJob.jobMissing'), body: t('agentInstallJob.jobMissingBody') };
     }
+    if (code === 'member_install_unavailable') {
+        return { code, title: t('agentInstallJob.jobUnavailable'), body: t('errors.agentIsolationMemberSetupAskManager') };
+    }
     return { code, title: t('agentInstallJob.jobUnavailable'), body: t('agentInstallJob.jobMissingBody') };
 }
 

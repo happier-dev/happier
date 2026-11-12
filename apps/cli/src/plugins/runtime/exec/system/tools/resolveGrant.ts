@@ -261,6 +261,62 @@ function validatePreferredCommand(
     }
 }
 
+type SystemToolGrantProjectionInput = Readonly<{
+    definition: PluginExecSystemToolDefinition;
+    request: SystemToolResolveRequestV1;
+    executablePath: string;
+    launch: Readonly<{ executablePath: string; args: readonly string[] }>;
+    registerGrant?: (grant: PluginExecSystemToolGrantRecord) => void;
+    now?: () => number;
+}>;
+
+function assertSystemToolSupportedOnHost(definition: PluginExecSystemToolDefinition): void {
+    if (isPluginExecSystemToolSupportedOnHost(definition, process.platform)) return;
+    throw new PluginError({ code: 'plugin_exec_system_tool_platform_unsupported',
+        message: `System tool '${definition.displayName}' is not supported on this host platform`,
+        diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
+            code: 'system_tool_platform_unsupported', severity: 'error',
+            messageKey: 'plugins.exec.systemTools.platformUnsupported',
+            detail: { toolId: definition.toolId, displayName: definition.displayName, platform: process.platform },
+        })]),
+    });
+}
+
+/** Host-private grant entry point for a canonical, already-admitted Agent CLI. */
+export function issueAdmittedPluginExecSystemToolGrant(params: SystemToolGrantProjectionInput): SystemToolLaunchGrantV1 {
+    const tool = params.definition;
+    if (params.request.signal?.aborted) throw createAbortError();
+    validatePreferredCommand(tool, params.request);
+    assertSystemToolSupportedOnHost(tool);
+    if (isDeniedPathOnlyRuntimeName(params.executablePath)) {
+        throw createDeniedSystemToolError({ definition: tool, executablePath: params.executablePath });
+    }
+    return projectSystemToolGrant(params);
+}
+
+function projectSystemToolGrant(params: SystemToolGrantProjectionInput): SystemToolLaunchGrantV1 {
+    const tool = params.definition;
+    const issuedAt = params.now?.() ?? Date.now();
+    const expiresAt = tool.expiresInMs === undefined || tool.expiresInMs === null
+        ? null : issuedAt + Math.max(0, tool.expiresInMs);
+    const grant: PluginExecSystemToolGrantRecord = Object.freeze({
+        kind: 'system-tool', grantId: createGrantId({ toolId: tool.toolId,
+            executablePath: params.launch.executablePath, issuedAt }),
+        toolId: tool.toolId, executablePath: params.launch.executablePath, expiresAt,
+    });
+    params.registerGrant?.(grant);
+    return Object.freeze({
+        grantId: grant.grantId, toolId: tool.toolId, displayName: tool.displayName,
+        source: classifySource(tool, params.request, params.executablePath),
+        executablePath: params.executablePath,
+        launch: Object.freeze({ kind: 'binary', executablePath: params.launch.executablePath,
+            cwd: params.request.cwd, args: params.launch.args,
+            env: Object.freeze({ ...(tool.env ?? {}) }) }),
+        ...(tool.allowedArguments ? { allowedArguments: Object.freeze([...tool.allowedArguments]) } : {}),
+        expiresAt,
+    });
+}
+
 export function createPluginExecSystemToolResolver(params: CreatePluginExecSystemToolResolverParams) {
     const definitions = new Map<string, PluginExecSystemToolDefinition>();
     for (const definition of params.definitions ?? []) {
@@ -292,22 +348,7 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
             // Narrowed once for the nested resolution helpers below, which
             // cannot rely on control-flow narrowing of the captured binding.
             const tool = definition;
-            if (!isPluginExecSystemToolSupportedOnHost(definition, process.platform)) {
-                throw new PluginError({
-                    code: 'plugin_exec_system_tool_platform_unsupported',
-                    message: `System tool '${definition.displayName}' is not supported on this host platform`,
-                    diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
-                        code: 'system_tool_platform_unsupported',
-                        severity: 'error',
-                        messageKey: 'plugins.exec.systemTools.platformUnsupported',
-                        detail: {
-                            toolId: request.toolId,
-                            displayName: definition.displayName,
-                            platform: process.platform,
-                        },
-                    })]),
-                });
-            }
+            assertSystemToolSupportedOnHost(definition);
 
             const env = buildSystemToolLookupEnv(params.baseEnv);
             const invalidPreferredPath = typeof request.preferredPath === 'string'
@@ -363,44 +404,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                 candidate: string,
                 launch: Readonly<{ executablePath: string; args: readonly string[] }>,
             ): SystemToolLaunchGrantV1 {
-                const issuedAt = params.now?.() ?? Date.now();
-                const expiresAt = tool.expiresInMs === undefined || tool.expiresInMs === null
-                    ? null
-                    : issuedAt + Math.max(0, tool.expiresInMs);
-                const grant: PluginExecSystemToolGrantRecord = Object.freeze({
-                    kind: 'system-tool',
-                    grantId: createGrantId({
-                        toolId: tool.toolId,
-                        executablePath: launch.executablePath,
-                        issuedAt,
-                    }),
-                    toolId: tool.toolId,
-                    executablePath: launch.executablePath,
-                    expiresAt,
-                });
-                params.registerGrant(grant);
-                return Object.freeze({
-                    grantId: grant.grantId,
-                    toolId: tool.toolId,
-                    displayName: tool.displayName,
-                    source: classifySource(tool, request, candidate),
-                    executablePath: candidate,
-                    launch: Object.freeze({
-                        kind: 'binary',
-                        executablePath: launch.executablePath,
-                        cwd: request.cwd,
-                        args: launch.args,
-                        env: Object.freeze({
-                            // The grant pins an absolute executable, not its descendants'
-                            // command search environment. Leave the host PATH inherited.
-                            ...(tool.env ?? {}),
-                        }),
-                    }),
-                    ...(tool.allowedArguments ? {
-                        allowedArguments: Object.freeze([...tool.allowedArguments]),
-                    } : {}),
-                    expiresAt,
-                });
+                return projectSystemToolGrant({ definition: tool, request,
+                    executablePath: candidate, launch, registerGrant: params.registerGrant, now: params.now });
             }
 
             /**

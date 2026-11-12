@@ -57,7 +57,8 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   const selected = input.requesterIdentity;
   const { homeServerIdentityId } = host;
   const machine = input.preparedIdentity && host.machine
-    ? { ...host.machine, read: () => input.preparedIdentity!.snapshot }
+    ? { ...host.machine, ...(input.allowMemberPreparation === false ? { prepareMember: undefined } : {}),
+      read: () => input.preparedIdentity!.snapshot }
     : input.allowMemberPreparation === false && host.machine
       ? { ...host.machine, prepareMember: undefined } : host.machine;
   if (selected.kind !== 'isolated'

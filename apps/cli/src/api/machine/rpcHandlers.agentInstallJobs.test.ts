@@ -17,6 +17,24 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
+it.each(['linux', 'darwin', 'win32'] as const)('refuses member install without an existing isolated native user on %s before creating a job', async platform => {
+  const handlers = new Map<string, RpcHandler>();
+  const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [],
+    readRegistry: () => ({ agents: [{ id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture',
+      sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none',
+      manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false } }] }) });
+  registerMachineAgentInstallJobRpcHandlers({ owner, deps: { platform }, rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+  const member: RpcHandlerContext = { signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
+    machineAdmission: { actorAccountId: 'member', custodianAccountId: 'custodian', machineId: 'machine',
+      installationId: 'installation', role: 'use', encryptionMode: 'plain' } };
+  try {
+    const result = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'install',
+      consent: { vendorRecipe: true } }, member);
+    expect(DaemonAgentInstallStartResponseSchema.parse(result)).toMatchObject({ ok: false, errorCode: 'member_install_unavailable' });
+    expect(owner.list('member')).toEqual({ ok: true, jobs: [] });
+  } finally { await owner.shutdown(); }
+});
+
 it('admits qualified bundled Codex installs through the published Home carrier and machine RPC, sharing the routing-id job', async () => {
   const home = await createTempDir('happier-codex-install-identity-');
   const handlers = new Map<string, RpcHandler>();
@@ -69,7 +87,7 @@ it('admits qualified bundled Codex installs through the published Home carrier a
   }
 });
 
-it('refuses a requester Account definition before resolving the custodian catalog and leaves built-in target admission available', async () => {
+it('refuses unverified requester jobs before resolving the custodian catalog or built-in target', async () => {
   const handlers = new Map<string, RpcHandler>();
   const definition = AcpBackendDefinitionV1Schema.parse({ id: 'private-agent', name: 'private-agent', title: 'Private Agent',
     launch: { kind: 'command', command: 'private-command' }, createdAt: 1, updatedAt: 1 });
@@ -93,14 +111,13 @@ it('refuses a requester Account definition before resolving the custodian catalo
     }
     expect(owner.list()).toEqual({ ok: true, jobs: [] });
     const builtin = DaemonAgentInstallStartResponseSchema.parse(await handler({ agentId: 'fixture', intent: 'install', consent: { vendorRecipe: false } }, requester));
-    expect(builtin).toMatchObject({ ok: true });
+    expect(builtin).toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     const privateJob = owner.start({ agentId: 'custom-acp', definitionId: definition.id, intent: 'install', consent: { vendorRecipe: false } });
     expect(privateJob.ok).toBe(true); if (!privateJob.ok) return;
     await vi.waitFor(() => expect(owner.read({ jobId: privateJob.jobId, cursor: 0 })).toMatchObject({ done: true }));
     const before = owner.read({ jobId: privateJob.jobId, cursor: 0 });
     expect(before).toMatchObject({ steps: [expect.objectContaining({ label: definition.title })] });
-    expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST)!({}, requester)).toMatchObject({ ok: true,
-      jobs: [expect.objectContaining({ agentId: 'fixture' })] });
+    expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST)!({}, requester)).toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     for (const method of [RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL]) {
       expect(await handlers.get(method)!({ jobId: privateJob.jobId, ...(method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? { cursor: 0 } : {}) }, requester))
         .toMatchObject({ ok: false, errorCode: 'install_unavailable' });
@@ -110,6 +127,5 @@ it('refuses a requester Account definition before resolving the custodian catalo
       verifyMachineAdmissionCurrent: async () => true };
     expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_READ)!({ jobId: privateJob.jobId, cursor: 0 }, custodian)).toEqual(before);
     expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL)!({ jobId: privateJob.jobId }, custodian)).toEqual({ ok: true });
-    if (builtin.ok) expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_READ)!({ jobId: builtin.jobId, cursor: 0 }, requester)).toMatchObject({ ok: true });
   } finally { await owner.shutdown(); }
 });

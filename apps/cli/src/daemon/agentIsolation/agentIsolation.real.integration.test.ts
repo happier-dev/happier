@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, cp, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { constants } from 'node:fs';
 import { createServer } from 'node:http';
 import { userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -18,6 +20,10 @@ import { observeAgentIsolationMemberNativeIdentity } from './agentIsolationNativ
 import { observeAgentIsolationMemberLaunchReadiness } from './agentIsolationReadiness';
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester } from './provisioning';
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
+import { resolveMemberRunnableAgentCliLaunch } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
+import { resolveAgentCliManagedCommandPathForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
+import { managedJavaScriptRuntimeBinPath } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
+import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/memberInstallEnvironment';
 
 const execute = promisify(execFile);
 
@@ -37,12 +43,13 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
             const processTree = join(directory, 'scripts', 'process_tree.cjs');
             await copyFile(resolve('scripts/process_tree.cjs'), processTree);
             await chmod(processTree, 0o644);
+            await cp(dirname(createRequire(import.meta.url).resolve('qrcode-terminal/package.json')),
+                join(directory, 'node_modules', 'qrcode-terminal'), { recursive: true });
             const child = join(directory, 'dist', 'child.mjs');
             await build({ entryPoints: [resolve('src/testkit/process/agentIsolationRealUidChild.ts')],
                 outfile: child, bundle: true, platform: 'node', format: 'esm', target: 'node22',
-                // Preserve ESM dependencies and Node's require boundary. Optional
-                // native binaries and the sign-in QR renderer are not exercised
-                // by this source launch fixture; their CJS seams stay external.
+                // Preserve optional native binaries and the QR renderer's legacy
+                // CommonJS syntax outside the ESM bundle.
                 external: ['*.node', 'qrcode-terminal'], banner: { js: "import { createRequire as realUidCreateRequire } from 'node:module'; const require = realUidCreateRequire(import.meta.url);" },
                 conditions: ['happier-source'], tsconfig: resolve('tsconfig.json'), logLevel: 'silent' });
             const binary = join(directory, 'happier');
@@ -103,6 +110,40 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                 }
                 const owner = identities[0]!;
                 const other = identities[1]!;
+                const sharedTools = join(directory, 'shared-tools');
+                const sharedEnvironment = { HOME: daemonHome, PATH: '/owner/private/bin',
+                    HAPPIER_HOME_DIR: daemonHome, HAPPIER_MANAGED_TOOLS_ROOT: sharedTools };
+                const descriptor: AgentCliRuntimeDescriptor = { id: 'fixture-member', title: 'Member Fixture', binaryName: 'fixture-member',
+                    knownUserBinDirSuffixes: ['.local/bin'], sourcePreferenceDefault: 'managed-first',
+                    manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+                    managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/member', binaryName: 'fixture-member' } };
+                const sharedCommand = resolveAgentCliManagedCommandPathForRuntime(descriptor, { processEnv: sharedEnvironment });
+                const localCommand = resolveAgentCliManagedCommandPathForRuntime(descriptor, { processEnv: buildMemberAgentInstallEnvironment(owner.home) });
+                const vendorCommand = join(owner.home, '.local/bin/fixture-member');
+                await mkdir(dirname(sharedCommand), { recursive: true });
+                await writeFile(sharedCommand, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+                const resolveMember = () => resolveMemberRunnableAgentCliLaunch({ agentId: descriptor.id, runtimeSpec: descriptor,
+                    processEnv: { ...sharedEnvironment, HAPPIER_FIXTURE_MEMBER_PATH: daemonPrivate },
+                    memberLaunch: { memberIdentity: owner, managedHappierBinaryPath: binary,
+                        runtimeHome: join(owner.home, 'runtime', 'resolve-fixture'), signal: new AbortController().signal } });
+                expect((await resolveMember()).resolvedPath).toBe(sharedCommand);
+                await sudo(['install', '-d', '-m', '0755', '-o', owner.username, '-g', owner.primaryGroup, dirname(localCommand)]);
+                await sudo(['install', '-m', '0755', '-o', owner.username, '-g', owner.primaryGroup, sharedCommand, localCommand]);
+                await expect(access(localCommand, constants.X_OK)).rejects.toMatchObject({ code: 'EACCES' });
+                expect((await resolveMember()).resolvedPath).toBe(localCommand);
+                await sudo(['install', '-d', '-m', '0755', '-o', owner.username, '-g', owner.primaryGroup, dirname(vendorCommand)]);
+                await sudo(['install', '-m', '0755', '-o', owner.username, '-g', owner.primaryGroup, sharedCommand, vendorCommand]);
+                await expect(access(vendorCommand, constants.X_OK)).rejects.toMatchObject({ code: 'EACCES' });
+                expect((await resolveMember()).resolvedPath).toBe(vendorCommand);
+
+                // Native JS fixtures use the same explicitly public managed
+                // runtime fallback as a member's real installed JavaScript CLI.
+                const runtimeWrapper = managedJavaScriptRuntimeBinPath(sharedEnvironment);
+                const sharedNode = join(dirname(runtimeWrapper), '..', 'runtime', 'bin', 'node');
+                await mkdir(dirname(runtimeWrapper), { recursive: true });
+                await mkdir(dirname(sharedNode), { recursive: true });
+                await symlink('/usr/bin/node', sharedNode);
+                await writeFile(runtimeWrapper, '#!/bin/sh\nexec /usr/bin/node "$@"\n', { mode: 0o755 });
                 const native = join(directory, 'codex.cjs');
                 const observationsPath = join(directory, 'native-uids');
                 await writeFile(observationsPath, '');
@@ -119,13 +160,17 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
  daemonDenied:denied(process.env.DAEMON_PRIVATE), otherDenied:denied(process.env.OTHER_PRIVATE)}) }] : {};
  console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));
 });`, { mode: 0o755 });
+                const memberCodex = join(owner.home, '.local/bin/codex');
+                await sudo(['install', '-m', '0755', '-o', owner.username, '-g', owner.primaryGroup, native, memberCodex]);
                 vi.stubEnv('HAPPIER_CODEX_PATH', native);
                 vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', '/usr/bin/node');
+                vi.stubEnv('HAPPIER_MANAGED_TOOLS_ROOT', sharedTools);
                 const runtime = await createAdmittedPluginRuntimeFixture();
                 try {
                     const material = { materializationKey: randomUUID(), environment: {
                         PATH: '/usr/bin:/bin', OWN_PRIVATE: join(owner.home, 'private'),
                         HAPPIER_CODEX_PATH: native, HAPPIER_JS_RUNTIME_PATH: '/usr/bin/node',
+                        HAPPIER_MANAGED_TOOLS_ROOT: sharedTools,
                         FIXTURE_UID_OBSERVATIONS: observationsPath,
                         DAEMON_PRIVATE: daemonPrivate, OTHER_PRIVATE: join(other.home, 'private'),
                     }, selectedMaterials: [] };

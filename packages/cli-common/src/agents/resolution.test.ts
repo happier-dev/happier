@@ -22,6 +22,34 @@ import {
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
+it.skipIf(process.platform === 'win32')('member selection prefers local user and managed code before explicitly shared managed code', () => {
+  const root = mkdtempSync(join(tmpdir(), 'member-resolution-roots-'));
+  const home = join(root, 'member');
+  const env = { HOME: home, HAPPIER_HOME_DIR: join(home, '.happier'), PATH: join(root, 'owner-bin'),
+    HAPPIER_FIXTURE_PATH: join(root, 'owner-bin', 'fixture') };
+  const runtime: AgentCliRuntimeDescriptor = { id: 'fixture', title: 'Fixture', binaryName: 'fixture',
+    knownUserBinDirSuffixes: ['.local/bin'], sourcePreferenceDefault: 'managed-first',
+    manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+    managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/fixture', binaryName: 'fixture' } };
+  const sharedRoot = join(root, 'shared');
+  const shared = resolveAgentCliManagedCommandPathForRuntime(runtime, { processEnv: { HAPPIER_MANAGED_TOOLS_ROOT: sharedRoot } });
+  const local = resolveAgentCliManagedCommandPathForRuntime(runtime, { processEnv: env });
+  const vendor = join(home, '.local/bin/fixture');
+  const install = (path: string) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); };
+  const resolve = () => resolveAgentCliCommandForRuntime(runtime, { processEnv: env, sourcePolicy: 'member', memberSharedManagedToolsRoot: sharedRoot });
+  try {
+    install(env.HAPPIER_FIXTURE_PATH);
+    expect(resolve()).toBeNull();
+    install(shared);
+    expect(resolve()).toEqual({ source: 'managed', command: shared, readOnly: true });
+    expect(resolveAgentCliCommandForRuntime(runtime, { processEnv: env, sourcePolicy: 'managed_only', memberSharedManagedToolsRoot: sharedRoot })).toBeNull();
+    install(local);
+    expect(resolve()?.command).toBe(local);
+    install(vendor);
+    expect(resolve()?.command).toBe(vendor);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 describe('readBackendCliSourcePreference', () => {
   it('prefers target-keyed preferences from the env map', () => {
     expect(readBackendCliSourcePreference('codex', {

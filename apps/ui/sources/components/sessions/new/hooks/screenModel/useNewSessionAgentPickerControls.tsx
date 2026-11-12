@@ -267,7 +267,8 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             getBackendEntryMachineAgent: params.getBackendEntryMachineAgent,
             selectedMachineName: params.selectedMachineName ?? null,
             machineAgentsStatus: params.machineAgentsStatus,
-            installMachineAgent: canManage ? (agent: MachineAgent) => runMachineAgentAction(agent, { kind: 'install' }) : undefined,
+            installMachineAgent: (agent: MachineAgent) => runMachineAgentAction(agent, { kind: 'install' }),
+            canManageMachine: canManage,
             renderMachineAgentSetup: (_entry: ResolvedBackendCatalogEntry, agent: MachineAgent) => (
                 <MachineAgentSetupPane
                     agent={agent}

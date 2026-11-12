@@ -1,11 +1,28 @@
 import { readFile, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { runAgentLaunchShim } from '@/cli/commands/agentLaunch';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
+import { runMemberAgentInstallEffect } from '@/capabilities/installJobs/memberInstallEffect';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { executeAgentLaunchPayload } from '@/daemon/agentIsolation/agentLaunchShim';
 
 // Bundled into a public, temporary fixture executable: the real member cannot
 // traverse the developer's private checkout/Home to import source modules.
 async function main() {
+    if (process.argv[2] === 'mapped-agent-launch') {
+        // Unit tests substitute only the OS RunAs observation; frame parsing,
+        // materialization, member effect and supervised child remain real.
+        const frame = await readAgentLaunchFrame(process.stdin);
+        if ('action' in frame || !frame.nativeIdentity) throw new Error('Expected member launch');
+        const result = await executeAgentLaunchPayload(frame, { agentHome: frame.nativeIdentity.home,
+            input: process.stdin, stdout: process.stdout, stderr: process.stderr });
+        process.exitCode = result.code ?? 1;
+        return;
+    }
+    if (process.argv[2] === 'agent-install-effect') {
+        await runMemberAgentInstallEffect(process.stdin, process.stdout, new AbortController().signal);
+        return;
+    }
     if (process.argv[2] === 'agent-launch') {
         await runAgentLaunchShim(process.argv.slice(3));
         return;

@@ -638,12 +638,12 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(resolveMachineRpcRoutePolicy(method), method).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     }
   });
-  it('requires Manage to start an Agent installation without restricting ordinary capability discovery', async () => {
+  it('admits requester-scoped Agent installation at Use while preserving internal Action routing', async () => {
     const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_AGENTS_INSTALL_START))
-      .toMatchObject({ sharedMachineAccess: 'manage', rpcClassification: 'internal_only' });
+      .toMatchObject({ sharedMachineAccess: 'use', rpcClassification: 'internal_only' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL))
-      .toMatchObject({ sharedMachineAccess: 'manage', rpcClassification: 'internal_only' });
+      .toMatchObject({ sharedMachineAccess: 'use', rpcClassification: 'internal_only' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.CAPABILITIES_INVOKE)).toMatchObject({ sharedMachineAccess: 'use' });
     for (const actionId of ['machines.agents.install', 'machines.agents.uninstall'] as const) {
       expect(getActionSpec(actionId).bindings?.rpcMethod).toBe(RPC_METHODS.DAEMON_AGENTS_INSTALL_START);

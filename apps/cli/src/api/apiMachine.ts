@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { acquireDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 /**
  * WebSocket client for machine/daemon communication with Happy server
@@ -753,11 +754,18 @@ export class ApiMachineClient {
             // The same folder RPC without intent remains a background read.
             const preparation = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
                 ? SessionCreationTargetPreparationRequestV1Schema.parse(input) : undefined;
+            // The capability service already expanded the effective request.
+            // Agent inventory consumes an existing member binding; other native
+            // capabilities retain their established preparation behavior.
+            const agentInventoryRead = method === RPC_METHODS.CAPABILITIES_DETECT
+                && (input as CapabilitiesDetectRequest).requests?.some(request =>
+                    request.id.startsWith('cli.') || request.id === 'tool.acpAgentInventory');
             const channel = await this.openNativeFilesystemChannel({ requester, identity,
                 operationKey: context.localActionContext?.operationAcceptance?.operationId
                     ?? context.localActionContext?.actionRequestId ?? context.transportRequestId ?? '',
                 signal: context.signal, ingress: context,
-                ...(preparation && preparation.prepareAgentIsolationMember !== true ? { allowMemberPreparation: false as const } : {}) });
+                ...(agentInventoryRead || preparation && preparation.prepareAgentIsolationMember !== true
+                    ? { allowMemberPreparation: false as const } : {}) });
             try { return await channel.request({ kind: 'filesystem.rpc', method, input }); }
             finally { await channel.dispose(); }
         },

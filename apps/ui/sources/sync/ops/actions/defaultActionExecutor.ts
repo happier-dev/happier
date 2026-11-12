@@ -265,7 +265,7 @@ import { createBugReportSubmitAction } from './bugReportSubmitAction';
 import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
 import { createUpdatesAction, readCurrentMachineUpdateItem } from '@/updates/updatesActionRuntime';
 import { startMachineAgentItemUpdate } from '@/updates/machineUpdateRuns';
-import { startAgentInstallJob } from '@/agents/machineAgents/installJobs/installJobStore';
+import { observeMachineAgentInstallJobCancellation, startAgentInstallJob } from '@/agents/machineAgents/installJobs/installJobStore';
 import { executeExternalSessionBrowseAction } from './externalSessionBrowseAction';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import { createUiUsageActionPorts } from './usageActionDeps';
@@ -1071,6 +1071,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ...(context.onTransportIssued ? { onTransportIssued: context.onTransportIssued } : {}) });
     const execution = await recoverUiDeploymentActionResult({ account: accountContext,
       actionId: args.actionId, input: args.input, machineId, requestId, context, execution: issued });
+    if (execution.ok && args.actionId === 'machines.agents.install.cancel') {
+      const cancellation = DaemonAgentInstallCancelResponseSchema.safeParse(execution.result);
+      if (cancellation.success && cancellation.data.ok && args.input && typeof args.input === 'object'
+          && 'jobId' in args.input && typeof args.input.jobId === 'string') {
+        observeMachineAgentInstallJobCancellation({ ...accountContext.accountLifetime.scope, machineId }, args.input.jobId);
+      }
+    }
     return execution.ok ? args.actionId === 'projects.open'
       ? await completeUiProjectOpenResult(accountContext, execution.result, context.signal)
       : execution.result : execution;

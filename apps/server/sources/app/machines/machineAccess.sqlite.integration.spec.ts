@@ -872,17 +872,24 @@ describe('Machine current access (real SQLite)', () => {
             .toEqual({ kind: 'denied', code: 'access_denied' });
     });
 
-    it('requires Manage for installation and command Actions while preserving Use capability discovery', async () => {
+    it('admits requester Agent jobs at Use while keeping Machine capabilities and commands Manage-only', async () => {
         const f = await fixture();
         const requester = await account();
         const actor = { actorAccountId: requester.id, machineId: f.machine.id };
         await grant(f.owner.id, f.machine.id, requester.id);
-        for (const actionId of ['machines.agents.install', 'machines.agents.uninstall', 'machines.capabilities.install', 'machines.command.run']) {
+        for (const actionId of ['machines.agents.uninstall', 'machines.capabilities.install', 'machines.command.run']) {
             expect(await access.resolveMachineAdmission({ ...actor, actionId }), actionId)
                 .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         }
-        expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_START }))
-            .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        for (const rpcMethod of [RPC_METHODS.DAEMON_AGENTS_INSTALL_START, RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL,
+            RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST]) {
+            expect(await access.resolveMachineAdmission({ ...actor, rpcMethod }), rpcMethod)
+                .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id, custodianAccountId: f.owner.id });
+        }
+        for (const actionId of ['machines.agents.install', 'machines.agents.install.status', 'machines.agents.install.cancel']) {
+            expect(await access.resolveMachineAdmission({ ...actor, actionId }), actionId)
+                .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
+        }
         expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE }))
             .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
         await grant(f.owner.id, f.machine.id, requester.id, 'admin');

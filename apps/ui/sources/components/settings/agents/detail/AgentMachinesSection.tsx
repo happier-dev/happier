@@ -12,6 +12,9 @@ import {
 } from '@/components/capabilities/detail/CapabilityMachineTruth';
 import { AgentSetupForm } from '@/components/machines/agents/AgentSetupForm';
 import { MachineAgentStatusLine } from '@/components/machines/agents/MachineAgentStatusLine';
+import { canPerformMachineAgentAction } from '@/components/machines/agents/machineAgentPresentation';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 import { useMachineAgentRowActions } from '@/components/machines/agents/useMachineAgentRowActions';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -256,6 +259,9 @@ function AgentMachineRowActions(
   }>,
 ) {
   const { agent, onOpenForm, onCheckAgain } = props;
+  const canManage = useServerScopedMachine(props.serverId, props.machine.machineId, canManageMachine);
+  const actions = props.actions.filter(action => action.kind === 'checkAgain'
+    || (agent !== null && canPerformMachineAgentAction(agent, action.kind, canManage)));
   const run = useMachineAgentRowActions({
     serverId: props.serverId,
     machineId: props.machine.machineId,
@@ -271,7 +277,7 @@ function AgentMachineRowActions(
   );
   return (
     <AgentMachineActionButtons
-      actions={props.actions}
+      actions={actions}
       machineName={props.machine.sentenceName}
       onAction={onAction}
       testID={props.testID}

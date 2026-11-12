@@ -55,6 +55,18 @@ it.each(['npm', 'github'] as const)('latest-version lookup cancels its real %s r
 });
 
 describe('classifyAgentCliInstall', () => {
+  it('keeps a shared member managed install readable without offering an update', () => {
+    const params = { runtimeSpec: runtimeSpec({ managedInstall: {
+      kind: 'github_release_binary', githubRepo: 'fixture/fixture', binaryName: 'fixture',
+    } }), command: '/shared/tools/fixture', source: 'managed' as const, platform };
+    expect(classifyAgentCliInstall({ ...params, readOnly: true })).toMatchObject({
+      installSource: 'managed', updateSupported: false, updateCommand: null,
+    });
+    expect(classifyAgentCliInstall(params)).toMatchObject({
+      installSource: 'managed', updateSupported: true,
+    });
+  });
+
   let home: string;
 
   beforeEach(async () => {

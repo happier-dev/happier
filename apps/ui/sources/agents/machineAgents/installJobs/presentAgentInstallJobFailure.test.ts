@@ -20,6 +20,7 @@ describe('agent install failure presentation', () => {
             ['in_use', 'agentInstallJob.inUseBody'],
             ['not_managed', 'agentInstallJob.notManagedBody'],
             ['definition_version_changed', 'agentInstallJob.definitionChangedBody'],
+            ['member_install_unavailable', 'errors.agentIsolationMemberSetupAskManager'],
         ]) {
             expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(code)).body).toBe(body);
         }

@@ -10,7 +10,7 @@
 
 import type { AgentId, ConnectedServicesAccountGroupOption } from '@happier-dev/agents';
 import type { MachineAgentInventoryItem, MachineAgentInventoryUnavailable } from '@happier-dev/protocol/capabilities';
-import type { AgentInstallJobFailureCode, AgentInstallJobIntent, AgentInstallJobOutcome } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import type { AgentInstallJob, AgentInstallJobFailureCode, AgentInstallJobIntent, AgentInstallJobOutcome } from '@happier-dev/protocol/daemon/agent-install-jobs';
 
 /** The one state a surface shows for an agent on a machine (first match wins, see the resolver). */
 export type MachineAgentState =
@@ -74,6 +74,7 @@ export type MachineAgentPlatform =
     | Readonly<{ supported: false; reason: 'os' | 'arch' }>;
 
 export type MachineAgentInstall = Readonly<{
+    executionScope?: MachineAgentInventoryItem['install']['executionScope'];
     /** Happier can install it on this machine (managed or vendor recipe). */
     available: boolean;
     mode: 'managed' | 'vendor_recipe' | 'manual' | 'none';
@@ -104,6 +105,7 @@ export type MachineAgentJobStep = Readonly<{
 export type MachineAgentJobFailureCode = AgentInstallJobFailureCode;
 
 export type MachineAgentJob = Readonly<{
+    executionScope?: AgentInstallJob['executionScope'];
     jobId: string;
     intent: AgentInstallJobIntent;
     startedAtMs: number;

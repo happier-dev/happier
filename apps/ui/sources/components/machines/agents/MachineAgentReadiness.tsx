@@ -3,6 +3,8 @@ import * as React from 'react';
 import { useMachineAgent } from '@/agents/machineAgents/useMachineAgents';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import { AgentSetupForm } from './AgentSetupForm';
 import { resolveAgentSetupPhase, type MachineAgentRowAction } from './machineAgentPresentation';
@@ -30,6 +32,7 @@ export const MachineAgentReadiness = React.memo(function MachineAgentReadiness(p
     const [expanded, setExpanded] = React.useState<boolean | null>(props.openForm ? true : null);
     const open = expanded ?? needsSetup;
     const openForm = React.useCallback(() => setExpanded(true), []);
+    const canManage = useServerScopedMachine(props.serverId, props.machineId, canManageMachine);
     const runAction = useMachineAgentRowActions({ serverId: props.serverId, machineId: props.machineId, machineName: props.machineName, onOpenForm: openForm });
     const onAction = React.useCallback((action: MachineAgentRowAction) => { if (agent) runAction(agent, action); }, [agent, runAction]);
     if (!agent) {
@@ -39,6 +42,7 @@ export const MachineAgentReadiness = React.memo(function MachineAgentReadiness(p
         <MachineAgentRow
             testID={props.testID}
             agent={agent}
+            canManage={canManage}
             mark={<MachineAgentMark agentId={agent.agentId} machineId={props.machineId} serverId={props.serverId} />}
             onAction={onAction}
             form={agent.stale ? undefined : (

@@ -12,6 +12,7 @@ import { Typography } from '@/constants/Typography';
 
 import { formatMachineAgentAction } from './machineAgentCopy';
 import {
+    canPerformMachineAgentAction,
     resolveMachineAgentRowAction,
     resolveMachineAgentStatus,
     type MachineAgentRowAction,
@@ -29,6 +30,7 @@ export type MachineAgentRowProps = Readonly<{
     expanded?: boolean;
     onExpandedChange?: (expanded: boolean) => void;
     showDivider?: boolean;
+    canManage?: boolean;
     testID: string;
 }>;
 
@@ -40,7 +42,10 @@ export type MachineAgentRowProps = Readonly<{
 export const MachineAgentRow = React.memo(function MachineAgentRow(props: MachineAgentRowProps) {
     const { agent, session, onAction } = props;
     const status = resolveMachineAgentStatus(agent, session);
-    const action = resolveMachineAgentRowAction(agent, session);
+    const resolvedAction = resolveMachineAgentRowAction(agent, session);
+    const action = resolvedAction && (canPerformMachineAgentAction(agent, resolvedAction.kind, props.canManage !== false))
+        ? resolvedAction
+        : null;
     const dim = agent.state === 'notInstalled' || agent.state === 'unsupported';
     const actionButton = action ? (
         <RoundButton

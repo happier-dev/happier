@@ -4,6 +4,7 @@ import {
   installAgentCliForRuntime as installAgentCliForRuntimeDefault,
   resolvePlatformFromNodePlatform,
   type AgentCliRuntimeDescriptor,
+  type AgentCliSourcePolicy,
   type AgentCliUpdateTarget,
   type InstallAgentCliResult,
   type AgentInstallProgressCallback,
@@ -61,6 +62,7 @@ export async function invokeAgentCliInstall(params: Readonly<{
   runtimeSpec?: AgentCliRuntimeDescriptor;
   params?: AgentCliInstallInvocationParams;
   env?: NodeJS.ProcessEnv;
+  sourcePolicy?: AgentCliSourcePolicy;
   nodePlatform?: string;
   signal?: AbortSignal;
   onProgress?: AgentInstallProgressCallback;
@@ -98,6 +100,7 @@ export async function invokeAgentCliInstall(params: Readonly<{
     ...(params.params?.intent === 'update' && params.params.updateTarget ? { updateTarget: params.params.updateTarget } : {}),
     allowVendorRecipeExecution,
     env: params.env ?? process.env,
+    sourcePolicy: params.sourcePolicy,
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.onProgress ? { onProgress: params.onProgress } : {}),
     deps: { fetchGitHubLatestRelease, fetchGitHubReleaseByTag, ...params.installerDeps },

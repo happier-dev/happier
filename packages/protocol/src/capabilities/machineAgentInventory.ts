@@ -68,6 +68,7 @@ const MachineAgentFactsSchema = lazyZodSchema(() => z.object({
   ]),
   install: z.strictObject({
     available: z.boolean(),
+    executionScope: z.optional(z.enum(['machine', 'member'])),
     mode: z.enum(['managed', 'vendor_recipe', 'manual', 'none']),
     sizeBytes: z.nullable(z.number().check(z.nonnegative())),
     guideUrl: z.nullable(z.string()),

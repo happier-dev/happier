@@ -1,6 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentInstallJobSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { AgentInstallJobSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -25,12 +26,28 @@ const { useAgentSignIn } = await import('./signIn/useAgentSignIn');
 const { useMachineAgentRowActions } = await import('@/components/machines/agents/useMachineAgentRowActions');
 const { machineAgentInventoryStore } = await import('./machineAgentInventoryStore');
 const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { router } = await import('expo-router');
 
 describe('readiness user intents through mounted Actions', () => {
     beforeEach(async () => {
         await home.reset(); network.resetRequests();
-        network.setHttpResponder(async (input, init) => new URL(String(input)).pathname.startsWith('/v1/machines/') ? null : home.request(input, init));
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const method = path === '/v1/actions/machines.agents.install.status' ? 'daemon.agents.install.read'
+                : path === '/v1/actions/machines.agents.install.cancel' ? 'daemon.agents.install.cancel' : null;
+            if (method) {
+                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const schema = method === 'daemon.agents.install.read' ? DaemonAgentInstallReadRequestSchema : DaemonAgentInstallCancelRequestSchema;
+                // The Home/daemon HTTP boundary forwards the real Action envelope to its native executor.
+                if (!request.input || typeof request.input !== 'object' || !('machineId' in request.input)) throw new Error('Expected install job operands');
+                const { machineId: _machineId, ...operands } = request.input;
+                const result = await boundary.rpc({ method, payload: schema.parse(operands) });
+                return Response.json({ v: 1, actionId: path.split('/').at(-1), requestId: request.requestId,
+                    execution: { ok: true, result } });
+            }
+            return path.startsWith('/v1/machines/') ? null : home.request(input, init);
+        });
         network.setRpcResponder(request => boundary.rpc(request));
         boundary.rpc.mockReset(); boundary.alert.mockReset(); boundary.confirm.mockReset(); boundary.confirm.mockResolvedValue(false);
         vi.mocked(router.push).mockClear();
@@ -43,17 +60,18 @@ describe('readiness user intents through mounted Actions', () => {
     afterAll(async () => { await network.dispose(); });
 
     async function target(machineId: string, agentId = 'codex') {
-        const serverId = await home.addHome({ name: 'Readiness', serverUrl: 'https://readiness.test', accountId: 'alice' });
-        await network.addHome('https://readiness.test', 'alice');
-        return { serverId, machineId, agentId };
+        const serverIdentityId = 'srv_readiness';
+        const serverId = await home.addHome({ name: 'Readiness', serverUrl: 'https://readiness.test', accountId: 'alice', serverIdentityId, currentAccount: true });
+        await network.addHome('https://readiness.test', 'alice', { serverIdentityId });
+        return { serverId: resolveServerProfileScopeIdForIdentifier(serverId), machineId, agentId };
     }
 
-    function installation(agentId: string) {
+    function installation(agentId: string, executionScope?: 'machine' | 'member') {
         let started = false;
         let cancelled = false;
         const job = AgentInstallJobSchema.parse({ jobId: 'readiness-job', agentId, intent: 'install', startedAt: 1,
             steps: [{ stepId: 'cli', label: 'Agent CLI', state: 'running' }], progress: [{ stepId: 'cli', bytesDone: 3, bytesTotal: 10 }],
-            done: false, outcome: null });
+            done: false, outcome: null, ...(executionScope ? { executionScope } : {}) });
         boundary.rpc.mockImplementation(async ({ method, payload }) => {
             if (method === 'daemon.agents.install.start') { DaemonAgentInstallStartRequestSchema.parse(payload); started = true; return { ok: true, jobId: job.jobId }; }
             if (method === 'daemon.agents.install.list') return { ok: true, jobs: started ? [job] : [] };
@@ -84,14 +102,9 @@ describe('readiness user intents through mounted Actions', () => {
         await act(async () => { await first.getCurrent().start('install'); });
         expect(second.getCurrent().job?.jobId).toBe('readiness-job');
         await waitForHomeGovernance(() => expect(second.getCurrent().job).toMatchObject({ jobId: 'readiness-job', steps: [{ bytesDone: 3 }] }));
-        home.answer(addressed.serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
-            actionsSettingsV1: { v: 1, actions: { 'machines.agents.install.cancel': { enabled: false } } },
-        } } } });
         await act(async () => { await second.getCurrent().cancel(); });
-        expect(boundary.rpc.mock.calls.some(([request]) => request.method === 'daemon.agents.install.cancel')).toBe(false);
-        expect(first.getCurrent().job?.outcome).toBeNull();
-        home.answer(addressed.serverId, '/v2/account/settings', { body: { version: 2, content: { t: 'plain', v: {} } } });
-        await act(async () => { await second.getCurrent().cancel(); });
+        expect(boundary.alert).not.toHaveBeenCalled();
+        expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'daemon.agents.install.cancel' }));
         await waitForHomeGovernance(() => expect(first.getCurrent().job?.outcome).toMatchObject({ code: 'cancelled' }));
     });
 
@@ -107,6 +120,30 @@ describe('readiness user intents through mounted Actions', () => {
         await act(async () => { hook.getCurrent()(machineAgentInventoryStore.read(key).agents[0], { kind }); });
         await waitForHomeGovernance(() => expect(boundary.confirm).toHaveBeenCalledOnce());
         expect(boundary.rpc.mock.calls.some(([request]) => request.method === 'daemon.agents.install.start')).toBe(false);
+    });
+
+    it.each(['install', 'update', 'retry'] as const)('a member-scoped row %s reaches the same Action admission', async (kind) => {
+        const addressed = await target(`member-row-${kind}`); installation(addressed.agentId, 'member');
+        boundary.confirm.mockResolvedValue(true);
+        const key = serverAccountScopedResourceKey({ serverId: addressed.serverId, accountId: 'alice' }, 'machine-agents', addressed.machineId);
+        const facts = MachineAgentInventoryItemSchema.parse({
+            agentId: addressed.agentId, title: 'Codex', installed: false, version: null, latestVersion: null,
+            update: { supported: true, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+            platform: { supported: true }, install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null, executionScope: 'member' }, dependencies: [],
+        });
+        machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1, items: [facts] });
+        const hook = await renderHook(() => useMachineAgentRowActions({ ...addressed, machineName: 'Dev box', onOpenForm: () => {}, canManage: false }));
+        await act(async () => { hook.getCurrent()(machineAgentInventoryStore.read(key).agents[0], { kind }); });
+        await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.agents.install.start', payload: expect.objectContaining({ intent: kind === 'retry' ? 'install' : kind }),
+        })));
+        await waitForHomeGovernance(() => expect(machineAgentInventoryStore.read(key).agents[0]?.job).toMatchObject({ executionScope: 'member' }));
+        await act(async () => { hook.getCurrent()(machineAgentInventoryStore.read(key).agents[0], { kind: 'cancel' }); });
+        await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'daemon.agents.install.cancel' })));
+        expect(boundary.alert).not.toHaveBeenCalled();
+        await waitForHomeGovernance(() => expect(machineAgentInventoryStore.read(key).agents[0]?.job?.outcome).toMatchObject({ code: 'cancelled' }));
+        await act(async () => { hook.getCurrent()(machineAgentInventoryStore.read(key).agents[0], { kind: 'remove' }); });
+        expect(boundary.confirm).toHaveBeenCalledOnce();
     });
 
     it.each(['row', 'form'] as const)('surfaces a confirmed %s install refusal without inventing an installer job', async surface => {

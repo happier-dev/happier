@@ -23,6 +23,7 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { AgentSetupFormView, type AgentSetupFormHandlers } from './AgentSetupFormView';
 import { useAgentSignInTerminalHost } from './signInTerminalHost';
 import { showAgentSignInTerminalSheet } from './AgentSignInTerminalSheet';
+import { canPerformMachineAgentAction } from './machineAgentPresentation';
 import { buildAgentSetupCredentialIntents } from './agentSetupCredentialIntents';
 
 export type AgentSetupFormProps = Readonly<{
@@ -74,7 +75,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
 
     const install = React.useCallback((intent: 'install' | 'update' | 'uninstall') => {
         const current = agentRef.current;
-        if (!canManage || !current) return;
+        if (!current || !canPerformMachineAgentAction(current, intent, canManage)) return;
         // The form itself reviews the install and any vendor-recipe consent; its press confirms.
         fireAndForget(installJob.start(intent), { tag: 'AgentSetupForm.install' });
     }, [canManage, installJob]);
@@ -99,7 +100,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
             if (agentRef.current?.job?.readFailure) fireAndForget(installJob.refresh(), { tag: 'AgentSetupForm.refreshJob' });
             else install(agentRef.current?.job?.intent ?? 'install');
         },
-        onCancelInstall: () => { if (!canManage) return; fireAndForget(installJob.cancel(), { tag: 'AgentSetupForm.cancel' }); },
+        onCancelInstall: () => { if (!agentRef.current || !canPerformMachineAgentAction(agentRef.current, 'cancel', canManage)) return; fireAndForget(installJob.cancel(), { tag: 'AgentSetupForm.cancel' }); },
         onCheckAgain: () => { fireAndForget(signIn.checkAgain(), { tag: 'AgentSetupForm.checkAgain' }); },
         onOpenGuide: (url) => { fireAndForget(openExternalUrl(url), { tag: 'AgentSetupForm.guide' }); },
         onUseService: (serviceId, selection) => {

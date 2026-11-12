@@ -58,6 +58,8 @@ function pi(
     job?: Job | null;
     checking?: boolean;
     guideUrl?: string;
+    executionScope?: 'machine' | 'member';
+    installAvailable?: boolean;
   }>,
 ) {
   const facts = MachineAgentInventoryItemSchema.parse({
@@ -73,10 +75,11 @@ function pi(
     },
     platform: { supported: true },
     install: {
-      available: true,
+      available: input.installAvailable ?? true,
       mode: 'managed',
       sizeBytes: null,
       guideUrl: input.guideUrl ?? null,
+      ...(input.executionScope ? { executionScope: input.executionScope } : {}),
     },
     dependencies: [],
   });
@@ -132,14 +135,18 @@ async function stepsOf(agent: MachineAgent) {
 }
 
 describe('agent setup steps', () => {
-  it.each(['full', 'compact'] as const)('hides installation mutations for Use and preserves Manage in %s setup', async (layout) => {
-    const agent = pi({});
-    for (const canManage of [false, true]) {
+  it.each(['full', 'compact'] as const)('offers requester-scoped Install and preserves Manage in %s setup', async (layout) => {
+    for (const [canManage, executionScope, available, allowed] of [
+      [false, undefined, true, false], [false, 'machine', true, false],
+      [false, 'member', true, true], [false, 'member', false, false],
+      [true, undefined, true, true], [true, 'machine', true, true],
+    ] as const) {
+      const agent = pi({ executionScope, installAvailable: available });
       const onInstall = vi.fn();
       const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={agent} machineName="devbox"
         layout={layout} canManage={canManage} handlers={{ ...HANDLERS, onInstall }} />);
-      expect(screen.findByTestId('setup.install') !== null).toBe(canManage);
-      if (canManage) {
+      expect(screen.findByTestId('setup.install') !== null).toBe(allowed);
+      if (allowed) {
         await screen.pressByTestIdAsync('setup.install');
         expect(onInstall).toHaveBeenCalledOnce();
       }
@@ -147,14 +154,20 @@ describe('agent setup steps', () => {
     }
   });
 
-  it.each(['full', 'compact'] as const)('hides cancel and retry mutations for Use in %s setup', async (layout) => {
+  it.each(['full', 'compact'] as const)('offers requester-scoped cancel and retry in %s setup', async (layout) => {
     const running = job([step(cliStep, 'Pi CLI', 'running')]);
     const failed = job([step(cliStep, 'Pi CLI', 'failed')], { kind: 'failed', code: 'download_failed', stepId: cliStep, message: 'Download failed' });
     for (const [record, action] of [[running, 'cancel'], [failed, 'retry']] as const) {
-      for (const canManage of [false, true]) {
-        const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={pi({ job: record })} machineName="devbox"
-          layout={layout} canManage={canManage} handlers={HANDLERS} />);
-        expect(screen.findByTestId(`setup.${action}`) !== null).toBe(canManage);
+      for (const [canManage, executionScope, allowed] of [[false, undefined, false], [false, 'machine', false], [false, 'member', true], [true, undefined, true]] as const) {
+        const handler = vi.fn();
+        const scopedRecord = executionScope ? { ...record, executionScope } : record;
+        const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={pi({ job: scopedRecord, executionScope })} machineName="devbox"
+          layout={layout} canManage={canManage} handlers={{ ...HANDLERS, onCancelInstall: handler, onRetry: handler }} />);
+        expect(screen.findByTestId(`setup.${action}`) !== null).toBe(allowed);
+        if (allowed) {
+          await screen.pressByTestIdAsync(`setup.${action}`);
+          expect(handler).toHaveBeenCalledOnce();
+        }
         await screen.unmount();
       }
     }

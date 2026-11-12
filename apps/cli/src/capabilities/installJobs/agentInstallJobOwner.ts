@@ -27,11 +27,23 @@ import { hasPinnedArchiveManagedInstall } from '@/packagedRuntime/installables/s
 import { isAgentInstallTargetInUse, removeManagedAcpInstall } from '@/agent/acp/catalog/registry/managedAgentInstalls';
 import type { TrackedSession } from '@/daemon/types';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 
 export type AgentInstallJobRegistry = Readonly<{
   agents: readonly Pick<ResolvedAgentContribution, 'id' | 'identity' | 'runtimeSpec' | 'pluginId' | 'richDefinition' | 'hostAccess' | 'cliMetadata'>[];
   managedDependencies?: readonly ResolvedInstallableContribution[];
 }>;
+
+export type MemberAgentInstallOperation = Readonly<{
+  request: DaemonAgentInstallStartRequest;
+  accountId: string;
+  registry: AgentInstallJobRegistry;
+  definition?: AcpBackendDefinitionV1;
+  targetInUse: boolean;
+  runtimeManagedDependencyId: string | null;
+}>;
+export type MemberAgentInstallExecutor = (operation: MemberAgentInstallOperation,
+  signal: AbortSignal, onEvent: (event: AgentInstallJobEvent) => void) => Promise<AgentInstallJobOutcome>;
 
 export type AgentInstallJobOwnerOptions = Readonly<{
   accountId?: string;
@@ -44,6 +56,9 @@ export type AgentInstallJobOwnerOptions = Readonly<{
   readAcpCatalog?: () => AcpCatalogSnapshotV1 | undefined;
   readTrackedSessions?: () => Iterable<TrackedSession>;
   invalidateInventory?: () => void;
+  /** Captured by the admitting owner before entering the native child. */
+  admittedOperation?: Pick<MemberAgentInstallOperation, 'targetInUse' | 'runtimeManagedDependencyId'>;
+  onEvent?: (event: AgentInstallJobEvent) => void;
 }>;
 
 type JobRecord = {
@@ -114,6 +129,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
 
   const emit = (job: JobRecord, event: AgentInstallJobEvent) => {
     job.events.push(event);
+    options.onEvent?.(event);
     if (event.t === 'step') {
       job.snapshot.steps = [...job.snapshot.steps.filter((step) => step.stepId !== event.stepId), {
         stepId: event.stepId, label: event.label, state: event.state,
@@ -129,9 +145,16 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   };
 
   const targetKey = (target: Pick<DaemonAgentInstallStartRequest, 'agentId' | 'definitionId'>, account?: string) =>
-    JSON.stringify([target.definitionId === undefined ? null : account, buildMachineAgentInventoryKey(target)]);
-  const inUse = (target: Pick<DaemonAgentInstallStartRequest, 'agentId' | 'definitionId'>): boolean => {
-    try { return !readTrackedSessions || isAgentInstallTargetInUse(target, readTrackedSessions()); }
+    JSON.stringify([account, buildMachineAgentInventoryKey(target)]);
+  const inUse = (target: Pick<DaemonAgentInstallStartRequest, 'agentId' | 'definitionId'>, memberAccountId?: string): boolean => {
+    if (options.admittedOperation) return options.admittedOperation.targetInUse;
+    try {
+      if (!readTrackedSessions) return true;
+      const sessions = readTrackedSessions();
+      return isAgentInstallTargetInUse(target, memberAccountId === undefined ? sessions
+        : [...sessions].filter(session => (session.requesterWorkAttributionV1
+          ?? session.spawnOptions?.requesterWorkAttributionV1)?.accountId === memberAccountId));
+    }
     catch { return true; }
   };
   const settle = (job: JobRecord, result: AgentInstallJobOutcome) => {
@@ -251,11 +274,12 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       } else {
         // Resolve all declared dependencies before any acquisition starts. A
         // request-only or unsupported declaration cannot silently disappear.
-        const dependencyId = resolveAgentRuntimeManagedDependencyId(agent);
+        const dependencyId = options.admittedOperation ? options.admittedOperation.runtimeManagedDependencyId : resolveAgentRuntimeManagedDependencyId(agent);
         const required = new Set(dependencyId ? [dependencyId] : []);
         const contributions = registry.managedDependencies ?? [];
         const dependencyRegistry = resolveExecutableManagedDependenciesRegistry(contributions, host);
-        const declarations = contributions.filter((candidate) => candidate.pluginId && required.has(buildQualifiedPluginContributionKey({ pluginId: candidate.pluginId, localId: candidate.definition.id })));
+        const declarations = options.admittedOperation ? contributions : contributions.filter((candidate) => candidate.pluginId
+          && required.has(buildQualifiedPluginContributionKey({ pluginId: candidate.pluginId, localId: candidate.definition.id })));
         const support = resolveAgentSetupPlatform({
           cli: agent.cliMetadata ?? { install: PluginAgentCliInstallMetadataSchema.parse({ managed: spec.managedInstall, manual: spec.manualInstallKind === 'none'
             ? { kind: 'none' } : { kind: spec.manualInstallKind, recipes: spec.manualInstallRecipes ?? undefined } }) },
@@ -289,9 +313,11 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
           if (input.intent === 'update') {
             const capability = withAgentCliUpdates({
               descriptor: { id: `cli.${agent.id}`, kind: 'cli', title: spec.title, methods: { install: { title: 'Install' } } },
-              detect: () => probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline }),
+              detect: () => probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline,
+                sourcePolicy: options.admittedOperation ? 'member' : undefined }),
             }, agent.id, {
               env, nodePlatform: host.platform, signal, onProgress: progressFor(job, stepId), installerDeps,
+              sourcePolicy: options.admittedOperation ? 'member' : undefined,
               resolveRuntimeSpec: () => spec,
               buildContext: async () => ({ cliSnapshot: null }),
             });
@@ -304,6 +330,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
           } else {
             const installed = await installAgentCliForRuntime({
               runtimeSpec: spec, platform, env, skipIfInstalled: !input.force,
+              sourcePolicy: options.admittedOperation ? 'member' : undefined,
               allowVendorRecipeExecution: input.consent.vendorRecipe, signal,
               onProgress: progressFor(job, stepId), deps: installerDeps,
             });
@@ -341,7 +368,8 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
             } else {
               begin(AGENT_INSTALL_JOB_VERIFY_STEP_ID, 'Check it runs');
               invalidateCliSnapshots();
-              const verified = await probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline });
+              const verified = await probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline,
+                sourcePolicy: options.admittedOperation ? 'member' : undefined });
               signal.throwIfAborted();
               if (!verified.available || !verified.version) {
                 result = fail('verification_failed', 'The installed agent did not report a version.');
@@ -369,7 +397,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   function read(input: DaemonAgentInstallReadRequest, requestedAccountId = accountId): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse> {
     if (!DaemonAgentInstallReadRequestSchema.safeParse(input).success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install read request.' };
     const job = jobs.get(input.jobId);
-    if (!job || job.accountId && requestedAccountId !== undefined && job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
+    if (!job || job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
     if (input.cursor > job.events.length) return { ok: false, errorCode: 'invalid_request', error: 'Install cursor is beyond the available events.' };
     const snapshot = (): DaemonAgentInstallReadResponse => ({ ok: true, events: structuredClone(job.events.slice(input.cursor)), nextCursor: job.events.length,
       steps: structuredClone(job.snapshot.steps), progress: structuredClone(job.snapshot.progress),
@@ -391,16 +419,14 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     bindAcpCatalog(reader: NonNullable<AgentInstallJobOwnerOptions['readAcpCatalog']>): void {
       readAcpCatalog = reader;
     },
-    start(input: DaemonAgentInstallStartRequest, account?: Readonly<{ accountId: string; catalog: AcpCatalogSnapshotV1 }>): DaemonAgentInstallStartResponse {
+    start(input: DaemonAgentInstallStartRequest, account?: Readonly<{ accountId: string; catalog?: AcpCatalogSnapshotV1;
+      executeMember?: MemberAgentInstallExecutor }>): DaemonAgentInstallStartResponse {
       const parsed = DaemonAgentInstallStartRequestSchema.safeParse(input);
       if (!parsed.success || parsed.data.expectedDefinitionVersion !== undefined
         && (parsed.data.definitionId === undefined || parsed.data.intent === 'uninstall')) {
         return { ok: false, errorCode: 'invalid_request', error: 'Invalid install request.' };
       }
       if (shuttingDown) return { ok: false, errorCode: 'install_unavailable', error: 'The daemon is shutting down.' };
-      const active = input.definitionId === undefined ? activeByAgent.get(targetKey(input)) : undefined;
-      if (active?.cleanupError) return { ok: false, errorCode: 'install_unavailable', error: 'The previous install process cleanup could not be verified.' };
-      if (active) return { ok: true, jobId: active.snapshot.jobId };
       let registry: AgentInstallJobRegistry;
       try { registry = readRegistry(); } catch {
         return { ok: false, errorCode: 'install_unavailable', error: 'The agent registry is unavailable.' };
@@ -423,11 +449,12 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
         || input.definitionId === undefined && !agent.runtimeSpec) return { ok: false, errorCode: 'install_unavailable', error: 'The agent has no registered CLI runtime.' };
       const selection = input.definitionId === undefined ? undefined : buildConfiguredAcpAgentSelectionV1(input.definitionId);
       const request = { ...parsed.data, agentId: selection?.agentId ?? agent.id };
-      if ((request.intent === 'uninstall' || request.force || request.definitionId === undefined && request.intent === 'update') && inUse(request)) {
+      const requestedAccountId = account?.accountId ?? accountId;
+      const targetInUse = inUse(request, account?.executeMember ? requestedAccountId : undefined);
+      if ((request.intent === 'uninstall' || request.force || request.definitionId === undefined && request.intent === 'update') && targetInUse) {
         return { ok: false, errorCode: 'in_use', error: 'Stop the sessions using this Agent before changing its managed installation. Session use must be known.' };
       }
       let definition: AcpBackendDefinitionV1 | undefined;
-      const requestedAccountId = request.definitionId === undefined ? undefined : account?.accountId ?? accountId;
       if (request.definitionId !== undefined && !requestedAccountId) return { ok: false, errorCode: 'install_unavailable', error: 'The configured Agent Account is unavailable.' };
       if (request.definitionId !== undefined && request.intent !== 'uninstall') {
         const catalog = account?.catalog ?? readAcpCatalog();
@@ -446,36 +473,65 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       const canonicalActive = activeByAgent.get(activeKey) ?? [...activeByAgent.values()].find(active =>
         active.recentKey === recentKey && (request.intent === 'uninstall' || active.snapshot.intent === 'uninstall'));
       if (canonicalActive?.cleanupError) return { ok: false, errorCode: 'install_unavailable', error: 'The previous install process cleanup could not be verified.' };
-      if (canonicalActive) return { ok: true, jobId: canonicalActive.snapshot.jobId };
+      if (canonicalActive) return { ok: true, jobId: canonicalActive.snapshot.jobId, executionScope: canonicalActive.snapshot.executionScope };
       if (admissionDrain?.isQuiescing()) return { ok: false, errorCode: 'install_unavailable',
         error: admissionDrain.isFinalShutdown() ? 'The daemon is shutting down.' : 'The daemon is draining.' };
       const job: JobRecord = {
         accountId: requestedAccountId, activeKey, recentKey,
         snapshot: { jobId: randomUUID(), agentId: request.agentId, ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }),
-          intent: request.intent, startedAt: Date.now(), steps: [], progress: [], done: false, outcome: null },
+          intent: request.intent, executionScope: account?.executeMember ? 'member' : 'machine', startedAt: Date.now(), steps: [], progress: [], done: false, outcome: null },
         events: [], controller: new AbortController(), completion: Promise.resolve(), cleanupError: null,
       };
       jobs.set(job.snapshot.jobId, job);
       activeByAgent.set(activeKey, job);
       // Start on the next microtask so admission publishes the active record
       // before even a synchronously rejected install can settle.
-      job.completion = Promise.resolve().then(() => request.definitionId === undefined ? run(job, request, registry, agent)
-        : runDefinition(job, request, definition));
+      job.completion = Promise.resolve().then(async () => {
+        if (!account?.executeMember) return request.definitionId === undefined ? run(job, request, registry, agent)
+          : runDefinition(job, request, definition);
+        try {
+          const runtimeManagedDependencyId = resolveAgentRuntimeManagedDependencyId(agent);
+          // Runtime declarations are trusted code. Private host access and plugin
+          // configuration never cross into the member process.
+          const declarations = registry.managedDependencies?.filter(dependency => dependency.pluginId
+            && runtimeManagedDependencyId === buildQualifiedPluginContributionKey({ pluginId: dependency.pluginId, localId: dependency.definition.id })) ?? [];
+          // Select using the original declaration and manifest qualification.
+          // The child receives only these admitted executable descriptors; their
+          // install IDs can differ from the original dependency reference.
+          const dependencies = selectExecutableManagedDependencies(declarations, host)
+            .map(({ definition, pluginId, source, provenance }) => ({ definition, pluginId, source, provenance }));
+          const outcome = await account.executeMember({ request, accountId: requestedAccountId!,
+            registry: { agents: [{ id: agent.id, identity: agent.identity, pluginId: agent.pluginId,
+              runtimeSpec: agent.runtimeSpec, cliMetadata: agent.cliMetadata }], managedDependencies: dependencies },
+            ...(definition ? { definition } : {}), targetInUse, runtimeManagedDependencyId }, job.controller.signal, event => emit(job, event));
+          settle(job, outcome);
+        } catch (error) {
+          if (error instanceof ExecFileTerminationError) job.cleanupError = error;
+          const nativeCode = isPluginError(error) && (error.code === 'agent_isolation_unavailable'
+            || error.code === 'requester_material_cleanup_failed') ? error.code : null;
+          const phase = nativeCode && isPluginError(error) && (error.details?.phase === 'native_execution_preparation'
+            || error.details?.phase === 'native_identity_binding' || error.details?.phase === 'native_execution_admission'
+            || error.details?.phase === 'requester_material_cleanup') ? error.details.phase : null;
+          settle(job, { kind: 'failed', code: job.controller.signal.aborted && !job.cleanupError ? 'cancelled' : 'install_failed',
+            stepId: buildAgentInstallJobCliStepId(request), message: nativeCode
+              ? `Native Agent installation failed (${nativeCode}${phase ? `, ${phase}` : ''}).` : 'Native Agent installation failed.' });
+        }
+      });
       notifyActivity();
-      return { ok: true, jobId: job.snapshot.jobId };
+      return { ok: true, jobId: job.snapshot.jobId, executionScope: job.snapshot.executionScope };
     },
     read,
     async cancel(input: DaemonAgentInstallCancelRequest, requestedAccountId = accountId): Promise<DaemonAgentInstallCancelResponse> {
       if (!DaemonAgentInstallCancelRequestSchema.safeParse(input).success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install cancellation request.' };
       const job = jobs.get(input.jobId);
-      if (!job || job.accountId && requestedAccountId !== undefined && job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
+      if (!job || job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
       if (!job.snapshot.done) job.controller.abort();
       await job.completion;
       if (job.cleanupError) return { ok: false, errorCode: 'install_unavailable', error: job.cleanupError.message };
       return { ok: true };
     },
     list(requestedAccountId = accountId): DaemonAgentInstallListResponse { return { ok: true, jobs: [...jobs.values()]
-      .filter(job => job.accountId === undefined || requestedAccountId === undefined || job.accountId === requestedAccountId)
+      .filter(job => job.accountId === requestedAccountId)
       .map((job) => structuredClone(job.snapshot)) }; },
     async shutdown(): Promise<void> {
       shuttingDown = true;

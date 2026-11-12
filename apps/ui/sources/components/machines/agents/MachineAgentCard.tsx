@@ -12,6 +12,7 @@ import { Typography } from '@/constants/Typography';
 
 import { formatMachineAgentAction } from './machineAgentCopy';
 import {
+    canPerformMachineAgentAction,
     resolveMachineAgentRowAction,
     resolveMachineAgentStatus,
     type MachineAgentRowAction,
@@ -29,11 +30,13 @@ export const MachineAgentCard = React.memo(function MachineAgentCard(props: Read
     session?: MachineAgentSignInSession | null;
     onAction: (action: MachineAgentRowAction) => void;
     onOpen?: () => void;
+    canManage?: boolean;
     testID: string;
 }>) {
     const { agent, session } = props;
     const status = resolveMachineAgentStatus(agent, session);
-    const action = resolveMachineAgentRowAction(agent, session);
+    const resolvedAction = resolveMachineAgentRowAction(agent, session);
+    const action = resolvedAction && canPerformMachineAgentAction(agent, resolvedAction.kind, props.canManage !== false) ? resolvedAction : null;
     return (
         <View style={styles.frame}>
             <SurfaceCard testID={props.testID} padding="sm" fill onPress={props.onOpen}>

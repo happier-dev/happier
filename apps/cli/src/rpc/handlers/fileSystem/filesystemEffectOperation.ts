@@ -19,6 +19,8 @@ export const FilesystemEffectConfigurationSchema = z.strictObject({
   requesterAccountId: z.optional(z.string()),
   callerAuthority: z.optional(z.enum(['present_user', 'account_automation'])),
   capabilitySessionFactories: z.optional(AgentSessionFactoryObservationsSchema),
+  capabilityAgentInstallExecutionScope: z.optional(z.literal('member')),
+  capabilityAgentSharedManagedToolsRoot: z.optional(absolutePath),
   sessionAttachment: z.optional(z.strictObject({ sessionId: z.string().check(z.minLength(1)) })),
   workingDirectory: absolutePath,
   accessPolicy: z.union([z.strictObject({ kind: z.literal('osUser') }),

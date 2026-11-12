@@ -99,6 +99,10 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   // this member process without returning through its RPC admission handlers.
   const getCapabilities = () => import('../capabilities').then(({ createCliCapabilitiesService }) =>
     createCliCapabilitiesService({ accountContext: { credentials: null, accountSettings: null },
+      ...(configuration.capabilityAgentInstallExecutionScope ? {
+        agentInstallExecutionScope: configuration.capabilityAgentInstallExecutionScope,
+        agentSharedManagedToolsRoot: configuration.capabilityAgentSharedManagedToolsRoot,
+      } : {}),
       ...(configuration.capabilitySessionFactories ? { sessionFactorySource: {
         observations: configuration.capabilitySessionFactories,
         isCurrent: () => !closed && signal?.aborted !== true,

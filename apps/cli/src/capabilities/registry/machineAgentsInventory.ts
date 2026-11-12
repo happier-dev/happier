@@ -17,6 +17,7 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
       if (!parsed.success) throw new CapabilityError('Invalid ACP inventory request', 'invalid-request');
       const accountId = context.accountId ?? input.accountId;
       if (!accountId) throw new CapabilityError('ACP inventory requires an admitted Account', 'account-unavailable');
+      const executionScope = context.agentInstallExecutionScope;
       const installs = parsed.data.definitions.some(definition => definition.launch.kind !== 'command')
         ? await listManagedAcpInstalls({ env: input.env, accountId }) : [];
       const items: MachineAgentInventoryItem[] = parsed.data.definitions.map(definition => {
@@ -28,7 +29,8 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
             fit: resolveAcpPlatformFitV1(launch, { platform: input.platform ?? process.platform, arch: input.arch ?? process.arch }),
             version: null, latestVersion: null, update: { supported: false, command: null },
             signIn: { status: 'unknown', loginSupport: 'unsupported' }, platform: { supported: true },
-            install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] };
+            install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null,
+              ...(executionScope ? { executionScope } : {}) }, dependencies: [] };
         }
         const matching = installs.filter(install => install.definitionId === definition.definitionId && install.kind === launch.kind);
         const install = matching.find(install => install.version === launch.version) ?? matching[0];
@@ -39,7 +41,8 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
           update: { supported: Boolean(install), command: null },
           signIn: { status: 'unknown', loginSupport: 'unsupported' },
           platform: fit.kind === 'cant_run' ? { supported: false, reason: 'arch' } : { supported: true },
-          install: { available: fit.kind === 'can_run', mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+          install: { available: fit.kind === 'can_run', mode: 'managed', sizeBytes: null, guideUrl: null,
+            ...(executionScope ? { executionScope } : {}) }, dependencies: [],
         };
       });
       return { items };

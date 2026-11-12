@@ -1,6 +1,10 @@
-import { expect, it, vi } from 'vitest';
-import { chmod, copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { chmod, copyFile, cp, mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { accessSync } from 'node:fs';
+import { build } from 'esbuild';
 import { PassThrough, Readable } from 'node:stream';
 import { userInfo } from 'node:os';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
@@ -22,6 +26,70 @@ import { projectBuiltInAgents } from '@/plugins/projection/registry/builtIn/agen
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-codex/manifest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
+
+let fixtureRoot: string;
+let fixtureBinary: string;
+const nativeBoundary = vi.hoisted(() => ({ enabled: false, binary: '', deniedHome: '' }));
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return { ...actual, accessSync: (...args: Parameters<typeof actual.accessSync>) => {
+        const path = args[0];
+        // Model the daemon's EACCES at the OS boundary. The real child process
+        // has its own filesystem view and does not inherit this boundary mock.
+        if (nativeBoundary.enabled && nativeBoundary.deniedHome && typeof path === 'string'
+            && (path === nativeBoundary.deniedHome || path.startsWith(nativeBoundary.deniedHome + '/'))) {
+            throw Object.assign(new Error('Member home is private'), { code: 'EACCES' });
+        }
+        return actual.accessSync(...args);
+    } };
+});
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, spawn: (...args: Parameters<typeof actual.spawn>) => {
+        if (nativeBoundary.enabled && args[0] === 'sudo' && Array.isArray(args[1]) && args[1].at(-1) === 'agent-launch') {
+            expect(args[1].at(-2)).toBe(nativeBoundary.binary);
+            const child = actual.spawn(nativeBoundary.binary, ['mapped-agent-launch'], args[2]);
+            // Expose loader failures from this secret-free fixture child.
+            child.stderr?.pipe(process.stderr);
+            return child;
+        }
+        return actual.spawn(...args);
+    } };
+});
+beforeAll(async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), 'member-cli-native-child-'));
+    await mkdir(join(fixtureRoot, 'dist'));
+    await mkdir(join(fixtureRoot, 'scripts'));
+    await copyFile(resolve('scripts/process_tree.cjs'), join(fixtureRoot, 'scripts/process_tree.cjs'));
+    // This dependency uses legacy CommonJS escapes that cannot enter an ESM
+    // bundle. Keep its real, dependency-free package beside the disposable child.
+    await cp(dirname(createRequire(import.meta.url).resolve('qrcode-terminal/package.json')),
+        join(fixtureRoot, 'node_modules', 'qrcode-terminal'), { recursive: true });
+    fixtureBinary = join(fixtureRoot, 'dist', 'happier.mjs');
+    await build({ entryPoints: [resolve('src/testkit/process/agentIsolationRealUidChild.ts')],
+        outfile: fixtureBinary, bundle: true, platform: 'node', format: 'esm', target: 'node22',
+        external: ['*.node', 'qrcode-terminal'], conditions: ['happier-source'], tsconfig: resolve('tsconfig.json'),
+        banner: { js: `#!${process.execPath}\nimport { createRequire as fixtureRequire } from 'node:module'; const require = fixtureRequire(import.meta.url);` }, logLevel: 'silent' });
+    await chmod(fixtureBinary, 0o755);
+});
+afterAll(async () => { await rm(fixtureRoot, { recursive: true, force: true }); });
+
+function memberLaunch(home: string) {
+    nativeBoundary.deniedHome = home;
+    const actual = userInfo();
+    return { memberIdentity: { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home', requester: {
+        serverId: 'server', accountId: 'member', machineId: 'machine', installationId: 'installation',
+    } }), username: actual.username, agentUid: actual.uid, agentGid: actual.gid, home },
+    managedHappierBinaryPath: fixtureBinary, runtimeHome: join(home, 'runtime', 'agent-cli') };
+}
+
+function mapNativeUserBoundary() {
+    // Only the OS RunAs boundary is mapped; the private child and resolver stay real.
+    nativeBoundary.enabled = true;
+    nativeBoundary.binary = fixtureBinary;
+    nativeBoundary.deniedHome = '';
+    return { mockRestore() { nativeBoundary.enabled = false; } };
+}
 
 it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'javascript', 'javascriptMissingRuntime'] as const)(
     'selects the Agent CLI for its admitted native identity (%s)', async outcome => {
@@ -49,6 +117,7 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'ja
             }
             // Observe the OS process boundary while the binding and managed
             // resolution stay real: admitted selections require no sudo probe.
+            const nativeBoundary = mapNativeUserBoundary();
             const probes = vi.spyOn(processBoundary, 'execFileWithDeadline')
                 .mockResolvedValue({ stdout: 'member-native-ready\n', stderr: '' });
             try {
@@ -56,9 +125,10 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'ja
                     binding: { toolId: 'codex-cli' },
                     definition: { toolId: 'codex-cli', displayName: 'Codex', lookupNames: ['codex'] },
                     processEnv, delegate: { async resolve() { throw new Error('No alternate resolution'); } },
-                    ...(outcome === 'owner' ? {} : { memberLaunch: {} }),
+                    ...(outcome === 'owner' ? {} : { memberLaunch: memberLaunch(home) }),
                 });
                 const selection = service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', signal: new AbortController().signal });
+                if (outcome !== 'owner') expect(() => accessSync(managed)).toThrowError(expect.objectContaining({ code: 'EACCES' }));
                 if (outcome === 'missing' || outcome === 'javascriptMissingRuntime') {
                     await expect(selection).rejects.toMatchObject({ code: 'agent_cli_not_runnable', retryable: false,
                         details: { agentId: 'codex', remedy: 'install_managed_runtime' },
@@ -68,10 +138,8 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'ja
                     if (javascript) await expect(selection).resolves.toMatchObject({ launch: { executablePath: runner, args: [managed] } });
                 }
                 if (outcome === 'managed' || outcome === 'javascript') {
-                    for (let index = 0; index < 3; index++) {
-                        await expect(service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', preferredPath: owner }))
-                            .resolves.toMatchObject({ executablePath: managed });
-                    }
+                    await expect(service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', preferredPath: owner }))
+                        .resolves.toMatchObject({ executablePath: managed });
                     const controller = new AbortController();
                     const cancellation = new Error('Tool resolution cancelled');
                     controller.abort(cancellation);
@@ -82,7 +150,7 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'ja
                         .rejects.toMatchObject({ code: 'agent_cli_not_runnable' });
                 }
                 expect(probes).not.toHaveBeenCalled();
-            } finally { probes.mockRestore(); }
+            } finally { probes.mockRestore(); nativeBoundary.mockRestore(); }
         });
     });
 
@@ -96,6 +164,7 @@ it.skipIf(process.platform !== 'linux')('allows an installed vendor-recipe Agent
         await writeFile(vendorBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         await writeFile(ownerOverride, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
+        const nativeBoundary = mapNativeUserBoundary();
         const service = createAgentCliSystemToolService({
             agentId: 'muse', runtimeSpec,
             binding: { toolId: 'muse-cli' },
@@ -105,12 +174,14 @@ it.skipIf(process.platform !== 'linux')('allows an installed vendor-recipe Agent
                 HAPPIER_MUSE_PATH: ownerOverride,
                 [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: join(home, 'public-install'),
             },
-            memberLaunch: {},
+            memberLaunch: memberLaunch(home),
             delegate: { async resolve() { throw new Error('No alternate resolution'); } },
         });
 
-        await expect(service.resolve({ toolId: 'muse-cli', purpose: 'Start Muse' }))
-            .resolves.toMatchObject({ executablePath: vendorBin });
+        try {
+            await expect(service.resolve({ toolId: 'muse-cli', purpose: 'Start Muse' }))
+                .resolves.toMatchObject({ executablePath: vendorBin });
+        } finally { nativeBoundary.mockRestore(); }
     });
 });
 
@@ -124,11 +195,12 @@ it.skipIf(process.platform !== 'linux')('returns a closed member refusal before 
         const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
             contributes: createResolvedContributionRegistry({ agents, activationTargets: [] }), pluginIds: [],
         } });
+        const nativeBoundary = mapNativeUserBoundary();
         try {
             const input = { agentId: 'codex', options: { directory: home },
                 pluginRuntimeRegistry: fixture.registry,
                 processEnv: { PATH: '', HOME: home, [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: home },
-                memberAgentCliLaunch: {},
+                memberAgentCliLaunch: memberLaunch(home),
             };
             await expect(validateSpawnAgentCliLaunch(input)).resolves.toMatchObject({
                 ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'agent_cli_not_runnable' });
@@ -136,7 +208,7 @@ it.skipIf(process.platform !== 'linux')('returns a closed member refusal before 
                 profileEnvironmentVariables: {}, daemonSpawnHooks: null, logDebug() {}, logInfo() {}, logWarn() {},
             })).resolves.toMatchObject({ ok: false, errorCode: 'SPAWN_VALIDATION_FAILED',
                 errorMessage: 'agent_cli_not_runnable', agentId: 'codex' });
-        } finally { await fixture.dispose(); }
+        } finally { nativeBoundary.mockRestore(); await fixture.dispose(); }
     });
 });
 

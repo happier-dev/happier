@@ -14,6 +14,8 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
+import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import {
     isBackendEntrySelectableForNewSession,
     resolveBackendEntryUnavailabilityReasonForNewSession,
@@ -51,6 +53,31 @@ function createEntry(params: Readonly<{
 }
 
 describe('buildNewSessionAgentPickerOptions', () => {
+    it.each([[false, undefined, false], [false, 'machine', false], [false, 'member', true], [true, undefined, true]] as const)(
+      'offers the rail install action by requester scope (%s, %s)', (canManageMachine, executionScope, allowed) => {
+        const entry = createEntry({ backendId: 'codex', kind: 'builtInAgent', title: 'Codex', providerId: 'codex',
+            catalogAgentId: 'codex', builtInAgentId: 'codex', capabilities: { session: { supported: true } } });
+        const facts = MachineAgentInventoryItemSchema.parse({ agentId: 'codex', title: 'Codex',
+            installed: false, version: null, latestVersion: null, update: { supported: true, command: null },
+            signIn: { status: 'unknown', loginSupport: 'login_terminal' }, platform: { supported: true },
+            install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null, ...(executionScope ? { executionScope } : {}) }, dependencies: [] });
+        const agent = projectMachineAgent({ agentId: 'codex', title: 'Codex', facts, checking: false, stale: false, connectedServices: [], job: null });
+        const installMachineAgent = vi.fn();
+        const result = buildNewSessionAgentPickerOptions({
+            useProfiles: false, projectionCurrent: true, selectedProfileId: null, profileMap: new Map(),
+            resolvedBackendEntries: [entry, createEntry({ backendId: 'claude', kind: 'builtInAgent', title: 'Claude' })],
+            getCompatibleProfileBackendEntries: () => [], isBackendEntrySelectable: () => false,
+            getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
+            selectEngineSelection: vi.fn(), selectedMachineId: 'machine-1', capabilityServerId: 'server-1',
+            selectedPath: '/repo', selectedBackendTargetKey: entry.backendTargetKey, selectedModelId: 'default',
+            getBackendEntryMachineAgent: () => agent, renderMachineAgentSetup: () => null, installMachineAgent, canManageMachine,
+        });
+        const action = result.agentPickerOptions?.[0]?.statusAction;
+        expect(Boolean(action)).toBe(allowed);
+        action?.onPress();
+        expect(installMachineAgent).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    });
+
     it('retains bundled rows disabled beside configured Agents when the Machine cannot answer its catalog', () => {
         const definition = AcpBackendDefinitionV1Schema.parse({ id: 'review', name: 'review', title: 'Review',
             launch: { kind: 'command', command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });

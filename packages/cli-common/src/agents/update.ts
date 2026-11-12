@@ -112,6 +112,7 @@ export function classifyAgentCliInstall(params: Readonly<{
   runtimeSpec: AgentCliRuntimeDescriptor;
   command: string;
   source: AgentCliResolutionSource;
+  readOnly?: true;
   platform: AgentCliInstallPlatform;
   env?: NodeJS.ProcessEnv;
 }>): AgentCliUpdateFacts {
@@ -119,7 +120,7 @@ export function classifyAgentCliInstall(params: Readonly<{
   if (params.source === 'managed') {
     return {
       installSource: 'managed',
-      updateSupported: runtimeSpec.managedInstall !== null,
+      updateSupported: params.readOnly !== true && runtimeSpec.managedInstall !== null,
       updateCommand: null,
       nativeUpdateArgs: null,
     };

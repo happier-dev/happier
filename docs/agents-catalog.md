@@ -2053,6 +2053,22 @@ that installer and the existing update owner, rather than implementing another i
 It resolves the Agent's `runtimeSpec` from the contribution registry, so declared install
 paths apply to installed plugin Agents as well as bundled Agents.
 
+In current 0.3 development, Agent install/update/cancel admission accepts Machine
+Use. The job owner consumes the signed requester Account and role: the custodian
+uses the daemon environment; other requesters require an existing Linux isolated
+member binding and run the whole installer through the same native-user launcher as Sessions.
+Member jobs use that member's home and explicit install environment, without
+daemon credentials or private configuration. Job identity, reads, lists and
+cancellation are scoped to the requester, including built-in Agents. Missing
+member isolation and unsupported platforms return `member_install_unavailable`.
+Member executable discovery runs as the same native user with the canonical
+`sourcePolicy: 'member'`, retaining explicitly shared managed tools as a read-only
+fallback. Its own vendor or managed installation takes priority. Retained launch
+grants consume that selection without rechecking private member files as the daemon.
+Inventory and admitted jobs carry their install execution scope so UI surfaces
+consume the owner's eligibility. Agent uninstall, Machine capabilities,
+Computer use provider installation, Docker removal and setup remain Manage-only.
+
 An Agent's `cli.install.managed` GitHub recipe may declare `releaseTag` to pin
 its supported native release. In current 0.3 development source, managed acquisition
 reads that tag's public GitHub release assets and SHA-256 digests through the shared

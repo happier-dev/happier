@@ -87,6 +87,20 @@ describe('machine Agent execution prerequisites', () => {
 });
 
 describe('machine Agent inventory projection', () => {
+  it('preserves native member install scope while accepting existing machine inventory facts', () => {
+    const project = (install: unknown) => projectMachineAgentsDetectResponse({ agents: agents.slice(1), response: {
+      protocolVersion: 1, results: { 'cli.acme/helper': { ok: true, checkedAt: 2, data: { ...facts, install } } },
+    } });
+    const member = project({ ...facts.install, available: true, mode: 'vendor_recipe', executionScope: 'member' });
+    expect(member).toMatchObject({ items: [{ install: { executionScope: 'member', available: true, mode: 'vendor_recipe' } }] });
+    expect(MachinesAgentsListOutputSchema.parse(member)).toEqual(member);
+    expect(project(facts.install).items[0]?.install).toEqual(facts.install);
+    expect(project({ ...facts.install, executionScope: 'machine' }).items[0]?.install).toMatchObject({ executionScope: 'machine' });
+    expect(project({ ...facts.install, executionScope: 'unknown' }).unavailable).toEqual([
+      { agentId: 'acme/helper', reason: 'invalid_facts' },
+    ]);
+  });
+
   it('preserves explicit optional authentication without inventing a signed-in status', () => {
     const signIn = { status: 'unknown' as const, loginSupport: 'unsupported' as const, required: false };
     const item = { ...agents[1], ...facts, installed: true, signIn };

@@ -41,13 +41,23 @@ export type MachineAgentRowAction =
     /** Uninstall a Happier-managed install from this machine (offered beside the row's own action). */
     | Readonly<{ kind: 'remove' }>;
 
-/** Actions that mutate a machine or an install job and therefore require machine Manage access. */
-export function isMachineAgentRowActionManageOnly(action: MachineAgentRowAction): boolean {
-    return action.kind === 'install'
-        || action.kind === 'update'
-        || action.kind === 'retry'
-        || action.kind === 'cancel'
-        || action.kind === 'remove';
+/** Consume daemon-owned requester eligibility; legacy or machine-scoped mutations retain Manage access. */
+export function canPerformMachineAgentAction(
+    agent: MachineAgent,
+    kind: MachineAgentRowAction['kind'] | 'uninstall',
+    canManage: boolean,
+): boolean {
+    if (canManage) return true;
+    switch (kind) {
+        case 'install': return agent.install.executionScope === 'member' && agent.install.available;
+        case 'update': return agent.install.executionScope === 'member' && agent.update?.supported === true;
+        case 'cancel': return agent.job?.executionScope === 'member';
+        case 'retry': return agent.job?.readFailure ? true
+            : canPerformMachineAgentAction(agent, agent.job?.intent ?? 'install', canManage);
+        case 'remove':
+        case 'uninstall': return false;
+        default: return true;
+    }
 }
 
 export type MachineAgentStatusTone = 'quiet' | 'warn' | 'bad';

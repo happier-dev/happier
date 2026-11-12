@@ -5,8 +5,8 @@ import { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } from './rout
 // Owner-approved route corridor changes, compared with HEAD a207bc7a89a7.
 // These expectations pin admission roles independently of the declaration refactor.
 it.each([
-  ['daemon.agents.install.start', 'manage'],
-  ['daemon.agents.install.cancel', 'manage'],
+  ['daemon.agents.install.start', 'use'],
+  ['daemon.agents.install.cancel', 'use'],
   // O-MACH 2026-11-08: Manage means full Machine control, including plugin installers.
   ['action.invoke', 'manage'],
   ['daemon.plugins.npmRegistries.get', 'manage'],

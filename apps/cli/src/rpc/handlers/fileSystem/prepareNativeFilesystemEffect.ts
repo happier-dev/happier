@@ -11,6 +11,8 @@ import type { SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupe
 import { createFilesystemEffectChannel, initializeFilesystemEffectChannel, type FilesystemEffectChannel } from './filesystemEffectChannel';
 import type { FilesystemEffectConfiguration } from './filesystemEffectOperation';
 import { recordDirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
+import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/memberInstallEnvironment';
+import { readMemberAgentSharedManagedToolsRoot } from '@/capabilities/installJobs/memberResolveEffect';
 
 const cleanupUnconfirmed = (cause?: unknown) => new PluginError({
   code: 'indeterminate', message: 'Native filesystem cleanup is unconfirmed',
@@ -81,10 +83,12 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
       readMaterial: () => material,
       ...(input.allowMemberPreparation === false ? { allowMemberPreparation: false as const } : {}),
       signal: input.signal, ...(input.ingress ? { ingress: input.ingress } : {}) });
+    const memberEnvironment = native.memberIdentity ? buildMemberAgentInstallEnvironment(native.memberIdentity.home) : undefined;
+    const sharedManagedToolsRoot = native.memberIdentity ? readMemberAgentSharedManagedToolsRoot(hostEnvironment) : undefined;
     // Existing temp-file owners stay inside this selected operation directory;
     // a shared daemon-created system temp parent may be private to its UID.
     material = Object.freeze({ materializationKey: operationKey, selectedMaterials: Object.freeze([]),
-      environment: Object.freeze({ TMPDIR: native.materialTarget.runtimeHome,
+      environment: Object.freeze({ ...memberEnvironment, TMPDIR: native.materialTarget.runtimeHome,
         TEMP: native.materialTarget.runtimeHome, TMP: native.materialTarget.runtimeHome }) });
     assertOpen();
     const installedBinary = native.agentIsolation.read()?.launch?.managedHappierBinaryPath;
@@ -93,9 +97,7 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
     const launch = await authorizeResolvedProjectExecLaunchForHost({
       launch: { command: installedBinary, args: ['filesystem-effect'],
         cwd: native.workingDirectory,
-        // Discovery uses the same selected PATH as native Exec; Account and
-        // Happier configuration remain owned by the member's native home.
-        env: hostEnvironment.PATH === undefined ? {} : { PATH: hostEnvironment.PATH } },
+        env: memberEnvironment ?? (hostEnvironment.PATH === undefined ? {} : { PATH: hostEnvironment.PATH }) },
       agentIsolation: native.agentIsolation, requesterIdentity: input.identity, agentLaunchKind: 'exec',
       signal: input.signal, assertCurrent: assertOpen,
     });
@@ -109,7 +111,11 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
         operationKey, ...(input.ingress?.transportRequestId ? { transportRequestId: input.ingress.transportRequestId } : {}),
       }),
       signal: input.signal, dispose });
-    try { await initializeFilesystemEffectChannel(channel, input.configuration); initialized = true; }
+    try { await initializeFilesystemEffectChannel(channel, { ...input.configuration,
+      ...(native.memberIdentity ? { capabilityAgentInstallExecutionScope: 'member' as const,
+        ...(sharedManagedToolsRoot ? { capabilityAgentSharedManagedToolsRoot: sharedManagedToolsRoot } : {}),
+      } : {}),
+    }); initialized = true; }
     catch (error) { await channel.dispose(); throw error; }
     return channel;
   } catch (error) { await dispose(); throw error; }

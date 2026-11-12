@@ -1,10 +1,11 @@
-import type { DetectCliName } from '../snapshots/cliSnapshot';
+import type { DetectCliName, DetectCliRequest } from '../snapshots/cliSnapshot';
 import type { CapabilitiesDetectContext } from '../service';
 import type { CapabilityDetectRequest } from '../types';
 import { detectCliSnapshotOnDaemonPath } from '../snapshots/cliSnapshot';
 import type { AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
 
-export const buildDetectContext = async (requests: CapabilityDetectRequest[], factorySource?: AgentSessionFactorySource): Promise<CapabilitiesDetectContext> => {
+export const buildDetectContext = async (requests: CapabilityDetectRequest[], factorySource?: AgentSessionFactorySource,
+    resolution?: DetectCliRequest['resolution']): Promise<CapabilitiesDetectContext> => {
     // Execution Run protocol/catalog facts come from contributions, not local
     // executable discovery. Control preflight must not scan every Agent CLI.
     const wantsCliOrTmux = requests.some((r) =>
@@ -27,6 +28,7 @@ export const buildDetectContext = async (requests: CapabilityDetectRequest[], fa
     );
     const cliSnapshot = wantsCliOrTmux
         ? await detectCliSnapshotOnDaemonPath({
+            ...(resolution ? { resolution } : {}),
             ...(anyLogin ? { includeLoginStatus: true } : {}),
             ...(omitVersion ? { includeVersion: false } : {}),
             ...(requestedCliNames.length > 0 ? { requestedCliNames } : {}),

@@ -29,11 +29,14 @@ import {
 } from '@/plugins/projection/registry/managedDependencyExecutables';
 import {
     type AgentCliRuntimeDescriptor,
+    type AgentCliCommandResolutionOptions,
+    type AgentCliSourcePolicy,
     agentCliPathRequiresJavaScriptRuntime,
     resolveAgentCliJavaScriptRuntimeCommand,
     classifyAgentCliInstall,
     resolvePlatformFromNodePlatform,
 } from '@happier-dev/cli-common/agents';
+import { buildMemberAgentCliResolutionEnvironment } from '@/capabilities/installJobs/memberResolveEffect';
 import {
     execFileWithDeadline,
     ExecFileTerminationError,
@@ -52,6 +55,8 @@ type ExecFileBestEffortOptions = ExecFileWithDeadlineOptions;
 export type DetectCliName = string;
 
 export interface DetectCliRequest {
+    /** Host-selected native source policy, independent of Account preferences. */
+    resolution?: Pick<AgentCliCommandResolutionOptions, 'sourcePolicy' | 'memberSharedManagedToolsRoot'>;
     /**
      * When true, also probes whether each detected CLI appears to be authenticated.
      * This is best-effort and may return null when unknown/unsupported.
@@ -84,6 +89,7 @@ export interface DetectCliEntry {
     resolvedPath?: string;
     resolvedCommand?: string;
     resolutionSource?: 'override' | 'system' | 'managed';
+    resolutionReadOnly?: true;
     version?: string;
     isLoggedIn?: boolean | null;
     authStatus?: CliAuthStatus | null;
@@ -203,7 +209,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         })
         .join(':');
 
-    return `${includeLoginStatus}:${includeVersion}:${verifyVersion}:${requestedCliNames}:${requestedTools}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
+    return `${JSON.stringify(params.resolution ?? {})}:${includeLoginStatus}:${includeVersion}:${verifyVersion}:${requestedCliNames}:${requestedTools}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
@@ -259,12 +265,14 @@ function quoteShellArgument(value: string): string {
     return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promise<string> {
+async function resolveCliLaunchCommand(params: { resolvedPath: string; env?: NodeJS.ProcessEnv }): Promise<string> {
     if (!agentCliPathRequiresJavaScriptRuntime(params.resolvedPath)) {
         return quoteShellArgument(params.resolvedPath);
     }
 
-    const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
+    const runtimeExecutable = params.env
+        ? resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, params.env)
+        : await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
     if (!runtimeExecutable) return quoteShellArgument(params.resolvedPath);
     return `${quoteShellArgument(runtimeExecutable)} ${quoteShellArgument(params.resolvedPath)}`;
 }
@@ -508,18 +516,22 @@ export async function probeResolvedAgentCliVersion(params: Readonly<{
 /** Fresh install verification uses the same resolver and version probe as inventory. */
 export async function probeAgentCliForInstall(params: Readonly<{
     runtimeSpec: AgentCliRuntimeDescriptor;
+    sourcePolicy?: AgentCliSourcePolicy;
     env?: NodeJS.ProcessEnv;
     signal?: AbortSignal;
     execFile?: typeof execFileWithDeadline;
 }>): Promise<DetectCliEntry> {
     params.signal?.throwIfAborted();
-    const resolution = resolveAgentCliCommandForRuntime(params.runtimeSpec, { processEnv: params.env ?? process.env });
+    const environment = params.sourcePolicy === 'member'
+        ? buildMemberAgentCliResolutionEnvironment(params.env ?? process.env) : params.env ?? process.env;
+    const resolution = resolveAgentCliCommandForRuntime(params.runtimeSpec, { processEnv: environment,
+        sourcePolicy: params.sourcePolicy });
     if (!resolution) return { available: false, installed: false };
     const probe = await probeCliExecution({
         name: params.runtimeSpec.id,
         resolvedPath: resolution.command,
         timeoutMs: resolveCliSnapshotProbeTimeoutMs(true),
-        env: params.env ?? process.env,
+        env: environment,
         signal: params.signal,
         execFile: params.execFile,
     });
@@ -593,11 +605,14 @@ async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: 
 
 async function resolveCliPathForName(
     name: DetectCliName,
-): Promise<Readonly<{ resolvedPath: string; resolutionSource: 'override' | 'system' | 'managed' }> | null> {
+    options?: AgentCliCommandResolutionOptions,
+): Promise<Readonly<{ resolvedPath: string; resolutionSource: 'override' | 'system' | 'managed'; readOnly?: true }> | null> {
     const runtimeSpec = readCurrentContributionRegistry().agentDefinitionsById.get(name)?.runtimeSpec;
     if (!runtimeSpec) return null;
-    const resolved = resolveAgentCliCommandForRuntime(runtimeSpec);
-    return resolved ? { resolvedPath: resolved.command, resolutionSource: resolved.source } : null;
+    const resolved = resolveAgentCliCommandForRuntime(runtimeSpec, options);
+    return resolved ? { resolvedPath: resolved.command, resolutionSource: resolved.source,
+        ...(resolved.readOnly ? { readOnly: resolved.readOnly } : {}),
+    } : null;
 }
 
 async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolean): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
@@ -669,7 +684,10 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
     // Runtime readiness is a live binding fact, not a CLI installation with a TTL.
     const observesNativeFactory = [...nativeFactories.values()].some((observation) =>
         observation.status === 'fulfilled' && observation.value !== null);
-    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, includeVersion, requestedCliNames, verifyVersion, requestedTools: data.requestedTools }, pathEnv);
+    const resolutionEnvironment = data.resolution?.sourcePolicy === 'member'
+        ? buildMemberAgentCliResolutionEnvironment(process.env, data.resolution.memberSharedManagedToolsRoot) : undefined;
+    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, includeVersion, requestedCliNames, verifyVersion,
+        requestedTools: data.requestedTools, resolution: data.resolution }, pathEnv);
     const cached = data?.bypassCache || observesNativeFactory ? null : cliSnapshotCache.get(cacheKey);
     if (!data?.bypassCache && cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
 
@@ -682,7 +700,9 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
             const factoryObservation = nativeFactories.get(name)!;
             const factory = factoryObservation.status === 'fulfilled' ? factoryObservation.value : null;
             const [resolved, setupFacts] = await Promise.all([
-                factory?.isCurrent() ? Promise.resolve(null) : resolveCliPathForName(name),
+                factory?.isCurrent() ? Promise.resolve(null) : resolveCliPathForName(name, {
+                    ...data.resolution, ...(resolutionEnvironment ? { processEnv: resolutionEnvironment } : {}),
+                }),
                 detectAgentSetupFacts(name, includeVersion),
             ]);
             if (!resolved) {
@@ -697,12 +717,14 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
                 const entry: DetectCliEntry = { available: false, installed: false, ...setupFacts, update: { supported: false, command: null } };
                 return [name, entry] as const;
             }
-            const { resolvedPath, resolutionSource } = resolved;
+            const { resolvedPath, resolutionSource, readOnly } = resolved;
 
             const [versionResult, authStatusResult, resolvedCommandResult] = await Promise.all([
                 // The process boundary owns the deadline and drains finished output after a
                 // stalled loop. A competing timer here would discard that successful result.
-                includeVersion ? probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs }) : Promise.resolve({ version: null }),
+                includeVersion ? probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs,
+                    ...(resolutionEnvironment ? { env: resolutionEnvironment } : {}),
+                }) : Promise.resolve({ version: null }),
                 includeLoginStatus
                     ? withCliSnapshotProbeTimeout(
                         detectCliAuthStatus({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
@@ -710,7 +732,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
                     )
                     : Promise.resolve(null),
                 withCliSnapshotProbeTimeout(
-                    resolveCliLaunchCommand({ resolvedPath }),
+                    resolveCliLaunchCommand({ resolvedPath, ...(resolutionEnvironment ? { env: resolutionEnvironment } : {}) }),
                     probeTimeoutMs,
                 ),
             ]);
@@ -738,7 +760,8 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
 
             const platform = resolvePlatformFromNodePlatform(process.platform);
             const update = platform
-                ? classifyAgentCliInstall({ runtimeSpec: resolveAgentCliRuntimeSpecForLookupId(name), command: resolvedPath, source: resolutionSource, platform, env: process.env })
+                ? classifyAgentCliInstall({ runtimeSpec: resolveAgentCliRuntimeSpecForLookupId(name), command: resolvedPath,
+                    source: resolutionSource, ...(readOnly ? { readOnly } : {}), platform, env: process.env })
                 : null;
 
             const entry: DetectCliEntry = {
@@ -755,6 +778,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
                 update: { supported: update?.updateSupported ?? false, command: update?.updateCommand ?? null },
                 resolvedPath,
                 resolutionSource,
+                ...(readOnly ? { resolutionReadOnly: readOnly } : {}),
                 ...(resolvedCommandResult !== CLI_SNAPSHOT_PROBE_TIMEOUT && typeof resolvedCommandResult === 'string'
                     ? { resolvedCommand: resolvedCommandResult }
                     : {}),

@@ -102,7 +102,7 @@ describe('agent install job owner', () => {
         let refused = true;
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) return { ok: true, jobId: 'replacement-update-job' };
-            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [{ ...wireJob('codex', 'admitted-update-job'), intent: 'update' }] };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [{ ...wireJob('codex', 'admitted-update-job'), intent: 'update', executionScope: 'member' }] };
             if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) return refused
                 ? { ok: false, errorCode: 'install_unavailable', error: 'Configured Agent jobs require current Account admission.' }
                 : { ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: true,
@@ -112,6 +112,7 @@ describe('agent install job owner', () => {
         });
         await ensureMachineAgentInstallJobs(target);
         await vi.waitFor(() => expect(readAgentInstallJob(target)?.readFailure).toBe('install_unavailable'));
+        expect(readAgentInstallJob(target)).toMatchObject({ executionScope: 'member' });
         refused = false;
         const { startMachineAgentItemUpdate } = await import('@/updates/machineUpdateRuns');
         const job = await startMachineAgentItemUpdate({
@@ -120,6 +121,7 @@ describe('agent install job owner', () => {
             step: null, managedBy: 'happier', action: { kind: 'run', verb: 'update' }, failure: null, skipped: false,
         }, target, { consent: { vendorRecipe: true } });
         expect(job.jobId).toBe('admitted-update-job');
+        expect(job).toMatchObject({ executionScope: 'member' });
         await expect(waitForAgentInstallJob(target)).resolves.toEqual({ kind: 'succeeded', version: '2.0' });
         expect(boundary.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)).toBe(false);
     });
@@ -518,12 +520,14 @@ describe('agent install job owner', () => {
         const read = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method.endsWith('.list')) return staleList.promise;
-            if (method.endsWith('.start')) return { ok: true, jobId: 'job-admitted' };
+            if (method.endsWith('.start')) return { ok: true, jobId: 'job-admitted', executionScope: 'member' };
             return read.promise;
         });
         const discovering = ensureMachineAgentInstallJobs(target);
         const starting = startAgentInstallJob(target, 'install', { consent: { vendorRecipe: true } });
         await act(async () => {});
+        expect(await starting).toMatchObject({ jobId: 'job-admitted', executionScope: 'member' });
+        expect(readAgentInstallJob(target)).toMatchObject({ executionScope: 'member' });
         await act(async () => {
             staleList.resolve({ ok: true, jobs: [{ ...wireJob('codex', 'job-historical'), startedAt: Date.now() + 60_000, done: true, outcome: { kind: 'succeeded', version: '1.0' } }] });
             await discovering;
@@ -532,7 +536,7 @@ describe('agent install job owner', () => {
         await act(async () => {
             read.resolve({ ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: true, outcome: { kind: 'succeeded', version: '2.0' } });
         });
-        expect(readAgentInstallJob(target)).toMatchObject({ jobId: 'job-admitted', outcome: { kind: 'succeeded', version: '2.0' } });
+        expect(readAgentInstallJob(target)).toMatchObject({ jobId: 'job-admitted', executionScope: 'member', outcome: { kind: 'succeeded', version: '2.0' } });
     });
 
     it('rejects cancelling a pruned projection while fresh discovery is pending instead of implicitly cancelling its successor', async () => {

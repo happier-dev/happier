@@ -120,14 +120,10 @@ export async function runLoggedAgentCommand(params: Readonly<{
   }
   const timeoutMs = resolveVendorInstallTimeoutMs(env);
   const childEnv = {
-    ...process.env,
     ...env,
     // Only POSIX recipes add user install directories. Preserve Windows Path
     // instead of shadowing the case-insensitive key with an empty PATH.
-    ...(process.platform === 'win32' ? {} : { PATH: buildVendorRecipePath(runtimeSpec, {
-      ...process.env,
-      ...env,
-    }) }),
+    ...(process.platform === 'win32' ? {} : { PATH: buildVendorRecipePath(runtimeSpec, env) }),
     ...(vendorScratchDir ? { TMPDIR: vendorScratchDir, TMP: vendorScratchDir, TEMP: vendorScratchDir } : {}),
   };
   const invocation = resolveWindowsCommandInvocation({

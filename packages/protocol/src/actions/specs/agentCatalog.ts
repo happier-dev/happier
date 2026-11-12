@@ -333,7 +333,7 @@ function createAgentCatalogActionSpecs() {
     sideEffectClass: 'read',
     safety: 'safe',
     placements: [],
-    bindings: { mcpToolName: 'machines_agents_install_status' },
+    bindings: { mcpToolName: 'machines_agents_install_status', rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.extend(DaemonAgentInstallReadRequestSchema, {
       machineId: z.string().check(z.minLength(1)), cursor: z.optional(DaemonAgentInstallReadRequestSchema.shape.cursor),
@@ -356,7 +356,7 @@ function createAgentCatalogActionSpecs() {
     sideEffectClass: 'danger',
     safety: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'machines_agents_install_cancel' },
+    bindings: { mcpToolName: 'machines_agents_install_cancel', rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.extend(DaemonAgentInstallCancelRequestSchema, { machineId: z.string().check(z.minLength(1)) })),
     outputSchema: DaemonAgentInstallCancelResponseSchema,

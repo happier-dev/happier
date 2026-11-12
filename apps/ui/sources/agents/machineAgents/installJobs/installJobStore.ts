@@ -137,6 +137,7 @@ export function subscribeMachineAgentInstallJobs(target: MachineAgentInstallJobT
 function fromWire(job: AgentInstallJob): MachineAgentJob {
     return {
         jobId: job.jobId, intent: job.intent, startedAtMs: job.startedAt, logLine: null, outcome: job.outcome,
+        ...(job.executionScope ? { executionScope: job.executionScope } : {}),
         steps: job.steps.map((step) => {
             const progress = job.progress.find((entry) => entry.stepId === step.stepId);
             return { ...step, bytesDone: progress?.bytesDone ?? null, bytesTotal: progress?.bytesTotal ?? null };
@@ -314,7 +315,7 @@ export function startAgentInstallJob(target: AgentInstallJobTarget, intent: Agen
         if (state.records.get(targetKey)?.job.jobId !== response.jobId) {
             const previous = state.records.get(targetKey);
             if (previous?.timer) clearTimeout(previous.timer);
-            const record: JobRecord = { target, job: { jobId: response.jobId, intent, startedAtMs: Date.now(), steps: [], logLine: null, outcome: null }, cursor: 0, hydrated: false, polling: false };
+            const record: JobRecord = { target, job: { jobId: response.jobId, intent, ...(response.executionScope ? { executionScope: response.executionScope } : {}), startedAtMs: Date.now(), steps: [], logLine: null, outcome: null }, cursor: 0, hydrated: false, polling: false };
             state.records.set(targetKey, record);
             publish(target, record.job);
         }
@@ -354,12 +355,18 @@ export async function cancelMachineAgentInstallJob(target: MachineAgentInstallJo
     const response = await cancelAgentInstallJobRpc({ ...target, signal: state.controller.signal }, { jobId });
     requireCurrent(state);
     if (!response.ok) return response;
-    const record = [...state.records.values()].find((candidate) => candidate.job.jobId === jobId);
+    observeMachineAgentInstallJobCancellation(target, jobId);
+    return response;
+}
+
+/** Resume the same job's cursor after an accepted cancellation, including an unmounted row. */
+export function observeMachineAgentInstallJobCancellation(target: MachineAgentInstallJobTarget, jobId: string): void {
+    const state = machines.get(machineKey(target));
+    const record = state && [...state.records.values()].find((candidate) => candidate.job.jobId === jobId);
     if (record) {
         if (record.timer) clearTimeout(record.timer);
         void poll(record.target, record);
     }
-    return response;
 }
 
 /** Queue and update adapters await the daemon job's terminal outcome. */

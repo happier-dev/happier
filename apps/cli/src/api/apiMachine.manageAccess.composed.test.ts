@@ -115,9 +115,6 @@ it('refuses Can-use Machine administration through real Home before installed ef
     { name: 'Machine setup Plan', method: RPC_METHODS.MACHINE_SETUP_PLAN, request: planInput },
     { name: 'Machine setup Apply', method: 'machines.setup.apply', request: apply },
     { name: 'Machine setup Remove', method: RPC_METHODS.MACHINE_SETUP_REMOVE, request: remove },
-    { name: 'configured Agent install', method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
-      request: DaemonAgentInstallStartRequestSchema.parse({ agentId: 'unavailable-agent', definitionId: 'unavailable-definition',
-        expectedDefinitionVersion: '1', intent: 'install', consent: { vendorRecipe: true } }) },
     { name: 'semantic service Exec', method: RPC_METHODS.MACHINES_SERVICE_EXEC,
       request: MachineServiceExecInputV1Schema.parse({ ...machine, mode: 'exec', argv: ['manage-access-no-effect'],
         target: { kind: 'current', serviceId: 'missing-service', expectedGeneration: 'missing-generation' } }) },
@@ -133,11 +130,15 @@ it('refuses Can-use Machine administration through real Home before installed ef
   ];
   const relay = await createInstalledMachineRpcRelay({ manager: f.rpcHandlerManager, machineId: f.machineId,
     transportOwnerAccountId: 'requester', ui: { installation: f.installation },
-    methods: [...requests.map(request => request.method), RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS] });
+    methods: [...requests.map(request => request.method), RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS, RPC_METHODS.DAEMON_AGENTS_INSTALL_START] });
   // Keep one legitimate member read on this exact Home/grant fixture, so a
   // blanket authentication or publication failure cannot pass every denial.
   expect(await relay.invokeUi(RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS, machine, { actorAccountId: 'member-use' }))
     .toEqual({ protection: 'unavailable', status: { kind: 'unavailable', code: 'metadata_unavailable' } });
+  expect(await relay.invokeUi(RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
+    DaemonAgentInstallStartRequestSchema.parse({ agentId: 'unavailable-agent', definitionId: 'unavailable-definition',
+      expectedDefinitionVersion: '1', intent: 'install', consent: { vendorRecipe: true } }), { actorAccountId: 'member-use' }))
+    .toMatchObject({ ok: false, errorCode: 'member_install_unavailable' });
   for (const { name, method, request } of requests) {
     expect.soft(await relay.invokeUiRaw(method, request, { actorAccountId: 'member-use' }), name)
       .toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });

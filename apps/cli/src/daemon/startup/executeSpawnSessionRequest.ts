@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import { NativeSessionDirectoryResultSchema } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
 import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
@@ -1275,7 +1276,8 @@ export async function executeSpawnSessionRequest(
                 });
             }
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
-                ...(connectedServices.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: { signal: params.signal } } : {}),
+                memberAgentCliLaunch: createMemberAgentCliLaunchContext({ material: connectedServices.agentLaunchMaterials,
+                    managedHappierBinaryPath: params.agentIsolation?.managedHappierBinaryPath, signal: params.signal }),
                 savedSecretOperationContext: acpOperationContext,
                 readMachineResourcesPolicy: params.readMachineResourcesPolicy,
                 options: effectiveOptionsForSpawn,

@@ -19,8 +19,7 @@ import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicke
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
-import { resolveMachineAgentPickerPlacement, type MachineAgentPickerPlacement } from '@/components/machines/agents/machineAgentPresentation';
-import { MachineAgentPickerMarker } from '@/components/machines/agents/MachineAgentPickerMarker';
+import { presentMachineAgentSetupRow, resolveMachineAgentSetupRow, type MachineAgentSetupRow } from '@/components/sessions/agentPicker/machineAgentSetupRow';
 import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerOptionInteractions } from './buildNewSessionAgentPickerOptionInteractions';
 import {
@@ -80,6 +79,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     renderMachineAgentSetup?: (entry: ResolvedBackendCatalogEntry, agent: MachineAgent) => React.ReactNode;
     /** Install from the rail's download glyph, through the install Action and its own confirmation. */
     installMachineAgent?: (agent: MachineAgent) => void;
+    canManageMachine?: boolean;
     /** The composer's machine name, for the rail group headings. */
     selectedMachineName?: string | null;
     /**
@@ -215,23 +215,11 @@ export function buildNewSessionAgentPickerOptions(
             resolvePresentation: (entry) => {
                 const setup = resolveMachineAgentSetupOption(params, entry);
                 if (setup) {
-                    return {
-                        disabled: false,
-                        muted: setup.placement.group !== 'onMachine',
-                        ...(setup.placement.group === 'onMachine' ? {} : {
-                            section: setup.placement.group === 'notOnMachine'
-                                ? { id: 'notOnMachine', label: t('machineAgents.notOnThisMachineYet'), rank: 1 }
-                                : { id: 'cantRun', label: t('machineAgents.cantRunOnThisMachine'), rank: 2 },
-                        }),
-                        statusMarker: <MachineAgentPickerMarker marker={setup.placement.marker} />,
-                        ...(setup.placement.marker === 'download' && setup.agent.install.available && params.installMachineAgent ? {
-                            statusAction: {
-                                testID: `new-session-engine-install-rail:${entry.backendTargetKey}`,
-                                accessibilityLabel: t('machineAgents.installAgent', { agent: setup.agent.title }),
-                                onPress: () => params.installMachineAgent?.(setup.agent),
-                            },
-                        } : {}),
-                    };
+                    return presentMachineAgentSetupRow(setup, {
+                        backendTargetKey: entry.backendTargetKey,
+                        installMachineAgent: params.installMachineAgent,
+                        canManageMachine: params.canManageMachine,
+                    });
                 }
                 const selectable = params.isBackendEntrySelectable(entry);
                 return resolveNewSessionAgentPickerOptionPresentation({
@@ -302,9 +290,7 @@ export function buildNewSessionAgentPickerOptions(
 function resolveMachineAgentSetupOption(
     params: Pick<BuildNewSessionAgentPickerOptionsParams, 'getBackendEntryMachineAgent' | 'renderMachineAgentSetup' | 'isBackendEntrySelectable'>,
     entry: ResolvedBackendCatalogEntry,
-): Readonly<{ agent: MachineAgent; placement: MachineAgentPickerPlacement }> | null {
+): MachineAgentSetupRow | null {
     if (!params.renderMachineAgentSetup || params.isBackendEntrySelectable(entry)) return null;
-    const agent = params.getBackendEntryMachineAgent?.(entry) ?? null;
-    const placement = resolveMachineAgentPickerPlacement(agent);
-    return agent && placement.opensSetup ? { agent, placement } : null;
+    return resolveMachineAgentSetupRow(params.getBackendEntryMachineAgent?.(entry));
 }

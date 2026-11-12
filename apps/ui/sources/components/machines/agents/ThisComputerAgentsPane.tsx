@@ -12,6 +12,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import { MachineAgentCard, MachineAgentCardGrid } from './MachineAgentCard';
 import { MachineAgentMark } from './MachineAgentMark';
@@ -44,6 +46,7 @@ export const ThisComputerAgentsPane = React.memo(function ThisComputerAgentsPane
         if (onOpenAgent) onOpenAgent(agent);
         else onOpenMachine();
     }, [onOpenAgent, onOpenMachine]);
+    const canManage = useServerScopedMachine(props.serverId, props.machineId, canManageMachine);
     const onAction = useMachineAgentRowActions({ serverId: props.serverId, machineId: props.machineId, machineName: props.machineName, onOpenForm: openForm });
     return (
         <View testID={props.testID} style={styles.pane}>
@@ -62,6 +65,7 @@ export const ThisComputerAgentsPane = React.memo(function ThisComputerAgentsPane
                             key={buildMachineAgentInventoryKey(agent)}
                             testID={`${props.testID}.agent.${buildMachineAgentInventoryKey(agent)}`}
                             agent={agent}
+                            canManage={canManage}
                             mark={<MachineAgentMark agentId={agent.agentId} machineId={props.machineId} serverId={props.serverId} size={22} />}
                             onAction={(action) => onAction(agent, action)}
                         />

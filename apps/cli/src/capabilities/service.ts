@@ -56,6 +56,8 @@ const UNCLASSIFIED_EFFECTS: CapabilityEffects = ['private_read', 'file_write', '
 export type CapabilitiesDetectContext = {
     accountId?: string;
     cliSnapshot: DetectCliSnapshot | null;
+    /** Fixed by the host's actual native member binding, never a request operand. */
+    agentInstallExecutionScope?: 'member';
 };
 
 export type CapabilitiesDetectContextBuilder = (requests: CapabilityDetectRequest[], source?: AgentSessionFactorySource) => Promise<CapabilitiesDetectContext>;

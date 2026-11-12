@@ -8,6 +8,7 @@ import {
   type AgentCliResolutionSource,
   type AgentCliUpdateFacts,
   type AgentCliRuntimeDescriptor,
+  type AgentCliSourcePolicy,
   type AgentInstallProgressCallback,
 } from '@happier-dev/cli-common/agents';
 import { compareVersions } from '@happier-dev/cli-common/update';
@@ -26,11 +27,13 @@ import { fetchGitHubLatestRelease } from './githubReleaseLookup';
 type InstalledCli = Readonly<{
   command: string;
   source: AgentCliResolutionSource;
+  readOnly?: true;
   version: string | null;
 }>;
 
 export type AgentCliUpdatesDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
+  sourcePolicy?: AgentCliSourcePolicy;
   nodePlatform?: string;
   buildContext?: CapabilitiesDetectContextBuilder;
   /** The agent's CLI descriptor, projected from its plugin manifest (`cli.install` update facts). */
@@ -57,6 +60,7 @@ function readInstalledCli(data: unknown): InstalledCli | null {
   return {
     command: data.resolvedPath,
     source,
+    ...(data.resolutionReadOnly === true ? { readOnly: true as const } : {}),
     version: typeof data.version === 'string' ? data.version : null,
   };
 }
@@ -147,6 +151,7 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
       runtimeSpec,
       command: installed.command,
       source: installed.source,
+      ...(installed.readOnly ? { readOnly: installed.readOnly } : {}),
       platform,
       env,
     });
@@ -187,6 +192,7 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
       },
       env,
       nodePlatform,
+      sourcePolicy: deps.sourcePolicy,
       signal,
       onProgress: deps.onProgress,
       installerDeps: deps.installerDeps,

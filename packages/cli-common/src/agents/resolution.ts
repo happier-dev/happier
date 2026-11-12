@@ -50,12 +50,16 @@ export type AgentCliSourcePolicy = 'default' | 'managed_only' | 'member';
 export type AgentCliCommandResolution = Readonly<{
   source: AgentCliResolutionSource;
   command: string;
+  /** A member may execute explicitly shared code but never update that root. */
+  readOnly?: true;
 }>;
 
 export type AgentCliCommandResolutionOptions = Readonly<
   {
     processEnv?: NodeJS.ProcessEnv;
     sourcePolicy?: AgentCliSourcePolicy;
+    /** Explicit public, read-only fallback for an isolated member's local install. */
+    memberSharedManagedToolsRoot?: string;
   } & RuntimeResolutionOptions
 >;
 
@@ -506,13 +510,23 @@ export function resolveAgentCliCommandForRuntime(
     // inherited from the endpoint daemon's PATH. Known user directories are
     // resolved from the member launch environment below.
     const memberProcessEnv = { ...processEnv, PATH: '' };
+    const sharedProcessEnv = opts.memberSharedManagedToolsRoot
+      ? { ...memberProcessEnv, HAPPIER_MANAGED_TOOLS_ROOT: opts.memberSharedManagedToolsRoot }
+      : undefined;
     const systemCommand = resolveAgentCliSystemCommand(runtimeSpec, memberProcessEnv, opts);
-    if (systemCommand && isAgentCliPathRunnable(systemCommand, processEnv, opts)) {
+    if (systemCommand && (isAgentCliPathRunnable(systemCommand, memberProcessEnv, opts)
+      || sharedProcessEnv && isAgentCliPathRunnable(systemCommand, sharedProcessEnv, opts))) {
       return { source: 'system', command: systemCommand };
     }
     const managedCommand = resolveAgentCliManagedCommand(runtimeSpec, processEnv);
     if (managedCommand && isAgentCliPathRunnable(managedCommand, processEnv, opts)) {
       return { source: 'managed', command: managedCommand };
+    }
+    if (sharedProcessEnv) {
+      const sharedCommand = resolveAgentCliManagedCommand(runtimeSpec, sharedProcessEnv);
+      if (sharedCommand && isAgentCliPathRunnable(sharedCommand, sharedProcessEnv, opts)) {
+        return { source: 'managed', command: sharedCommand, readOnly: true };
+      }
     }
     return null;
   }

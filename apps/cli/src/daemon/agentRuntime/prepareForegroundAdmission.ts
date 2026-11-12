@@ -1,6 +1,7 @@
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
 import { join } from 'node:path';
+import { createMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import {
   resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';
@@ -1020,7 +1021,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
       materializedConnectedServices = connectedServiceAuth?.connectedServicesBindings
         ?? effectiveConnectedServices;
       const childEnvironment = await resolveSpawnChildEnvironment({
-        ...(foregroundMemberIdentity ? { memberAgentCliLaunch: { signal: dependencies.signal } } : {}),
+        memberAgentCliLaunch: createMemberAgentCliLaunchContext({ material: agentLaunchMaterials,
+          managedHappierBinaryPath: dependencies.agentIsolation?.managedHappierBinaryPath, signal: dependencies.signal }),
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
         resolvedAgentId: request.agentId,

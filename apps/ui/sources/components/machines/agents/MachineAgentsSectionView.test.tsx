@@ -35,13 +35,17 @@ describe('machine agent inventory recovery', () => {
         expect(changed).toHaveBeenCalledWith(secondKey, false);
     });
 
-    it('does not expose mutating row actions to a Use viewer', async () => {
+    it.each([[false, undefined, false], [false, 'machine', false], [false, 'member', true], [true, undefined, true]] as const)(
+      'offers install by requester scope and preserves Manage (%s, %s)', async (canManage, executionScope, allowed) => {
+        const base = definitions[0]!;
+        const agent = { ...base, state: 'notInstalled' as const,
+            install: executionScope ? { ...base.install, executionScope } : base.install };
         const screen = await renderSettingsView(<MachineAgentsSectionView testID="machine-agents"
-            agents={[{ ...definitions[0]!, state: 'notInstalled' as const }]} status="ready" lastCheckedAt={1} machineName="Workstation"
+            agents={[agent]} status="ready" lastCheckedAt={1} machineName="Workstation"
             renderMark={() => null} sessionFor={() => null} renderForm={() => null}
             expandedAgentIds={new Set()} onExpandedChange={() => {}} onAction={() => {}} onCheckAgain={() => {}}
-            canManage={false} />);
-        expect(screen.findByTestId('machine-agents.custom-acp:first.action.install')).toBeNull();
+            canManage={canManage} />);
+        expect(screen.findByTestId(`machine-agents.${buildMachineAgentInventoryKey(agent)}.action.install`) !== null).toBe(allowed);
     });
 
     it('keeps the chosen first-agent definition after the inventory order changes', async () => {

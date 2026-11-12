@@ -52,6 +52,7 @@ export const AgentInstallJobSchema = lazyZodSchema(() => z.strictObject({
   agentId: z.string().check(z.minLength(1)),
   definitionId: z.optional(z.string().check(z.minLength(1))),
   intent: AgentInstallJobIntentSchema,
+  executionScope: z.optional(z.enum(['machine', 'member'])),
   startedAt: z.number().check(z.int(), z.nonnegative()),
   steps: z.array(AgentInstallJobStepSchema),
   progress: z.array(AgentInstallJobProgressSchema),
@@ -60,7 +61,7 @@ export const AgentInstallJobSchema = lazyZodSchema(() => z.strictObject({
 }));
 export const DaemonAgentInstallErrorSchema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false),
-  errorCode: z.enum(['invalid_request', 'job_not_found', 'install_unavailable', 'not_managed', 'in_use', 'definition_version_changed']),
+  errorCode: z.enum(['invalid_request', 'job_not_found', 'install_unavailable', 'member_install_unavailable', 'not_managed', 'in_use', 'definition_version_changed']),
   error: z.string().check(z.minLength(1)),
 }));
 export const DaemonAgentInstallStartRequestSchema = lazyZodSchema(() => z.strictObject({
@@ -73,7 +74,8 @@ export const DaemonAgentInstallStartRequestSchema = lazyZodSchema(() => z.strict
   force: z.optional(z.boolean()),
 }));
 export const DaemonAgentInstallStartResponseSchema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), jobId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ ok: z.literal(true), jobId: z.string().check(z.minLength(1)),
+    executionScope: AgentInstallJobSchema.shape.executionScope }),
   DaemonAgentInstallErrorSchema,
 ]));
 export const DaemonAgentInstallReadRequestSchema = lazyZodSchema(() => z.strictObject({

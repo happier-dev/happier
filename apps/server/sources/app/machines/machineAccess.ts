@@ -134,8 +134,9 @@ function resolveMachineRpcRequiredRole(input: Readonly<{
 }>): MachineAccessRoleV1 | null {
     const policy = resolveMachineRpcRoutePolicy(input.method).sharedMachineAccess;
     if (policy === 'custodian_only' && !input.owned) return null;
-    // Capability discovery and installation share a transport, not a role.
-    return policy === 'manage' || input.actionId === 'machines.capabilities.install' ? 'manage' : input.requiredRole;
+    // Discovery/acquisition and Machine administration can share a transport.
+    return policy === 'manage' || input.actionId === 'machines.capabilities.install'
+        || input.actionId === 'machines.agents.uninstall' ? 'manage' : input.requiredRole;
 }
 
 export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input: Readonly<{

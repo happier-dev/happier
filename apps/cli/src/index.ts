@@ -54,6 +54,16 @@ if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) 
     try { await runFilesystemEffectInternal(process.stdin, process.stdout, controller.signal); }
     finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
   }).catch(() => { process.stderr.write('filesystem_effect_operation_failed\n'); process.exitCode = 1; });
+} else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'agent-install-effect') {
+  // Private native installer/resolver: never bootstrap Account or daemon state.
+  void import('./capabilities/installJobs/memberInstallEffect').then(async ({ runMemberAgentInstallEffect }) => {
+    if (readCliProcessArgs().length !== 1) throw new Error('agent_install_effect_invalid');
+    const controller = new AbortController();
+    const stop = () => { controller.abort(); };
+    process.once('SIGTERM', stop); process.once('SIGINT', stop);
+    try { await runMemberAgentInstallEffect(process.stdin, process.stdout, controller.signal); }
+    finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
+  }).catch(() => { process.stderr.write('agent_install_effect_failed\n'); process.exitCode = 1; });
 } else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'agent-launch') {
   // The RunAs shim cannot enter Account/bootstrap initialization under the
   // Agent identity. Its static descriptor also reserves this internal command.

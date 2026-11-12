@@ -9,7 +9,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 
-import type { MachineAgentRowAction } from './machineAgentPresentation';
+import { canPerformMachineAgentAction, type MachineAgentRowAction } from './machineAgentPresentation';
 import { showAgentSignInTerminalSheet } from './AgentSignInTerminalSheet';
 import { useAgentSignInTerminalHost } from './signInTerminalHost';
 
@@ -33,11 +33,11 @@ export function useMachineAgentRowActions(input: Readonly<{
     const { binding, execute, isCurrent } = useMountedActionExecution(serverId);
     return React.useCallback((agent, action) => {
         const target = { serverId, machineId, agentId: agent.agentId, definitionId: agent.definitionId };
+        if (!canPerformMachineAgentAction(agent, action.kind, canManage)) return;
         switch (action.kind) {
             case 'install':
             case 'retry':
             case 'update': {
-                if (!canManage) return;
                 if (!binding?.isCurrent()) return;
                 if (action.kind === 'retry' && agent.job?.readFailure) {
                     fireAndForget(ensureMachineAgentInstallJobs({ ...target, ...binding.scope }), { tag: 'machineAgentRowAction.refreshJob' });
@@ -54,14 +54,12 @@ export function useMachineAgentRowActions(input: Readonly<{
             }
             case 'remove':
                 // Removing confirms through the uninstall Action's own policy (D22: deletions confirm).
-                if (!canManage) return;
                 if (!binding?.isCurrent()) return;
                 fireAndForget(withAgentInstallJobFailureFeedback(execute('machines.agents.uninstall', {
                     machineId, agentId: agent.agentId, ...(agent.definitionId === undefined ? {} : { definitionId: agent.definitionId }),
                 }), isCurrent), { tag: 'machineAgentRowAction.remove' });
                 return;
             case 'cancel':
-                if (!canManage) return;
                 if (!binding?.isCurrent() || !agent.job || agent.job.outcome) return;
                 fireAndForget(withAgentInstallJobFailureFeedback(execute('machines.agents.install.cancel', { machineId, jobId: agent.job.jobId }), isCurrent), { tag: 'machineAgentRowAction.cancel' });
                 return;

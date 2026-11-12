@@ -22,7 +22,7 @@ import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from '@happier-dev/protocol/daemon/agent-install-jobs';
-import { isMachineAgentInstalledBySetup, resolveAgentSetupPhase, resolveMachineAgentStatus, type AgentSetupPhase } from './machineAgentPresentation';
+import { canPerformMachineAgentAction, isMachineAgentInstalledBySetup, resolveAgentSetupPhase, resolveMachineAgentStatus, type AgentSetupPhase } from './machineAgentPresentation';
 import { formatMachineAgentStatus } from './machineAgentCopy';
 
 /** Exact choices from the connected-account chooser, or the Agent's own login. */
@@ -179,11 +179,11 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
     const { agent, handlers, machineName: machine, compact, testID } = props;
     // Installed by this setup: the step list carries the flow on into sign-in.
     const installedHere = isMachineAgentInstalledBySetup(agent);
-    const canManage = props.canManage !== false;
+    const canAct = (kind: Parameters<typeof canPerformMachineAgentAction>[1]) => canPerformMachineAgentAction(agent, kind, props.canManage !== false);
     if (agent.job?.readFailure && !agent.job.outcome) {
         const failure = presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(agent.job.readFailure));
         return <AttentionBanner testID={`${testID}.failure`} title={failure.title} description={failure.body}
-            action={canManage ? { label: t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` } : undefined} announce="alert" />;
+            action={canAct('retry') ? { label: t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` } : undefined} announce="alert" />;
     }
     switch (props.phase) {
         case 'install':
@@ -193,7 +193,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     <Steps agent={agent} signIn="upcoming" testID={testID} />
                     <Actions>
                         {/* The pane is the review of what this installs and where: its press is the confirmation. */}
-                        {canManage ? <RoundButton testID={`${testID}.install`} size="small" title={t('machineAgents.installAgent', { agent: agent.title })} onPress={handlers.onInstall} /> : null}
+                        {canAct('install') ? <RoundButton testID={`${testID}.install`} size="small" title={t('machineAgents.installAgent', { agent: agent.title })} onPress={handlers.onInstall} /> : null}
                         {!compact && agent.install.guideUrl ? (
                             <RoundButton testID={`${testID}.installMyself`} size="small" display="secondary" title={t('machineAgents.installMyself')} onPress={() => handlers.onOpenGuide(agent.install.guideUrl!)} />
                         ) : null}
@@ -225,7 +225,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     <Actions>
                         <Text style={styles.quiet}>{t('machineAgents.closeNote', { machine })}</Text>
                         <View style={styles.grow} />
-                        {canManage ? <RoundButton testID={`${testID}.cancel`} size="small" display="inverted" title={t('machineAgents.actionCancel')} onPress={handlers.onCancelInstall} /> : null}
+                        {canAct('cancel') ? <RoundButton testID={`${testID}.cancel`} size="small" display="inverted" title={t('machineAgents.actionCancel')} onPress={handlers.onCancelInstall} /> : null}
                     </Actions>
                 </>
             );
@@ -251,7 +251,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                                 ? handlers.onSetUpAnother
                                     ? { label: failure.recovery.label, onPress: handlers.onSetUpAnother, testID: `${testID}.chooseAgent` }
                                     : undefined
-                            : canManage ? { label: failure?.recovery.label ?? t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` } : undefined}
+                            : canAct('retry') ? { label: failure?.recovery.label ?? t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` } : undefined}
                         announce="alert"
                     />
                 </>

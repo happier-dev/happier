@@ -19,7 +19,7 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import type { RpcHandler, RpcHandlerContext } from '../rpc/types';
 import { registerMachineAgentInstallJobRpcHandlers } from './rpcHandlers.agentInstallJobs';
 
-it.each(['custodian', 'guest'] as const)('installs the admitted %s Account pin independently of the daemon catalog', async caller => {
+it.each(['custodian', 'guest'] as const)('isolates the admitted %s Account pin from daemon catalog and execution authority', async caller => {
   const home = await createTempDir('happier-install-account-catalog-');
   const channel = await createRequesterCurrentnessSocketHarness();
   const accountId = caller === 'custodian' ? 'alice' : 'bob';
@@ -97,6 +97,11 @@ it.each(['custodian', 'guest'] as const)('installs the admitted %s Account pin i
       storedCredentials.mockResolvedValue(credentials);
     }
     const accepted = DaemonAgentInstallStartResponseSchema.parse(await start(input, context));
+    if (caller === 'guest') {
+      expect(accepted).toMatchObject({ ok: false, errorCode: 'member_install_unavailable' });
+      expect(owner.list(accountId)).toEqual({ ok: true, jobs: [] });
+      return;
+    }
     expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true });
     if (!accepted.ok) return;
     const read = () => owner.read({ jobId: accepted.jobId, cursor: 0 }, accountId);
