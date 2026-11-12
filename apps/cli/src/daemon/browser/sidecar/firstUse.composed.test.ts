@@ -44,7 +44,7 @@ import { createRequesterSessionControlRuntimeFixture } from '../../testkit/reque
 import { ConnectedServiceRuntimeRegistry } from '../../connectedServices/runtimeRegistry/registry';
 import { readOrCreateInstallationIdentity } from '../../identity/store';
 import { executeExternalAction } from '../../externalActions/executeExternalAction';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionAccountServerPrincipalV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionAccountServerPrincipalV1Schema, ExternalActionTerminalServerPrincipalV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -66,6 +66,9 @@ import { createBrowserRuntimeActionExecutor } from '../../../../../ui/sources/sy
 import { createBrowserExtensionService } from '../extensions/service';
 import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
+import { bindPresentUserActionConfirmation } from '../../../../../ui/sources/sync/ops/actions/presentUserConfirmation';
+import { executeMachineActionAtDaemon } from '../../../../../ui/sources/sync/ops/actions/executeMachineActionAtDaemon';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 // A tiny valid ZIP with an executable and companion file; no real Chromium is fetched.
 const archive = Buffer.from('UEsDBBQAAAAAAKCqIl2/ze6ZDgAAAA4AAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyc2VydmVyLWZpeHR1cmVQSwMEFAAAAAAAoKoiXeOBVF8PAAAADwAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxoYXJuZXNzLWZpeHR1cmVQSwECFAMUAAAAAACgqiJdv83umQ4AAAAOAAAAEgAAAAAAAAAAAAAA7YEAAAAAYWd5X2FjcF9zZXJ2ZXIucGFyUEsBAhQDFAAAAAAAoKoiXeOBVF8PAAAADwAAABUAAAAAAAAAAAAAAO2BPgAAAGxvY2FsaGFybmVzc19leHRlcm5hbFBLBQYAAAAAAgACAIMAAACAAAAAAAA=', 'base64');
@@ -181,7 +184,10 @@ async function setup(pageOpenFailure?: Error, publishControlBeforeInstall = fals
         } };
 }
 
-async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 'decision' | 'daemon' = 'decision', requireOpenApproval = true) {
+// 02102e614e1 separates own-UI native review from automation's durable Inbox approval.
+// Real MCP browser dispatch: createExternalMcpServer.ts requestDaemonSignedRootActionExecution.
+async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 'decision' | 'daemon' = 'decision',
+    requireOpenApproval = true, requesterSurface: 'mcp' | 'ui' = 'mcp') {
     const browser = await setup(undefined, true);
     const directory = boundary.home;
     const homeId = 'srv_browser_first_use';
@@ -191,7 +197,7 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
     const credentials = { token: token('alice', true), encryption: null };
     const currentnessChannel = await createRequesterCurrentnessSocketHarness();
     const settings = { actionsSettingsV1: { v: 1, actions: requireOpenApproval
-        ? { 'browser.view.open': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli'] } } : {} } };
+        ? { 'browser.view.open': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli', 'mcp'] } } : {} } };
     let artifact: Record<string, unknown> | undefined;
     let originalAuthorizationCurrent = true;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => {
@@ -265,17 +271,25 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
     machine.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorMessage: 'Unexpected launch' }),
         stopSession: async () => false, requestShutdown: () => {} }, { externalActionIngressOwner: ingress });
     const phaseDiagnostics = vi.spyOn(logger, 'warnLocalFile');
-    const invoke = async (actionId: 'browser.view.open' | 'browser.extensions.install' | 'approval.request.decide', input: unknown, requestId: string, replayApproved = false) => {
+    const invoke = async (actionId: 'browser.view.open' | 'browser.extensions.install' | 'approval.request.decide', input: unknown, requestId: string, replayApproved = false, reviewDigest?: string) => {
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const envelope = { v: 1 as const, requestId, target, input };
-        const authentication = { kind: 'account' as const, tokenEpoch: 0 };
+        // The requesting automation and the person deciding its Inbox proposal are separate invocations.
+        const surface = actionId === 'approval.request.decide' ? 'ui' : requesterSurface;
+        const authority = surface === 'ui' ? 'present_user' : 'account_automation';
+        const authentication = { kind: surface === 'ui' ? 'account' as const : 'terminal' as const, tokenEpoch: 0 };
+        const context: ActionExecutorContext = { surface, authority, actionCaller: { kind: 'host' },
+            defaultSessionId: 'session', runtimeAccountId: requesterAccountId, serverIdentityId: homeId,
+            actionRequestId: requestId, externalActionTarget: target };
+        const confirmed = reviewDigest ? bindPresentUserActionConfirmation(actionId, input, context, reviewDigest) : context;
         const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'browser-root', binding: {
             accountId: requesterAccountId, custodianAccountId: 'alice', authentication, accountEncryptionMode: 'plain',
             machineId: 'machine', installationId: installation.installationId, serverIdentityId: homeId,
             actionId, requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target } });
         const boxed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose: { kind: 'external_action' },
-            invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user', defaultSessionId: 'session' },
-            installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), credentials: { token: token(requesterAccountId) },
+            invocation: { caller: { kind: 'host' }, surface, authority, defaultSessionId: 'session',
+                ...(confirmed.presentUserConfirmation ? { presentUserConfirmation: confirmed.presentUserConfirmation } : {}) },
+            installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), credentials: { token: token(requesterAccountId, surface === 'mcp') },
             randomBytes: length => new Uint8Array(randomBytes(length)) });
         if (replayApproved) {
             const prepared = await ingress.prepareRequesterAccountContext!({ authorization: boxed });
@@ -286,8 +300,9 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
                         callerAuthority: 'present_user', callerInputAuthorization: prepared.authorization } });
             } finally { await prepared.dispose(); }
         }
-        const outcome = await executeExternalAction({ actionId, envelope, surface: 'ui',
-            principal: ExternalActionAccountServerPrincipalV1Schema.parse({ accountId: requesterAccountId, authentication, authority: 'present_user' }),
+        const outcome = await executeExternalAction({ actionId, envelope, surface,
+            principal: (surface === 'ui' ? ExternalActionAccountServerPrincipalV1Schema : ExternalActionTerminalServerPrincipalV1Schema)
+                .parse({ accountId: requesterAccountId, authentication, authority }),
             currentMachineId: 'machine', currentServerId: homeId, currentServerHttpBaseUrl: endpoint,
             currentInstallationId: installation.installationId, executionAuthorization: boxed,
             externalActionMachineRequestPrivateKey: decodeBase64(installation.privateKey, 'base64url'),
@@ -306,6 +321,13 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
         ACTION_OPERATION_RPC_METHODS_V2.list, {}, requester ? { rpcContext: requesterContext } : undefined));
     const approvals = createCliApprovalsArtifactStore({ credentials: { token: token(requesterAccountId), encryption: null }, serverId: homeId });
     return { ...browser, machine, invoke, read, credentials, homeId,
+        confirmOpen: (requestId: string, confirm: () => Promise<boolean>) => executeMachineActionAtDaemon('browser.view.open', command,
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+            async (input, reviewDigest) => {
+                const execution = await invoke('browser.view.open', input, requestId, false, reviewDigest);
+                // Match executeMachineOwnedAction: its UI adapter unwraps successful Action payloads.
+                return execution.ok ? execution.result : execution;
+            }, confirm),
         retireOriginalAuthorization: () => { originalAuthorizationCurrent = false; },
         approve: async () => {
             if (replayRoute === 'daemon') {
@@ -323,6 +345,7 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
             return await invoke('approval.request.decide', { artifactId: artifact?.id, decision: 'approve' },
                 'approve-first-use', replayRoute === 'daemon');
         },
+        approvalExists: () => artifact !== undefined,
         approval: async () => ApprovalRequestV2Schema.parse(await approvals.approvalsGet({ artifactId: String(artifact?.id) })),
         list,
         close: async () => {
@@ -345,7 +368,9 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(await fixture.invoke('browser.view.open', command, 'inbox-open')).toMatchObject({ ok: true,
                 result: { kind: 'approval_request_created' } });
             expect(await fixture.approve()).toMatchObject({ ok: true });
-            const accepted = BrowserOpenViewInProgressV1Schema.parse((await fixture.approval()).execution?.result);
+            const approved = await fixture.approval();
+            expect(approved, JSON.stringify(approved)).toMatchObject({ execution: { ok: true } });
+            const accepted = BrowserOpenViewInProgressV1Schema.parse(approved.execution?.result);
             await fixture.downloading.promise;
             fixture.release.resolve();
             await fixture.read(accepted.operationId, true);
@@ -365,20 +390,20 @@ describe('managed Browser provisioning through the approved first open', () => {
         } finally { abort.abort(); await fixture.close(); }
     });
     it.each(['alice', 'bob'])('executes the Home-admitted person %s open and extension install without the agent approval floor', async accountId => {
-        const fixture = await setupInstalledRequester(accountId, 'decision', false);
+        const fixture = await setupInstalledRequester(accountId, 'decision', false, 'ui');
         try {
             // Real installed ingress restores Home's private present-user invocation;
             // only network, download and CDP boundaries are replaced above.
             const opened = await fixture.invoke('browser.view.open', command, 'present-user-open');
-            expect.soft(opened).toMatchObject({ ok: true, result: { status: 'in_progress' } });
+            expect.soft(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { status: 'in_progress' } });
             const directory = join(boundary.home, 'unpacked-person-extension');
             await mkdir(directory);
             await writeFile(join(directory, 'manifest.json'), JSON.stringify({ manifest_version: 3,
                 name: 'Present user extension', version: '1.0', permissions: ['storage'] }));
-            expect(await fixture.invoke('browser.extensions.install', { machineId: 'machine', profileId: 'personal',
+            const extension = await fixture.invoke('browser.extensions.install', { machineId: 'machine', profileId: 'personal',
                 source: { kind: 'unpacked', directory },
-                reviewedPermissions: { version: '1.0', permissions: ['storage'], hostPermissions: [] } }, 'present-user-extension'))
-                .toMatchObject({ ok: true, result: { status: 'updated', entry: {
+                reviewedPermissions: { version: '1.0', permissions: ['storage'], hostPermissions: [] } }, 'present-user-extension');
+            expect(extension, JSON.stringify(extension)).toMatchObject({ ok: true, result: { status: 'updated', entry: {
                     extension: { name: 'Present user extension', enabled: true } } } });
             fixture.release.resolve();
             if (opened.ok && opened.result && typeof opened.result === 'object' && 'operationId' in opened.result) {
@@ -386,6 +411,32 @@ describe('managed Browser provisioning through the approved first open', () => {
                     operation: { state: 'succeeded' } });
             }
             expect(fixture.broker.listViews('session')).toMatchObject([{ viewId: command.viewId }]);
+        } finally { await fixture.close(); }
+    });
+    it('cancels native own-UI Ask without effects, then confirms the exact first-use review once', async () => {
+        const fixture = await setupInstalledRequester('bob', 'decision', true, 'ui');
+        try {
+            // 02102e614e1: Ask on a person's own UI uses the carried native review, not self-approval.
+            const cancelled = vi.fn(async () => false);
+            expect(await fixture.confirmOpen('cancelled-native-open', cancelled)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(cancelled).toHaveBeenCalledOnce();
+            expect(fixture.approvalExists()).toBe(false);
+            expect((await fixture.list()).items).toEqual([]);
+            expect(fixture.opened).toEqual([]);
+            expect(boundary.download).not.toHaveBeenCalled();
+            const confirm = vi.fn(async () => true);
+            const accepted = await fixture.confirmOpen('confirmed-native-open', confirm);
+            expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, result: { status: 'in_progress' } });
+            expect(confirm).toHaveBeenCalledOnce();
+            expect(fixture.approvalExists()).toBe(false);
+            if (!accepted.ok) throw new Error('Native first-use confirmation was refused');
+            const operation = BrowserOpenViewInProgressV1Schema.parse(accepted.result);
+            await fixture.downloading.promise;
+            fixture.release.resolve();
+            expect(await fixture.read(operation.operationId, true)).toMatchObject({ kind: 'found', operation: { state: 'succeeded', scope: { accountId: 'bob' } } });
+            expect((await fixture.list()).items).toHaveLength(1);
+            expect(fixture.opened).toEqual([command.target.url]);
+            expect(boundary.download).toHaveBeenCalledOnce();
         } finally { await fixture.close(); }
     });
     it('refuses daemon replay when the original requester authorization is no longer current', async () => {
@@ -424,7 +475,9 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(boundary.download).not.toHaveBeenCalled();
             expect((await fixture.list()).items).toEqual([]);
             expect(await fixture.approve()).toMatchObject({ ok: true });
-            const accepted = BrowserOpenViewInProgressV1Schema.parse((await fixture.approval()).execution?.result);
+            const approved = await fixture.approval();
+            expect(approved, JSON.stringify(approved)).toMatchObject({ execution: { ok: true } });
+            const accepted = BrowserOpenViewInProgressV1Schema.parse(approved.execution?.result);
             await fixture.downloading.promise;
             // Repeated approval joins the Artifact's original execution; it must
             // not create a second operation while the first download is held.
