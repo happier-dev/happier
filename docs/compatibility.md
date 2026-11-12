@@ -1,5 +1,33 @@
 # Compatibility and version skew
 
+## SessionMessage content codec (unreleased 0.3)
+
+Direct transcript writers use the shared content-byte frame before their existing
+Session cipher. AES messages use bundle version 1; legacy-secretbox messages seal
+the same marked content. New readers retain version-0 AES and unframed secretbox
+JSON. Generic non-message writers and ciphertext copied from Pending keep their
+historical representation until their own content batch is migrated. Platform
+gzip byte streams need not be identical: deterministic message nonces bind the
+actual framed bytes in a message-specific namespace, separate from older writes.
+
+Server physical storage adds nullable `SessionMessage.contentBytes`; byte-backed
+rows retain JSON null in the historical `content` column. The one storage codec
+restores the unchanged wire envelope. New readers accept historical JSON rows,
+plain values remain JSON, and noncanonical accepted ciphertext strings retain
+their exact JSON representation. Migrations add a nullable column without
+rewriting historical content; MySQL uses LongBlob rather than narrowing messages
+to its default Blob capacity. Deploy the additive schema before loading new
+server queries. An older server reading new byte-backed rows is unsupported.
+
+The predecessor basis is `../0.2` at
+`7b0f74960b1393886b994dbda71dcb3439c1ab57`, with no scoped working changes to
+CLI encryption or UI encryptor at inspection. Its AES uses version 0, a 12-byte
+nonce and 16-byte tag; secretbox uses a 24-byte nonce and serialized JSON. Reading
+0.2-created content in 0.3 is required. The first 0.3 release includes matching
+Node, browser, native-worker and notification-extension readers together;
+0.2 binaries reading newly framed writes and automatic old-binary rollback are
+not supported directions. See [content bytes](encryption.md#sessionmessage-content-bytes-03-development).
+
 ## Deployment joining settlement (unreleased 0.3)
 
 The closed V1 deployment transition accepts optional `servingDeploymentId` for a
@@ -8153,6 +8181,19 @@ has no tracked source-declaration protocol at this path and no scoped working
 changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 agent/MCP Usage delivery adds optional
+`accounting.coverage.sourceSummary` to the client-only `UsageQueryAccountingSchema`.
+It is a closed presentation object with total source count and closed groups
+derived from existing source status, path and capture-kind fields. Broad tool
+delivery replaces per-source rows with this summary while retaining coverage
+reasons and Work counts; selecting one Session retains per-source detail.
+The server accounting schema, query identity and stored data are unchanged.
+Matching Protocol hosts and generated SDK DTOs update together; older closed
+0.3 result readers reject the added field. This direct development cut adds no
+epoch or adapter. The scoped-clean `../0.2` frontier
+`7b0f74960b1393886b994dbda71dcb3439c1ab57` has no Usage delivery or accounting
+contract at the corresponding paths.
 
 Unreleased 0.3 direct Machine RPC removes `maxCalls` from the closed grant scope.
 Home signs `callerAuthority` on every V2 Machine RPC grant; the requester reuses

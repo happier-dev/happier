@@ -4,9 +4,30 @@ import { USAGE_QUERY_EVIDENCE_SECTIONS, type UsageQueryBatchResult, type UsageQu
 
 type EvidenceSection = NonNullable<UsageQueryResultSlice['incomplete']>['omittedSections'][number];
 const bytes = (value: unknown) => measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'usageQueryDelivery');
+type Accounting = NonNullable<UsageQueryResultSlice['accounting']>;
+type SourceGroup = NonNullable<NonNullable<Accounting['coverage']>['sourceSummary']>['groups'][number];
 
-function projectAccounting(value: NonNullable<UsageQueryResultSlice['accounting']>, includeRows: boolean): NonNullable<UsageQueryResultSlice['accounting']> {
+function projectAccounting(value: Accounting, includeRows: boolean, summarizeSources = false): Accounting {
   const { priceCatalog: _catalog, contributions, ...facts } = value;
+  const coverage = facts.coverage;
+  if (summarizeSources && coverage && !coverage.sourceSummary) {
+    const groups = new Map<string, SourceGroup>();
+    for (const row of coverage.sources) {
+      const key = JSON.stringify([row.path, row.status, row.captureKind]);
+      const group = groups.get(key);
+      if (group) {
+        group.sourceCount++;
+        group.eventCount += row.eventCount;
+      } else {
+        groups.set(key, { path: row.path, status: row.status,
+          ...(row.captureKind === undefined ? {} : { captureKind: row.captureKind }),
+          sourceCount: 1, eventCount: row.eventCount });
+      }
+    }
+    facts.coverage = { ...coverage, sources: [], sourceSummary: {
+      sourceCount: coverage.sources.length, groups: [...groups.values()],
+    } };
+  }
   // Work conserves these exact rows. Summary/comparison facts do not need them.
   return includeRows && contributions !== undefined ? { ...facts, contributions } : facts;
 }
@@ -54,18 +75,19 @@ export function projectUsageQueryDelivery(batch: UsageQueryBatchResult, surface?
   const result = { ...batch, results: batch.results.map(original => {
     let slice = original;
     const sessions = slice.requestedQuery.session;
+    const summary = Boolean(surface) && !(typeof sessions === 'string' || sessions?.length === 1);
     // Agent tools have their own smaller delivery budgets (Pi: 50 KiB tool,
     // 1 MiB bridge). Broad reads deliver conserved summary facts, not event
     // bodies. One selected Session is the existing detail/recovery front door.
-    if (surface && !(typeof sessions === 'string' || sessions?.length === 1)) {
+    if (summary) {
       for (const section of ['work', 'howYouWork'] as const) {
         if (slice[section] !== undefined) slice = omitEvidence(slice, section);
       }
     }
     return { ...slice,
-      ...(slice.accounting ? { accounting: projectAccounting(slice.accounting, slice.work !== undefined) } : {}),
+      ...(slice.accounting ? { accounting: projectAccounting(slice.accounting, slice.work !== undefined, summary) } : {}),
       ...(slice.comparison?.accounting ? { comparison: { ...slice.comparison,
-        accounting: projectAccounting(slice.comparison.accounting, false) } } : {}),
+        accounting: projectAccounting(slice.comparison.accounting, false, summary) } } : {}),
     };
   }) };
   // Remove largest detail sections first so a large slice cannot erase a small

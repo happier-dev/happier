@@ -4152,8 +4152,8 @@ export type UsageActionResultById = {
             reason: 'accounting_unavailable' | 'period_unavailable' | 'public_profile_source_unavailable' | 'public_profile_unavailable' | 'query_mismatch';
         };
         file: {
-            base64: string;
             v: 1;
+            base64: string;
             asOfMs: null | number;
             fileName: string;
             mediaType: 'image/png';
@@ -4904,8 +4904,8 @@ export type UsageActionResultById = {
             reason: 'accounting_unavailable' | 'period_unavailable' | 'public_profile_source_unavailable' | 'public_profile_unavailable' | 'query_mismatch';
         };
         file: {
-            base64: string;
             v: 1;
+            base64: string;
             asOfMs: null | number;
             fileName: string;
             mediaType: 'image/png';
@@ -9347,6 +9347,16 @@ export type UsageActionResultById = {
                         historyComplete?: boolean | undefined;
                         displayLocation?: string | undefined;
                     }[];
+                    sourceSummary?: undefined | {
+                        sourceCount: number;
+                        groups: {
+                            path: 'legacy' | 'native' | 'runtime' | 'unknown';
+                            status: 'available' | 'error' | 'partial' | 'pending' | 'unknown' | 'unsupported';
+                            sourceCount: number;
+                            eventCount: number;
+                            captureKind?: 'from_logs' | 'measured' | 'not_added' | undefined;
+                        }[];
+                    };
                 };
             };
             accountingObservationRange?: undefined | {
@@ -13302,6 +13312,16 @@ export type UsageActionResultById = {
                             historyComplete?: boolean | undefined;
                             displayLocation?: string | undefined;
                         }[];
+                        sourceSummary?: undefined | {
+                            sourceCount: number;
+                            groups: {
+                                path: 'legacy' | 'native' | 'runtime' | 'unknown';
+                                status: 'available' | 'error' | 'partial' | 'pending' | 'unknown' | 'unsupported';
+                                sourceCount: number;
+                                eventCount: number;
+                                captureKind?: 'from_logs' | 'measured' | 'not_added' | undefined;
+                            }[];
+                        };
                     };
                 };
                 costFactTotals?: undefined | {
@@ -13399,7 +13419,6 @@ export type UsageActionResultById = {
                     };
                     outcome: null | {
                         key: string;
-                        repositoryKey: string;
                         pullRequest: {
                             [x: string]: unknown;
                             provider: {
@@ -13444,7 +13463,7 @@ export type UsageActionResultById = {
                                 description?: string | undefined;
                             };
                         };
-                        contributionIds: string[];
+                        repositoryKey: string;
                     };
                     reason: 'allocated' | 'ambiguous_outcome' | 'missing_evidence' | 'missing_turn' | 'uncertain_writers';
                     evidence: {
@@ -13640,12 +13659,11 @@ export type UsageActionResultById = {
                     };
                     branch: null | {
                         key: string;
-                        repositoryKey: string;
                         branch: {
                             ref: string;
                             headSha: string;
                         };
-                        contributionIds: string[];
+                        repositoryKey: string;
                     };
                     reason: 'allocated' | 'ambiguous_outcome' | 'missing_evidence' | 'missing_turn' | 'uncertain_writers';
                     evidence: {
@@ -13683,6 +13701,9 @@ export type UsageActionResultById = {
             };
             workSummary?: undefined | {
                 mergedPrCount: number;
+                sessionCount?: number | undefined;
+                contributionCount?: number | undefined;
+                allocatedContributionCount?: number | undefined;
             };
             mergedOutcomes?: undefined | {
                 period: {

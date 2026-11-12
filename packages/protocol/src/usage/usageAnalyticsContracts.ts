@@ -678,9 +678,19 @@ export function getUsageAnalyticsQueryRequestKey(query: UsageAnalyticsQueryReque
 
 /** Opened machine labels belong to authorized client reads, never the server accounting response. */
 export const UsageQueryAccountingSchema = lazyZodSchema(() => z.extend(UsageAnalyticsQueryResponseSchema, {
-  coverage: z.optional((<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(UsageAnalyticsCoverageSchema, { sources: z.array((<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(UsageAnalyticsSourceCoverageSchema, {
-    displayLocation: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  }))) }))),
+  coverage: z.optional((<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(UsageAnalyticsCoverageSchema, {
+    sources: z.array((<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(UsageAnalyticsSourceCoverageSchema, {
+      displayLocation: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    }))),
+    /** Agent delivery replaces per-source rows with these counts; coverage reasons remain intact. */
+    sourceSummary: z.optional(z.strictObject({
+      sourceCount: z.number().check(z.int(), z.minimum(0)),
+      groups: z.array(z.extend(z.pick(UsageAnalyticsSourceCoverageSchema, { path: true, status: true, captureKind: true }), {
+        sourceCount: z.number().check(z.int(), z.minimum(0)),
+        eventCount: z.number().check(z.int(), z.minimum(0)),
+      })),
+    })),
+  }))),
 }));
 
 export const ServerUsageAnalyticsCapabilitiesSchema = lazyZodSchema(() => z.object({

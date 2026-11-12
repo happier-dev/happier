@@ -3565,6 +3565,12 @@ still validates and applies its explicit incomplete-response contract.
 
 Agent and MCP delivery defaults to conserved summary facts: accounting totals,
 breakdowns and Work summary counts. The existing delivery owner omits broad
+per-source coverage rows in favor of `accounting.coverage.sourceSummary`:
+the total source count and groups by status, path and capture kind, with source
+and event counts. `coverage.reasons` and the other coverage facts remain intact;
+`coverage.sources` is empty when that summary replaces its rows. Comparison
+accounting uses the same projection. Select one Session to read per-source rows.
+The existing delivery owner also omits broad
 Work allocations and transcript autopsy bodies, recording them in
 `incomplete.omittedSections` with `narrow_query` recovery for agent tool budgets.
 Select exactly one Session with `session` to obtain those detail sections.
