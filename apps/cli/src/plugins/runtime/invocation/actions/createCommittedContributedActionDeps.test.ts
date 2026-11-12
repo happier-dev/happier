@@ -7,7 +7,9 @@ import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { createCommittedContributedActionInvoker } from './createCommittedContributedActionDeps';
+import { createPluginInvocationActionsService } from '../services/actions';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCommittedContributedActionInvoker, listRuntimeContributedActionDefinitions } from './createCommittedContributedActionDeps';
 
 // Login storage is an external persistence boundary. Admission, activation,
 // invocation, published error projection and public Action normalization stay real.
@@ -43,5 +45,46 @@ it('preserves only the canonical published PluginError envelope across committed
     expect(ActionExecuteFailureSchema.parse(unpublished)).toMatchObject({ ok: false, errorCode: 'plugin_action_execution_failed' });
     expect(unpublished).not.toHaveProperty('details.details.rawPayload');
     expect(unpublished).not.toHaveProperty('details.details.phase');
+  } finally { await fixture.dispose(); }
+});
+
+
+it('captures a nested SDK with-origin call through the committed CLI executor and rejects mismatched routing', async () => {
+  let effects = 0;
+  const pluginId = 'example.committed-origin';
+  const machineId = 'origin-machine';
+  const serverIdentityId = 'srv_committed_origin';
+  const authored = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+    actions: { read: { title: 'Read', dangerLevel: 'safe', surfaces: ['plugin'],
+      inputSchema: { type: 'object', additionalProperties: false },
+      run() { effects++; return { received: true }; },
+    } } });
+  const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: authored.manifest,
+    files: { 'daemon.mjs': 'export function activate() {}' }, instantiateCommittedModule: () => ({ activate: authored.activate }) }],
+    resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+      loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
+    runtimeOptions: { resolveCurrentMachineId: () => machineId,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId }) },
+  });
+  try {
+    const service = createPluginInvocationActionsService({
+      invokeContributedAction: async () => { throw new Error('Targeted operations are outside this ordinary-ref test'); },
+      seed: { plugin: { id: pluginId, version: '1.0.0' }, contribution: { id: 'read', qualifiedId: `${pluginId}/actions/read` },
+        occurrenceId: fixture.registry.readPluginOccurrenceId!(pluginId)!,
+        sourceCustody: fixture.registry.readPluginSourceCustody!(pluginId)!,
+        surface: 'cli', signal: new AbortController().signal, isOccurrenceCurrent: () => true },
+      actionExecutor: createCliActionExecutor({ token: 'fixture-token', sessionId: 'cli-global', mode: 'plain', ctx: null,
+        pluginActionExecutionOwner: 'current_process',
+        listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(fixture.registry, selection),
+        invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry() }) }),
+    });
+    const action = { pluginId, localId: 'read' };
+    const routing = { serverIdentityId, machineId, pluginId };
+    await expect(service.executeWithExecutionOrigin(action, {}, { expectedExecutionRouting: routing }))
+      .resolves.toMatchObject({ result: { received: true }, executionOrigin: { serverIdentityId } });
+    expect(effects).toBe(1);
+    await expect(service.executeWithExecutionOrigin(action, {}, { expectedExecutionRouting: { ...routing, machineId: 'other-machine' } }))
+      .rejects.toMatchObject({ code: 'plugin_action_execution_origin_mismatch' });
+    expect(effects).toBe(1);
   } finally { await fixture.dispose(); }
 });

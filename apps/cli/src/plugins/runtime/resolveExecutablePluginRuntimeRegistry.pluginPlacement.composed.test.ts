@@ -33,7 +33,7 @@ function response<T>(data: T): AxiosResponse<T> {
 
 afterEach(() => vi.restoreAllMocks());
 
-async function fixture(crossMachine = false) {
+async function fixture(crossMachine = false, captureOrigin = false) {
     let effects = 0;
     const callers: unknown[] = [];
     const accountReads: string[] = [];
@@ -61,9 +61,9 @@ async function fixture(crossMachine = false) {
     const caller = definePlugin({ id: callerId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
         actions: { run: { title: 'Call receiver', surfaces: ['cli'], dangerLevel: 'safe',
             inputSchema: { type: 'object', additionalProperties: false },
-            run: async (_input, context) => crossMachine
+            run: async (_input, context) => (crossMachine || captureOrigin)
                 ? await context.services.actions.executeWithExecutionOrigin({ pluginId: receiverId, localId: 'read' }, {}, {
-                    expectedExecutionRouting: { serverIdentityId, machineId: 'other-machine', pluginId: receiverId },
+                    expectedExecutionRouting: { serverIdentityId, machineId: crossMachine ? 'other-machine' : machineId, pluginId: receiverId },
                 })
                 : await context.services.actions.execute({ pluginId: receiverId, localId: 'read' }, {}),
         } },
@@ -244,6 +244,19 @@ describe('daemon plugin caller execution placement', () => {
             })]);
             expect(runtime.accountReads).toEqual([]);
             expect(runtime.transportRequests).toEqual([]);
+        } finally { await runtime.dispose(); }
+    });
+
+    it('returns the executed origin of a nested same-Machine with-origin Action', async () => {
+        const runtime = await fixture(false, true);
+        try {
+            expect(await executeAppliedDaemonPluginActionWithController({
+                actionId: `${callerId}/run`, input: {}, surface: 'cli',
+            }, runtime.controller)).toMatchObject({ matched: true, result: { ok: true, result: {
+                result: { received: true },
+                executionOrigin: { serverIdentityId, materializationRef: { pluginId: receiverId, machineId } },
+            } } });
+            expect(runtime.effects()).toBe(1);
         } finally { await runtime.dispose(); }
     });
 

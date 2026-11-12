@@ -202,6 +202,13 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
         ...(resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope } : {}),
         approvalContext,
+        ...(context.contributedActionExecutionOrigin ? {
+          captureExecutionOrigin: true as const,
+          ...(context.contributedActionExecutionOrigin.expectedExecutionOrigin === undefined ? {} : {
+            expectedExecutionOrigin: context.contributedActionExecutionOrigin.expectedExecutionOrigin }),
+          ...(context.contributedActionExecutionOrigin.expectedExecutionRouting === undefined ? {} : {
+            expectedExecutionRouting: context.contributedActionExecutionOrigin.expectedExecutionRouting }),
+        } : {}),
         ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
         ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
@@ -222,6 +229,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       });
       if (!attempt.matched) return { ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable' };
       if (attempt.result.ok) {
+        if (attempt.result.executionOrigin) context.contributedActionExecutionOrigin?.onExecuted(attempt.result.executionOrigin);
         const { executionOrigin: _executionOrigin, deferredApprovalArtifactId: _deferredApprovalArtifactId, ...result } = attempt.result;
         return result;
       }
