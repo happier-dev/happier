@@ -9794,7 +9794,7 @@ export const zhHans: TranslationStructure = {
       gpt5High: "GPT-5 高",
     },
     geminiPermissionMode: {
-      title: "GEMINI 权限模式",
+      title: "Gemini 权限模式",
       default: "默认",
       readOnly: "只读",
       safeYolo: "安全 YOLO",

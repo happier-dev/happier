@@ -9891,7 +9891,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     permissionMode: {
       nativeModeOverrides: ({ mode }: { mode: string }) => `Режим агента ${mode} переопределяет настройку подтверждений. Сбросьте переопределение режима, чтобы использовать настройку разрешений.`,
       usePermissionSetting: 'Использовать настройку разрешений',
-      title: "РЕЖИМ РАЗРЕШЕНИЙ",
+      title: "Режим разрешений",
       effectiveLabel: ({ label }: { label: string }) => `Эффективно: ${label}`,
       default: "По умолчанию",
       readOnly: "Только чтение",
@@ -9967,7 +9967,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         customPlaceholder: "например: claude-3.5-sonnet",
       },
     codexPermissionMode: {
-      title: "РЕЖИМ РАЗРЕШЕНИЙ",
+      title: "Режим разрешений",
       default: "Настройки CLI",
       plan: "Режим планирования",
       readOnly: "Только чтение",
@@ -9993,7 +9993,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       gpt5High: "GPT-5 Высокий",
     },
     geminiPermissionMode: {
-      title: "РЕЖИМ РАЗРЕШЕНИЙ",
+      title: "Режим разрешений",
       default: "По умолчанию",
       readOnly: "Только чтение",
       safeYolo: "Безопасный YOLO",

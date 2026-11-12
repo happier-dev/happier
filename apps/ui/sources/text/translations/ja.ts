@@ -10444,7 +10444,7 @@ localTailscale: {
       gpt5High: "GPT-5 高",
     },
     geminiPermissionMode: {
-      title: "GEMINI権限モード",
+      title: "Gemini権限モード",
       default: "デフォルト",
       readOnly: "読み取り専用モード",
       safeYolo: "セーフYOLO",

@@ -11762,7 +11762,7 @@ const enAgentInput = {
   permissionMode: {
     nativeModeOverrides: ({ mode }: { mode: string }) => `Agent Mode ${mode} overrides the approval preset. Clear the Mode override to use the permission setting.`,
     usePermissionSetting: 'Use permission setting',
-    title: 'PERMISSION MODE',
+    title: 'Permission mode',
     effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
     default: 'Default',
     readOnly: 'Read only',
@@ -11843,7 +11843,7 @@ const enAgentInput = {
     customPlaceholder: 'e.g. claude-3.5-sonnet',
   },
   codexPermissionMode: {
-    title: 'PERMISSIONS MODE',
+    title: 'Permissions mode',
     default: 'CLI settings',
     plan: 'Plan mode',
     readOnly: 'Read only',
@@ -11869,7 +11869,7 @@ const enAgentInput = {
     gpt5High: 'GPT-5 High',
   },
   geminiPermissionMode: {
-    title: 'GEMINI PERMISSION MODE',
+    title: 'Gemini permission mode',
     default: 'Default',
     readOnly: 'Read only',
     safeYolo: 'Safe YOLO',

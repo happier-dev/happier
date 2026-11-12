@@ -8148,7 +8148,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             gpt5High: 'GPT-5 高',
         },
         geminiPermissionMode: {
-            title: 'GEMINI 權限模式',
+            title: 'Gemini 權限模式',
             default: '預設',
             readOnly: '唯讀',
             safeYolo: '安全 YOLO',
