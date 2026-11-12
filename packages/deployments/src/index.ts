@@ -38,5 +38,6 @@ export { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindin
 export * from './secrets/sealMachineSecretGrantEnvelopeV1.js';
 
 export { buildMoveWorkflowDefinition } from './move/buildMoveWorkflowDefinition.js';
+export { buildDeploymentFleetWorkflowDefinition, type DeploymentFleetWorkflowInput } from './fleet/buildDeploymentFleetWorkflowDefinition.js';
 
 export { resolvePublishTargetRecommendation, type PublishTargetRecommendationInput } from './targets/resolvePublishTargetRecommendation.js';
