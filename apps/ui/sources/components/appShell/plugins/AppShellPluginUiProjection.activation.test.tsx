@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Linking } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, onTestFailed, vi } from 'vitest';
 import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginSearchQueryV1Schema, PluginSearchResultV1Schema } from '@happier-dev/protocol/plugins/contributions/search-providers';
@@ -18,6 +18,8 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createDeferred, createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -54,6 +56,11 @@ import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
 import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderRuntimeDemand';
+import { acquireVoiceProviderRuntimeDemand } from '@/voice/session/voiceProviderRuntimeDemand';
+import { getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
+import { getBundledConversationRuntimeGenerationRevision } from '@/voice/registry/bundledConversationRuntimeGeneration';
+import { VoiceSessionRuntimeHost } from '@/voice/session/VoiceSessionRuntimeHost';
+import { getVoiceSessionPresentedAttemptId } from '@/voice/session/voiceSessionStore';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
@@ -72,6 +79,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     const { createPluginArtifactTransferBoundary } = await import('@/dev/testkit/harness/pluginArtifactTransferBoundary');
     const artifacts = createPluginArtifactTransferBoundary(async ({ payload }) => {
+        daemon.artifactReads += 1;
         const successor = payload.cacheIdentity.artifactDigest === daemon.successorDigest;
         const bytes = successor ? daemon.successorBytes : daemon.bytes;
         const digest = successor ? daemon.successorDigest : daemon.artifactDigest;
@@ -94,7 +102,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             return { protocolVersion: 1, projection: machineId === 'machine-peer' ? daemon.peerProjection : daemon.projection };
         }
         if (artifacts.handles(method)) {
-            daemon.artifactReads += 1;
             return artifacts.request({ method, payload, machineId });
         }
         if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true, inputSchema: {} };
@@ -471,7 +478,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     return { ...fixture, registration };
 }
 
-it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descriptors on a fresh Home before executable demand (%s)', async (selection) => {
+it.each(['selected', 'presented-local-picker', 'settings-artifact'] as const)('discovers Voice descriptors on a fresh Home before executable demand (%s)', async (selection) => {
     daemon.projectionReads = 0;
     daemon.artifactReads = 0;
     const selectedPluginId = 'acme.fresh-voice';
@@ -484,17 +491,59 @@ it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descri
     const executionOrigin = { serverIdentityId, sourceRef: { machineId: 'machine-live', pluginId: selectedPluginId,
         sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/fresh-voice' } } };
     const occurrenceId = 'fresh-voice-install';
+    const hasArtifact = selection === 'settings-artifact';
+    // A foreign executable crosses the real Artifact transport and CommonJS
+    // loader. No call/media operation is needed to register its settings roles.
+    daemon.bytes = new TextEncoder().encode(`exports.activate = function(api) {
+        api.voiceProviders.register('conversation', {
+            kind: 'conversation', microphoneMode: 'host_webrtc',
+            protocol: {
+                prepare: async function() { return { kind: 'prepared', session: { config: {}, safeMetadata: null } }; },
+                decodeControl: function() { return []; }, encodeTurnControl: function() { return null; }
+            },
+            createConnection: async function() { throw new Error('Unexpected call'); },
+            encodeToolResults: function() { return []; }, encodeToolContinuation: function() { return {}; },
+            encodeContextUpdate: function() { return []; }, encodeTextTurn: function() { return []; },
+            settingsActions: { execute: async function() { return { patch: {} }; } }
+        });
+    };`);
+    daemon.entryPath = 'react-native/voice-client/entry.cjs.bundle';
+    const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: daemon.entryPath, bytes: daemon.bytes }]);
+    daemon.artifactDigest = artifactDigest;
+    const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'voice-client', tier: 'reactNative', entry: daemon.entryPath,
+        files: [{ relativePath: daemon.entryPath, digest: computePluginUiArtifactSha256DigestV1(daemon.bytes), byteSize: daemon.bytes.byteLength }],
+        digest: artifactDigest, builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+    const bundleId = `reactNativeBundle:${selectedPluginId}:${contribution.id}`;
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: selectedPluginId, version: '1.0.0', displayName: 'Fresh Voice',
+        runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] }, secrets: [], contributes: { voiceProviders: [contribution] } });
+    const materialization = { serverIdentityId, machineId: 'machine-live', materializationId: occurrenceId, pluginId: selectedPluginId,
+        version: '1.0.0', sourceClass: 'localPath' as const, portableRelease: false, declaredManifest: manifest,
+        declaredUiEntries: projectPluginPortableUiDeclarationsV1(manifest, [artifactGraph]),
+        uiArtifacts: [{ contributionId: contribution.id, artifactId: 'voice-client', tier: 'reactNative' as const, platform,
+            artifactDigest, hostUiApiRange: '^1.0.0' }], enabled: true, trustState: 'trusted' as const, observedAt: 1 };
+    const availabilitySnapshot: PluginAccountAvailabilitySnapshot = { availabilityCursor: 1,
+        intentReads: [{ pluginId: selectedPluginId, response: { availabilityCursor: 1, packageAssets: [], hostingCapability: { enabled: false },
+            intent: { pluginId: selectedPluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+            release: null, uiArtifacts: [] } }],
+        materializations: [materialization], snapshots: [{ serverIdentityId, machineId: 'machine-live', materializations: [materialization] }] };
     // This is the daemon response, not a seeded client projection/currentness cache.
     daemon.projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
         installedPackagesById: { [selectedPluginId]: { id: selectedPluginId, displayName: 'Fresh Voice', version: '1.0.0', enabled: true,
             occurrenceId, executionOrigin, sourceCustody: executionOrigin.sourceRef.sourceCustody,
             source: { kind: 'localPath', locator: '/fixture/plugins/fresh-voice' } } },
-        familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: { [providerId]: {
+        familiesById: { ...(hasArtifact ? { pluginUi: { family: 'pluginUi', entriesById: { [bundleId]: {
+            id: bundleId, pluginId: selectedPluginId, contributionKind: 'reactNativeBundle', contributionId: contribution.id,
+            occurrenceId, executionOrigin, generatedOwnerKind: 'voiceProvider', artifactGraph,
+            entry: { artifactId: 'voice-client', exportName: 'activate' }, artifactSelectionOwner: 'daemonProjection',
+            runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest },
+                cacheKey: derivePluginReactNativeBundleCacheKey({ pluginId: selectedPluginId, contributionId: contribution.id,
+                    artifactId: 'voice-client', artifactDigest, platform }) },
+        } } } } : {}), voiceProviders: { family: 'voiceProviders', entriesById: { [providerId]: {
             id: providerId, pluginId: selectedPluginId, occurrenceId, generation: 1, contributionKey: providerId, definition: contribution,
         } } } },
     });
     const settings = { ...initialStorage.settings,
-        ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId: selection === 'selected' ? providerId : 'local_conversation',
+        ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId: selection !== 'presented-local-picker' ? providerId : 'local_conversation',
             executionMachine: { mode: 'fixed', machineId: 'machine-live' } }) }, initialStorage.settings),
     };
     const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(),
@@ -513,26 +562,40 @@ it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descri
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({ features: {
-                voice: { enabled: true }, plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
+                voice: { enabled: true }, machines: { enabled: true,
+                    transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } },
+                plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
             } }));
             if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'account-continuity', machine })]);
+            if (hasArtifact && path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) return Response.json(
+                PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 1, snapshots: availabilitySnapshot.snapshots }));
+            if (hasArtifact && path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) return Response.json(
+                PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1, pluginIds: [selectedPluginId],
+                    intentReads: availabilitySnapshot.intentReads, failedPluginIds: [] }));
             return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({ error: 'not_found' }, { status: 404 });
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Missing fresh Voice Account lifetime');
     const serverId = lifetime.scope.serverId;
+    if (hasArtifact) replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: availabilitySnapshot });
     storage.setState({ profileScope: lifetime.scope, settingsScope: lifetime.scope, endpointStatus: 'online', isDataReady: true, settings,
         machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
     observeMachinePresenceForTest(lifetime.scope, [machine.id]);
     const registry = createDefaultVoiceProviderRegistry();
     expect(registry.get(providerId)).toBeNull();
     let demand: ReadonlySet<string> = new Set();
-    function Probe() { demand = useVoiceProviderRuntimeDemand(); return null; }
+    let activation: ReturnType<typeof useAppShellPluginUiProjection>['clientExecutableActivation'] | undefined;
+    function Probe() {
+        demand = useVoiceProviderRuntimeDemand();
+        activation = useAppShellPluginUiProjection().clientExecutableActivation;
+        return null;
+    }
     let pickerOpen = false;
     let pickerPresented = false;
     const render = () => <InjectedAuthProvider credentials={null}>
         <AppShellPluginUiProjectionProvider>
             <Probe />
+            <VoiceSessionRuntimeHost />
             {pickerOpen ? <PluginSurfaceFocusEligibilityProvider active={pickerPresented} presentationActive={pickerPresented}>
                 <VoiceServiceListScreen />
             </PluginSurfaceFocusEligibilityProvider> : null}
@@ -554,14 +617,52 @@ it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descri
     }
     await vi.waitFor(() => expect(registry.get(providerId)).toMatchObject({ providerId,
         kind: 'voice.conversation-provider.v1', declaration: { title: 'Fresh Voice' } }));
-    if (selection === 'presented-local-picker') {
-        await screen.pressByTestIdAsync(`settings.voice.provider.${encodeURIComponent(providerId)}.default`);
-        await vi.waitFor(() => expect(storage.getState().settings.voiceSettingsV1.providerId).toBe(providerId));
-    }
     expect([...demand]).toEqual([]);
     expect(daemon.artifactReads).toBe(0);
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
     expect(getVoiceSessionLifecycleController()).toBeNull();
+    if (selection === 'presented-local-picker') return;
+    // A Settings operation demands the same exact target without creating a call.
+    // AppShell must publish the actual settings occurrence, or settle the
+    // missing Artifact as unavailable, rather than leave Finish setup waiting.
+    const signal = new AbortController();
+    let operation: ReturnType<typeof acquireVoiceProviderRuntimeDemand> | undefined;
+    onTestFailed(() => {
+        console.error('Cold Settings activation state', { generationRevision: getBundledConversationRuntimeGenerationRevision(),
+            demanded: [...demand], artifactReads: daemon.artifactReads, activation,
+            hasController: Boolean(getVoiceSessionLifecycleController()),
+            registration: getExternalVoiceProviderRegistration(providerId)?.occurrenceId ?? null });
+    });
+    // Metro resolves this deferred require; bridge that module-loader boundary
+    // to the real transformed runtime without replacing its host lifecycle.
+    const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
+    const runtimeBridge = await loadVitestModuleForNodeRequire(
+        new NodeURL('../../../voice/session/VoiceSessionRuntime.tsx', import.meta.url),
+        () => import('@/voice/session/VoiceSessionRuntime'),
+    );
+    try {
+        await act(async () => {
+            operation = acquireVoiceProviderRuntimeDemand(providerId, signal.signal);
+        });
+        // Readiness is the activation owner's completion, including the real
+        // finite Artifact transfer; the enclosing test owns the deadline.
+        if (hasArtifact) await operation!.ready;
+        else await expect(operation!.ready).rejects.toMatchObject({ code: 'provider_unavailable' });
+        await flushHookEffects();
+        if (hasArtifact) {
+            expect(getExternalVoiceProviderRegistration(providerId)).toMatchObject({ occurrenceId,
+                settingsActions: { execute: expect.any(Function) } });
+            expect(daemon.artifactReads).toBe(1);
+        }
+        expect([...demand]).toEqual([providerId]);
+        expect(getVoiceSessionPresentedAttemptId()).toBeNull();
+        expect(getVoiceSessionLifecycleController()?.getSnapshot()).toMatchObject({ canStop: false });
+        await act(async () => { operation!.release(); });
+        expect([...demand]).toEqual([]);
+    } finally {
+        await act(async () => { operation?.release(); });
+        runtimeBridge.dispose();
+    }
 });
 
 it('dispatches a controller prerequisite repair through the mounted managed catalog and AppShell activation', async () => {

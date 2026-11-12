@@ -9,6 +9,63 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { useVoiceSessionStore } = await import('./voiceSessionStore');
 const { useVoiceProviderRuntimeDemand } = await import('./useVoiceProviderRuntimeDemand');
 const { voiceSessionManager } = await import('./voiceSession');
+const { acquireVoiceProviderRuntimeDemand, bindVoiceProviderRuntimeDemandActivation } = await import('./voiceProviderRuntimeDemand');
+const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
+
+it('waits for the producer settings occurrence and reuses an already registered runtime', async () => {
+  const token = {};
+  const signal = new AbortController();
+  const operation = acquireVoiceProviderRuntimeDemand('test.voice/settings-ready', signal.signal);
+  let ready = false;
+  void operation.ready.then(() => { ready = true; });
+  try {
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    commitExternalVoiceProviderRegistration({ token, pluginId: 'test.voice', localId: 'settings-ready',
+      providerId: 'test.voice/settings-ready', descriptor: null, adapter: null, occurrenceId: 'settings-occurrence',
+      settingsActions: { execute: async () => ({ patch: {} }) },
+    });
+    await operation.ready;
+    expect(ready).toBe(true);
+    const warm = acquireVoiceProviderRuntimeDemand('test.voice/settings-ready', signal.signal);
+    try { await warm.ready; } finally { warm.release(); }
+  } finally {
+    operation.release();
+    removeExternalVoiceProviderRegistration(token);
+  }
+});
+
+it('admits settings demand without a call attempt, shares unchanged target membership, and propagates activation failure', async () => {
+  const snapshot = useVoiceSessionStore.getState();
+  useVoiceSessionStore.setState({ adapterId: null, canStop: false });
+  const hook = await renderHook(useVoiceProviderRuntimeDemand);
+  const firstSignal = new AbortController();
+  const secondSignal = new AbortController();
+  let first: ReturnType<typeof acquireVoiceProviderRuntimeDemand> | undefined;
+  let second: ReturnType<typeof acquireVoiceProviderRuntimeDemand> | undefined;
+  try {
+    expect([...hook.getCurrent()]).toEqual([]);
+    await act(async () => { first = acquireVoiceProviderRuntimeDemand('test.voice/settings', firstSignal.signal); });
+    expect([...hook.getCurrent()]).toEqual(['test.voice/settings']);
+    expect(useVoiceSessionStore.getState()).toMatchObject({ adapterId: null, canStop: false });
+    const retained = hook.getCurrent();
+    await act(async () => { second = acquireVoiceProviderRuntimeDemand('test.voice/settings', secondSignal.signal); });
+    expect(hook.getCurrent()).toBe(retained);
+    await act(async () => { firstSignal.abort(); });
+    await expect(first!.ready).rejects.toMatchObject({ name: 'AbortError' });
+    expect(hook.getCurrent()).toBe(retained);
+    const failure = Object.assign(new Error('Artifact transport failed'), { code: 'plugin_ui_artifact_unavailable' });
+    bindVoiceProviderRuntimeDemandActivation(new Set(['test.voice/settings']), Promise.reject(failure));
+    await expect(second!.ready).rejects.toBe(failure);
+    await act(async () => { second!.release(); });
+    expect([...hook.getCurrent()]).toEqual([]);
+  } finally {
+    first?.release();
+    second?.release();
+    await hook.unmount();
+    useVoiceSessionStore.setState(snapshot);
+  }
+});
 
 it('keeps saved selection descriptor-only and admits the selected handoff only while an attempt can stop', async () => {
   const settings = storage.getState().settings;

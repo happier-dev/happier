@@ -95,6 +95,7 @@ import {
 } from '@/voice/registry/bundledConversationRuntimeGeneration';
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
 import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderRuntimeDemand';
+import { bindVoiceProviderRuntimeDemandActivation, rejectVoiceProviderRuntimeDemands } from '@/voice/session/voiceProviderRuntimeDemand';
 import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { PluginPageLaunchInputScope } from '@/components/plugins/pages/pluginPageNavigation';
@@ -713,6 +714,9 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         return activation?.providerIds.has(providerId) ? activation.completion : null;
     }, []);
     React.useLayoutEffect(() => () => {
+        rejectVoiceProviderRuntimeDemands(Object.assign(new Error('plugin_settings_action_cancelled'), {
+            code: 'plugin_settings_action_cancelled',
+        }));
         voiceActivation.current?.settle();
         voiceActivation.current = null;
     }, [accountLifetime, activeServer.serverId, voiceExecutionMachineId]);
@@ -734,6 +738,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         }
         const activation = voiceActivation.current;
         activation.providerIds = basis.voiceProviderIds;
+        bindVoiceProviderRuntimeDemandActivation(basis.voiceProviderIds, activation.completion);
         const next = presentationRef.current.pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
         let cancelled = false;
         const voiceProjection = presentationRef.current.voicePluginUiProjection;
@@ -775,6 +780,13 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
             if (!cancelled && settlement.status !== 'cancelled') {
                 setSettledClientExecutableActivation({ request, state: settlement });
                 if (!basis.voiceProjectionAcquiring) {
+                    if (settlement.status === 'unavailable') {
+                        for (const providerId of basis.voiceProviderIds) {
+                            const pluginId = parseQualifiedPluginContributionKey(providerId)?.pluginId;
+                            const failure = settlement.failures.find(candidate => candidate.pluginId === null || candidate.pluginId === pluginId);
+                            if (failure) rejectVoiceProviderRuntimeDemands(Object.assign(new Error(failure.code), failure), new Set([providerId]));
+                        }
+                    }
                     if (voiceActivation.current === activation) voiceActivation.current = null;
                     activation.settle();
                 }

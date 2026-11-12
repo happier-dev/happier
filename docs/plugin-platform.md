@@ -2039,6 +2039,14 @@ digest mismatch; plugin source and declaration are no longer consent inputs. The
 and UI retain this detail for a traced replay. Admission and single-use consent
 remain at the approval consumption boundary.
 
+In unreleased 0.3, bound inline Actions use a UUID request identity that reaches
+Account handlers and current-intent failure settlement. An unavailable confirmation retains the
+transient owner's status and interaction request identity under
+`details.currentIntentPresentation`. Unexpected presenter exceptions retain the
+content-free `failureCause` with phase `action.current_intent`; fingerprint
+construction failures use `action.current_intent.fingerprint`. These failures
+settle before the Action handler starts. They do not imply that consent was given.
+
 The daemon's target admission owner also writes the comparison category to its
 local file log before error projection. Carried Account confirmation refusals
 name that lookup branch and record confirmation and parent-approval presence
@@ -5499,6 +5507,15 @@ Webhook and Event currentness reads select the executing Machine's declaration.
 Account reads derive `machineDeclarations` from those entries; a single
 `currentDeclaration` exists only when they agree. Account enablement changes
 preserve the entries, while selecting a portable release displaces them.
+Both are identities only (`{ declarationDigestSha256 }`) in `intents.list` and
+in `intent.read`; neither reads a body from storage. A selected release's
+declaration is its release facts' normalized manifest. A reader that consumes a
+release-less body (the guided Automation editor's Event contribution) sends
+`intent.read` with `declarationDigests` naming the digests it does not hold and
+receives `declarationBodies`, each requested digest once however many Machines
+share it. The UI Availability store keeps those bodies in one per-scope
+digest-keyed set, admitted once at that read, shared by every Machine and
+publication that names the digest, and dropped with the Account scope.
 The daemon's Availability publication lifecycle claims
 these admitted declarations through the existing Account Data host after
 reporting materializations, including native-only plugins without Account storage
@@ -9046,7 +9063,7 @@ not change read results or failure semantics.
 
 ### Voice schema composition (0.3 development)
 
-Conversation provider declarations remain discoverable before their executable modules load. Saved selection stays descriptor-only; Start admits executable demand and retains the attempt's provider through preparation, cancellation and recovery; a deliberate provider change during a stoppable attempt also demands its handoff target. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. The lifecycle owner remains mounted after its first activation to handle media cleanup and Account retirement. Speech model catalogs acquire only for presented setup/settings/read-aloud controls or an active speech operation, through the shared catalog owner. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
+Conversation provider declarations remain discoverable before their executable modules load. Saved selection stays descriptor-only; Start admits executable demand and retains the attempt's provider through preparation, cancellation and recovery; a deliberate provider change during a stoppable attempt also demands its handoff target. An admitted provider Settings Action holds the same executable demand until it completes or is cancelled, allowing provisioning before the first call. Its declared control remains visible before runtime activation. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. The lifecycle owner remains mounted after its first activation to handle media cleanup and Account retirement. Speech model catalogs acquire only for presented setup/settings/read-aloud controls or an active speech operation, through the shared catalog owner. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
 
 Realtime Voice runtimes may implement optional `playHostText({text, signal})`
 from `@happier-dev/plugin-sdk/voice/client`. This plays the host's exact prepared

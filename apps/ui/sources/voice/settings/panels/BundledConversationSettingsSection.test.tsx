@@ -236,6 +236,13 @@ describe('BundledConversationSettingsSection', () => {
     await screen.pressByTestIdAsync('app-shell-confirmation-confirm');
   }
 
+  it('keeps Create discoverable before the selected provider runtime has activated', async () => {
+    removeExternalVoiceProviderRegistration(provider.registration.token);
+    expect(getExternalVoiceProviderRegistration(providerId)).toBeNull();
+    const screen = await render();
+    expect(screen.findHostByTestId('voice-settings-action-create-agent')).not.toBeNull();
+  });
+
   it('finishes empty-agent setup through one confirmed creation and saves a ready provider', async () => {
     const { resolveVoiceSettingsRecoveryTarget } = await import('@/voice/settings/voiceSettingsRouteFocus');
     expect(resolveVoiceSettingsRecoveryTarget('open_provider_settings', providerId)).toEqual({
@@ -243,6 +250,8 @@ describe('BundledConversationSettingsSection', () => {
       params: { setting: 'voiceConversations.provider.happier.voice.elevenlabs/realtime-elevenlabs.action.create-agent' },
     });
     await saveCredential();
+    removeExternalVoiceProviderRegistration(provider.registration.token);
+    expect(getExternalVoiceProviderRegistration(providerId)).toBeNull();
     const { VoiceConversationsSettingsScreen } = await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const screen = await render(account.settings.voice,
@@ -259,6 +268,13 @@ describe('BundledConversationSettingsSection', () => {
     expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
     expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(0);
     await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    const { getVoiceProviderSettingsRuntimeDemand, subscribeVoiceProviderSettingsRuntimeDemand } = await import('@/voice/session/voiceProviderRuntimeDemand');
+    await waitForTestEvent(subscribeVoiceProviderSettingsRuntimeDemand, getVoiceProviderSettingsRuntimeDemand,
+      demand => demand.has(providerId));
+    expect(screen.findHostByTestId('app-shell-confirmation-confirm')).toBeNull();
+    // Complete the real plugin activation at its external entrypoint. AppShell's
+    // demand-to-artifact activation is covered by its composition regression.
+    await act(async () => { await provider.register(); });
     await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('app-shell-confirmation-confirm')).not.toBeNull());
     expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(0);
     await screen.pressByTestIdAsync('app-shell-confirmation-confirm');

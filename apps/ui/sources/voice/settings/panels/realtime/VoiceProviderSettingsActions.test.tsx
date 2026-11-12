@@ -63,6 +63,12 @@ async function settleMountedOperation() {
 }
 async function waitForConfirmation(count: number) {
   await waitForTestEvent(modalTree.subscribe, () => modalTree.root.findAll(node => typeof node.type === 'string'
+    && (node.props.testID === 'app-shell-confirmation-confirm'
+      || node.props.testID === 'actions.confirmation-review.decision-approve')).at(-1), control => Boolean(control));
+  const approval = modalTree.root.findAll(node => typeof node.type === 'string'
+    && node.props.testID === 'actions.confirmation-review.decision-approve').at(-1);
+  if (approval) await act(async () => { approval.props.onPress(); });
+  await waitForTestEvent(modalTree.subscribe, () => modalTree.root.findAll(node => typeof node.type === 'string'
     && node.props.testID === 'app-shell-confirmation-confirm').at(-1), control => Boolean(control));
   const control = modalTree.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'app-shell-confirmation-confirm').at(-1);
   expect(control).toBeTruthy();
@@ -79,7 +85,7 @@ async function saveCredential() {
   if (!recipient) throw new Error('Expected ElevenLabs recipient contract');
   accountFixture.replaceSettings(await withVoiceSettingsCredentialResource(accountFixture, {
     settings: accountFixture.settings, declaration, pluginId: PLUGIN_MANIFEST.id,
-    resourceId: 'elevenlabs-secret', recipientContractDigest: createRecipientContractDigestV1(recipient),
+    resourceId: 'elevenlabs-secret', approvedRecipientContractDigest: createRecipientContractDigestV1(recipient),
   }));
   await refreshSavedSecretCatalog(accountFixture.scope);
   // Admit the operation only after the real material catalog is current.
@@ -413,7 +419,7 @@ describe('VoiceProviderSettingsActions', () => {
     });
   });
 
-  it('fails closed when a settings-action registration has no producer occurrence', async () => {
+  it('keeps a declared control visible without admitting an unregistered producer', async () => {
     // Malformed external plugin registration exercises the host's runtime admission guard.
     state.registration = Object.freeze({
       ...state.registration,
@@ -429,7 +435,8 @@ describe('VoiceProviderSettingsActions', () => {
         placement={{ kind: 'afterField', fieldId: 'agentId' }}
       />);
     });
-    expect(tree.toJSON()).toBeNull();
+    expect(tree.root.findByProps({ testID: 'voice-settings-action-create-agent' })).toBeDefined();
+    expect(provider.fetch).not.toHaveBeenCalled();
   });
 
   it('enables a declared nonempty action only after its setting has a value', async () => {
@@ -899,8 +906,7 @@ describe('VoiceProviderSettingsActions', () => {
     expect(nativeAlert).not.toHaveBeenCalled();
   });
 
-  it('names a confirmation that could not be presented instead of doing nothing', async () => {
-    await act(async () => modalTree.unmount());
+  it('names a confirmation whose presentation host disappears instead of doing nothing', async () => {
     const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
@@ -913,6 +919,14 @@ describe('VoiceProviderSettingsActions', () => {
     });
     await act(async () => {
       tree.root.findByProps({ testID: 'voice-settings-action-create-agent' }).props.onPress();
+    });
+    await waitForConfirmation(1);
+    await act(async () => {
+      // Losing an actual presentation host settles its mounted provider prompt
+      // as unavailable; a prompt queued before any host exists remains queued.
+      modalTree.unmount();
+    });
+    await act(async () => {
       await settleMountedOperation();
       expect(nativeAlert).toHaveBeenCalled();
     });

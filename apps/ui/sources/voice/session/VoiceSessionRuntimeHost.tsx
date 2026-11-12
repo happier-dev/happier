@@ -4,8 +4,9 @@ import { InboxModelProvider } from '@/hooks/inbox/useInboxModel';
 
 import { useVoiceProviderRuntimeDemand } from './useVoiceProviderRuntimeDemand';
 import { rejectVoiceSessionRuntimeRequest } from './voiceSessionLifecycleControllerStore';
+import { rejectVoiceProviderRuntimeDemands } from './voiceProviderRuntimeDemand';
 
-/** Discovery stays synchronous; the first Start admits executable adapter loading. */
+/** Discovery stays synchronous; an admitted call or Settings operation loads the runtime. */
 export function VoiceSessionRuntimeHost(): React.ReactElement | null {
     const demanded = useVoiceProviderRuntimeDemand().size > 0;
     const activated = React.useRef(false);
@@ -26,6 +27,7 @@ export function VoiceSessionRuntimeHost(): React.ReactElement | null {
         </>;
     } catch (error) {
         rejectVoiceSessionRuntimeRequest(error);
+        rejectVoiceProviderRuntimeDemands(error);
         throw error;
     }
 }

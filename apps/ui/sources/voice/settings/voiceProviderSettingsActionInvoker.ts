@@ -12,6 +12,7 @@ import { getExternalVoiceProviderRegistration, type ExternalVoiceProviderRegistr
 import { resolveVoiceProviderIdForSettingsAction } from '@/voice/settings/resolveVoiceProviderId';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
+import { acquireVoiceProviderRuntimeDemand } from '@/voice/session/voiceProviderRuntimeDemand';
 
 export type VoiceProviderSettingsActionOwner = Readonly<{
   schemaVersion: number;
@@ -103,7 +104,7 @@ export function readSafeSettingsActionErrorCode(error: unknown): string | null {
 }
 
 /** The user moved to another Voice provider: the press was superseded by them. */
-export function isPressedProviderSelected(context: ActionContext): boolean {
+export function isPressedProviderSelected(context: Pick<ActionContext, 'providerId'>): boolean {
   return resolveVoiceProviderIdForSettingsAction(
     storage.getState().settings.voice,
     context.providerId,
@@ -275,25 +276,28 @@ export async function invokeVoiceProviderSettingsAction(input: Readonly<{
   signal?: AbortSignal;
   isCurrent?: () => boolean;
 }>) {
-  const registration = getExternalVoiceProviderRegistration(input.providerId);
-  if (!registration?.settingsActions || !registration.occurrenceId) return { status: 'unavailable' as const, reason: 'provider_unavailable' };
-  const context: ActionContext = Object.freeze({
-    actionId: input.declaration.id, providerId: input.providerId,
-    occurrenceId: registration.occurrenceId, owner: input.owner, registration,
-    settingsScope: storage.getState().settingsScope,
-    callerIsCurrent: input.isCurrent,
-  });
-  if (!isContextCurrent(context)) return { status: 'unavailable' as const, reason: 'provider_not_selected' };
-  const config = readActionConfig(context, voiceSettingsParse(storage.getState().settings.voice));
-  const enabledWhen = input.declaration.enabledWhen;
-  if (enabledWhen && (typeof config?.[enabledWhen.settingId] !== 'string' || !(config[enabledWhen.settingId] as string).trim())) {
-    return { status: 'unavailable' as const, reason: 'setting_prerequisite_missing' };
-  }
+  const signal = input.signal ?? new AbortController().signal;
+  const settingsScope = storage.getState().settingsScope;
+  const demand = acquireVoiceProviderRuntimeDemand(input.providerId, signal);
   try {
+    await demand.ready;
+    const registration = getExternalVoiceProviderRegistration(input.providerId);
+    if (!registration?.settingsActions || !registration.occurrenceId) return { status: 'unavailable' as const, reason: 'provider_unavailable' };
+    const context: ActionContext = Object.freeze({
+      actionId: input.declaration.id, providerId: input.providerId,
+      occurrenceId: registration.occurrenceId, owner: input.owner, registration,
+      settingsScope, callerIsCurrent: input.isCurrent,
+    });
+    if (!isContextCurrent(context)) return { status: 'unavailable' as const, reason: 'provider_not_selected' };
+    const config = readActionConfig(context, voiceSettingsParse(storage.getState().settings.voice));
+    const enabledWhen = input.declaration.enabledWhen;
+    if (enabledWhen && (typeof config?.[enabledWhen.settingId] !== 'string' || !(config[enabledWhen.settingId] as string).trim())) {
+      return { status: 'unavailable' as const, reason: 'setting_prerequisite_missing' };
+    }
     await settingsActionInvoker.invoke({
       key: `${input.providerId}/${registration.occurrenceId}/${input.declaration.id}`,
       declaration: input.declaration, userGesture: false, requestHumanInteraction: true,
-      signal: input.signal ?? new AbortController().signal,
+      signal,
       isCurrent: () => isContextCurrent(context), context,
     });
     return { status: 'completed' as const };
@@ -302,5 +306,7 @@ export async function invokeVoiceProviderSettingsAction(input: Readonly<{
     const diagnostic = projectSafeSettingsActionFailure(error);
     return { status: code === 'plugin_settings_action_confirmation_declined' ? 'cancelled' as const : 'unavailable' as const,
       reason: code, ...(Object.keys(diagnostic).length ? { value: diagnostic } : {}) };
+  } finally {
+    demand.release();
   }
 }

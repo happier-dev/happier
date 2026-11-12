@@ -13,9 +13,7 @@ import { Modal } from '@/modal';
 import { log } from '@/log';
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import {
-  getExternalVoiceProviderRegistration,
-} from '@/voice/registry/externalVoiceProviderRegistrations';
+import { getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
@@ -25,7 +23,7 @@ import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
 
-import { isContextCurrent, isPressedProviderSelected, projectSafeSettingsActionFailure, type SafeSettingsActionFailureDiagnostic, type VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
+import { isPressedProviderSelected, projectSafeSettingsActionFailure, type SafeSettingsActionFailureDiagnostic, type VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
 export type { VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
 
 /**
@@ -80,39 +78,34 @@ function useVoiceProviderSettingsAction(props: Readonly<{
   owner: VoiceProviderSettingsActionOwner | null;
 }>) {
   const settingRef = useVoiceContributedSettingRefs(props.providerId);
-  const registration = getExternalVoiceProviderRegistration(props.providerId);
+  const registrationToken = getExternalVoiceProviderRegistration(props.providerId)?.token;
   const settingsScope = useAccountSettingsScope();
   const { execute } = useMountedActionExecution(settingsScope);
   const [busyActionIds, setBusyActionIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const lifecycleRef = React.useRef(new AbortController());
+  const lifecycleIdentity = React.useRef({ providerId: props.providerId, registrationToken });
   // Whether this panel is still on screen. `signal.aborted` cannot answer that:
-  // it is also raised when the activation scope re-commits the registration
-  // under a mounted panel, which is exactly when the user must be told.
+  // it is also raised when the user switches provider under a mounted panel.
   const mountedRef = React.useRef(true);
   React.useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => { mountedRef.current = false; lifecycleRef.current.abort(); };
   }, []);
   React.useEffect(() => {
+    const previousIdentity = lifecycleIdentity.current;
+    lifecycleIdentity.current = { providerId: props.providerId, registrationToken };
+    // The admitted operation creates its first registration. Replacing an
+    // existing occurrence still retires its pending mounted confirmation.
+    if (previousIdentity.providerId === props.providerId && !previousIdentity.registrationToken && registrationToken) return;
     const previous = lifecycleRef.current;
     lifecycleRef.current = new AbortController();
     previous.abort();
     setBusyActionIds(new Set());
-    return () => lifecycleRef.current.abort();
-  }, [props.providerId, registration?.token]);
+  }, [props.providerId, registrationToken]);
 
   const invoke = React.useCallback((action: VoiceProviderSettingsActionDeclaration, enabled: boolean) => {
-    if (!props.owner || !registration?.settingsActions || !registration.occurrenceId || busyActionIds.has(action.id) || !enabled) return false;
-    const occurrenceId = registration.occurrenceId;
+    if (!props.owner || busyActionIds.has(action.id) || !enabled) return false;
     const signal = lifecycleRef.current.signal;
-    const context = Object.freeze({
-      actionId: action.id,
-      providerId: props.providerId,
-      occurrenceId,
-      owner: props.owner,
-      registration,
-      settingsScope,
-    });
     setBusyActionIds((current) => new Set(current).add(action.id));
     fireAndForget((async () => {
       try {
@@ -140,7 +133,7 @@ function useVoiceProviderSettingsAction(props: Readonly<{
           ? 'declined'
           : !mountedRef.current
             ? 'unmounted'
-            : isPressedProviderSelected(context)
+            : isPressedProviderSelected({ providerId: props.providerId })
               ? 'failed'
               : 'deselected';
         const diagnostic = projectSafeSettingsActionFailure(error);
@@ -148,7 +141,7 @@ function useVoiceProviderSettingsAction(props: Readonly<{
           `[VoiceProviderSettingsActions] settings action ${outcome} ${JSON.stringify({
             actionId: action.id,
             ...(signal.aborted ? { aborted: true } : {}),
-            ...(isContextCurrent(context) ? {} : { retired: true }),
+            ...(signal.aborted || outcome === 'deselected' ? { retired: true } : {}),
             ...diagnostic,
           })}`,
         );
@@ -168,7 +161,7 @@ function useVoiceProviderSettingsAction(props: Readonly<{
       }
     })(), { tag: `VoiceProviderSettingsActions.${action.id}` });
     return true;
-  }, [props.owner, props.providerId, registration, settingsScope, busyActionIds, settingRef, execute]);
+  }, [props.owner, props.providerId, busyActionIds, settingRef, execute]);
   return { busyActionIds, invoke };
 }
 
@@ -208,7 +201,6 @@ export function VoiceProviderSettingsActions(props: Readonly<{
   placement: Readonly<{ kind: 'afterField'; fieldId: string }> | Readonly<{ kind: 'contributionFooter' }>;
 }>) {
   const settingRef = useVoiceContributedSettingRefs(props.providerId);
-  const registration = getExternalVoiceProviderRegistration(props.providerId);
   const { busyActionIds, invoke: invokeAction } = useVoiceProviderSettingsAction(props);
   const agentAction = props.agentAction;
   const agentConfigured = isAgentConfigured(agentAction, props.config);
@@ -218,7 +210,7 @@ export function VoiceProviderSettingsActions(props: Readonly<{
       : action.placement.kind === 'afterField' && action.placement.fieldId === props.placement.fieldId
   )).filter((action) => !agentAction || (action.id !== agentAction.createActionId && action.id !== agentAction.updateActionId)
     || action.id === (agentConfigured ? agentAction.updateActionId : agentAction.createActionId));
-  if (!registration?.settingsActions || !registration.occurrenceId || actions.length === 0) return null;
+  if (actions.length === 0) return null;
 
   return <>
     {actions.map((action) => {
