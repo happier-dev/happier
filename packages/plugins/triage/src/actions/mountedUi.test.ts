@@ -5,7 +5,7 @@ import { TriageMountedUiInputV1Schema } from './mountedUiProtocol.js';
 import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
-import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { activate } from './mountedUi.js';
@@ -30,6 +30,7 @@ import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-suppo
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { useTriageTaskCommit } from '../ui/detail/taskWrite.js';
+import { commitTaskWriteForTest } from '../ui/detail/taskActionControl.test-support.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 
 /** The New task draft's first line (lab `tasks-create`). */
@@ -218,8 +219,9 @@ it.each([
         await act(async () => { writeProbe = await createPluginUiTestkit({ identity: { instanceId: 'draft-write', mountNonce: 'write' },
           authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
           surface: defineUiSurface(() => {
+            const host = usePluginHostApi();
             const write = useTriageTaskCommit(async () => undefined, { draftId: launch.draftId });
-            beginWrite = () => write.commit('tasks/create-v1', { v: 1,
+            beginWrite = () => commitTaskWriteForTest(host, write, 'tasks/create-v1', { v: 1,
               source: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.source,
               sourceInstanceId: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId,
               kindId: 'task', fields: { title: 'Held transport' } });

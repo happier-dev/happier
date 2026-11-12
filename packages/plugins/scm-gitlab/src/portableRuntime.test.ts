@@ -4,11 +4,12 @@ import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { GITLAB_TRIAGE_ACTION_IDS as SOURCE_ACTION_IDS } from './triage/contribution.js';
+import { GITLAB_ACTION_DECLARATIONS } from './accountActions.js';
 
 describe('Account source runtime portability', () => {
   it('places finite Account reads together and keeps local workspaces on the daemon', () => {
     const nativeIds = new Set<string>([SOURCE_ACTION_IDS.prepareReviewWorkspace, SOURCE_ACTION_IDS.verifyReviewWorkspace]);
-    for (const { id } of PLUGIN_MANIFEST.contributes.actions.filter(({ id }) => !nativeIds.has(id))) {
+    for (const { id } of GITLAB_ACTION_DECLARATIONS.filter(({ id }) => !nativeIds.has(id))) {
       expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === id)?.execution).toEqual({
         target: 'account', account: { artifactId: 'gitlab-account-runtime', exportName: 'activate' },
       });

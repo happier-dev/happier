@@ -177,6 +177,7 @@ describe('source Remove through the shared Action admission and durable writer',
     });
     const invocation = createPluginActionInvocation({
       ...TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,
+      declaration: descriptor,
       inputSchema: descriptor.inputSchema, resultSchema: descriptor.resultSchema,
       occurrenceSignal: context.signal, isCurrent: () => true,
     });
