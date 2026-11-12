@@ -340,9 +340,9 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         ref={ref as React.Ref<HappierFocusable>}
         title={props.title}
         subtitle={props.subtitle}
-        // Ordinary menu summaries stay compact. A disabled action's explanation
-        // must keep its recovery instruction visible, including on phones.
-        subtitleLines={isMenu ? (disabled ? 0 : 1) : undefined}
+        // A menu has no other place to read the rest of a choice's description (a
+        // permission mode's risk, a disabled action's recovery), so it wraps.
+        subtitleLines={isMenu ? 0 : undefined}
         titleLeading={titleLeading}
         titleAccessory={titleAccessory}
         subtitleLeading={subtitleLeading}

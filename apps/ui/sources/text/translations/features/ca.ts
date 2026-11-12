@@ -13191,6 +13191,7 @@ const catalan: TeamsTranslationRoot = {
             returnToHappier: 'Torna a Happier',
             signInToTeam: 'Inicia la sessió en aquest equip',
             readyStatus: 'Tria com vols iniciar la sessió per continuar.',
+            readyToJoinStatus: 'Revisa la invitació i després uneix-t’hi.',
         },
         homeLabel: 'Home',
         role: {

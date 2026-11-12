@@ -48,17 +48,18 @@ export const ITEM_STATUS_SUBTITLE_MAX_LINES = 2;
  * The clamp for one painted subtitle string. `null` means the box grows with its content.
  *
  * An explicit `subtitleLines` wins, with `0` (or less) meaning "auto/multiline". Otherwise page
- * descriptions paint unbounded. In grouped rows, a status subtitle takes up to
+ * and menu-row descriptions paint unbounded. In grouped rows, a status subtitle takes up to
  * {@link ITEM_STATUS_SUBTITLE_MAX_LINES}, a subtitle carrying a hard line break paints unbounded,
  * and any other is a single line.
  */
 export function resolveItemSubtitleMaxLines(
-    params: Readonly<{ text: string; subtitleLines: number | undefined; status?: boolean; page?: boolean }>,
+    params: Readonly<{ text: string; subtitleLines: number | undefined; status?: boolean; page?: boolean; menu?: boolean }>,
 ): number | null {
     if (params.subtitleLines !== undefined) {
         return params.subtitleLines <= 0 ? null : params.subtitleLines;
     }
-    if (params.page === true) return null;
+    // Page descriptions and menu-choice descriptions are the only place their consequence is said.
+    if (params.page === true || params.menu === true) return null;
     if (params.status === true) return ITEM_STATUS_SUBTITLE_MAX_LINES;
     return params.text.indexOf('\n') === -1 ? 1 : null;
 }

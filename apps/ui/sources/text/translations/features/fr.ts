@@ -13216,6 +13216,7 @@ const french: TeamsTranslationRoot = {
             returnToHappier: 'Retour à Happier',
             signInToTeam: 'Se connecter à cette équipe',
             readyStatus: 'Choisis comment te connecter pour continuer.',
+            readyToJoinStatus: 'Consulte l’invitation, puis rejoins l’équipe.',
         },
         homeLabel: 'Home',
         role: {

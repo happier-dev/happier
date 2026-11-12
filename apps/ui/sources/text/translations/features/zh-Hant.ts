@@ -13149,6 +13149,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             returnToHappier: '返回 Happier',
             signInToTeam: '登入此團隊',
             readyStatus: '選擇登入方式以繼續。',
+            readyToJoinStatus: '查看邀請，然後加入。',
         },
         homeLabel: 'Home',
         role: {

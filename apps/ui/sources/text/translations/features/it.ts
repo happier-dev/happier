@@ -13170,6 +13170,7 @@ const italian: TeamsTranslationRoot = {
             returnToHappier: 'Torna a Happier',
             signInToTeam: 'Accedi a questo team',
             readyStatus: 'Scegli come accedere per continuare.',
+            readyToJoinStatus: 'Controlla l’invito, poi unisciti.',
         },
         homeLabel: 'Home',
         role: {

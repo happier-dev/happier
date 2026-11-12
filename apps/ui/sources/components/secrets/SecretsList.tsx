@@ -227,6 +227,8 @@ export function SecretsList(props: SecretsListProps) {
                         testID="saved-secret:none"
                         title={t('secrets.noneTitle')}
                         subtitle={props.noneSubtitle ?? t('secrets.noneSubtitle')}
+                        // The alternatives to a saved secret are instructions: they wrap rather than cut.
+                        subtitleLines={0}
                         icon={<Icon name="x-circle" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => props.onSelectId?.('')}
                         showChevron={false}
@@ -263,6 +265,7 @@ export function SecretsList(props: SecretsListProps) {
                         testID="saved-secret:empty"
                         title={t('secrets.emptyTitle')}
                         subtitle={t('secrets.emptySubtitle')}
+                        subtitleLines={0}
                         icon={<Icon name="key" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />

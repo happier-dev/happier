@@ -736,6 +736,7 @@ describe('TeamAuthEntrySurface', () => {
 
         expect(screen.findByTestId('team-auth-entry-join')).toBeNull();
         expect(await waitForTestId(screen, 'team-join-preview')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(t('teams.entry.readyStatus'));
         expect(endpointFetch).toHaveBeenCalledWith('/v1/team-invitations/preview', expect.objectContaining({
             body: JSON.stringify({ v: 1, token }),
         }), { includeAuth: false, retry: 'none' });
@@ -827,6 +828,9 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.findByTestId('team-join-preview-role')).toBeTruthy();
         expect(screen.findByTestId('team-join-preview-history')).toBeTruthy();
         expect(screen.findByTestId('team-join-preview-expiry')).toBeTruthy();
+        // Signed in and ready to join: the guidance names that state, never another sign-in.
+        expect(screen.getTextContent()).toContain(t('teams.entry.readyToJoinStatus'));
+        expect(screen.getTextContent()).not.toContain(t('teams.entry.readyStatus'));
 
         await screen.pressByTestIdAsync('team-auth-entry-join');
         expect(acceptTeamInvitation).toHaveBeenCalledWith(expect.objectContaining({
@@ -1085,6 +1089,8 @@ describe('TeamAuthEntrySurface', () => {
         // an answer the preview already gave.
         expect(screen.findByTestId('team-auth-entry-join')).toBeNull();
         expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        // The preview explains the retired link; the page does not also ask the signed-in person to sign in.
+        expect(screen.getTextContent()).not.toContain(t('teams.entry.readyStatus'));
     });
 
     it('states the Guest restriction and the plain-storage disclosure the Home published', async () => {

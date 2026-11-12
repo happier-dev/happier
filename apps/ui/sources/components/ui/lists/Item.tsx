@@ -1716,7 +1716,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     if (typeof subtitle !== 'string') {
                         const wrapPrimitive = (value: string | number) => {
                             const asText = String(value);
-                            const effectiveLines = resolveItemSubtitleMaxLines({ text: asText, subtitleLines, page: isPageRow }) ?? undefined;
+                            const effectiveLines = resolveItemSubtitleMaxLines({ text: asText, subtitleLines, page: isPageRow, menu: isMenuRow }) ?? undefined;
 
                             return renderPrimitiveText({
                                 value: asText,
@@ -1753,6 +1753,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         subtitleLines,
                         status: subtitleLeading != null,
                         page: isPageRow,
+                        menu: isMenuRow,
                     }) ?? undefined;
 
                     if (subtitleLeading) {

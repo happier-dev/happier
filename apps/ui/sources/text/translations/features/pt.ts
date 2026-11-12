@@ -13169,6 +13169,7 @@ const portuguese: TeamsTranslationRoot = {
             returnToHappier: 'Voltar ao Happier',
             signInToTeam: 'Entrar nesta equipe',
             readyStatus: 'Escolha como iniciar sessão para continuar.',
+            readyToJoinStatus: 'Revise o convite e depois entre.',
         },
         homeLabel: 'Home',
         role: {

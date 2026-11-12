@@ -13154,6 +13154,7 @@ const japanese: TeamsTranslationRoot = {
             returnToHappier: 'Happier に戻る',
             signInToTeam: 'このチームにサインイン',
             readyStatus: '続行するにはサインイン方法を選択してください。',
+            readyToJoinStatus: '招待内容を確認してから参加してください。',
         },
         homeLabel: 'Home',
         role: {

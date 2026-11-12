@@ -13189,6 +13189,7 @@ const polish: TeamsTranslationRoot = {
             returnToHappier: 'Wróć do Happier',
             signInToTeam: 'Zaloguj się do tego zespołu',
             readyStatus: 'Wybierz sposób logowania, aby kontynuować.',
+            readyToJoinStatus: 'Przejrzyj zaproszenie, a potem dołącz.',
         },
         homeLabel: 'Home',
         role: {

@@ -649,7 +649,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
         const { projection } = loadState;
         const teamName = projection.team.name;
         const homeDisplayName = projection.home.displayName
-            ?? resolveHomeDisplayLabel(getServerProfileById(resolvedTarget?.serverIdentityId ?? ''), '');
+            ?? resolveHomeDisplayLabel(getServerProfileById(projection.home.serverId), projection.home.serverId);
         const accountLabel = projection.account
             ? resolveViewerAccountDisplayName(formatAccountDisplayName(projection.account))
             : null;
@@ -675,6 +675,16 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
             ? leadWithHomeSignUp(projection.actions)
             : projection.actions;
         const firstRunnableAuthenticateIndex = entryActions.findIndex((action) => action.kind === 'authenticate');
+        // One message per state, matching the actions below it: a member opens the Team, a signed-in
+        // person with a usable invitation joins, and an invitation that cannot be used (or is still
+        // being read) is explained by its preview alone. Only the sign-in choices ask to sign in.
+        const entryStatus = projection.state === 'already_member'
+            ? t('teams.join.alreadyMemberTitle')
+            : invitation && !invitationIsJoinable
+                ? null
+                : invitation && accountScope
+                    ? t('teams.entry.readyToJoinStatus')
+                    : t('teams.entry.readyStatus');
         content = (
             <View testID="team-auth-entry-ready" style={styles.content}>
                 <TeamEntryIdentity
@@ -787,7 +797,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                     />
                 ) : (
                     <>
-                        <Text
+                        {entryStatus ? <Text
                             testID="team-auth-entry-status"
                             accessibilityRole="text"
                             accessibilityLiveRegion="polite"
@@ -795,10 +805,8 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                             role="status"
                             style={styles.guidance}
                         >
-                            {projection.state === 'already_member'
-                                ? t('teams.join.alreadyMemberTitle')
-                                : t('teams.entry.readyStatus')}
-                        </Text>
+                            {entryStatus}
+                        </Text> : null}
                         {invitation ? (
                             <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
                         ) : null}

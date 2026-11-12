@@ -13218,6 +13218,7 @@ const spanish: TeamsTranslationRoot = {
             returnToHappier: 'Volver a Happier',
             signInToTeam: 'Iniciar sesión en este Team',
             readyStatus: 'Elige cómo iniciar sesión para continuar.',
+            readyToJoinStatus: 'Revisa la invitación y luego únete.',
         },
         homeLabel: 'Home',
         role: {

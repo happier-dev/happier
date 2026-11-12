@@ -127,7 +127,7 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
             <ListPresentationProvider value="page">
                 <Item title={title} subtitle={detail} rowRole="menu" />
             </ListPresentationProvider>, detail,
-        )).toBe(1);
+        )).toBeNull();
     });
 
     it('paints the title clamp the rule reports, with and without a subtitle', async () => {

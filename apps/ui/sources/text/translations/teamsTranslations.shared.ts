@@ -123,6 +123,7 @@ export const english = {
             returnToHappier: 'Back to Happier',
             signInToTeam: 'Sign in to this Team',
             readyStatus: 'Choose how to sign in to continue.',
+            readyToJoinStatus: 'Review the invitation, then join.',
         },
         homeLabel: 'Home',
         role: {

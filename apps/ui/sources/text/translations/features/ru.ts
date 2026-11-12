@@ -13201,6 +13201,7 @@ const russian: TeamsTranslationRoot = {
             returnToHappier: 'Назад в Happier',
             signInToTeam: 'Войти в эту команду',
             readyStatus: 'Выберите способ входа, чтобы продолжить.',
+            readyToJoinStatus: 'Просмотрите приглашение, затем присоединяйтесь.',
         },
         homeLabel: 'Home',
         role: {

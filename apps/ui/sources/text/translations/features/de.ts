@@ -12978,6 +12978,7 @@ const german: TeamsTranslationRoot = {
             returnToHappier: 'Zurück zu Happier',
             signInToTeam: 'Bei diesem Team anmelden',
             readyStatus: 'Wähle, wie du dich anmelden möchtest, um fortzufahren.',
+            readyToJoinStatus: 'Sieh dir die Einladung an und tritt dann bei.',
         },
         homeLabel: 'Home',
         role: {

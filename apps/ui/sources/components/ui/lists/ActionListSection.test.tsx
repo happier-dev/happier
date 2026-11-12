@@ -35,8 +35,9 @@ describe('ActionListSection', () => {
         // React Native's zero line count means no truncation; undefined uses
         // the shared OptionRow's ordinary two-line default.
         expect(reasonText.every(node => node.props.numberOfLines === 0)).toBe(true);
+        // An enabled choice's description wraps too: a menu has no other place to read the rest of it.
         expect(screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.children === 'Ordinary summary')
-            .every(node => node.props.numberOfLines === 1)).toBe(true);
+            .every(node => node.props.numberOfLines === 0)).toBe(true);
     });
 
     it('labels its section through the shared popover section-header owner, in the title\'s own case', async () => {

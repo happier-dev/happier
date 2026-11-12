@@ -407,6 +407,17 @@ describe('SecretsList', () => {
         expect(onSelectId).toHaveBeenCalledWith('');
     });
 
+    it('lets the None and empty-list instructions wrap instead of cutting them off', async () => {
+        const { screen } = await renderSecretsList({ includeNoneRow: true, allowAdd: false });
+        const linesOf = (text: string) => screen.findAllByType('Text')
+            .filter((node: any) => node.props?.children === text)
+            .map((node: any) => node.props.numberOfLines);
+
+        // The rows explain the alternatives to a saved secret; a truncated instruction cannot be followed.
+        expect(linesOf('secrets.noneSubtitle')).toEqual([undefined]);
+        expect(linesOf('secrets.emptySubtitle')).toEqual([undefined]);
+    });
+
     it('keeps a selected shared secret visible, unavailable and repairable after the Home stops authorizing it', async () => {
         const {
             applySavedSecretCatalogPage,
