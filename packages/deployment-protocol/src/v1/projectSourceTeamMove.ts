@@ -1,6 +1,7 @@
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext, ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectSourcesMoveToTeamInputV1Schema, type ProjectSourcesFailureV1,
     type ProjectSourcesMoveToTeamInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
@@ -61,7 +62,8 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
         const response = await ports.deploymentAction('deployments.environments.list', {
             serverId: input.serverId, projectSourceId: source.id, includeDeleted: true, ...(cursor ? { cursor } : {}),
         }, context);
-        if ('errorCode' in response) throw new ProjectSourceTeamMoveReadFailure(response);
+        const failure = readActionFailureEnvelope(response);
+        if (failure) throw new ProjectSourceTeamMoveReadFailure(failure);
         const page = DeploymentEnvironmentListResultV1Schema.parse(response);
         if (!page.ok) refuse(page.error);
         if (page.coverage === 'partial') refuse('deployment_content_unavailable');
@@ -71,7 +73,8 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     const environments = await Promise.all(headers.map(async header => {
         const response = await ports.deploymentAction('deployments.environments.get', { serverId: input.serverId,
             environmentId: header.id, includeRetainedTargetLinkCleanup: true }, context);
-        if ('errorCode' in response) throw new ProjectSourceTeamMoveReadFailure(response);
+        const failure = readActionFailureEnvelope(response);
+        if (failure) throw new ProjectSourceTeamMoveReadFailure(failure);
         const detail = DeploymentEnvironmentGetResultV1Schema.parse(response);
         if (!detail.ok) return refuse(detail.error);
         if (!detail.retainedTargetLinkCleanupCompleteIds) return refuse('deployment_content_unavailable');
@@ -82,7 +85,8 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
         do {
             const response = await ports.deploymentAction('deployments.receipts.list', { serverId: input.serverId,
                 environmentId: header.id, ...(receiptCursor ? { cursor: receiptCursor } : {}) }, context);
-            if ('errorCode' in response) throw new ProjectSourceTeamMoveReadFailure(response);
+            const failure = readActionFailureEnvelope(response);
+            if (failure) throw new ProjectSourceTeamMoveReadFailure(failure);
             const page = DeploymentReceiptListResultV1Schema.parse(response);
             if (!page.ok) return refuse(page.error);
             if (page.items.some(receipt => receipt.environmentId !== header.id)) return refuse('deployment_invalid');
@@ -152,7 +156,7 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     }
     const machineAccess = await Promise.all([...machines].map(async ([machineId, roles]) => {
         const response = await ports.machineAccessAction({ actionId: 'machines.access.grants.list',
-            input: { serverId: input.serverId, machineId }, context, signal: context.signal });
+            input: { serverId: input.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) });
         const access = MachineAccessGrantsListResultV1Schema.parse(response);
         if ('kind' in access) return refuse(access.code);
         if (!access.canManage) return refuse('access_denied');
@@ -163,7 +167,7 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     const tokens = tokenInventory;
     const triggerSets: WorkflowTriggerSetV1[] = [];
     if (headers.length) {
-        const triggerResponse = await ports.workflowAction({ actionId: 'workflow.trigger.list', input: { scope: 'account_all' }, context, signal: context.signal });
+        const triggerResponse = await ports.workflowAction({ actionId: 'workflow.trigger.list', input: { scope: 'account_all' }, context, ...(context.signal ? { signal: context.signal } : {}) });
         if ('errorCode' in triggerResponse) refuse(triggerResponse.errorCode);
         triggerSets.push(...WorkflowTriggerListResultV1Schema.parse(triggerResponse).sets);
     }
