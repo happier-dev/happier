@@ -86,14 +86,16 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('Linux inventory scan to Inventory V1 RPC', () => {
     it.each([
-        { name: 'long unicode command and wildcard bind', command: ['node', 'serve', '界🚀'.repeat(700)], bind: '00000000' },
-        { name: 'empty argv and loopback bind', command: [], bind: '0100007F' },
-        { name: 'ordinary listener with missing optional facts', command: ['node', 'vite'], bind: '0100007F' },
-        { name: 'IPv6 wildcard bind', command: ['node', 'serve', '世界'], bind: '00000000000000000000000000000000', ipv6: true },
-    ])('emits registered inventory/refresh/launcher outputs for $name without leaking collector fields', async ({ command, bind, ipv6 }) => {
+        { name: 'long unicode command and wildcard bind', command: ['node', 'serve', '界🚀'.repeat(700)], bind: '00000000', launcherService: false },
+        { name: 'empty argv and loopback bind', command: [], bind: '0100007F', launcherService: false },
+        { name: 'ordinary listener with missing optional facts', command: ['node', 'vite'], bind: '0100007F', launcherService: true },
+        { name: 'IPv6 wildcard bind', command: ['node', 'serve', '世界'], bind: '00000000000000000000000000000000', ipv6: true, launcherService: false },
+    ])('emits registered inventory/refresh/launcher outputs for $name without leaking collector fields', async ({ command, bind, ipv6, launcherService }) => {
         installScan(command, bind, ipv6);
+        let scanFailure: unknown;
         const runtime = createLocalServicesDaemonRuntime({ machineId: workspace.machineId, startLoop: false,
             processEnv: {}, now: () => 1_000, scan: scanPlatformLocalServices,
+            onError: error => { scanFailure = error; },
             resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
                 features: { localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true } } }, capabilities: {},
             }) }),
@@ -103,6 +105,7 @@ describe('Linux inventory scan to Inventory V1 RPC', () => {
         });
         try {
             const internal = await runtime.inventoryRoutes.refreshSnapshot();
+            expect(scanFailure).toBeUndefined();
             expect(internal.diagnostics).toEqual([]);
             expect(internal.entries).toEqual([expect.objectContaining({ port: 5173, establishedConnections: 0,
                 provenance: expect.objectContaining({ workspace: { id: workspace.id, path: workspace.rootPath, association: 'cwd_containment' } }),
@@ -187,9 +190,10 @@ describe('Linux inventory scan to Inventory V1 RPC', () => {
                 RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, { machineId: workspace.machineId },
             ));
             assertActionOutputContract('localServices.launcher.snapshot', launcher.snapshot);
-            expect(launcher.snapshot.targets).toEqual([expect.objectContaining({
+            // Unclassified listeners remain visible in inventory without becoming launcher Services.
+            expect(launcher.snapshot.targets).toEqual(launcherService ? [expect.objectContaining({
                 sourceClass: { kind: 'inventory_entry', inventoryEntryId: internal.entries[0]!.id },
-            })]);
+            })] : []);
             expect(runtime.inventoryRegistry.getSnapshot().entries[0]?.establishedConnections).toBe(0);
         } finally { await runtime.stop(); }
     });
