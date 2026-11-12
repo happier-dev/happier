@@ -28,7 +28,7 @@ export function readHappierActionCallId(toolName: string, input: unknown): Actio
 export function readHappierActionCallInput(toolName: string, input: unknown): unknown {
     const payload = readHappierActionToolPayload(input);
     return readHappierActionExecuteActionId(toolName, input, (id): id is ActionId => KNOWN_ACTION_IDS.has(id))
-        ? (isRecord(payload) ? payload.input : undefined)
+        ? (isRecord(payload) ? readHappierActionToolPayload(payload.input) : undefined)
         : payload;
 }
 

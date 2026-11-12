@@ -1,11 +1,11 @@
 import { ComputerActionResultV1Schema, ComputerApprovalDisplayV1Schema, ComputerCaptureResponseV1Schema, ComputerInputRequestV1Schema, ComputerQueryResponseV1Schema, type ComputerCaptureResponseV1, type ComputerInputOperationV1 } from '@happier-dev/protocol/computer/v1';
-import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { z } from 'zod/mini';
 import type { ToolCall } from '@happier-dev/session-core/messages';
 
 import {
     createHappierActionToolNameIndex,
     isRecord,
+    readHappierActionCallInput,
     readHappierActionExecuteActionId,
     readHappierActionId,
     readHappierActionToolResultCandidates,
@@ -79,8 +79,7 @@ export function resolveTranscriptComputerActionReference(input: Readonly<{
         : readHappierActionExecuteActionId(input.toolName, input.input, isComputerAgentActionId);
     const actionId = directActionId ?? executeActionId;
     if (!actionId) return null;
-    const toolInput = maybeParseJson(input.input);
-    const actionInput = executeActionId && isRecord(toolInput) ? maybeParseJson(toolInput.input) : toolInput;
+    const actionInput = readHappierActionCallInput(input.toolName, input.input);
     const machineId = isRecord(actionInput) && typeof actionInput.machineId === 'string' ? actionInput.machineId.trim() : '';
     const verb = readVerb(actionId, actionInput);
     if (!machineId || !verb) return null;

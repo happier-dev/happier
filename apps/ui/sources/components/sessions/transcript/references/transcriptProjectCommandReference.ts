@@ -1,12 +1,12 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { WaitActionInputV1Schema } from '@happier-dev/protocol/actions/specs/wait';
-import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import type { ToolCall } from '@happier-dev/session-core/messages';
 
 import {
   createHappierActionToolNameIndex,
   isRecord,
+  readHappierActionCallInput,
   readHappierActionExecuteActionId,
   readHappierActionId,
   readHappierActionToolResultCandidates,
@@ -64,14 +64,14 @@ export function readTranscriptProjectCommandCall(
     return {
       kind: 'start',
       actionId,
-      input: readActionInput(tool.name, tool.input),
+      input: readHappierActionCallInput(tool.name, tool.input),
     };
   const waitId =
     readHappierActionId(tool.name, WAIT_TOOLS) ??
     readHappierActionExecuteActionId(tool.name, tool.input, isWaitActionId);
   if (!waitId) return null;
   const wait = WaitActionInputV1Schema.safeParse(
-    readActionInput(tool.name, tool.input),
+    readHappierActionCallInput(tool.name, tool.input),
   );
   return wait.success && wait.data.target.kind === 'action_operation'
     ? { kind: 'wait', operationId: wait.data.target.operationId }
@@ -103,16 +103,4 @@ export function readTranscriptProjectCommandAcceptance(
     }
   }
   return null;
-}
-
-/** The generic `action_execute` tool nests the Action's input; a dedicated tool's input is the input. */
-function readActionInput(toolName: string, input: unknown): unknown {
-  const parsed = maybeParseJson(input);
-  return readHappierActionExecuteActionId(
-    toolName,
-    parsed,
-    (id): id is string => true,
-  ) && isRecord(parsed)
-    ? parsed.input
-    : parsed;
 }

@@ -78,5 +78,9 @@ describe('readTranscriptMachineResourcesCall', () => {
             name: toolName('machines.processes.list'), state: 'completed', result: answer, input: { machineId: 'edge-1', serverId: 'home-a' },
         });
         expect(call).toMatchObject({ kind: 'processes', machineId: 'edge-1', serverId: 'home-a' });
+        expect(readTranscriptMachineResourcesCall({
+            name: 'mcp__happier__action_execute', state: 'completed', result: answer,
+            input: { actionId: 'machines.processes.list', input: JSON.stringify({ machineId: 'edge-1', serverId: 'home-a' }) },
+        })).toMatchObject({ kind: 'processes', machineId: 'edge-1', serverId: 'home-a' });
     });
 });

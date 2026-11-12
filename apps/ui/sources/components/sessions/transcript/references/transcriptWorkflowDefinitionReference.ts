@@ -1,9 +1,8 @@
 import type { Message, ToolCall } from '@happier-dev/session-core/messages';
 import type { SessionMessageChange } from '@/sync/store/sessionMessageChanges';
 import type { WorkflowAgentRevision } from '@/sync/domains/workflows/workflowAgentRevision';
-import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import { createHappierActionToolNameIndex, isRecord, readHappierActionExecuteActionId, readHappierActionId, readHappierActionToolResultCandidates } from './happierActionToolResult';
+import { createHappierActionToolNameIndex, isRecord, readHappierActionCallInput, readHappierActionExecuteActionId, readHappierActionId, readHappierActionToolResultCandidates } from './happierActionToolResult';
 
 const WRITES = ['workflow.definition.create', 'workflow.definition.update', 'workflow.definition.edit'] as const;
 type DefinitionWrite = typeof WRITES[number];
@@ -49,8 +48,7 @@ export function resolveTranscriptWorkflowDefinitionReference(tool: ToolCall): Tr
     if (tool.state !== 'completed') return null;
     const actionId = readDefinitionWriteActionId(tool);
     if (!actionId) return null;
-    const toolInput = maybeParseJson(tool.input);
-    const input = readHappierActionId(tool.name, INDEX) ? toolInput : isRecord(toolInput) ? toolInput.input : null;
+    const input = readHappierActionCallInput(tool.name, tool.input);
     for (const candidate of readHappierActionToolResultCandidates(tool.result)) {
         // Refusals/deferred approvals are ordinary transcript outcomes, never revisions.
         if (isRecord(candidate) && 'ok' in candidate && candidate.ok !== true) continue;

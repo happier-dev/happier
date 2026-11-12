@@ -2,7 +2,6 @@ import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/b
 import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { parseLocator } from '@happier-dev/protocol/browser/automation/locators';
 
 import type { ToolCall } from '@happier-dev/session-core/messages';
@@ -11,6 +10,7 @@ import { formatBrowserDisplayUrl } from '@/sync/domains/browser/shell';
 import {
     createHappierActionToolNameIndex,
     isRecord,
+    readHappierActionCallInput,
     readHappierActionExecuteActionId,
     readHappierActionId,
     readHappierActionToolResultCandidates,
@@ -237,8 +237,7 @@ export function resolveTranscriptBrowserActionReference(input: Readonly<{
     if (!identity) return null;
     const { actionId } = identity;
 
-    const toolInput = maybeParseJson(input.input);
-    const actionInputValue = identity.generic && isRecord(toolInput) ? maybeParseJson(toolInput.input) : toolInput;
+    const actionInputValue = readHappierActionCallInput(input.toolName, input.input);
     const actionInput = isRecord(actionInputValue) ? actionInputValue : null;
     const payload = isRecord(actionInput?.payload) ? actionInput.payload : null;
     const verb = resolveVerb(actionId);

@@ -58,6 +58,10 @@ describe('transcript Project command projection', () => {
     expect(readTranscriptProjectCommandAcceptance(tool)?.operationId).toBe(
       'op-test',
     );
+    expect(readTranscriptProjectCommandCall({ ...tool, name: 'mcp__happier__action_execute',
+      input: { actionId: 'projects.script.run', input: JSON.stringify(input) } })).toEqual({
+      kind: 'start', actionId: 'projects.script.run', input,
+    });
   });
 
   it('reads the generic action_execute form and the executor envelope', () => {

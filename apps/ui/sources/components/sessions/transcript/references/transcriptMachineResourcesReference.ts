@@ -1,4 +1,3 @@
-import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import {
   MachineProcessesAnswerV1Schema,
   type MachineProcessesAnswerV1,
@@ -14,6 +13,7 @@ import {
 import {
   createHappierActionToolNameIndex,
   isRecord,
+  readHappierActionCallInput,
   readHappierActionExecuteActionId,
   readHappierActionId,
   readHappierActionToolResultCandidates,
@@ -40,17 +40,6 @@ function isProposalId(id: string): id is ProposalActionId {
   return (PROPOSAL_IDS as readonly string[]).includes(id);
 }
 
-function readActionInput(toolName: string, input: unknown): unknown {
-  const parsed = maybeParseJson(input);
-  return readHappierActionExecuteActionId(
-    toolName,
-    parsed,
-    (id): id is string => true,
-  ) && isRecord(parsed)
-    ? parsed.input
-    : parsed;
-}
-
 export type TranscriptMachineResourcesCall =
   | Readonly<{
       kind: 'processes';
@@ -72,7 +61,7 @@ export function readTranscriptMachineResourcesCall(
     readHappierActionExecuteActionId(tool.name, tool.input, isProcessList);
   if (listId) {
     if (tool.state !== 'completed') return null;
-    const input = readActionInput(tool.name, tool.input);
+    const input = readHappierActionCallInput(tool.name, tool.input);
     const machineId =
       isRecord(input) && typeof input.machineId === 'string'
         ? input.machineId
@@ -107,7 +96,7 @@ export function readTranscriptMachineResourcesCall(
     actionId: proposalId,
     proposal: readResourceProposalApproval({
       actionId: proposalId,
-      actionArgs: readActionInput(tool.name, tool.input),
+      actionArgs: readHappierActionCallInput(tool.name, tool.input),
     }),
   };
 }

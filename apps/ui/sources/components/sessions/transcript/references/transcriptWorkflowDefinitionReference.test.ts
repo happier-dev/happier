@@ -17,6 +17,8 @@ describe('saved workflow Action acknowledgements', () => {
         for (const call of [
             { name, input, result: { ok: true, result } },
             { name: 'mcp__happier__action_execute', input: { actionId: 'workflow.definition.edit', input }, result },
+            { name: 'mcp__happier__action_execute', input: { actionId: 'workflow.definition.edit', input: JSON.stringify(input) }, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, result }) }] } },
+            { name: 'mcp__happier__action_execute', input: JSON.stringify({ actionId: 'workflow.definition.edit', input: JSON.stringify(input) }), result },
         ]) {
             expect(resolveTranscriptWorkflowDefinitionReference({ ...tool, ...call, state: 'completed' }))
                 .toEqual({ actionId: 'workflow.definition.edit', definitionId, ...result });
