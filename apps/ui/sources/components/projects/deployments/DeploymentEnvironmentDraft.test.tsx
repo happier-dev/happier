@@ -379,6 +379,9 @@ describe('Environment draft Machine Home', () => {
   it('withdraws and restores the new Environment entry without withdrawing the collection', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://deployment-entry.test',
       accountId: 'alice', currentAccount: true });
+    homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+      id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [], createdByAccountId: 'alice',
+    } } });
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
     const controller = createDeploymentReadControllerV1({

@@ -53,6 +53,7 @@ import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { buildDeploymentEnvironmentHref } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
+import { useProjectSource } from '../sources/useProjectSources';
 
 /** The narrowest Environment detail that keeps its header facts beside the title. */
 const DEPLOYMENTS_DETAIL_MIN_WIDTH_PX = 480;
@@ -174,7 +175,16 @@ const ProjectDeploymentsPage = React.memo(
       scopeKind: 'spawn', serverId: props.serverId,
     })?.state === 'enabled';
     const { theme } = useUnistyles();
-    const preparation = newWorkEnabled && props.lifetime ? <>
+    // The shared Source reader owns readability, including retained reads during refresh.
+    const sourceRead = useProjectSource(props.lifetime, props.sourceId);
+    const sourceAvailable = sourceRead.source !== null;
+    const canCreate = newWorkEnabled && sourceAvailable && Boolean(props.actions?.prepareCreate);
+    const preparation = !sourceAvailable && sourceRead.issue ? <SurfaceStateCard
+      testID="project-deployments.sourceUnavailable" size="line" kind="unavailable"
+      title={t('projects.sources.unavailable')} reason={t('projects.open.sourceUnavailableHint')}
+      diagnosticCode={sourceRead.issue}
+      action={{ label: t('common.open'), onPress: () => router.push(projectSourceRoute(null)) }}
+    /> : newWorkEnabled && sourceAvailable && props.lifetime ? <>
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
     </> : null;
@@ -207,13 +217,13 @@ const ProjectDeploymentsPage = React.memo(
     const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
     const [drafting, setDrafting] = React.useState(newDefinition !== null);
     const [draftSource, setDraftSource] = React.useState<DeploymentEnvironmentDetailV1 | null>(null);
-    const selection = React.useMemo<Selection>(() => drafting ? DRAFTING : routeDefaults ? {
+    const selection = React.useMemo<Selection>(() => drafting && sourceAvailable ? DRAFTING : routeDefaults ? {
       environmentId: null, deploymentId: null, defaults: true,
     } : {
       environmentId: routeEnvironmentId,
       deploymentId: routeEnvironmentId ? routeDeploymentId : null,
       database: routeEnvironmentId && !routeDeploymentId ? routeDatabase : null,
-    }, [drafting, routeDatabase, routeDefaults, routeDeploymentId, routeEnvironmentId]);
+    }, [drafting, sourceAvailable, routeDatabase, routeDefaults, routeDeploymentId, routeEnvironmentId]);
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {
@@ -407,7 +417,7 @@ const ProjectDeploymentsPage = React.memo(
             title={t('projects.deployments.emptyTitle')}
             subtitle={t('projects.deployments.emptyBody')}
             // Settings is the second way forward beside Add environment, or the one action when adding isn't open.
-            {...(newWorkEnabled && props.actions?.prepareCreate ? {
+            {...(canCreate ? {
               primaryAction: { label: t('projects.deployments.add'), onPress: startDraft, testID: 'project-deployments.empty.add' },
               secondaryAction: emptySettingsAction,
             } : { primaryAction: emptySettingsAction })}
@@ -502,7 +512,7 @@ const ProjectDeploymentsPage = React.memo(
           readLogs={props.actions?.readLogs ?? null}
           domainActions={props.actions ?? null}
           environmentActions={props.actions ?? null}
-          onDuplicate={newWorkEnabled && props.actions?.prepareCreate ? source => {
+          onDuplicate={canCreate ? source => {
             setDraftSource(source);
             setSelection(DRAFTING);
           } : undefined}
@@ -566,7 +576,7 @@ const ProjectDeploymentsPage = React.memo(
                 stale={stale}
                 drafting={selection.drafting === true}
                 lifetime={props.lifetime}
-                onAdd={newWorkEnabled && props.actions?.prepareCreate ? startDraft : null}
+                onAdd={canCreate ? startDraft : null}
                 onSettings={openDefaults}
                 paging={{ hasPrevious: collection.hasPreviousPage, hasNext: collection.hasNextPage,
                   previous: collection.previousPage, next: collection.nextPage }}
