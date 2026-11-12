@@ -228,7 +228,8 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         flexDirection: 'row',
         alignItems: 'center',
         gap: chip ? HAPPIER_FIELD_BOX_METRICS.chipGapPx : HAPPIER_FIELD_BOX_METRICS.triggerGapPx,
-        minWidth: resolvedSpan === 'intrinsic' ? 0 : HAPPIER_FIELD_BOX_METRICS.triggerMinWidthPx,
+        // A spanning field takes its row's width, whatever it is; a floor above that row would draw past it.
+        minWidth: resolvedSpan === 'intrinsic' || resolvedSpan === 'row' ? 0 : HAPPIER_FIELD_BOX_METRICS.triggerMinWidthPx,
         ...(resolvedSpan === 'column' ? { minWidth: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx } : {}),
         ...(resolvedSpan === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: maxWidthPx ?? HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,

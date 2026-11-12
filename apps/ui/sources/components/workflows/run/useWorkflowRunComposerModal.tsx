@@ -77,11 +77,13 @@ export function useWorkflowRunComposerModal(params: Readonly<{
         props: modalProps,
         title: params.props?.workflowName ?? t('workflows.start.workflow'),
         testID: params.testID ?? 'workflow-run-inputs-modal',
+        // The card's body is the one scroller: a long preview (identity, steps, inputs, where it runs) keeps
+        // Start reachable on a short phone or at large text instead of under the sheet's edge.
         chrome: { ...createAnchoredSheetChrome({
             title: params.props?.workflowName ?? t('workflows.start.workflow'),
             testID: params.testID ?? 'workflow-run-inputs-modal',
             ...(params.anchorRef?.current ? { anchor: { kind: 'view', ref: params.anchorRef } as const } : {}),
-        }), header: 'none' },
+        }), header: 'none', bodyScroll: 'auto' },
         focusReturnRef: params.anchorRef,
         ...(params.props === null ? {} : { onRequestClose: cancelHostedIntent }),
     });

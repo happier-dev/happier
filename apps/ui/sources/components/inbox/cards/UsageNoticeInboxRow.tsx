@@ -9,6 +9,8 @@ export const UsageNoticeInboxRow = React.memo(function UsageNoticeInboxRow(props
     entry: OpenUsageNoticeArtifact;
     onOpen: () => void;
     onDismiss: (entry: OpenUsageNoticeArtifact) => Promise<void>;
+    /** A phone row gives the title the row's width (see `InboxWorkRow`). */
+    narrow?: boolean;
 }>) {
     const dismiss = React.useCallback(async () => {
         try { await props.onDismiss(props.entry); }
@@ -19,6 +21,7 @@ export const UsageNoticeInboxRow = React.memo(function UsageNoticeInboxRow(props
             testID={`inbox.usage-notice.${props.entry.artifact.id}`}
             title={props.entry.header.title}
             onPress={props.onOpen}
+            narrow={props.narrow}
             trailingAccessory={<InboxDismissRowMenu testID={`inbox.usage-notice.dismiss.${props.entry.artifact.id}`} onDismiss={dismiss} />}
         />
     );

@@ -124,6 +124,8 @@ export const MachineVitalsNoticeInboxRow = React.memo(
       notice: MachineVitalsNotificationV1;
       navigate: (route: string) => void;
       onDismiss: (entry: OpenUsageNoticeArtifact) => Promise<void>;
+      /** A phone row gives the title the row's width (see `InboxWorkRow`). */
+      narrow?: boolean;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -180,6 +182,7 @@ export const MachineVitalsNoticeInboxRow = React.memo(
         }
         time={<InboxRelativeTime timestamp={notice.at} />}
         onPress={open}
+        narrow={props.narrow}
         trailingAccessory={
           <InboxDismissRowMenu testID={`inbox.machine-notice.dismiss.${entry.artifact.id}`} onDismiss={dismiss} />
         }

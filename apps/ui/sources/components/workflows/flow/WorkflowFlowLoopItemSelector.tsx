@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
-import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { FIELD_BOX_METRICS, resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
@@ -47,6 +47,13 @@ export const WorkflowFlowLoopItemSelector = React.memo(function WorkflowFlowLoop
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [open, setOpen] = React.useState(false);
+    // Where the row cannot give the item field a field's own width between the arrows (a phone at a large
+    // text size), the field takes the row and the arrows step beneath it, so the item's name is never cut.
+    const [stacked, setStacked] = React.useState(false);
+    const measureRow = React.useCallback((event: LayoutChangeEvent) => {
+        const room = event.nativeEvent.layout.width - 2 * (HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE + theme.space.s4);
+        setStacked(room < FIELD_BOX_METRICS.triggerMinWidthPx);
+    }, [theme.space.s4]);
     const testID = `${props.testIDPrefix}-node-${loopNodeId}-item-selector`;
     const position = view.visibleItems.findIndex(item => item.index === view.selectedIndex);
     const selected = view.visibleItems[position];
@@ -78,48 +85,54 @@ export const WorkflowFlowLoopItemSelector = React.memo(function WorkflowFlowLoop
         onChange: (id: string) => onFilterItems(loopNodeId, id as WorkflowFlowLoopItemFilter),
     };
 
+    const previous = <StepButton testID={`${testID}-previous`} icon="caret-left" label={t('workflows.map.itemSelector.previous')}
+        disabled={position <= 0} onPress={() => step(-1)} />;
+    const next = <StepButton testID={`${testID}-next`} icon="caret-right" label={t('workflows.map.itemSelector.next')}
+        disabled={position === -1 || position >= view.visibleItems.length - 1} onPress={() => step(1)} />;
+    const menu = (
+        <View style={styles.menu}>
+            <DropdownMenu
+                open={open}
+                onOpenChange={setOpen}
+                items={items}
+                selectedId={String(view.selectedIndex)}
+                onSelect={(id) => { setOpen(false); onSelectItem(loopNodeId, Number(id)); }}
+                search
+                variant="slim"
+                matchTriggerWidth={false}
+                popoverPortalWebTarget="body"
+                popoverAccessibilityLabel={t('workflows.map.itemSelector.label')}
+                trigger={({ toggle }) => (
+                    <HappierPressable
+                        testID={`${testID}-open`}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${t('workflows.map.itemSelector.label')}: ${selected?.label ?? ''}`}
+                        expanded={open}
+                        hasPopup="menu"
+                        onPress={toggle}
+                        style={({ focused }) => [styles.trigger, focusRingStyle({ focused, color: theme.colors.border.focus })]}
+                    >
+                        {renderDropdownItemTriggerRightElement({
+                            detail: selected?.label ?? '',
+                            open,
+                            detailColor: theme.colors.text.primary,
+                            chevronColor: theme.colors.text.secondary,
+                            field: resolveFieldBoxColors(theme),
+                            fieldSpan: 'row',
+                        })}
+                    </HappierPressable>
+                )}
+            />
+        </View>
+    );
     return (
         <View testID={testID} style={styles.container}>
-            <View style={styles.row}>
-                <StepButton testID={`${testID}-previous`} icon="caret-left" label={t('workflows.map.itemSelector.previous')}
-                    disabled={position <= 0} onPress={() => step(-1)} />
-                <View style={styles.menu}>
-                    <DropdownMenu
-                        open={open}
-                        onOpenChange={setOpen}
-                        items={items}
-                        selectedId={String(view.selectedIndex)}
-                        onSelect={(id) => { setOpen(false); onSelectItem(loopNodeId, Number(id)); }}
-                        search
-                        variant="slim"
-                        matchTriggerWidth={false}
-                        popoverPortalWebTarget="body"
-                        popoverAccessibilityLabel={t('workflows.map.itemSelector.label')}
-                        trigger={({ toggle }) => (
-                            <HappierPressable
-                                testID={`${testID}-open`}
-                                accessibilityRole="button"
-                                accessibilityLabel={`${t('workflows.map.itemSelector.label')}: ${selected?.label ?? ''}`}
-                                expanded={open}
-                                hasPopup="menu"
-                                onPress={toggle}
-                                style={({ focused }) => [styles.trigger, focusRingStyle({ focused, color: theme.colors.border.focus })]}
-                            >
-                                {renderDropdownItemTriggerRightElement({
-                                    detail: selected?.label ?? '',
-                                    open,
-                                    detailColor: theme.colors.text.primary,
-                                    chevronColor: theme.colors.text.secondary,
-                                    field: resolveFieldBoxColors(theme),
-                                    fieldSpan: 'row',
-                                })}
-                            </HappierPressable>
-                        )}
-                    />
-                </View>
-                <StepButton testID={`${testID}-next`} icon="caret-right" label={t('workflows.map.itemSelector.next')}
-                    disabled={position === -1 || position >= view.visibleItems.length - 1} onPress={() => step(1)} />
+            <View style={styles.row} onLayout={measureRow}>
+                {stacked ? null : previous}
+                {menu}
+                {stacked ? null : next}
             </View>
+            {stacked ? <View style={styles.row}>{previous}{next}</View> : null}
             {filter === null ? null : <SelectionListFilterChip filter={filter} />}
         </View>
     );
@@ -149,11 +162,11 @@ function StepButton(props: Readonly<{
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-    // Inset to the loop header's text edge, the same inset the map's item list takes.
+    // Inset to the loop header's text edges, the same inset the map's item list takes.
     container: {
         gap: theme.space.s8,
         alignItems: 'flex-start',
-        paddingLeft: theme.space.s16,
+        paddingHorizontal: theme.space.s16,
     },
     row: {
         alignSelf: 'stretch',

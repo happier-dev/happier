@@ -416,7 +416,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
               }}
             >
               {props.actions ? (
-                <View style={{ flexDirection: 'row', flexWrap: inlineActions ? 'nowrap' : 'wrap', alignItems: 'center', justifyContent: centered ? 'center' : 'flex-start', gap: 8, maxWidth: '100%', ...(shrinkActions ? { flexShrink: 1, minWidth: 0 } : null) }}>
+                // Controls wider than the whole column (large text in a narrow document) wrap within it, ending on
+                // the actions' edge, rather than drawing past it; shrinking controls give up width instead.
+                <View style={{ flexDirection: 'row', flexWrap: shrinkActions ? 'nowrap' : 'wrap', alignItems: 'center', justifyContent: centered ? 'center' : inlineActions ? 'flex-end' : 'flex-start', gap: 8, maxWidth: '100%', ...(shrinkActions ? { flexShrink: 1, minWidth: 0 } : null) }}>
                   {props.actions}
                 </View>
               ) : null}

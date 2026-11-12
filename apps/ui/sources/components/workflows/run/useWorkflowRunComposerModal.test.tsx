@@ -111,7 +111,8 @@ describe('useWorkflowRunComposerModal', () => {
         expect(mounted.visible()).toHaveLength(1);
         expect(mounted.visible()[0]).toMatchObject({
             focusReturnRef: anchorRef,
-            chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'none' },
+            // The card's body scrolls, so Start stays reachable under a long preview at large text (FIN-QA-LARGETEXT F7).
+            chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'auto' },
         });
         expect(mounted.screen.findByType(ModalCardFrame).props.presentation).toBe('sheet');
         expect(mounted.screen.findAllByType(Popover)).toHaveLength(0);
@@ -126,7 +127,7 @@ describe('useWorkflowRunComposerModal', () => {
         expect(anchorRef.current).not.toBeNull();
         expect(mounted.visible()).toHaveLength(1);
         expect(mounted.visible()[0]).toMatchObject({ focusReturnRef: anchorRef,
-            chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'none',
+            chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'auto',
                 anchor: { kind: 'view', ref: anchorRef } } });
         expect(mounted.screen.findHostByTestId('workflow-run-inputs-run')).not.toBeNull();
     });

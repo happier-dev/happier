@@ -425,6 +425,11 @@ function WorkflowSelectedDetail(props: Readonly<{
     const reviewShown = card !== null && !reviewDismissed;
     const reviewOpen = props.phone && active && reviewShown;
     const paneHeaderScroll = usePaneHeaderScrollSink();
+    // A step without its own conversation ends the page: its last facts scroll clear of the phone's floating chrome.
+    const { theme } = useUnistyles();
+    const chromeClearance = useFloatingChromeClearance();
+    const inspectorClearance = props.sessionId === null && chromeClearance > 0
+        ? { paddingBottom: theme.space.s16 + chromeClearance } : null;
     const reportInspectorScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         paneHeaderScroll?.reportTopDistance(event.nativeEvent.contentOffset.y);
     }, [paneHeaderScroll]);
@@ -453,7 +458,8 @@ function WorkflowSelectedDetail(props: Readonly<{
     if (props.phone && props.sessionId === null && card !== null) return reopenReview;
     return <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
         {props.phone ? <PaneHeader testID={`${props.detail.testIDPrefix}-selected-header`}
-            title={props.title} subtitle={props.subtitle} size="large" onClose={props.onClose}
+            // The step's name wraps whole: it is what tells this step from its siblings.
+            title={props.title} subtitle={props.subtitle} size="large" titleNumberOfLines={null} onClose={props.onClose}
             actions={reviewOpen ? undefined : props.headerActions} lineTrailing={reviewOpen ? undefined : props.headerTrailing} /> : null}
         {!props.phone && props.inlineHeader ? <DetailsTabHeader
             testID={`${props.detail.testIDPrefix}-selected-header`} title={props.title}
@@ -469,7 +475,7 @@ function WorkflowSelectedDetail(props: Readonly<{
             // The inspector is the body under the step's header: its scroll drives that header's shade.
             onScroll={paneHeaderScroll ? reportInspectorScroll : undefined} scrollEventThrottle={16}
             style={props.sessionId === null ? styles.scroll : styles.inspectorAboveConversation}
-            contentContainerStyle={styles.inspectorContent}>
+            contentContainerStyle={[styles.inspectorContent, inspectorClearance]}>
             <WorkflowInvocationDetail {...props.detail} />
         </ScrollView>}
         {props.sessionId === null ? null : <SessionInPane sessionId={props.sessionId}
@@ -1618,6 +1624,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 ? { value: props.result } : null,
             recovery,
             lifecycle: selectedInvocation?.lifecycle ?? null,
+            investigationSubject: props.serverId ? { kind: 'workflowRun', serverId: props.serverId, runId: props.run.id } : null,
             waitPrompt: selectedDetail.waitPrompt,
             workspaceSourceLabel,
             cause: selectedInvocationCause,
@@ -1708,6 +1715,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         selectedInvocationCause,
         props.machineName,
         props.machineReachable,
+        props.serverId,
+        props.run.id,
         props.run.machineId,
         selectedRecoveryText,
         selectInvocation,

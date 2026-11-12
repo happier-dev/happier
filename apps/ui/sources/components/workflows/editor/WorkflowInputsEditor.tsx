@@ -9,6 +9,7 @@ import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/wo
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { FIELD_BOX_METRICS } from '@/components/ui/forms/fieldBox';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
@@ -38,10 +39,11 @@ const styles = StyleSheet.create((theme) => ({
     },
     line: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s8 },
     nameField: { flexGrow: 1, flexBasis: 140, minWidth: 0 },
-    defaultInput: { flex: 1, minWidth: 0 },
+    // Beside its label while a field's own width fits there; beneath it, at the line's width, when it doesn't.
+    defaultInput: { flexGrow: 1, flexShrink: 1, flexBasis: FIELD_BOX_METRICS.triggerMinWidthPx, minWidth: 0 },
     required: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     requiredLabel: { ...Typography.variant('label', 'regular'), color: theme.colors.text.primary },
-    defaultField: { flexGrow: 1, flexBasis: 200, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    defaultField: { flexGrow: 1, flexShrink: 1, flexBasis: 200, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
 }));
 
 const VALUE_TYPES = ['string', 'number', 'boolean', 'json'] as const;

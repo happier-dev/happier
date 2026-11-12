@@ -577,7 +577,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                             surface={sectionSurface} spacingBefore={daySections.length > 0 ? 'separated' : undefined}>
                             {notices.machines.map(({ entry, notice }) => (
                                 <MachineVitalsNoticeInboxRow key={entry.artifact.id} entry={entry} notice={notice}
-                                    navigate={navigate}
+                                    navigate={navigate} narrow={!wide}
                                     onDismiss={model.dismissUsageNotice} />
                             ))}
                             {model.machineReachabilityEntries.map((entry, index) => (
@@ -599,7 +599,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                             surface={sectionSurface} spacingBefore={daySections.length > 0 || notices.machines.length > 0 || model.machineReachabilityEntries.length > 0 ? 'separated' : undefined}>
                             {notices.usage.map((entry) => (
                                 <UsageNoticeInboxRow key={entry.artifact.id} entry={entry}
-                                    onOpen={openUsage}
+                                    onOpen={openUsage} narrow={!wide}
                                     onDismiss={model.dismissUsageNotice} />
                             ))}
                         </InboxSection>
