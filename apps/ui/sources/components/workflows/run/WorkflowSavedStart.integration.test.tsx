@@ -11,6 +11,7 @@ import {
     type WorkflowRunStartRequestV1,
 } from '@happier-dev/protocol/workflows/actionsV1';
 import {
+    WorkflowRunAdmissionPreparationResultV1Schema,
     WorkflowRunRecipientCensusResponseV1Schema,
     WorkflowRunRecipientKeyEnvelopesV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import {
@@ -39,7 +40,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
-import { projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { t } from '@/text';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -146,10 +147,21 @@ describe('saved editor Start through the real front door and Account admission',
                 if (path === '/v1/account/encryption/currentness') return json({ ...encryption.witness, signingKeyFingerprint: null, updatedAt: 0,
                     recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } });
                 if (path === '/v3/automations') return json({ automations: [], nextCursor: null });
+                if (path === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(JSON.parse(String(init?.body)), artifactId => {
+                    const artifact = artifacts.get(artifactId);
+                    if (!artifact) return { artifactId, ok: false, error: 'artifact_not_found', status: 404, retryable: false };
+                    return { artifactId, ok: true, artifact, recipientCensus: mode === 'plain' ? null
+                        : ArtifactAccessRecipientCensusResponseV1Schema.parse({
+                            artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
+                            dataEncryptionKey: artifact.dataEncryptionKey, callerDataEncryptionKey: artifact.dataEncryptionKey,
+                            provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ?? null,
+                            callerProvenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ?? null, recipients: [],
+                        }) };
+                });
                 if (path === '/v1/artifacts') {
                     if (init?.method !== 'POST') return json([...artifacts.values()]);
                     const input = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                    const row: Artifact = { ...input, ...projectArtifactStoredKind(input.kind), ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
+                    const row: Artifact = { ...input, ...projectArtifactStoredKind(input.kind), ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: mode,
                         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
                     artifacts.set(row.id, row);
                     return json(row);
@@ -181,6 +193,10 @@ describe('saved editor Start through the real front door and Account admission',
         const operations: Readonly<Record<string, unknown>>[] = [];
         let submitted: WorkflowRunStartRequestV1 | undefined;
         let rpcFailure: unknown;
+        const readRunCensus = (runId: unknown) => WorkflowRunRecipientCensusResponseV1Schema.parse({
+            runId, ownerAccountId: accountId, visibleTeamId: null, encryptionMode: mode, access: 'owner',
+            ownerAccountCurrentness: encryption.witness, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [],
+        });
         const owner = createWorkflowAccountRunActionOwner({ definitions, resolveAccountId: async () => accountId,
             resolveEncryption: async () => encryption, normalizeAbsolutePath: resolveAbsolutePath,
             randomBytes: length => {
@@ -191,11 +207,13 @@ describe('saved editor Start through the real front door and Account admission',
             resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
             storage: { execute: async operation => {
                 operations.push(operation);
-                if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
-                if (operation.operation === 'run-key.census') return WorkflowRunRecipientCensusResponseV1Schema.parse({
-                    runId: operation.runId, ownerAccountId: accountId, visibleTeamId: null, encryptionMode: mode, access: 'owner',
-                    ownerAccountCurrentness: encryption.witness, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [],
-                });
+                if (operation.operation === 'get') {
+                    if (operation.prepareAdmission !== undefined) return WorkflowRunAdmissionPreparationResultV1Schema.parse({
+                        run: null, keyCensus: readRunCensus(operation.runId),
+                    });
+                    throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+                }
+                if (operation.operation === 'run-key.census') return readRunCensus(operation.runId);
                 if (operation.operation === 'admit') return { kind: 'created', run: createWorkflowRunSummaryFixture({
                     id: String(operation.runId), machineId: 'machine-1', ownerAccountId: accountId,
                     sourceArtifactId: String(operation.sourceArtifactId), state: 'queued', origin: { kind: 'direct' },
@@ -245,7 +263,10 @@ describe('saved editor Start through the real front door and Account admission',
             expect(screen.getTextContent()).not.toContain('machineRequester.fullSignIn');
         }
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
-        await vi.waitFor(() => expect(router.spies.push.mock.calls.length + modals.filter(entry => entry.type === 'alert').length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(router.spies.push.mock.calls.length > 0, JSON.stringify({
+            submitted: submitted !== undefined,
+            operations: operations.map(operation => operation.operation),
+        })).toBe(true));
         expect(rpcFailure).toBeUndefined();
         expect(modals.filter(entry => entry.type === 'alert')).toEqual([]);
         expect(router.spies.push).toHaveBeenCalled();
