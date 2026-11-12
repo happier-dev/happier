@@ -1,4 +1,4 @@
-import { releaseLessDeclarationIdentitySql } from './declarationReadRows';
+import { releaseLessDeclarationIdentitySql, selectedDeclarationBodySql } from './declarationReadRows';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
@@ -76,12 +76,12 @@ export async function readIntentListDeclarations(tx: Tx, accountId: string, rows
             row.releaseLessDeclarationSummaryText === null ? null : JSON.parse(row.releaseLessDeclarationSummaryText), row.pluginId) }]
         : []);
     const selected = summaries.flatMap(({ pluginId, summary }) => summary.currentDeclaration
-        ? [{ pluginId, path: summary.currentDeclaration.manifestPath }] : []);
+        ? [{ pluginId, path: summary.currentDeclaration.manifestPath, digest: summary.currentDeclaration.manifestDigestSha256 }] : []);
     const prisma = getActivePrismaRuntime();
     const bodies = selected.length === 0 ? [] : await tx.$queryRaw<Readonly<{ pluginId: string; manifestText: string }>[]>(prisma.sql`
-        SELECT i."pluginId", CAST(i."releaseLessDeclaration" #> ARRAY(
-            SELECT jsonb_array_elements_text(r.path)) AS TEXT) AS "manifestText"
-        FROM jsonb_to_recordset(CAST(${JSON.stringify(selected)} AS jsonb)) AS r("pluginId" text, path jsonb)
+        SELECT i."pluginId", CAST(${selectedDeclarationBodySql(
+            'i."releaseLessDeclaration" #> ARRAY(SELECT jsonb_array_elements_text(r.path))', 'r.digest')} AS TEXT) AS "manifestText"
+        FROM jsonb_to_recordset(CAST(${JSON.stringify(selected)} AS jsonb)) AS r("pluginId" text, path jsonb, digest text)
         JOIN "AccountPluginIntent" i ON i."accountId" = ${accountId} AND i."pluginId" = r."pluginId"
     `);
     const manifests = new Map(bodies.map(row => [row.pluginId, row.manifestText]));

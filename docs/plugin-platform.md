@@ -1,4 +1,12 @@
 # Plugin platform and SDK ownership
+## Action refusal diagnostics (unreleased 0.3)
+
+The Action failure-cause owner keeps provider-authored `nativeErrorCode` separate
+from the Happier `errorCode` classification. Plugin author-payload and RPC readers
+normalize malformed code/status leaves independently, retaining the valid cause
+fields. UI client errors and the SDK test host carry the same authored cause,
+details and remediation. Existing causes without a native code remain valid.
+
 
 ## Channel Session status (unreleased 0.3)
 
@@ -1626,6 +1634,17 @@ incumbent Availability loader; its exact read supplies opaque Machine bodies.
 The Event reader admits its selected body through the same Protocol load
 ingester before using its Event declaration. Earlier full-body lists remain
 readable. Publication and claim admission remain strict.
+
+In unreleased 0.3 source, the existing Account/plugin intent stores each distinct
+release-less manifest body once under its canonical manifest digest. Machine and
+legacy declarations retain their identity envelopes and refer to that row-local
+body map (storage version 3). Offline selection and divergent-Machine consensus
+still belong to `currentDeclaration.ts`; no body is shared across Accounts.
+Storage readers accept legacy inline declarations and version 2 rows.
+`apps/server/scripts/pluginDeclarationBackfill.ts` dry-runs by default against an
+explicit `DATABASE_URL`; `--apply` converts retained rows using their existing
+revision CAS and preserves revisions and timestamps. It reports unsupported rows
+and concurrent conflicts for operator reconciliation; no schema migration is needed.
 
 The server captures the Account cursor and intent page in one SQL statement.
 On PostgreSQL, lists capture compact declaration identities first. The existing

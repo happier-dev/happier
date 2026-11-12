@@ -36,7 +36,35 @@ export type ReleaseLessDeclarationsV2 = Readonly<{
     legacyDeclaration: ReleaseLessDeclarationV1 | null;
 }>;
 
-export type StoredReleaseLessDeclaration = ReleaseLessDeclarationV1 | ReleaseLessDeclarationsV2;
+type DeclarationReferenceV3 = Readonly<{
+    manifestDigestSha256: PluginUiArtifactDigestV1;
+    manifest: Pick<ParsedPluginManifestV2, 'schemaVersion' | 'id' | 'version'> & { contributes: Record<string, never> };
+}>;
+
+/** Bodies stay inside their Account/plugin row; Machines refer to the existing digest. */
+export type ReleaseLessDeclarationsV3 = Readonly<{
+    schemaVersion: 3;
+    manifests: Readonly<Record<string, ParsedPluginManifestV2>>;
+    machines: readonly Readonly<{ machineId: string; machineInstallationId: string; declaration: DeclarationReferenceV3 }>[];
+    legacyDeclaration: DeclarationReferenceV3 | null;
+}>;
+
+export type StoredReleaseLessDeclaration = ReleaseLessDeclarationV1 | ReleaseLessDeclarationsV2 | ReleaseLessDeclarationsV3;
+
+/** Physical encoding only: admission, provenance and currentness remain unchanged. */
+export function compactReleaseLessDeclarations(stored: unknown, pluginId: string): ReleaseLessDeclarationsV3 {
+    const expanded = readReleaseLessDeclarationsV2(stored, pluginId);
+    const manifests: Record<string, ParsedPluginManifestV2> = {};
+    const reference = (declaration: ReleaseLessDeclarationV1): DeclarationReferenceV3 => {
+        manifests[declaration.manifestDigestSha256] = declaration.manifest;
+        const { schemaVersion, id, version } = declaration.manifest;
+        return { manifestDigestSha256: declaration.manifestDigestSha256,
+            manifest: { schemaVersion, id, version, contributes: {} } };
+    };
+    const machines = expanded.machines.map(entry => ({ ...entry, declaration: reference(entry.declaration) }));
+    const legacyDeclaration = expanded.legacyDeclaration ? reference(expanded.legacyDeclaration) : null;
+    return { schemaVersion: 3, manifests, machines, legacyDeclaration };
+}
 
 /**
  * The manifest that currently declares a plugin's Account-scoped
@@ -124,16 +152,25 @@ function readReleaseLessDeclarations<T>(stored: unknown, pluginId: string,
     readDeclaration: (stored: unknown, pluginId: string, entry: number | 'legacy' | 'root') => T | null,
 ) {
     if (stored !== null && typeof stored === "object" && !Array.isArray(stored)
-        && "schemaVersion" in stored && stored.schemaVersion === 2 && "machines" in stored && Array.isArray(stored.machines)) {
+        && "schemaVersion" in stored && (stored.schemaVersion === 2 || stored.schemaVersion === 3)
+        && "machines" in stored && Array.isArray(stored.machines)) {
+        const read = (entry: unknown, location: number | 'legacy') => {
+            if (stored.schemaVersion !== 3) return readDeclaration(entry, pluginId, location);
+            if (!('manifests' in stored) || stored.manifests === null || typeof stored.manifests !== 'object'
+                || entry === null || typeof entry !== 'object' || !('manifestDigestSha256' in entry)
+                || typeof entry.manifestDigestSha256 !== 'string') return null;
+            const bodies = stored.manifests as Readonly<Record<string, unknown>>;
+            return readDeclaration({ ...entry, manifest: bodies[entry.manifestDigestSha256] }, pluginId, location);
+        };
         const machines = stored.machines.flatMap((entry: unknown, index: number) => {
             if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
             const value = entry as Readonly<Record<string, unknown>>;
-            const declaration = readDeclaration(value.declaration, pluginId, index);
+            const declaration = read(value.declaration, index);
             return typeof value.machineId === "string" && typeof value.machineInstallationId === "string" && declaration
                 ? [{ machineId: value.machineId, machineInstallationId: value.machineInstallationId, declaration }] : [];
         });
         return { schemaVersion: 2 as const, machines,
-            legacyDeclaration: readDeclaration("legacyDeclaration" in stored ? stored.legacyDeclaration : null, pluginId, 'legacy') };
+            legacyDeclaration: read("legacyDeclaration" in stored ? stored.legacyDeclaration : null, 'legacy') };
     }
     // Supported old daemon/stored-row shape has no Machine provenance. Never assign it one.
     return { schemaVersion: 2 as const, machines: [], legacyDeclaration: readDeclaration(stored, pluginId, 'root') };
@@ -189,15 +226,15 @@ export function mergeReleaseLessDeclarationV2(params: Readonly<{
 }>): Readonly<{ stored: StoredReleaseLessDeclaration; unchanged: boolean }> {
     const store = readReleaseLessDeclarationsV2(params.stored, params.declaration.manifest.id);
     if (!params.publisher) {
-        return { stored: store.machines.length === 0 ? params.declaration : { ...store, legacyDeclaration: params.declaration },
+        return { stored: compactReleaseLessDeclarations(store.machines.length === 0 ? params.declaration : { ...store, legacyDeclaration: params.declaration }, params.declaration.manifest.id),
             unchanged: store.legacyDeclaration?.manifestDigestSha256 === params.declaration.manifestDigestSha256 };
     }
     const publisher = params.publisher;
     const incumbent = store.machines.find(entry => entry.machineId === publisher.machineId);
-    return { stored: { ...store, machines: [
+    return { stored: compactReleaseLessDeclarations({ ...store, machines: [
         ...store.machines.filter(entry => entry.machineId !== publisher.machineId),
         { machineId: publisher.machineId, machineInstallationId: publisher.installationId, declaration: params.declaration },
-    ].sort((left, right) => left.machineId.localeCompare(right.machineId)) },
+    ].sort((left, right) => left.machineId.localeCompare(right.machineId)) }, params.declaration.manifest.id),
     unchanged: incumbent?.machineInstallationId === publisher.installationId
         && incumbent.declaration.manifestDigestSha256 === params.declaration.manifestDigestSha256 };
 }

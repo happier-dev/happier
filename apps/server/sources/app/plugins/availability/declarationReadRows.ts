@@ -22,7 +22,7 @@ export function releaseLessDeclarationIdentitySql() {
     };
     return prisma.sql`(
         SELECT ${declarationIdentity('d."manifestDigestSha256"', 'd.manifest')} || jsonb_build_object(
-            'schemaVersion', d."schemaVersion",
+            'schemaVersion', CASE WHEN d."schemaVersion" = '3'::jsonb THEN '2'::jsonb ELSE d."schemaVersion" END,
             'legacyDeclaration', ${declarationIdentity('(d."legacyDeclaration"->\'manifestDigestSha256\')', '(d."legacyDeclaration"->\'manifest\')')},
             'machines', CASE WHEN jsonb_typeof(d.machines) = 'array'
                 THEN (SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -68,7 +68,9 @@ export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: stri
     if (selected.length === 0) return new Map<string, unknown>();
     const prisma = getActivePrismaRuntime();
     const rows = await tx.$queryRaw<Readonly<{ key: string; manifest: unknown }>[]>(prisma.sql`
-        SELECT r.key, i."releaseLessDeclaration" #> ARRAY(SELECT jsonb_array_elements_text(r.path)) AS manifest
+        SELECT r.key, ${selectedDeclarationBodySql(
+            'i."releaseLessDeclaration" #> ARRAY(SELECT jsonb_array_elements_text(r.path))',
+            'r."declarationDigestSha256"')} AS manifest
         FROM jsonb_to_recordset(CAST(${JSON.stringify(selected.map((entry, index) => ({ ...entry, key: String(index), digestPath: [...entry.path.slice(0, -1), "manifestDigestSha256"] })))} AS jsonb)) AS r(key text, "pluginId" text, path jsonb, "digestPath" jsonb, "declarationDigestSha256" text)
         JOIN "AccountPluginIntent" i ON i."accountId" = ${accountId} AND i."pluginId" = r."pluginId"
         -- ReadCommitted callers can observe a replacement between the identity and body reads.
@@ -76,4 +78,12 @@ export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: stri
         WHERE i."releaseLessDeclaration" #>> ARRAY(SELECT jsonb_array_elements_text(r."digestPath")) = r."declarationDigestSha256"
     `);
     return new Map(rows.map(row => [selected[Number(row.key)]!.key, row.manifest]));
+}
+
+/** Both selected-body readers share the same physical-format translation. */
+export function selectedDeclarationBodySql(inlineExpression: string, digestExpression: string) {
+    const prisma = getActivePrismaRuntime();
+    return prisma.sql`CASE WHEN i."releaseLessDeclaration"->>'schemaVersion' = '3'
+        THEN i."releaseLessDeclaration"->'manifests'->(${prisma.raw(digestExpression)})
+        ELSE ${prisma.raw(inlineExpression)} END`;
 }

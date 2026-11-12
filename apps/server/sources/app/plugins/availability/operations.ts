@@ -64,6 +64,7 @@ import {
 } from "./browserArtifactCapability";
 import {
     createReleaseLessDeclarationV1,
+    compactReleaseLessDeclarations,
     readCurrentReleaseLessDeclarationV1,
     readCurrentPluginDeclarationV1,
     readCurrentMachinePluginDeclarationsV1,
@@ -546,8 +547,10 @@ async function transitionIntentTx(input: Readonly<{
     // cleanup covers cancelled/replaced and no-row bindings without making
     // stages an activation owner.
     await retirePluginCollectionCandidatePreparationStagesTx({ tx, accountId, pluginId });
-    const releaseLessDeclarationText = next.storedReleaseLessDeclarationText
+    const admittedDeclarationText = next.storedReleaseLessDeclarationText
         ?? (next.releaseLessDeclaration === null ? null : JSON.stringify(next.releaseLessDeclaration));
+    const releaseLessDeclarationText = admittedDeclarationText === null ? null
+        : JSON.stringify(compactReleaseLessDeclarations(JSON.parse(admittedDeclarationText), pluginId));
     const data = {
         desiredVersion: next.desiredVersion,
         enabled: next.enabled,
