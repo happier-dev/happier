@@ -1,4 +1,4 @@
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderCatalogAdmissionError } from '../settings/read';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ProviderOperationLifetime } from '../operationLifetime';
@@ -21,7 +21,8 @@ export async function readProviderSpawnCatalogSnapshot(input: Readonly<{
     snapshot = input.readSnapshot();
   }
   if (snapshot?.scopeKey !== input.expectedScopeKey || snapshot.providerConnectionsCatalog?.status !== 'ready') {
-    return { ok: false, error: createProviderErrorV1('provider_settings_invalid', {
+    return { ok: false, error: createProviderCatalogAdmissionError(
+      snapshot?.scopeKey !== input.expectedScopeKey ? { status: 'unavailable', reason: 'scope-retired' } : snapshot.providerConnectionsCatalog, {
       connectionId: input.connectionId ?? undefined, machineId: input.machineId,
     }) };
   }

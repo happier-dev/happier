@@ -1,3 +1,6 @@
+import { resolveProviderSourceCatalog } from '../registry/sourceFacts';
+import { projectProviderCatalogGatewaySlots } from '../catalog/assemble';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { randomUUID } from 'node:crypto';
 import { projectProviderModelGenerationSettings } from '@happier-dev/protocol/models/descriptor';
 import { lookup } from 'node:dns/promises';
@@ -11,7 +14,6 @@ import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderMa
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1, ProviderCatalogRuntimeStateRecordV1, ProviderMergedCatalogRowV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { DaemonProviderDraftProbeRequestV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
-import type { ProviderConnectionsCatalogSnapshotV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
@@ -36,7 +38,7 @@ import type { ProviderModelLoadCatalogPort } from '@/providers/modelManagement/l
 import { projectProviderCatalogPresentation } from '@/providers/catalog';
 import { createProviderRuntimeStateStore, type ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { createProviderCatalogAdmissionError as catalogAdmissionError, readProviderSettingsForCli } from '@/providers/settings/read';
 import { prepareProviderConnectionsCatalogForCli, refreshProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
 import { acquireSavedSecretMaterializerForOperation, type SavedSecretOperationReferenceV1 } from '@/settings/secrets/savedSecretCatalogRead';
@@ -130,12 +132,6 @@ type RuntimeProviderIdentity = Readonly<{
   connectionId: string;
   machineId: string;
 }>;
-
-function catalogAdmissionError(catalog: ProviderConnectionsCatalogSnapshotV1, identity: RuntimeProviderIdentity): ProviderErrorV1 {
-  return createProviderErrorV1(catalog.status === 'unavailable'
-    && ['unreachable', 'cancelled', 'encryption-material-unavailable'].includes(catalog.reason)
-    ? 'provider_catalog_unavailable' : 'provider_settings_invalid', identity);
-}
 
 /** Exact facts carried by a single live Provider operation. */
 export type RuntimeProviderOperationScope = ProviderProbeOperationScope & Readonly<{
@@ -276,9 +272,7 @@ async function acquireContributedProviderCatalogParsers(
 }
 
 function sourceCatalog(connection: ResolvedProviderConnectionRecord) {
-  return connection.source.kind === 'contribution'
-    ? connection.source.definition.catalog
-    : connection.source.template.catalog;
+  return resolveProviderSourceCatalog(connection);
 }
 
 function staticModels(catalog: ReturnType<typeof sourceCatalog>) {
@@ -359,13 +353,6 @@ export function createRuntimeProviderServices(input: Readonly<{
     ProviderProbeHostAuthorizationTicket
   >;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
-  /** Source browsing consumes this same admitted connection before aggregate catalog probing. */
-  readManagedSourceModels?: (input: Readonly<{
-    connection: ResolvedProviderConnectionRecord;
-    registry: ProviderContributionRegistryView;
-    scope: RuntimeProviderOperationScope;
-    modelLoadAction: Extract<ProviderSavedModelsRpcResult, { status: 'success' }>['modelLoadAction'];
-  }>) => Promise<ProviderSavedModelsRpcResult>;
   resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
   resolveContributedUsageParsers?: (identity: Readonly<{ pluginId: string; localId: string }>) => Promise<ProviderUsageParserBinding | null>;
   openTeamDirect?: Parameters<typeof createRuntimeProviderProbeAuthorizationPort>[0]['openTeamDirect'];
@@ -1617,6 +1604,17 @@ export function createRuntimeProviderServices(input: Readonly<{
       connectionRevision: context.connection.connection.revision,
       ...('probes' in sourceCatalog(context.connection)
         ? { catalogObserved: context.catalogRuntimeRecord?.state.snapshot != null } : {}),
+      ...(context.connection.deployment.kind === 'managedLocal' ? {
+        sourceCatalogs: context.connection.deployment.purposeBindingIntents.bindings.map(binding => {
+          const ids = new Set(projected.rows.filter(({ row }) =>
+            projectProviderCatalogGatewaySlots(context.connection, row).some(slot =>
+              qualifiedPurposeKey(slot.purpose) === qualifiedPurposeKey(binding.purpose)),
+          ).map(({ row }) => row.descriptor.id));
+          return { purpose: binding.purpose.purpose,
+            catalogObserved: context.catalogRuntimeRecord?.state.snapshot != null,
+            models: models.filter(model => ids.has(model.id)) };
+        }),
+      } : {}),
       manualModelPolicy: sourceCatalog(context.connection).manualModelPolicy,
       modelLoadAction: projectModelLoadAction(context.connection),
       models,
@@ -1632,12 +1630,6 @@ export function createRuntimeProviderServices(input: Readonly<{
       const connection = await resolveConnectionContext(identity, operationScope);
       if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
       if (!connection.ok) return { status: 'error', error: connection.error };
-      if (connection.value.connection.deployment.kind === 'managedLocal'
-        && connection.value.connection.deployment.managedRuntime.connectedAccounts.length > 0 && input.readManagedSourceModels) {
-        return input.readManagedSourceModels({ connection: connection.value.connection,
-          registry: connection.value.registry, scope: operationScope,
-          modelLoadAction: projectModelLoadAction(connection.value.connection) });
-      }
       if (operationScope.forceRefresh) return { status: 'error',
         error: createProviderErrorV1('provider_catalog_unavailable', identity) };
       const remote = await readPlacedGatewayCatalog(identity, connection.value,

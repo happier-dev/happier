@@ -3,7 +3,7 @@ import { BackendTargetKeyV2InputSchema, BackendTargetKeyV2Schema, PersistedBacke
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionPermissionMode, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
@@ -125,10 +125,16 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
     return { agentTargetKey, selection: canonicalSelection };
   };
   if ((!selection || selection.ref.providerConnectionId === null) && input.agentId && input.managedPurposeContext) {
-    const managed = await prepareManagedPurposeLaunch({ ...input.managedPurposeContext,
-      agentId: input.agentId, machineId: input.machineId, selection, connectedServices: input.connectedServices,
-      featureEnabled: input.featureEnabled, resolveSelectionTarget });
-    if (managed) return managed;
+    try {
+      const managed = await prepareManagedPurposeLaunch({ ...input.managedPurposeContext,
+        agentId: input.agentId, machineId: input.machineId, selection, connectedServices: input.connectedServices,
+        featureEnabled: input.featureEnabled, resolveSelectionTarget });
+      if (managed) return managed;
+    } catch (error) {
+      const typed = ProviderErrorV1Schema.safeParse(error);
+      if (!typed.success) throw error;
+      return { ok: false, error: typed.data };
+    }
   }
   if (!selection) {
     if (input.previousBinding) {

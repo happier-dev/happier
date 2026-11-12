@@ -26,7 +26,7 @@ import { createProviderLaunchResourceScope } from './resourceScope';
 export type ManagedPurposeLaunchContext = Readonly<{
   lease: PluginRuntimeRegistryLease;
   happyHomeDir: string;
-  readProviderSettings?: () => ProviderSettingsV1 | null;
+  readProviderSettings?: () => ProviderSettingsV1 | null | Promise<ProviderSettingsV1 | null>;
   accountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   signal?: AbortSignal;
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
@@ -116,7 +116,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       if (compatibility.result.status === 'incompatible') continue;
       const confirmed = resolveProviderCompatibilityConfirmation({ compatibility,
         declaredManagedModel: group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
-        providerSettings: compatibility.result.status === 'experimental' ? input.readProviderSettings?.() : undefined,
+        providerSettings: compatibility.result.status === 'experimental' ? await input.readProviderSettings?.() : undefined,
         confirmationSource: row.confirmationSource!, agentTargetKey, modelId: row.descriptor.id });
       if (!confirmed.confirmed) { unconfirmed = true; continue; }
       admitted.push({ candidate, provider, group, row, selection: group.source.selection, catalog, transport, compatibility });

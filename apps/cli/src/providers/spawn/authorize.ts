@@ -43,7 +43,7 @@ import {
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
-import { readProviderSettingsForCli } from '../settings/read';
+import { createProviderCatalogAdmissionError, readProviderSettingsForCli } from '../settings/read';
 import { prepareProviderConnectionsCatalogForCli, refreshProviderConnectionsCatalogForCli } from '../settings/hydrate';
 import { resolveProviderCredentialPlaintext } from './credentials';
 import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
@@ -542,7 +542,10 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           expectedScopeKey: initialScopeKey, operationContext: input.savedSecretOperationContext, signal: input.signal,
         }), admissionLifetime));
   initialSnapshot = getAccountSettingsSnapshot();
-  if (catalog.status !== 'ready' || !initialSnapshot) return { ok: false, error: createProviderErrorV1('provider_settings_invalid') };
+  if (catalog.status !== 'ready' || !initialSnapshot) return { ok: false, error: createProviderCatalogAdmissionError(
+    !initialSnapshot ? { status: 'unavailable', reason: 'scope-retired' } : catalog,
+    { connectionId: input.selection.ref.providerConnectionId ?? undefined, machineId: input.machineId },
+  ) };
   const definitive = resolveProviderSpawnDefinitiveRejection({
     selection: input.selection.ref,
     agentTargetKey: input.agentTargetKey,

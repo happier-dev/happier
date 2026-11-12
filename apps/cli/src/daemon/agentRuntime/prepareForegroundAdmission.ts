@@ -1,4 +1,4 @@
-import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderSettingsForCli } from '@/providers/settings/hydrate';
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
 import { join } from 'node:path';
@@ -419,10 +419,10 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
     connectedServices: request.connectedServices ?? null,
     featureEnabled,
     managedPurposeContext: { lease, signal: dependencies.signal,
-      readProviderSettings: () => {
-        const snapshot = readForegroundAccountSnapshot(dependencies);
-        return snapshot ? readProviderSettingsForCli(snapshot).settings : null;
-      },
+      readProviderSettings: () => prepareProviderSettingsForCli({
+        readSnapshot: () => readForegroundAccountSnapshot(dependencies),
+        operationContext: requester?.savedSecretOperationContext, signal: dependencies.signal,
+      }),
       happyHomeDir: requester ? dependencies.connectedServicesMaterializationBaseDir! : configuration.happyHomeDir,
       resolveManagedPurposeBindingIntentSelection: dependencies.resolveManagedPurposeBindingIntentSelection,
       accountAuthority: dependencies.managedProviderAccountAuthority },

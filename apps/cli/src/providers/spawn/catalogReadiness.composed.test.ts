@@ -9,7 +9,7 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
 import * as persistence from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { commitActiveProviderConnectionsCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
 import { createCliAccountProviderActionExecuteV1 } from '../connections/accountActions';
 import { resolveProviderModelCompatibility } from '../catalog/compatibility';
@@ -24,7 +24,7 @@ afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTes
 it.each(['ready', 'unavailable', 'cancelled'] as const)(
   'settles a freshly authored custom Codex binding through its existing catalog refresh: %s', async outcome => {
   const credentials = { token: 'custom-spawn-readiness-fixture', encryption: null };
-  vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+  const readCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
   let catalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
   let revision = 0;
   let rowReads = 0;
@@ -33,10 +33,6 @@ it.each(['ready', 'unavailable', 'cancelled'] as const)(
   let releaseRead!: () => void;
   const entered = new Promise<void>(resolve => { enterRead = resolve; });
   const held = new Promise<void>(resolve => { releaseRead = resolve; });
-  let releaseHistory!: () => void;
-  let enterHistory!: () => void;
-  const historyEntered = new Promise<void>(resolve => { enterHistory = resolve; });
-  const historyHeld = new Promise<void>(resolve => { releaseHistory = resolve; });
   let boundaryError: unknown;
   const server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
@@ -71,10 +67,6 @@ it.each(['ready', 'unavailable', 'cancelled'] as const)(
       } else {
         const history = emptyAccountSettingsHistoryCaptureResponse(request.url ?? '');
         if (!history) throw new Error(`Unexpected catalog boundary: ${request.method} ${request.url}`);
-        if (holdRead && outcome === 'ready' && request.url === '/v1/account/entity-rows/profiles/transfer') {
-          enterHistory();
-          await historyHeld;
-        }
         response.statusCode = history.status;
         response.end(JSON.stringify(history.data));
       }
@@ -93,6 +85,8 @@ it.each(['ready', 'unavailable', 'cancelled'] as const)(
   let refreshing: Promise<unknown> | undefined;
   try {
     await runWithServerHttpBaseUrl(base, async () => {
+      // These credentials belong only to the loopback Account catalog, after runtime fixture admission.
+      readCredentials.mockResolvedValue(credentials);
       const scopeKey = resolveAccountSettingsScopeKey(credentials);
       setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
         settingsVersion: 1, loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: [],
@@ -114,6 +108,7 @@ it.each(['ready', 'unavailable', 'cancelled'] as const)(
       const resolved = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a', providerSettings,
         registry, dnsEvidenceByEndpointUrl: new Map([['https://custom.example/v1', ['1.1.1.1']]]) });
       if (resolved.status !== 'resolved') throw new Error(`Authored custom connection: ${resolved.status}`);
+      await runtime.registry.acquireAgentCatalogEntry('codex');
       const adapter = readLeasedAgentProviderBindingAdapter({ lease: runtime.lease, agentId: 'codex' });
       if (!adapter) throw new Error('Expected actual Codex Provider binding');
       const compatibility = resolveProviderModelCompatibility({ record: resolved.record, providerSettings,
@@ -167,67 +162,50 @@ it.each(['ready', 'unavailable', 'cancelled'] as const)(
         expect(boundaryError).toBeUndefined();
         return;
       }
-      const beforeAdmission = rowReads;
-      attempt = await createRuntimeProviderSpawnAuthorizationAttempt({
+      const beforeRefresh = rowReads;
+      holdRead = true;
+      // The Account-change owner withdraws authority before the next admission.
+      refreshing = refreshDemandedActiveProviderConnectionsCatalog({ token: credentials.token });
+      await entered;
+      expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog?.status).toBe('loading');
+      const pendingAdmission = createRuntimeProviderSpawnAuthorizationAttempt({
         signal: cancellation.signal,
         selection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: connectionId, modelId: model.id } },
         machineId: 'machine-a', agentTargetKey, agentId: 'codex', lease: runtime.lease,
         getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
         resolveAddresses: async () => ['1.1.1.1'], materializationBaseDir: runtime.happyHomeDir, sessionId: 'fresh-custom-session',
       });
-      expect(attempt).toMatchObject({ ok: true });
-      expect(rowReads).toBe(beforeAdmission);
-      if (!attempt.ok || !('materializeAfterHooks' in attempt.attempt)) throw new Error('Expected external Codex binding');
-      if (outcome === 'ready') {
-        // A previous optional history failure leaves this real owner state.
-        // The next refresh must publish its row before retrying maintenance.
-        const beforeHistory = getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog;
-        if (beforeHistory?.status !== 'ready') throw new Error('Expected admitted catalog');
-        expect(commitActiveProviderConnectionsCatalog({ scopeKey,
-          lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog: {
-            ...beforeHistory, cleanup: { status: 'cleanup-pending', reason: 'history-incomplete' },
-          } })).toBe(true);
-      }
-      const beforeRefresh = rowReads;
-      holdRead = true;
-      // The production Account-change entry withdraws authority until this
-      // already-owned read completes; no internal decision is mocked.
-      refreshing = refreshDemandedActiveProviderConnectionsCatalog({ token: credentials.token });
-      await entered;
-      expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog?.status).toBe('loading');
-      const materialization = attempt.attempt.materializeAfterHooks();
       releaseRead();
-      const materialized = await materialization;
-      // Readable authority, rather than optional history cleanup, releases spawn.
-      if (outcome === 'ready') {
-        await historyEntered;
-        // Optional history later recaptures row authority independently; the
-        // spawn consumer itself must not add another observation.
-        expect(rowReads - beforeRefresh).toBe(1);
-      }
-      releaseHistory();
+      attempt = await pendingAdmission;
       await refreshing;
-      if (outcome !== 'ready') {
-        if (outcome === 'unavailable') expect(rowReads - beforeRefresh).toBe(1);
-        expect(materialized).toMatchObject({ ok: false, error: { connectionId,
-          code: 'provider_settings_invalid' } });
+      expect(rowReads - beforeRefresh).toBe(1);
+      if (outcome === 'unavailable') {
+        expect(attempt).toMatchObject({ ok: false, error: { connectionId,
+          code: 'provider_catalog_unavailable' } });
         expect(boundaryError).toBeUndefined();
         return;
       }
+      expect(attempt).toMatchObject({ ok: true });
+      if (!attempt.ok || !('materializeAfterHooks' in attempt.attempt)) throw new Error('Expected external Codex binding');
+      const materialized = await attempt.attempt.materializeAfterHooks();
       expect(materialized.ok ? null : materialized.error).toBeNull();
       expect(materialized).toMatchObject({ ok: true, sessionBindingMetadata: { connectionId, model: { id: model.id } } });
       holdRead = false;
-      // A genuine grant change must still reach the retained spawn consumer.
+      // A subsequent admission observes the changed Account grant.
       expect(await execute(parseProviderActionRequestV1('providers.connections.enabled.set', {
         action: 'setEnabled', scope: 'account', connectionId, enabled: false,
       }), { surface: 'cli' })).toMatchObject({ ok: true });
-      await expect(attempt.attempt.revalidateBeforeCommit()).resolves.toMatchObject({ ok: false,
+      await expect(createRuntimeProviderSpawnAuthorizationAttempt({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: connectionId, modelId: model.id } },
+        machineId: 'machine-a', agentTargetKey, agentId: 'codex', lease: runtime.lease,
+        getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
+        resolveAddresses: async () => ['1.1.1.1'], materializationBaseDir: runtime.happyHomeDir, sessionId: 'disabled-custom-session',
+      })).resolves.toMatchObject({ ok: false,
         error: { code: 'provider_connection_disabled', connectionId, retryable: false } });
       expect(boundaryError).toBeUndefined();
     });
   } finally {
     releaseRead();
-    releaseHistory();
     await refreshing;
     if (attempt?.ok) attempt.attempt.cleanupOnFailure();
     await runtime.dispose();

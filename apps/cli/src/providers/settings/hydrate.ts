@@ -1,3 +1,5 @@
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createProviderCatalogAdmissionError, readProviderSettingsForCli } from './read';
 import { $ZodError } from 'zod/v4/core';
 import { awaitWithinProviderOperation, type ProviderOperationLifetime } from '../operationLifetime';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
@@ -201,4 +203,24 @@ export async function refreshDemandedActiveProviderConnectionsCatalog(input: Rea
   const credentials = await readStoredCredentials();
   if (!credentials || credentials.token !== input.token) return;
   await refresh({ credentials, signal: input.signal }, 'change');
+}
+
+/** Direct-purpose compatibility consumes the same prepared Account row as saved connections. */
+export async function prepareProviderSettingsForCli(input: Readonly<{
+  readSnapshot(): ActiveAccountSettingsSnapshot | null;
+  operationContext?: SavedSecretOperationContextV1;
+  signal?: AbortSignal;
+}>): Promise<import('@happier-dev/protocol').ProviderSettingsV1 | null> {
+  const snapshot = input.operationContext ? input.operationContext.readSnapshot() : input.readSnapshot();
+  if (!snapshot) return null;
+  if (snapshot.providerConnectionsCatalog?.status === 'ready') return readProviderSettingsForCli(snapshot).settings;
+  const catalog = await prepareProviderConnectionsCatalogForCli({
+    expectedScopeKey: snapshot.scopeKey ?? '', operationContext: input.operationContext, signal: input.signal,
+  });
+  if (catalog.status !== 'ready') {
+    const reason = catalog.status === 'unavailable' ? catalog.reason : catalog.status;
+    throw Object.assign(new Error('Provider catalog preparation failed: ' + reason),
+      createProviderCatalogAdmissionError(catalog));
+  }
+  return readProviderSettingsForCli({ ...snapshot, providerConnectionsCatalog: catalog }).settings;
 }

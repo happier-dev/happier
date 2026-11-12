@@ -1,4 +1,4 @@
-import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderSettingsForCli } from '@/providers/settings/hydrate';
 import { join } from 'node:path';
 
 import type {
@@ -168,11 +168,10 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
         })(),
         featureEnabled: input.resolveProvidersFeatureEnabled ?? (() => false),
         managedPurposeContext: { lease: appliedPluginRuntimeLease,
-            readProviderSettings: () => {
-                const snapshot = input.readAccountSettingsSnapshot ? input.readAccountSettingsSnapshot()
-                    : input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot();
-                return snapshot ? readProviderSettingsForCli(snapshot).settings : null;
-            },
+            readProviderSettings: () => prepareProviderSettingsForCli({
+                readSnapshot: input.readAccountSettingsSnapshot ?? (() => input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot()),
+                operationContext: input.savedSecretOperationContext, signal: input.signal,
+            }),
             happyHomeDir: input.providerRuntimeHomeDir ?? configuration.happyHomeDir, signal: input.signal,
             resolveManagedPurposeBindingIntentSelection: input.resolveManagedPurposeBindingIntentSelection,
             accountAuthority: input.managedProviderAccountAuthority },

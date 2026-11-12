@@ -1,3 +1,4 @@
+import { readProviderSettingsForCli } from '../settings/read';
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -133,6 +134,7 @@ describe('Agent managed Connected Account purpose launch', () => {
           throw new Error('Expected a projected experimental source with its confirmation identity');
         }
         let settings = fixture.providerSettings;
+        let catalogUnavailable = true;
         const launch = () => prepareProviderLaunch({
           selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' } },
           backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
@@ -140,9 +142,14 @@ describe('Agent managed Connected Account purpose launch', () => {
           connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
           featureEnabled: true, resolvePrerequisites: async () => ({ ok: true }),
           createAuthorizationAttempt: async () => { throw new Error('Saved connection path'); },
-          managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir, readProviderSettings: () => settings,
+          managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir, readProviderSettings: async () => catalogUnavailable
+            ? readProviderSettingsForCli({ ...fixture.snapshot, providerConnectionsCatalog: { status: 'unavailable', reason: 'unreachable' } }).settings
+            : settings,
             resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection },
         });
+        expect(await launch()).toMatchObject({ ok: false, error: { code: 'provider_catalog_unavailable',
+          failureCause: { phase: 'providers.catalog', errorCode: 'unreachable' } } });
+        catalogUnavailable = false;
         expect(await launch()).toMatchObject({ ok: false, error: { code: 'provider_compatibility_unverified' } });
         settings = { ...settings, experimentalBindingConfirmations: [{ v: 1, ...row.confirmationSource,
           agentTargetKey: fixture.agentTargetKey,

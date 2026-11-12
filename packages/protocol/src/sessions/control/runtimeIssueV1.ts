@@ -1,3 +1,5 @@
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
+import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -393,6 +395,47 @@ export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.cor
     agentProcessExitAfterSwitch: z.optional(SessionRuntimeAgentProcessExitAfterSwitchDetailsV1Schema),
   }))));
 export type SessionRuntimeIssueV1 = z.infer<typeof SessionRuntimeIssueV1Schema>;
+
+function readDataField(value: unknown, key: string): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch { return undefined; }
+}
+
+function readDataRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Object.values(descriptors).some(descriptor => !('value' in descriptor))) return undefined;
+    return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+  } catch { return undefined; }
+}
+
+/** Read the existing runtime cause envelopes without evaluating foreign accessors. */
+export function readSessionRuntimeFailureCause(error: unknown): SessionRuntimeIssueV1['failureCause'] {
+  const details = readDataField(error, 'details');
+  const providerError = readDataField(details, 'providerError') ?? error;
+  const cause = readDataRecord(readDataField(details, 'failureCause')
+    ?? readDataField(error, 'failureCause') ?? readDataField(providerError, 'failureCause'));
+  const parsed = SessionRuntimeFailureCauseV1Schema.safeParse(cause && {
+    ...cause,
+    ...(Object.hasOwn(cause, 'preparationCause')
+      ? { preparationCause: readDataRecord(cause.preparationCause) ?? null }
+      : {}),
+  });
+  if (parsed.success) return parsed.data;
+  // Catalog admission uses Action diagnostics; translate once at the runtime envelope owner.
+  const action = ActionFailureCauseV1Schema.safeParse(cause);
+  const code = ProviderErrorCodeV1Schema.safeParse(readDataField(providerError, 'code'));
+  if (!action.success || action.data.phase !== 'providers.catalog' || !code.success) return undefined;
+  return {
+    code: code.data, phase: 'client_start', failureReason: 'unknown',
+    ...(action.data.errorCode === null ? {} : { providerErrorCode: action.data.errorCode }),
+    ...(action.data.httpStatus === null ? {} : { httpStatus: action.data.httpStatus }),
+  };
+}
 
 /** The source distinguishes native Agent sign-in refusals from Provider endpoint credentials. */
 export function readSessionRuntimeIssueNativeAuthAgentId(
