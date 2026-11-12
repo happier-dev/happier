@@ -1518,6 +1518,16 @@ process-local listener. Carrier acquisition failures retain their typed cause.
 Existing runners launched with an older daemon-local route need replacement
 through their normal lifecycle before they consume this correction.
 
+Native Home and Machine tunnel listeners share authenticated connection custody.
+After QUIC closes, the next local TCP connection reacquires the same descriptor
+EndpointId through that owner and retains the published listener origin. Healthy
+connections remain shared across local streams. A failed acquisition ends that
+local request and leaves the listener available for the next request; there is
+no idle reconnect timer or backoff loop. Normal lease release closes the current
+connection and joins its local socket pumps. Native UI adapters project a retained
+disconnected lease as `degraded`, continue their existing observation, and report
+terminal `closed` only when native status confirms the lease no longer exists.
+
 Session runners can survive daemon restart. The incumbent services proxy may
 reprepare an invocation only after a proven pre-effect refusal, and does not
 replay an ambiguous in-flight command across authority replacement. Missing
@@ -2205,10 +2215,10 @@ probe drain and do not depend on a second resume RPC. The native-effect guard
 confirms idle again and retains admission closure immediately before Stop/Delete;
 once native IO may have started, an uncertain result does not reopen admission.
 
-An external after-idle Stop/Delete uses the original accepted Action root and
+An external after-idle Stop/Suspend/Delete uses the original accepted Action root and
 controller installation signature through the existing Machine transport. Home
 derives the private activity/drain destination from that same current control
-request and exact retained guest, while rechecking the original requester's
+request's admitted intent and exact retained guest, while rechecking the original requester's
 Manage admission. Only this proved controller receives its custodian guest key
 envelope for the transport codec; requester Account key material is not borrowed.
 The requester needs Manage on the controller, without a separate guest grant.

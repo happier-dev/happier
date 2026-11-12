@@ -1,12 +1,13 @@
 use crate::endpoint::{
-    accept_first_application_stream, verified_remote_endpoint_id, ConsumerRegistration,
+    accept_first_application_stream, ConsumerRegistration,
     ConsumerSlot, CONSUMER_CHANNEL_CAPACITY,
 };
 use crate::stream::pump_bidirectional;
+use crate::tunnel_connection::TunnelConnection;
 use crate::{
     snapshot_for_connection, validate_loopback_bind_addr, validate_loopback_target,
     AcceptedIrohConnection, IrohAlpn, IrohCapProfile, IrohError, IrohPathSnapshot, Result,
-    MACHINE_ALPN, TUNNEL_PREAMBLE,
+    TUNNEL_PREAMBLE,
 };
 use iroh::RelayUrl;
 use std::future::Future;
@@ -622,7 +623,7 @@ pub struct MachineTunnel {
 
 #[derive(Clone)]
 enum MachineTunnelCarrier {
-    Remote(Arc<MachineTunnelConnection>),
+    Remote(Arc<TunnelConnection>),
     Local(MachineLocalAdmission),
 }
 
@@ -636,67 +637,9 @@ impl MachineTunnelCarrier {
 
     fn close(&self) {
         if let Self::Remote(connection) = self {
-            connection.close();
+            connection.close(b"machine_tunnel_released");
         }
     }
-}
-
-/// One authenticated connection owner for every local stream of a tunnel.
-/// Opening the listener still proves the remote identity. Subsequent requests
-/// replace a closed connection on demand, after obtaining their admission
-/// witness; no idle task keeps an unused target connection in custody.
-struct MachineTunnelConnection {
-    endpoint: iroh::Endpoint,
-    remote: iroh::EndpointAddr,
-    remote_id: iroh::EndpointId,
-    cap_profile: IrohCapProfile,
-    current: Mutex<iroh::endpoint::Connection>,
-    dial: tokio::sync::Mutex<()>,
-}
-
-impl MachineTunnelConnection {
-    fn current(&self) -> iroh::endpoint::Connection {
-        self.current.lock().expect("machine connection").clone()
-    }
-
-    async fn for_local_stream(&self) -> Result<iroh::endpoint::Connection> {
-        let connection = self.current();
-        if connection.close_reason().is_none() {
-            return Ok(connection);
-        }
-        // Concurrent local requests share the replacement, not separate dials.
-        let _dial = self.dial.lock().await;
-        let connection = self.current();
-        if connection.close_reason().is_none() {
-            return Ok(connection);
-        }
-        let connection = dial_machine_connection(
-            &self.endpoint, self.remote.clone(), self.remote_id, self.cap_profile,
-        ).await?;
-        *self.current.lock().expect("machine connection") = connection.clone();
-        Ok(connection)
-    }
-
-    fn close(&self) {
-        self.current().close(0u32.into(), b"machine_tunnel_released");
-    }
-}
-
-async fn dial_machine_connection(
-    endpoint: &iroh::Endpoint,
-    remote: iroh::EndpointAddr,
-    remote_id: iroh::EndpointId,
-    cap_profile: IrohCapProfile,
-) -> Result<iroh::endpoint::Connection> {
-    let connecting = endpoint.connect_with_opts(
-        remote,
-        MACHINE_ALPN,
-        iroh::endpoint::ConnectOptions::new()
-            .with_transport_config(cap_profile.transport_config()?),
-    ).await.map_err(IrohError::from)?;
-    let connection = connecting.await.map_err(IrohError::from)?;
-    verified_remote_endpoint_id(connection.remote_id(), remote_id)?;
-    Ok(connection)
 }
 
 /// Qualified provider-broker/readiness HTTP adapter over the capability-gated
@@ -1299,14 +1242,9 @@ impl MachineTunnel {
         let carrier = match local_admission {
             Some(admission) => MachineTunnelCarrier::Local(admission),
             None => {
-                let connection = dial_machine_connection(
-                    &endpoint.endpoint(), remote.clone(), endpoint_id, config.cap_profile,
-                ).await?;
-                MachineTunnelCarrier::Remote(Arc::new(MachineTunnelConnection {
-                    endpoint: endpoint.endpoint(), remote, remote_id: endpoint_id,
-                    cap_profile: config.cap_profile, current: Mutex::new(connection),
-                    dial: tokio::sync::Mutex::new(()),
-                }))
+                MachineTunnelCarrier::Remote(Arc::new(TunnelConnection::connect(
+                    endpoint.endpoint(), remote, endpoint_id, IrohAlpn::Machine, config.cap_profile,
+                ).await?))
             }
         };
         // The authenticated transport identity — not the requested descriptor

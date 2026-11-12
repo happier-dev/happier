@@ -58,6 +58,48 @@ describe('Iroh Home transport diagnostics retention', () => {
         vi.restoreAllMocks();
     });
 
+    it('retains the same native Home lease and URL while its connection degrades and recovers', async () => {
+        vi.useFakeTimers();
+        let connectionActive = true;
+        const native = {
+            ...createNativeFake(),
+            getTunnelStatus: vi.fn(async () => ({
+                active: true,
+                connectionActive,
+                observedPath: 'direct' as const,
+            })),
+        };
+        const supervisor = createIrohHomeTunnelSupervisor({
+            native,
+            probe: async () => ({ ok: true }),
+        });
+        try {
+            const lease = await supervisor.ensureTunnel(makeRequest(homeIdentity('recovery', 1)));
+            await vi.advanceTimersByTimeAsync(0);
+
+            connectionActive = false;
+            await vi.advanceTimersToNextTimerAsync();
+            expect(supervisor.listTunnels().leases).toEqual([
+                expect.objectContaining({ leaseId: lease.leaseId, localUrl: lease.localUrl, status: 'degraded' }),
+            ]);
+            expect(native.releaseHomeTunnel).not.toHaveBeenCalled();
+
+            connectionActive = true;
+            await vi.advanceTimersToNextTimerAsync();
+            expect(supervisor.listTunnels().leases).toEqual([
+                expect.objectContaining({ leaseId: lease.leaseId, localUrl: lease.localUrl, status: 'ready' }),
+            ]);
+            expect(native.ensureHomeTunnel).toHaveBeenCalledTimes(1);
+            expect(native.releaseHomeTunnel).not.toHaveBeenCalled();
+
+            await supervisor.releaseTunnel(lease.leaseId);
+            expect(native.releaseHomeTunnel).toHaveBeenCalledExactlyOnceWith('native-lease-1');
+        } finally {
+            await supervisor.dispose();
+            vi.useRealTimers();
+        }
+    });
+
     it('retains inactive Home history without an arbitrary eviction bound and never evicts a Home holding an active lease', async () => {
         const supervisor = createSupervisorUnderTest();
         const scope = 'retention';

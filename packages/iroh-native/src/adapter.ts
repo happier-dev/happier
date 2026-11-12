@@ -144,16 +144,7 @@ export function createIrohNativeAdapter(native?: NativeLifecycleModule, options:
       }
       const current = readNativeStatus(value);
       const previous = poller.lastStatus;
-      if (value.connectionActive === false) {
-        // The core sets this only after Connection::closed resolves. The
-        // retained native handle still needs release, but cannot recover.
-        emit(leaseId, {
-          type: 'closed', tunnelHandle: leaseId, status: 'closed',
-          observedPath: current.observedPath, errorCode: 'transport_closed', atMs: Date.now(),
-        });
-        stopPolling(leaseId);
-        return;
-      } else if (!current.active) {
+      if (!current.active) {
         if (previous?.active !== false) {
           emit(leaseId, {
             type: 'degraded', tunnelHandle: leaseId, status: 'degraded',

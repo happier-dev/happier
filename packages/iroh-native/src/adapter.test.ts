@@ -250,9 +250,13 @@ describe('Iroh native lifecycle adapter', () => {
       const getTunnelStatus = vi.fn()
         .mockResolvedValueOnce({ active: true, connectionActive: true, observedPath: 'direct' })
         .mockResolvedValueOnce({ active: true, connectionActive: true, observedPath: 'relay' })
-        // Rust retains the tunnel entry after Connection::closed completes.
-        .mockResolvedValue({ active: true, connectionActive: false, observedPath: 'relay' });
-      const adapter = createIrohNativeAdapter(nativeHarness({ getTunnelStatus }), { statusPollIntervalMs: 100 });
+        // A disconnected native lease retains its listener for the next local accept.
+        .mockResolvedValueOnce({ active: true, connectionActive: false, observedPath: 'relay' })
+        .mockResolvedValueOnce({ active: true, connectionActive: false, observedPath: 'relay' })
+        .mockResolvedValueOnce({ active: true, connectionActive: true, observedPath: 'direct' })
+        .mockResolvedValue(null);
+      const native = nativeHarness({ getTunnelStatus });
+      const adapter = createIrohNativeAdapter(native, { statusPollIntervalMs: 100 });
       const lease = await adapter.ensureHomeTunnel({
         homeServerIdentityId: 'srv_home_a',
         endpointId: 'endpoint-a',
@@ -261,11 +265,13 @@ describe('Iroh native lifecycle adapter', () => {
       const events: unknown[] = [];
       const unsubscribe = adapter.subscribeEvents(lease.leaseId, (event) => events.push(event));
 
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(500);
 
       expect(events).toEqual([
         expect.objectContaining({ type: 'ready', tunnelHandle: 'l1', status: 'ready', observedPath: 'direct' }),
         expect.objectContaining({ type: 'path_changed', tunnelHandle: 'l1', status: 'ready', observedPath: 'relay' }),
+        expect.objectContaining({ type: 'degraded', tunnelHandle: 'l1', status: 'degraded', observedPath: 'relay' }),
+        expect.objectContaining({ type: 'ready', tunnelHandle: 'l1', status: 'ready', observedPath: 'direct' }),
         expect.objectContaining({ type: 'closed', tunnelHandle: 'l1', status: 'closed' }),
       ]);
       for (const event of events) {
@@ -273,10 +279,14 @@ describe('Iroh native lifecycle adapter', () => {
         expect(event).not.toHaveProperty('runtimeOrigin');
         expect(event).not.toHaveProperty('descriptorRevision');
       }
-      unsubscribe();
+      const pollsAtClosure = getTunnelStatus.mock.calls.length;
       await vi.advanceTimersByTimeAsync(200);
-      expect(getTunnelStatus).toHaveBeenCalledTimes(3);
+      expect(getTunnelStatus).toHaveBeenCalledTimes(pollsAtClosure);
       expect(getTunnelStatus).toHaveBeenCalledWith('l1');
+      expect(native.ensureHomeTunnel).toHaveBeenCalledTimes(1);
+      expect(native.releaseHomeTunnel).not.toHaveBeenCalled();
+      unsubscribe();
+      await adapter.dispose();
     } finally {
       vi.useRealTimers();
     }

@@ -28,6 +28,8 @@ mod path;
 mod preamble;
 #[cfg(not(target_arch = "wasm32"))]
 mod stream;
+#[cfg(not(target_arch = "wasm32"))]
+mod tunnel_connection;
 #[cfg(all(feature = "test-relay-fixture", not(target_arch = "wasm32")))]
 mod test_relay;
 

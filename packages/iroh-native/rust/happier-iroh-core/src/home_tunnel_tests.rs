@@ -320,6 +320,88 @@ async fn home_tunnel_moves_bytes_through_real_acceptor_over_one_reused_connectio
     _target.abort();
 }
 
+/// A closed QUIC connection must not retire a still-owned local listener.
+/// The next local TCP accept reacquires the same Home through a fresh QUIC
+/// connection without asking the caller to replace its tunnel lease.
+#[tokio::test]
+async fn home_tunnel_reacquires_closed_quic_on_next_local_connection() {
+    let (target_addr, target, _target_accepted) = spawn_echo_target().await;
+    let server = IrohEndpoint::bind(&direct_endpoint_config()).await.unwrap();
+    let client = IrohEndpoint::bind(&direct_endpoint_config()).await.unwrap();
+    let server_id = server.id().to_string();
+    let direct_addr = server
+        .endpoint()
+        .addr()
+        .ip_addrs()
+        .next()
+        .copied()
+        .expect("server endpoint publishes a direct address");
+    let acceptor = HomeAcceptor::start(
+        &server,
+        HomeAcceptorConfig { target: target_addr },
+    )
+    .unwrap();
+    let tunnel = HomeTunnel::start(
+        &client,
+        home_tunnel_config(server_id.clone(), direct_addr),
+    )
+    .await
+    .unwrap();
+    let origin = tunnel.local_origin().unwrap();
+    echo_over_tunnel(&origin, b"before-quic-close").await;
+    assert_eq!(acceptor.status().connections_accepted, 1);
+
+    // Retire only the remote acceptor's connection custody. Both authenticated
+    // endpoints and the client tunnel lease remain alive.
+    acceptor.stop_and_wait().await;
+    let closed = wait_for(Duration::from_secs(5), || {
+        !tunnel.status().connection_active
+    })
+    .await;
+    if !closed {
+        tunnel.stop_and_wait().await;
+        client.shutdown().await;
+        server.shutdown().await;
+        target.abort();
+        panic!("fixture remote retirement must close QUIC before the next local connect");
+    }
+    let replacement_acceptor = HomeAcceptor::start(
+        &server,
+        HomeAcceptorConfig { target: target_addr },
+    )
+    .expect("same Home endpoint can resume accepting connections");
+
+    // No new HomeTunnel::start: the caller keeps its already-published origin.
+    let payload = b"after-quic-close";
+    let recovered: std::io::Result<Vec<u8>> = async {
+        let mut socket = TcpStream::connect(loopback_target_of_origin(&origin)).await?;
+        socket.write_all(payload).await?;
+        let mut response = vec![0; payload.len()];
+        socket.read_exact(&mut response).await?;
+        Ok(response)
+    }
+    .await;
+    let status = tunnel.status();
+    let accepted = replacement_acceptor.status().connections_accepted;
+    let remote_endpoint_id = tunnel.remote_endpoint_id().to_string();
+    let retained_origin = tunnel.local_origin().unwrap();
+
+    tunnel.stop_and_wait().await;
+    replacement_acceptor.stop_and_wait().await;
+    client.shutdown().await;
+    server.shutdown().await;
+    target.abort();
+
+    assert_eq!(
+        recovered.expect("next local TCP connection must reacquire QUIC and return the Home response"),
+        payload,
+    );
+    assert_eq!(accepted, 1, "next local accept must establish a fresh QUIC connection");
+    assert!(status.connection_active);
+    assert_eq!(remote_endpoint_id, server_id);
+    assert_eq!(retained_origin, origin);
+}
+
 /// Directional EOF from the QUIC initiator must shut down the fixed target's
 /// TCP write half immediately. Waiting for the reverse direction would
 /// deadlock targets that reply only after request EOF.

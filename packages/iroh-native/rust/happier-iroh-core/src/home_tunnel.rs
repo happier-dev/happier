@@ -1,17 +1,18 @@
 use crate::endpoint::{
-    accept_first_application_stream, verified_remote_endpoint_id, ConsumerRegistration,
+    accept_first_application_stream, ConsumerRegistration,
     ConsumerSlot, CONSUMER_CHANNEL_CAPACITY,
 };
 use crate::stream::pump_bidirectional;
+use crate::tunnel_connection::TunnelConnection;
 use crate::{
     snapshot_for_connection, validate_loopback_bind_addr, validate_loopback_target,
-    AcceptedIrohConnection, IrohAlpn, IrohError, IrohPathSnapshot, Result, HOME_TUNNEL_ALPN,
+    AcceptedIrohConnection, IrohAlpn, IrohError, IrohPathSnapshot, Result,
     TUNNEL_PREAMBLE,
 };
 use iroh::RelayUrl;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
@@ -278,22 +279,20 @@ pub struct HomeTunnelStatus {
 
 #[derive(Default)]
 struct TunnelState {
-    connection_active: AtomicBool,
     streams_opened: AtomicU64,
 }
 
 /// Client-side loopback dialer. The tunnel connects to the descriptor endpoint
-/// ONCE per healthy lease and multiplexes every local TCP connection over that
-/// reused Iroh connection. The returned origin is ephemeral and must not be
-/// persisted as a Home profile URL. Reconnect/retry stays the outer
-/// supervisor's responsibility; this type never retries on its own.
+/// once per healthy connection and multiplexes local TCP streams over it.
+/// The next local connection replaces a closed QUIC connection through the
+/// shared tunnel connection owner. The returned origin is ephemeral and must
+/// not be persisted as a Home profile URL; no background retry runs here.
 pub struct HomeTunnel {
     origin: String,
     local_addr: SocketAddr,
     remote_endpoint_id: String,
-    connection: iroh::endpoint::Connection,
+    connection: Arc<TunnelConnection>,
     task: JoinHandle<()>,
-    watcher_task: JoinHandle<()>,
     shutdown: watch::Sender<bool>,
     state: Arc<TunnelState>,
 }
@@ -311,26 +310,12 @@ impl HomeTunnel {
         for addr in &config.direct_addresses {
             remote = remote.with_ip_addr(*addr);
         }
-        // One connection per healthy lease: established before the loopback
-        // origin is ever published.
-        let connecting = endpoint
-            .endpoint()
-            .connect_with_opts(
-                remote,
-                HOME_TUNNEL_ALPN,
-                iroh::endpoint::ConnectOptions::new().with_transport_config(
-                    crate::IrohCapProfile::HomeInteractive.transport_config()?,
-                ),
-            )
-            .await
-            .map_err(IrohError::from)?;
-        let connection = connecting.await.map_err(IrohError::from)?;
-        // The authenticated transport identity — not the requested descriptor
-        // copy — is the only honest remote identity this tunnel reports. A
-        // mismatch fails the start closed with the shared
-        // endpoint-identity-mismatch classification before any loopback
-        // listener is published, exactly as the machine tunnel does.
-        let remote_endpoint_id = verified_remote_endpoint_id(connection.remote_id(), endpoint_id)?;
+        // Authenticate the requested Home before publishing its local listener.
+        let connection = Arc::new(TunnelConnection::connect(
+            endpoint.endpoint(), remote, endpoint_id, IrohAlpn::HomeTunnel,
+            crate::IrohCapProfile::HomeInteractive,
+        ).await?);
+        let remote_endpoint_id = connection.current().remote_id().to_string();
         let listener = TcpListener::bind(config.bind_addr)
             .await
             .map_err(|_| IrohError::LoopbackBindFailed)?;
@@ -338,22 +323,7 @@ impl HomeTunnel {
             .local_addr()
             .map_err(|_| IrohError::LoopbackBindFailed)?;
 
-        let state = Arc::new(TunnelState {
-            connection_active: AtomicBool::new(true),
-            streams_opened: AtomicU64::new(0),
-        });
-        // Mark the lease degraded when the shared connection dies; reconnect
-        // decisions belong to the outer supervisor, not to a competing retry
-        // loop here.
-        let watcher_state = Arc::clone(&state);
-        let watcher_connection = connection.clone();
-        let watcher_task = tokio::spawn(async move {
-            watcher_connection.closed().await;
-            watcher_state
-                .connection_active
-                .store(false, Ordering::Release);
-        });
-
+        let state = Arc::new(TunnelState::default());
         let loop_connection = connection.clone();
         let loop_state = Arc::clone(&state);
         let (shutdown, mut shutdown_rx) = watch::channel(false);
@@ -364,10 +334,12 @@ impl HomeTunnel {
                     _ = shutdown_rx.changed() => { break; }
                     accepted = listener.accept() => {
                         let Ok((mut socket, _)) = accepted else { break };
-                        if !loop_state.connection_active.load(Ordering::Acquire) { break; }
                         loop_state.streams_opened.fetch_add(1, Ordering::Relaxed);
                         let stream_connection = loop_connection.clone();
                         streams.spawn(async move {
+                            let Ok(stream_connection) = stream_connection.for_local_stream().await else {
+                                return;
+                            };
                             // One bidi stream per local TCP connection; the preamble is
                             // written immediately because Iroh streams are lazy until
                             // the first write.
@@ -391,6 +363,7 @@ impl HomeTunnel {
                 }
             }
             streams.shutdown().await;
+            loop_connection.close(b"tunnel_released");
         });
         Ok(Self {
             origin: format!("http://{}:{}", local_addr.ip(), local_addr.port()),
@@ -398,7 +371,6 @@ impl HomeTunnel {
             remote_endpoint_id,
             connection,
             task,
-            watcher_task,
             shutdown,
             state,
         })
@@ -422,13 +394,13 @@ impl HomeTunnel {
     pub fn status(&self) -> HomeTunnelStatus {
         HomeTunnelStatus {
             local_origin: self.origin.clone(),
-            connection_active: self.state.connection_active.load(Ordering::Acquire),
+            connection_active: !self.task.is_finished() && self.connection.current().close_reason().is_none(),
             streams_opened: self.state.streams_opened.load(Ordering::Relaxed),
             // Live observation: the currently selected path of the lease's
             // one reused Iroh connection. Direct/relay only when actually
             // observed, `unknown` otherwise; path migration is telemetry, so
             // status reflects it without touching the logical connection.
-            observed_path: Some(snapshot_for_connection(&self.connection)),
+            observed_path: Some(snapshot_for_connection(&self.connection.current())),
         }
     }
 
@@ -438,7 +410,7 @@ impl HomeTunnel {
     /// endpoint manager.
     pub fn stop(self) {
         let _ = self.shutdown.send(true);
-        self.connection.close(0u32.into(), b"tunnel_released");
+        self.connection.close(b"tunnel_released");
     }
 
     /// Releases the lease and waits until the loopback accept task has joined
@@ -448,9 +420,7 @@ impl HomeTunnel {
     /// longer own.
     pub async fn stop_and_wait(self) {
         let _ = self.shutdown.send(true);
-        self.watcher_task.abort();
-        self.connection.close(0u32.into(), b"tunnel_released");
+        self.connection.close(b"tunnel_released");
         let _ = self.task.await;
-        let _ = self.watcher_task.await;
     }
 }
