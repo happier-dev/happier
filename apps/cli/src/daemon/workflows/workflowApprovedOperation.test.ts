@@ -67,9 +67,9 @@ function approvedContext(): ActionExecutorContext {
       inputDigest: computeActionInputApprovalDigestV1(parent.actionId, parent.input), decidingAccountId: accountId } };
 }
 
-async function fixture(withApproval = true, encrypted = false) {
+async function fixture(withApproval = true, encrypted = false, initial = snapshot()) {
   const approved = withApproval
-    ? await prepareWorkflowApprovedOperationSnapshot({ snapshot: snapshot(), parent, steps, context: approvedContext() }) : snapshot();
+    ? await prepareWorkflowApprovedOperationSnapshot({ snapshot: initial, parent, steps, context: approvedContext() }) : initial;
   const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
     material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } });
   const accountEncryption = { kind: 'available' as const, witness: { mode: 'e2ee' as const, version: 1,
@@ -90,7 +90,7 @@ async function fixture(withApproval = true, encrypted = false) {
     recordId: invocationId, sequence: '1', parentRecordId: 'root', memberOrdinal: '0', attempt: '0' };
   const progress = { kind: 'happier.workflow-progress.v1' as const, blockKind: 'action' as const,
     invocationPath: { blockId: 'apply', scope: [] }, attempt: '0', logicalInvocationRecordId: invocationId };
-  const content = (execution?: { kind: 'action'; actionId: string; actionRequestId: string; localInputId: string; input: (typeof steps)[0]['input'] }) =>
+  const content = (execution?: { kind: 'action'; actionId: string; actionRequestId: string; localInputId: string; input: Readonly<Record<string, JsonValue>> }) =>
     serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...mode, binding,
       progress: { ...progress, ...(execution ? { execution } : {}) } }));
   await storage.execute({ operation: 'invocations.admit', runId, parentAttempt: 0,
@@ -100,9 +100,9 @@ async function fixture(withApproval = true, encrypted = false) {
     actionCaller: { kind: 'workflowRun', runId, authorization: approved.authorization } };
   const reader = createWorkflowApprovedOperationReader({ storage,
     resolveEncryption: async () => encryption });
-  const admit = async (input = steps[0]!.input) => storage.execute({ operation: 'invocations.fact', runId,
+  const admit = async (input: Readonly<Record<string, JsonValue>> = initial.materializedLeaves[0]!.actionInput!) => storage.execute({ operation: 'invocations.fact', runId,
     invocationId, invocationAttempt: '0', expectedContentRevision: '0', expectedLifecycle: 'pending', lifecycle: 'admitting',
-    contentEnvelope: content({ kind: 'action', actionId: steps[0]!.actionId, actionRequestId, localInputId: 'local', input }) });
+    contentEnvelope: content({ kind: 'action', actionId: initial.materializedLeaves[0]!.actionId!, actionRequestId, localInputId: 'local', input }) });
   return { approved, storage, context, reader, admit, encryption, mode };
 }
 
@@ -684,15 +684,25 @@ describe('Workflow approved operation private custody', () => {
     expect(await reader({ runId, context: h.context, phase: 'dispatch' })).toBeNull();
   });
 
-  it('reopens person-saved exact schedule consent at both admission phases and restores a hold on changed input or disable', async () => {
-    const h = await fixture(false);
+  it.each(['setup', 'app-command'] as const)('reopens exact scheduled %s consent and holds edited operands or stricter Ask', async kind => {
+    const actionId = kind === 'setup' ? 'machines.setup.apply' : 'machines.services.exec';
+    const input: Record<string, JsonValue> = kind === 'setup' ? steps[0]!.input : {
+      serverId: 'home', machineId: 'host', target: { kind: 'current', serviceId: 'environment/app', expectedGeneration: 'generation-a' },
+      mode: 'exec', argv: ['app', 'jobs:run'],
+    };
+    const currentSteps = [{ actionId, input }];
+    const currentDefinition = WorkflowDefinitionV1Schema.parse({ ...definition, blocks: [{ kind: 'action', id: 'apply', actionId,
+      input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal', value }])) }] });
+    const initial = snapshot();
+    const h = await fixture(false, false, { ...initial, definition: currentDefinition, authoredDefinition: currentDefinition,
+      materializedLeaves: initial.materializedLeaves.map(leaf => ({ ...leaf, actionId, actionInput: input })) });
     const triggerId = 'exact-schedule';
     const automationId = 'exact-command-automation';
     const operation = await prepareWorkflowApprovedOperation({ parent: { actionId: 'workflow.trigger.add', input: {
-      target: { kind: 'inline', definition }, project: { machineId: 'host', directory: '/repo' },
+      target: { kind: 'inline', definition: currentDefinition }, project: { machineId: 'host', directory: '/repo' },
       trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } },
       actionApproval: 'automatic',
-    } }, steps, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+    } }, steps: currentSteps, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
       runtimeAccountId: accountId, serverId: 'home', actionRequestId: 'save-schedule' },
       nativeAccount: { accountId, serverId: 'home', isCurrent: async () => true } });
     const accepted = { ...h.approved, approvedOperation: operation };
@@ -704,7 +714,7 @@ describe('Workflow approved operation private custody', () => {
       triggers: [{ id: triggerId, revision: 0, kind: 'schedule', enabled: true, createdAt: 1, updatedAt: 1,
         schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null }, nextRunAt: 2, triggerDefinitionEnvelope: null }],
       executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
-        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: definition,
+        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: currentDefinition,
         actionApprovals: [{ triggerId, operation }],
       } } },
     });
@@ -728,21 +738,49 @@ describe('Workflow approved operation private custody', () => {
     } }, resolveEncryption: async () => h.encryption,
       readSavedTriggerConsent: input => triggers.readSavedConsent(input, input.context) });
     for (const phase of ['prepare', 'dispatch'] as const) {
+      if (kind === 'app-command') expect(await reader({ runId, actionId,
+        input: { ...input, argv: ['app', 'jobs:delete'] }, context: h.context, phase })).toBeNull();
       if (phase === 'dispatch') await h.admit();
-      const proof = await reader({ runId, actionId: 'machines.setup.apply', input: steps[0]!.input, context: h.context, phase });
-      expect(proof?.steps).toEqual(steps);
-      expect(resolveActionApprovalRouting({ actionId: 'machines.setup.apply', spec: getActionSpec('machines.setup.apply'),
-        input: steps[0]!.input, context: { surface: 'agent', authority: 'account_automation' }, approvedOperation: proof }).required).toBe(false);
-      expect(resolveActionApprovalRouting({ actionId: 'machines.setup.apply', spec: getActionSpec('machines.setup.apply'),
-        input: { ...steps[0]!.input, machineId: 'changed' }, context: { surface: 'agent', authority: 'account_automation' },
+      const proof = await reader({ runId, actionId, input: input, context: h.context, phase });
+      expect(proof?.steps).toEqual(currentSteps);
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+        input: input, context: { surface: 'agent', authority: 'account_automation' }, approvedOperation: proof }).required).toBe(false);
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+        input: { ...input, machineId: 'changed' }, context: { surface: 'agent', authority: 'account_automation' },
         approvedOperation: proof }).required).toBe(true);
-      expect(resolveActionApprovalRouting({ actionId: 'machines.setup.apply', spec: getActionSpec('machines.setup.apply'),
-        input: steps[0]!.input, context: { surface: 'agent', authority: 'account_automation' }, approvedOperation: proof,
-        settings: normalizeActionsSettingsV1({ v: 1, actions: { 'machines.setup.apply': { approvalRequiredSurfaces: ['agent'] } } }) }).required).toBe(true);
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+        input: input, context: { surface: 'agent', authority: 'account_automation' }, approvedOperation: proof,
+        settings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } }) }).required).toBe(true);
     }
-    expect(triggerReads).toEqual([automationId, automationId]);
+    if (kind === 'app-command') {
+      let effects = 0;
+      const context: ActionExecutorContext = { ...h.context, surface: 'agent', authority: 'account_automation', serverId: 'home' };
+      // Native exec and storage are boundaries; exact consent and Action admission stay real.
+      const executor = createActionExecutor({
+        machineServiceScope: async () => ({ kind: 'environment', environmentId: 'environment' }),
+        machineServiceExec: async () => { effects++; return { exitCode: 0, stdout: 'completed', stderr: '' }; },
+        readApprovedOperation: async request => request.runId ? reader({ ...request, runId: request.runId }) : null,
+      });
+      for (const changed of [
+        { ...input, argv: ['app', 'jobs:delete'] }, { ...input, mode: 'run' },
+        { ...input, target: { kind: 'current', serviceId: 'environment/worker', expectedGeneration: 'generation-a' } },
+        { ...input, target: { kind: 'current', serviceId: 'environment/app', expectedGeneration: 'generation-b' } },
+        { ...input, machineId: 'other-machine' }, { ...input, serverId: 'other-home' },
+      ]) {
+        expect(await reader({ runId, actionId, input: changed, context: h.context, phase: 'dispatch' })).toBeNull();
+        expect(await executor.execute(actionId, changed, context)).toMatchObject({ ok: false });
+        expect(effects).toBe(0);
+      }
+      expect(await executor.execute(actionId, input, { ...context,
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } }),
+      })).toMatchObject({ ok: false });
+      expect(effects).toBe(0);
+      expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: true, result: { exitCode: 0 } });
+      expect(effects).toBe(1);
+    }
+    expect(triggerReads.every(id => id === automationId)).toBe(true);
     row = { ...row, enabled: false };
-    expect(await reader({ runId, actionId: 'machines.setup.apply', input: steps[0]!.input, context: h.context, phase: 'dispatch' })).toBeNull();
+    expect(await reader({ runId, actionId, input: input, context: h.context, phase: 'dispatch' })).toBeNull();
   });
 
   it('keeps transient input and undiscovered contributed input out of durable parent approval', async () => {
