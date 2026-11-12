@@ -117,7 +117,11 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     const nativeAdmission = binding.deploymentNativeAdmission;
     const defaults = binding.actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission) && nativeAdmission.defaultsFor !== undefined;
-    const resolvedEnvironmentId = preparationEffectRead ? await readTemplateDeploymentEnvironmentIdInTx(tx, binding) : binding.environmentId ?? (preparation?.operation === 'create'
+    // A template's children (bindings, link, update) read the Environment mint admitted or this root
+    // created, with or without a deploy intent; deploy-only reads gate on the intent at their own arm.
+    const resolvedEnvironmentId = preparationEffectRead ? preparation?.operation === 'template'
+        ? await readTemplateEnvironmentId(tx, binding, preparation) : await readTemplateDeploymentEnvironmentIdInTx(tx, binding)
+        : binding.environmentId ?? (preparation?.operation === 'create'
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation)
         : preparation?.operation === 'template' ? await readTemplateEnvironmentId(tx, binding, preparation) : null);
     if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);

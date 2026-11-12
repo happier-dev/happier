@@ -2976,12 +2976,15 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    // Store installs create the Environment inside the template root, then its bindings step reads it back.
-    it.each((['plain', 'e2ee'] as const).flatMap(contentMode => [false, true].flatMap(newProject => [false, true].map(deploy => ({ contentMode, newProject, deploy })))))
-    ('reads the Environment a template root created ($contentMode; newProject=$newProject; deploy=$deploy) and no foreign one', async ({ contentMode, newProject, deploy }) => {
+    // A template root's bindings child reads back the Environment that root created (Store install, J35)
+    // or selected (Add database, DJ12), signed as the child effect, with or without a deploy intent (#130).
+    it.each((['plain', 'e2ee'] as const).flatMap(contentMode => (['create', 'createNewProject', 'existing'] as const)
+        .flatMap(shape => [false, true].map(deploy => ({ contentMode, shape, deploy })))))
+    ('admits a template root and its bindings child reading its own Environment ($contentMode; $shape; deploy=$deploy), never a foreign one', async ({ contentMode, shape, deploy }) => {
         const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true, contentMode });
+        const foreign = await fixture('account', 'account', { contentMode });
         const resourceId = crypto.randomUUID(), resourceKey = nacl.randomBytes(32);
-        const resourceContent = { v: 1 as const, name: 'Probe key', kind: 'password' as const, value: 'probe' };
+        const resourceContent = { v: 1 as const, name: 'Template key', kind: 'password' as const, value: 'template-test-boundary' };
         expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
             displayName: resourceContent.name, kind: resourceContent.kind, encryptionMode: contentMode,
             storedContent: sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
@@ -2993,12 +2996,13 @@ describe('deployment children retain their controller Action authority', () => {
             .toMatchObject({ ok: true });
         const requestKey = crypto.randomUUID();
         const { projectSourceId: _source, deploy: deployIntent, ...withoutSource } = f.templateInput;
-        const project = newProject ? { newProject: { requestKey: crypto.randomUUID(), name: 'Probe project', owner: { kind: 'account' as const, accountId: f.account.id } } }
-            : { projectSourceId: f.environment.projectSourceId };
+        const project = shape === 'createNewProject' ? { newProject: { requestKey: crypto.randomUUID(), name: 'Template project',
+            owner: { kind: 'account' as const, accountId: f.account.id } } } : { projectSourceId: f.environment.projectSourceId };
         const input = { ...withoutSource, ...project, ...(deploy ? { deploy: deployIntent } : {}),
-            environment: { kind: 'create' as const, requestKey, name: 'Probe', protection: 'nonProduction' as const,
-                purpose: 'standard' as const, deployerMode: 'managers' as const, controllerMachineId: f.controller.id },
-            target: { kind: 'new' as const, installationId: f.member.installationId }, destination: { kind: 'stored' as const } };
+            ...(shape === 'existing' ? {} : {
+                environment: { kind: 'create' as const, requestKey, name: 'Template', protection: 'nonProduction' as const,
+                    purpose: 'standard' as const, deployerMode: 'managers' as const, controllerMachineId: f.controller.id },
+                target: { kind: 'new' as const, installationId: f.member.installationId }, destination: { kind: 'stored' as const } }) };
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
         const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
@@ -3006,43 +3010,47 @@ describe('deployment children retain their controller Action authority', () => {
             actionId: 'deployments.templates.instantiate', machineId: f.controller.id, target, requestId: envelope.requestId,
             deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', input),
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
-        const content = await f.content('deployment-environment.v1');
-        const body = { serverId, ...project, requestKey,
-            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
-            buildMachineId: f.member.id, ...content, referencedSavedSecretRevisions: [{ resourceId, revision: 1 }],
-            firstTargetLink: { ...await f.content('deployment-target-link.v1'),
-                machines: [{ machineId: f.member.id, installationId: f.member.installationId }] } };
-        const verify = (effectActionId: string, method: string, path: string, payload?: unknown, routeInput?: unknown) =>
-            verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token,
-                effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body: payload,
-                routeInput, machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token,
-                    effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
-                    method, path, body: payload, privateKey: f.controller.keys.secretKey }) });
-        const headers = (effectActionId: string, method: string, path: string, payload?: unknown) => ({
+        const sign = (effectActionId: string, method: string, path: string, payload?: unknown, reviewedChild?: ReviewedActionChildHttpProofV1) =>
+            signExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId, target,
+                installationId: f.controller.installationId, requestId: envelope.requestId, method, path, body: payload,
+                ...(reviewedChild ? { reviewedChild } : {}), privateKey: f.controller.keys.secretKey });
+        const headers = (effectActionId: string, method: string, path: string, payload?: unknown, reviewedChild?: ReviewedActionChildHttpProofV1) => ({
             ...currentAccountStoredContentCompatibilityHeaders,
             [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
             [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+            ...(reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild) } : {}),
             [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
-            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
-                effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
-                method, path, body: payload, privateKey: f.controller.keys.secretKey }),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: sign(effectActionId, method, path, payload, reviewedChild),
         });
-        let environmentId = '';
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
-            const created = await app.inject({ method: 'POST', url: '/v1/deployments/environments', payload: body,
-                headers: headers('deployments.environments.create', 'POST', '/v1/deployments/environments', body) });
-            expect(created.statusCode, created.body).toBe(200);
-            environmentId = created.json().environmentId;
-            const readPath = `/v1/deployments/environments/${environmentId}?serverId=${serverId}`;
-            const read = await app.inject({ method: 'GET', url: readPath,
-                headers: headers('deployments.environments.get', 'GET', readPath) });
-            expect(read.statusCode, read.body).toBe(200);
+            let environmentId = f.environment.id;
+            if (shape !== 'existing') {
+                const content = await f.content('deployment-environment.v1');
+                const body = { serverId, ...project, requestKey,
+                    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+                    buildMachineId: f.member.id, ...content, referencedSavedSecretRevisions: [{ resourceId, revision: 1 }],
+                    firstTargetLink: { ...await f.content('deployment-target-link.v1'),
+                        machines: [{ machineId: f.member.id, installationId: f.member.installationId }] } };
+                const created = await app.inject({ method: 'POST', url: '/v1/deployments/environments', payload: body,
+                    headers: headers('deployments.environments.create', 'POST', '/v1/deployments/environments', body) });
+                expect(created.statusCode, created.body).toBe(200);
+                environmentId = created.json().environmentId;
+            }
+            const revision = (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } })).revision;
+            const child: ReviewedActionChildHttpProofV1 = { actionId: 'deployments.bindings.set', role: 'template.bindings',
+                inputDigest: computeActionInputApprovalDigestV1('deployments.bindings.set', { serverId, environmentId,
+                    expectedRevision: revision, set: [], remove: [] }) };
+            const read = async (id: string, effectActionId: string, reviewedChild?: ReviewedActionChildHttpProofV1) => {
+                const path = `/v1/deployments/environments/${id}?serverId=${encodeURIComponent(serverId)}`;
+                return (await app.inject({ method: 'GET', url: path, headers: headers(effectActionId, 'GET', path, undefined, reviewedChild) })).statusCode;
+            };
+            // Each read the root and its bindings child make is admitted for the owner and refused for a foreign Environment.
+            for (const [effectActionId, reviewedChild] of [['deployments.environments.get', undefined],
+                ['deployments.bindings.set', undefined], ['deployments.bindings.set', child]] as const) {
+                expect(await read(environmentId, effectActionId, reviewedChild), `${effectActionId} own`).toBe(200);
+                expect(await read(foreign.environment.id, effectActionId, reviewedChild), `${effectActionId} foreign`).toBe(401);
+            }
         }, { authentication: 'real' });
-        const getPath = `/v1/deployments/environments/${environmentId}?serverId=${serverId}`;
-        // The bindings preparer signs this read as deployments.environments.get (prepareDeploymentBindingsForHost).
-        expect(await verify('deployments.environments.get', 'GET', getPath, undefined, { serverId, environmentId })).not.toBeNull();
-        expect(await verify('deployments.environments.get', 'GET', `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
-            undefined, { serverId, environmentId: f.environment.id })).toBeNull();
     });
 
     it.each(['plain', 'e2ee'] as const)('prepares a template addition to an existing %s Environment through signed Home HTTP', async contentMode => {
