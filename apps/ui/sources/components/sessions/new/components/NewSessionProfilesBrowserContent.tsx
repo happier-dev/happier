@@ -26,7 +26,6 @@ export function NewSessionProfilesBrowserContent(props: Props) {
             serverId={props.serverId}
             machineName={props.machineName}
             onClose={() => setPreviewProfile(null)}
-            surfaceVariant="popover"
         />
     ) : null;
 

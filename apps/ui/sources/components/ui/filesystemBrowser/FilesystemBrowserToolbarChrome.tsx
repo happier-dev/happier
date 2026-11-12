@@ -16,7 +16,7 @@ export type FilesystemBrowserToolbarChromeProps = Readonly<{
     currentUiContextCommandScope?: string;
     testID?: string;
     searchTestID?: string;
-    searchPlaceholder?: string;
+    searchPlaceholder: string;
     searchValue: string;
     onSearchValueChange: (value: string) => void;
     actions: readonly FilesystemBrowserToolbarAction[];

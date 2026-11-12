@@ -49,7 +49,7 @@ describe('WorkspaceWorktreeListSection', () => {
             />,
         );
 
-        const searchInput = screen.tree.findByProps({ testID: 'workspace-worktrees-search-input' });
+        const searchInput = screen.findHostByTestId('workspace-worktrees-search-input')!;
         await act(async () => {
             searchInput.props.onChangeText('feature');
         });

@@ -9,7 +9,6 @@ type Props = Readonly<{
     serverId?: string | null;
     machineName?: string | null;
     onClose: () => void;
-    surfaceVariant?: 'modal' | 'popover';
 }>;
 
 export function NewSessionProfileEnvironmentVariablesPreview(props: Props) {
@@ -21,7 +20,6 @@ export function NewSessionProfileEnvironmentVariablesPreview(props: Props) {
             machineName={props.machineName}
             profileName={props.profile.name}
             onClose={props.onClose}
-            surfaceVariant={props.surfaceVariant}
         />
     );
 }

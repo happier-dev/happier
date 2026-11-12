@@ -11,7 +11,7 @@ import { Modal } from '@/modal';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -19,7 +19,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
 
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -38,17 +38,6 @@ const stylesheet = StyleSheet.create((theme) => ({
 
         ...Typography.variant('body', 'semiBold'),
         color: theme.colors.text.secondary,
-    },
-    textInput: {
-        ...Typography.default('regular'),
-        backgroundColor: theme.colors.input.background,
-        borderRadius: 10,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-        ...SETTINGS_TEXT_INPUT_METRICS,
-        color: theme.colors.input.text,
-        borderWidth: 0.5,
-        borderColor: theme.colors.border.default,
     },
     actions: {
         flexDirection: 'row',
@@ -154,15 +143,13 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
             <ItemGroup>
                 <View style={styles.groupContent}>
                     <Text style={styles.fieldLabel}>{props.kind === 'env' ? t('settings.mcpServersEnvKeyLabel') : t('settings.mcpServersHeaderKeyLabel')}</Text>
-                    <TextInput
-                        style={styles.textInput}
+                    <FieldTextInput
                         value={keyText}
-                        autoCapitalize="none"
-                        autoCorrect={false}
+                        accessibilityLabel={props.kind === 'env' ? t('settings.mcpServersEnvKeyLabel') : t('settings.mcpServersHeaderKeyLabel')}
+                        monospace
                         editable={props.lockKey !== true}
                         onChangeText={setKeyText}
                         placeholder={props.kind === 'env' ? t('settings.mcpServersEnvKeyPlaceholder') : t('settings.mcpServersHeaderKeyPlaceholder')}
-                        placeholderTextColor={theme.colors.input.placeholder}
                         testID="mcp.valueRefEditor.key"
                     />
 
@@ -196,15 +183,12 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                     {source === 'literal' ? (
                         <>
                             <Text style={styles.fieldLabel}>{t('settings.mcpServersValueLiteralLabel')}</Text>
-                            <TextInput
-                                style={styles.textInput}
+                            <FieldTextInput
                                 value={literalValue}
-                                autoCapitalize="none"
-                                autoCorrect={false}
+                                accessibilityLabel={t('settings.mcpServersValueLiteralLabel')}
                                 multiline
                                 onChangeText={setLiteralValue}
                                 placeholder={t('settings.mcpServersValueLiteralPlaceholder')}
-                                placeholderTextColor={theme.colors.input.placeholder}
                                 testID="mcp.valueRefEditor.literal"
                             />
                         </>

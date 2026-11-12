@@ -4,7 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -18,14 +19,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s12,
         paddingTop: theme.space.s12,
         paddingBottom: theme.space.s6,
-    },
-    searchInput: {
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surface.inset,
-        color: theme.colors.text.primary,
-        fontSize: 13,
     },
     helperText: {
         paddingHorizontal: theme.space.s16,
@@ -63,15 +56,11 @@ export const WorkspaceWorktreeListSection = React.memo((props: Readonly<{
     return (
         <ItemGroup title={t('files.branchMenu.category.worktrees')}>
             <View style={styles.searchContainer}>
-                <TextInput
+                <CompactSearchField
                     testID="workspace-worktrees-search-input"
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                     placeholder={t('files.branchMenu.searchPlaceholder')}
-                    placeholderTextColor={theme.colors.text.secondary}
-                    style={styles.searchInput}
-                    autoCapitalize="none"
-                    autoCorrect={false}
                 />
             </View>
             {sortedWorktrees.length === 0 ? (

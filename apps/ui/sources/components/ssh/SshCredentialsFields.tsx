@@ -155,7 +155,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                 value={value.identityFilePath}
                 editable={!formDisabled}
                 autoCapitalize="none"
-                autoCorrect={false}
                 onChangeText={(nextPath) => {
                     props.onChange({
                         ...value,
@@ -187,7 +186,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                 editable={!formDisabled}
                 multiline
                 autoCapitalize="none"
-                autoCorrect={false}
                 onChangeText={props.onChangePrivateKeyMaterial}
             />
         );
@@ -201,7 +199,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
             editable={!formDisabled}
             secureTextEntry
             autoCapitalize="none"
-            autoCorrect={false}
             onChangeText={(nextPassword) => {
                 props.onChange({
                     ...value,
@@ -224,7 +221,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             value={value.host}
                             editable={!formDisabled}
                             autoCapitalize="none"
-                            autoCorrect={false}
                             onChangeText={handleHostChange}
                         />
                     </View>
@@ -236,7 +232,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             value={value.username}
                             editable={!formDisabled}
                             autoCapitalize="none"
-                            autoCorrect={false}
                             onChangeText={(nextUsername) => {
                                 updateValue({
                                     username: nextUsername.trim(),
@@ -253,7 +248,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             editable={!formDisabled}
                             keyboardType="number-pad"
                             autoCapitalize="none"
-                            autoCorrect={false}
                             onChangeText={handlePortChange}
                         />
                     </View>
@@ -268,7 +262,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             value={value.username}
                             editable={!formDisabled}
                             autoCapitalize="none"
-                            autoCorrect={false}
                             onChangeText={(nextUsername) => {
                                 updateValue({
                                     username: nextUsername.trim(),
@@ -282,7 +275,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             value={value.host}
                             editable={!formDisabled}
                             autoCapitalize="none"
-                            autoCorrect={false}
                             onChangeText={handleHostChange}
                         />
                         <MachineEnrollTextField
@@ -293,7 +285,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             editable={!formDisabled}
                             keyboardType="number-pad"
                             autoCapitalize="none"
-                            autoCorrect={false}
                             onChangeText={handlePortChange}
                         />
                     </View>
@@ -353,7 +344,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                                     value={value.identityFilePath}
                                     editable={!formDisabled}
                                     autoCapitalize="none"
-                                    autoCorrect={false}
                                     onChangeText={(nextPath) => {
                                         props.onChange({
                                             ...value,
@@ -393,7 +383,6 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                                 editable={!formDisabled}
                                 secureTextEntry
                                 autoCapitalize="none"
-                                autoCorrect={false}
                                 onChangeText={(nextPassword) => {
                                     props.onChange({
                                         ...value,

@@ -978,7 +978,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     useModalCardChrome(chromeSetter, chrome);
 
-    type ToolbarActionId = 'path-browser-filter' | 'path-browser-refresh' | 'path-browser-clear-search';
+    type ToolbarActionId = 'path-browser-filter' | 'path-browser-refresh';
 
     type ToolbarActionConfig = Readonly<{
         id: ToolbarActionId;
@@ -1020,21 +1020,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 onPress: () => invokeBrowserCommand('refresh'),
             },
         ];
-
-        if (canClearSearch) {
-            actions.push({
-                id: 'path-browser-clear-search',
-                priority: 2,
-                order: 2,
-                icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'x',
-                accessibilityLabel: t('files.clearSearchA11y'),
-                onPress: () => invokeBrowserCommand('clearSearch'),
-            });
-        }
-
+        // Clearing the query is the search field's own control; the `clearSearch` command keeps its keyboard path.
         return actions;
-    }, [canClearSearch, filterSelected, invokeBrowserCommand, theme.colors.text.link, theme.colors.text.secondary]);
+    }, [filterSelected, invokeBrowserCommand, theme.colors.text.link, theme.colors.text.secondary]);
 
     const buildOverflowItems = React.useCallback((hiddenActions: readonly FilesystemBrowserToolbarAction[]) => {
         const items: ItemAction[] = [

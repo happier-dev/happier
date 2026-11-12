@@ -34,7 +34,6 @@ export const RemoteSshChecklistPromptCard = React.memo(function RemoteSshCheckli
                     editable={!props.isStarting}
                     secureTextEntry
                     autoCapitalize="none"
-                    autoCorrect={false}
                     onChangeText={props.onChangePassword}
                 />
             </View>

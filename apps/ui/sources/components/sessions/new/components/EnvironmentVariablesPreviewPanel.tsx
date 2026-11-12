@@ -5,15 +5,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { t } from '@/text';
 import { formatEnvVarTemplate, parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
 import { Text } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { Icon } from '@/components/ui/icons/Icon';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { ModalCardHeader } from '@/modal/components/card/ModalCardHeader';
 
 export interface EnvironmentVariablesPreviewPanelProps {
     environmentVariables: Record<string, string>;
@@ -22,7 +20,6 @@ export interface EnvironmentVariablesPreviewPanelProps {
     machineName?: string | null;
     profileName?: string | null;
     onClose: () => void;
-    surfaceVariant?: 'modal' | 'popover';
 }
 
 function isSecretLike(name: string) {
@@ -46,33 +43,9 @@ function extractVarRefsFromValue(value: string): string[] {
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flexShrink: 1,
-    },
-    modalContainer: {
-        width: '92%',
-        maxWidth: 560,
-        backgroundColor: theme.colors.background.canvas,
-        borderRadius: 16,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-    },
-    popoverContainer: {
         width: 420,
         maxWidth: '100%',
         backgroundColor: theme.colors.surface.base,
-    },
-    header: {
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border.default,
-    },
-    headerTitle: {
-        ...Typography.variant('heading'),
-        color: theme.colors.text.primary,
     },
     scroll: {
         flex: 1,
@@ -106,11 +79,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
     const styles = stylesheet;
     const { height: windowHeight } = useWindowDimensions();
     const scrollRef = React.useRef<ScrollView>(null);
-    const surfaceVariant = props.surfaceVariant ?? 'modal';
-
-    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef, {
-        enabled: surfaceVariant === 'popover' ? true : undefined,
-    });
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef, { enabled: true });
 
     const envVarEntries = React.useMemo(() => {
         return Object.entries(props.environmentVariables)
@@ -149,32 +118,15 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
     const title = props.profileName
         ? t('profiles.environmentVariables.previewModal.titleWithProfile', { profileName: props.profileName })
         : t('profiles.environmentVariables.title');
-    const maxHeight = surfaceVariant === 'modal'
-        ? Math.min(720, Math.max(360, Math.floor(windowHeight * 0.85)))
-        : Math.min(480, Math.max(280, Math.floor(windowHeight * 0.6)));
+    const maxHeight = Math.min(480, Math.max(280, Math.floor(windowHeight * 0.6)));
     const emptyValue = t('profiles.environmentVariables.preview.emptyValue');
 
     return (
         <View
-            style={[
-                styles.container,
-                surfaceVariant === 'modal' ? styles.modalContainer : styles.popoverContainer,
-                { height: maxHeight, maxHeight },
-            ]}
+            style={[styles.container, { height: maxHeight, maxHeight }]}
             {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
         >
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>
-                    {title}
-                </Text>
-
-                <HappierPressable
-                    onPress={props.onClose}
-                    style={({ pressed }) => ({ opacity: pressed ? motionTokens.press.opacity : 1 })}
-                >
-                    {normalizeNodeForView(<Icon name="x" size={20} color={theme.colors.text.secondary} />)}
-                </HappierPressable>
-            </View>
+            <ModalCardHeader title={title} onClose={props.onClose} />
 
             <ScrollView
                 ref={scrollRef}

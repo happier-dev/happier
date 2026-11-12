@@ -42,7 +42,8 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock({ spies: { confirm: modalConfirmMock } }).module;
 });
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/ui/popover')>()),
     Popover: (props: Record<string, unknown> & { children?: ((args: Record<string, never>) => React.ReactNode) | React.ReactNode; open?: boolean }) =>
         React.createElement('Popover', props, props.open && typeof props.children === 'function' ? props.children({}) : null),
 }));
@@ -236,7 +237,7 @@ describe('WorkspaceSourceControlBranchMenu worktrees', () => {
         );
 
         await openBranchMenu(createScreen);
-        const search = createScreen.tree.findByProps({ testID: 'workspace-scm-branch-popover-search' });
+        const search = createScreen.findHostByTestId('workspace-scm-branch-popover-search')!;
         await act(async () => {
             search.props.onChangeText('feature/new');
         });

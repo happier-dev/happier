@@ -138,7 +138,6 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
                         label={field.label}
                         placeholder={field.placeholder}
                         autoCapitalize={field.autoCapitalize}
-                        autoCorrect={field.autoCorrect}
                         value={draft[field.id]}
                         onChangeText={(value) => handleChange(field.id, value)}
                     />

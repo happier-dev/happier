@@ -139,7 +139,6 @@ export function SlimProfilePlacementFields(props: Readonly<{
                         value={pinned.directory ?? ''}
                         placeholder={t('profiles.launchPlacement.directoryPlaceholder')}
                         autoCapitalize="none"
-                        autoCorrect={false}
                         onChangeText={(directory) => {
                             props.onPlacementChange(
                                 withSlimProfilePlacementDirectoryV1(props.placement, directory),

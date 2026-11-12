@@ -241,7 +241,6 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
                     label={t('settingsProviders.authoring.baseUrl')}
                     value={draft.baseUrl}
                     autoCapitalize="none"
-                    autoCorrect={false}
                     onChangeText={(baseUrl) => updateDraft({ baseUrl })}
                 />
                 <MachineEnrollTextField
@@ -250,7 +249,6 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
                     value={draft.manualModelsText}
                     multiline
                     autoCapitalize="none"
-                    autoCorrect={false}
                     onChangeText={(manualModelsText) => updateDraft({ manualModelsText })}
                 />
             </ItemGroup>

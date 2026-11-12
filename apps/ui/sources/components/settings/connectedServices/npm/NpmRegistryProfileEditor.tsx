@@ -179,7 +179,6 @@ export function NpmRegistryProfileEditorModal(props: Readonly<{
                         value={origin}
                         placeholder="https://registry.example.com"
                         autoCapitalize="none"
-                        autoCorrect={false}
                         onChangeText={setOrigin}
                     />
                     <MachineEnrollTextField
@@ -198,7 +197,6 @@ export function NpmRegistryProfileEditorModal(props: Readonly<{
                         value={scopeInput}
                         placeholder={t('settingsPlugins.registriesScopesPlaceholder')}
                         autoCapitalize="none"
-                        autoCorrect={false}
                         onChangeText={setScopeInput}
                     />
                 </View>

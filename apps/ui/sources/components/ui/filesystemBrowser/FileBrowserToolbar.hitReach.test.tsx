@@ -21,7 +21,7 @@ describe('FileBrowserToolbar action hit areas', () => {
     it('splits the toolbar action gap between neighbouring actions', async () => {
         const screen = await renderScreen(
             <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
-                <FileBrowserToolbar searchValue="" onSearchValueChange={() => {}}>
+                <FileBrowserToolbar searchPlaceholder="Search files" searchValue="" onSearchValueChange={() => {}}>
                     <FileBrowserToolbarIconButton testID="one" accessibilityLabel="One" onPress={() => {}}>{null}</FileBrowserToolbarIconButton>
                     <FileBrowserToolbarIconButton testID="two" accessibilityLabel="Two" onPress={() => {}}>{null}</FileBrowserToolbarIconButton>
                 </FileBrowserToolbar>

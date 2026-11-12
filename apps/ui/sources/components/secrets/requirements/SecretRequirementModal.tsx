@@ -32,7 +32,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { Icon } from '@/components/ui/icons/Icon';
-import { IconButton } from '@/components/ui/buttons/IconButton';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 
@@ -373,26 +373,6 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
 
     return (
         <View style={layoutVariant === 'screen' ? styles.containerScreen : styles.containerChrome}>
-            {layoutVariant === 'screen' ? (
-                <View style={styles.header}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.headerTitle}>
-                            {props.titleOverride ?? t('profiles.requirements.modalTitle')}
-                        </Text>
-                        <Text style={styles.headerSubtitle} numberOfLines={1}>
-                            {props.profile.name}
-                        </Text>
-                    </View>
-                    <IconButton
-                        testID="secret-requirement:close"
-                        variant="plain"
-                        iconName="x"
-                        accessibilityLabel={t('common.close')}
-                        onPress={props.onClose}
-                    />
-                </View>
-            ) : null}
-
             <View style={styles.scrollWrap}>
                 <ScrollView
                     ref={scrollRef}
@@ -409,6 +389,10 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                     onScroll={wheelScrollHandlers.onScroll}
                     {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
                 >
+                {/* A route screen is a page: its title and Back are the page header's (Back cancels through the route). */}
+                {layoutVariant === 'screen' ? (
+                    <PageHeader title={modalTitle} description={modalSubtitle} />
+                ) : null}
                 {variant === 'requirement' ? (
                     <View style={styles.helpContainer}>
                         <Text style={styles.helpText}>
@@ -765,27 +749,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         overflow: 'hidden',
         borderWidth: 0,
         alignSelf: 'stretch',
-    },
-    header: {
-        paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
-        paddingTop: 14,
-        paddingBottom: theme.space.s12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s12,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border.default,
-    },
-    headerTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: theme.colors.text.primary,
-        ...Typography.default('semiBold'),
-    },
-    headerSubtitle: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-        marginTop: theme.space.s2,
     },
     scrollWrap: {
         position: 'relative',

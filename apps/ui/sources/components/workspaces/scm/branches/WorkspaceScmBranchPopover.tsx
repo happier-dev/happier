@@ -7,7 +7,8 @@ import { SelectableMenuResults } from '@/components/ui/forms/dropdown/Selectable
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { CREATE_ITEM_ID, useSelectableMenu } from '@/components/ui/forms/dropdown/useSelectableMenu';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -176,25 +177,14 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                         }}
                     >
                         <View style={{ paddingHorizontal: theme.space.s12, paddingTop: theme.space.s12, paddingBottom: theme.space.s10 }}>
-                            <TextInput
-                                ref={inputRef}
+                            <CompactSearchField
+                                inputRef={inputRef}
                                 value={searchQuery}
                                 onChangeText={handleSearchChange}
                                 placeholder={t('sessionGitBranches.searchPlaceholder')}
-                                placeholderTextColor={theme.colors.text.secondary}
                                 testID="workspace-scm-branch-popover-search"
                                 onKeyPress={(event) => {
                                     handleKeyPress(String(event.nativeEvent.key ?? ''), handleActivateItem);
-                                }}
-                                style={{
-                                    fontSize: 13,
-                                    color: theme.colors.text.primary,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.border.default,
-                                    borderRadius: 10,
-                                    paddingHorizontal: theme.space.s12,
-                                    paddingVertical: theme.space.s8,
-                                    backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
                                 }}
                             />
                         </View>

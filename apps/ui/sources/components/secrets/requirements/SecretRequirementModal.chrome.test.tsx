@@ -253,9 +253,10 @@ describe('SecretRequirementModal', () => {
         });
     });
 
-    it('announces Use once as a button and names the screen close control', async () => {
+    it('announces Use once as a button and titles the route screen as a page', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { SecretRequirementModal } = await import('./SecretRequirementModal');
+        const { PageHeader } = await import('@/components/ui/layout/PageHeader');
         const screen = await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p4', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
             secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
@@ -270,7 +271,9 @@ describe('SecretRequirementModal', () => {
             'profiles.requirements.actions.useOnceButton',
         );
         expect(submit?.props.role ?? submit?.props.accessibilityRole).toBe('button');
-        expect(screen.tree.findAll((node) => node.props.accessibilityLabel === 'common.close').length).toBeGreaterThan(0);
+        // The page header titles the screen with the profile it is for; leaving is the navigation's Back, not a close of its own.
+        expect(screen.tree.findByType(PageHeader).props).toMatchObject({ title: 'profiles.requirements.modalTitle', description: 'Profile' });
+        expect(screen.tree.findAll((node) => node.props.accessibilityLabel === 'common.close')).toHaveLength(0);
     });
 
     it('returns an Enter Once value without normalizing opaque whitespace', async () => {

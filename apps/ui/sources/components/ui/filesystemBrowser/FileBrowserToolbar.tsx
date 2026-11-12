@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { TextInput } from '@/components/ui/text/Text';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierPressable, useHappierMaterialColorResolver, type HappierPressableProps, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
 
@@ -44,7 +44,7 @@ export function resolveVisibleFileBrowserToolbarActionIds(params: Readonly<{
 
 export type FileBrowserToolbarProps = ViewProps & Readonly<{
     searchTestID?: string;
-    searchPlaceholder?: string;
+    searchPlaceholder: string;
     searchValue: string;
     onSearchValueChange: (value: string) => void;
     onWidthChange?: (width: number) => void;
@@ -61,7 +61,6 @@ export function FileBrowserToolbar({
     ...rest
 }: FileBrowserToolbarProps) {
     const { theme } = useUnistyles();
-    const paintColor = useHappierMaterialColorResolver();
 
     const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
         onWidthChange?.(event.nativeEvent.layout.width);
@@ -73,20 +72,13 @@ export function FileBrowserToolbar({
             onLayout={handleLayout}
             style={[styles.row, { borderBottomColor: theme.colors.border.default }, style]}
         >
-            <View style={[styles.searchWrap, { borderColor: theme.colors.border.default, backgroundColor: paintColor(theme.colors.surface.base) }]}>
-                <TextInput
-                    testID={searchTestID}
-                    placeholder={searchPlaceholder}
-                    value={searchValue}
-                    onChangeText={onSearchValueChange}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    spellCheck={false}
-                    clearButtonMode="never"
-                    style={[styles.searchInput, { color: theme.colors.text.primary }]}
-                    placeholderTextColor={theme.colors.text.secondary}
-                />
-            </View>
+            <CompactSearchField
+                testID={searchTestID}
+                placeholder={searchPlaceholder}
+                value={searchValue}
+                onChangeText={onSearchValueChange}
+                style={styles.search}
+            />
             <View style={styles.actions}>
                 {children}
             </View>
@@ -144,18 +136,9 @@ const styles = StyleSheet.create(() => ({
         paddingVertical: 10,
         borderBottomWidth: 1,
     },
-    searchWrap: {
+    search: {
         flex: 1,
         minWidth: 160,
-        borderWidth: 1,
-        borderRadius: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-    },
-    searchInput: {
-        padding: 0,
-        margin: 0,
-        minHeight: 20,
     },
     actions: {
         flexDirection: 'row',

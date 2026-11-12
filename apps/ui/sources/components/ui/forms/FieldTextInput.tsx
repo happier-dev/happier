@@ -22,6 +22,8 @@ export type FieldTextInputProps = Readonly<{
     accessibilityHint?: string;
     /** The `nativeID` of a persistent visible label (`FieldItem` `labelNativeID`) that names this field. */
     accessibilityLabelledBy?: string;
+    /** The `nativeID` of persistent visible help (a form field's support line) that describes this field. */
+    accessibilityDescribedBy?: string;
     placeholder?: string;
     /** The field's refusal, shown under it and announced. */
     error?: string | null;
@@ -127,6 +129,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                     accessibilityLabel={props.accessibilityLabel}
                     accessibilityHint={props.error ?? props.accessibilityHint}
                     accessibilityLabelledBy={props.accessibilityLabelledBy}
+                    accessibilityDescribedBy={props.accessibilityDescribedBy}
                     accessibilityState={invalid ? { invalid: true } as never : undefined}
                     autoCapitalize={props.autoCapitalize ?? 'none'}
                     autoCorrect={false}

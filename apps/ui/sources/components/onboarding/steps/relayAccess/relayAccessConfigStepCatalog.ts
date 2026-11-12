@@ -11,7 +11,6 @@ export type RelayAccessCredentialRefs = readonly RelayAccessConfig['credentialRe
 export type RelayAccessConfigStepField = Readonly<{
     id: string; label: string; placeholder: string;
     autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-    autoCorrect?: boolean;
 }>;
 
 type DraftComparison = Readonly<{
@@ -53,7 +52,7 @@ export const relayAccessConfigStepCatalog: Readonly<Record<string, RelayAccessCo
             providerId: descriptor.id, descriptor,
             testIDPrefix: step.testIDPrefix,
             fields: step.fields.map(field => ({ id: field.id, label: t(field.labelKey as TranslationKey),
-                placeholder: t((field.placeholderKey ?? field.labelKey) as TranslationKey), autoCapitalize: 'none', autoCorrect: false })),
+                placeholder: t((field.placeholderKey ?? field.labelKey) as TranslationKey), autoCapitalize: 'none' })),
             hint: t(step.hintKey as TranslationKey),
             readConfiguredDraft: snapshot => {
                 if (!snapshot?.configured || snapshot.providerId !== descriptor.id) return emptyDraft();

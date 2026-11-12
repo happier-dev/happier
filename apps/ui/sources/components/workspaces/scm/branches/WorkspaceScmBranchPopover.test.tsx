@@ -27,7 +27,8 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/ui/popover')>()),
     Popover: (props: Record<string, unknown> & { children?: ((args: { maxHeight: number; maxWidth: number }) => React.ReactNode) | React.ReactNode; open?: boolean }) =>
         React.createElement(
             'Popover',
@@ -80,7 +81,7 @@ describe('WorkspaceScmBranchPopover', () => {
             />,
         );
 
-        const search = screen.tree.findByProps({ testID: 'workspace-scm-branch-popover-search' } as never);
+        const search = screen.findHostByTestId('workspace-scm-branch-popover-search')!;
         act(() => {
             search.props.onChangeText('feature/new');
         });
@@ -106,7 +107,7 @@ describe('WorkspaceScmBranchPopover', () => {
             scroller.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 360 } } });
             scroller.props.onContentSizeChange(320, 300 * 36);
         });
-        const search = screen.tree.findByProps({ testID: 'workspace-scm-branch-popover-search' } as never);
+        const search = screen.findHostByTestId('workspace-scm-branch-popover-search')!;
         await act(async () => { search.props.onKeyPress({ nativeEvent: { key: 'End' } }); });
         // The last branch is mounted wherever the window is; once it reports where it sits, the list scrolls to it.
         const last = screen.tree.findByProps({ testID: 'dropdown-option-branch_feature-299:scroll-frame' } as never);
