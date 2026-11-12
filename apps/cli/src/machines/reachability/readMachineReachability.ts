@@ -7,6 +7,7 @@ import { readMachineMetadataFieldV1, readMachineMetadataSnapshotV1, type Machine
   type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { createReachabilityProviderHost } from './reachabilityProviderHost';
 
 /** Typed observation refusal; the host phase owns whether effects preceded it. */
@@ -103,8 +104,9 @@ export async function observeMachineReachability(input: Readonly<{
     if (!outcome.ok) {
       if (outcome.errorCode === 'plugin_exec_termination_incomplete') throw new PluginError({
         code: outcome.errorCode, message: 'Native process termination is incomplete', retryable: false,
+        failureCause: outcome.failureCause,
       });
-      if (input.additionalSelection && sameStrictJsonValue(input.additionalSelection, selection)) return refuse(outcome.errorCode);
+      if (input.additionalSelection && sameStrictJsonValue(input.additionalSelection, selection)) throw createActionExecuteFailureError(outcome);
       return { selection, networkRequired, state: 'unavailable' as const, code: outcome.errorCode };
     }
     if (outcome.result.kind === 'refused' && input.additionalSelection

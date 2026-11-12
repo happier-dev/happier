@@ -19,6 +19,7 @@ import { getMachineAdminAccessV1, MACHINE_REACHABILITY_ACTION_IDS_V1,
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
@@ -228,6 +229,8 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
 
 /** Preserve the owner's typed failure at the existing RPC boundary. */
 function throwMachineReachabilityRpcError(error: unknown): never {
+  const failure = readActionFailureEnvelope(error);
+  if (failure) throw Object.assign(new RpcError(failure.error, failure.errorCode, failure.failureCause), failure);
   const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
     ? error.code : null;
   if (code) throw new RpcError(code, code);

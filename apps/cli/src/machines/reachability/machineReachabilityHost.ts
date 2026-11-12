@@ -1,4 +1,6 @@
 import { networkInterfaces } from 'node:os';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { executeRetainedSshTransition, type RetainedSshTransitionInput } from './retainedSshTransition';
 import { prepareMachineRecipeProgramV1 } from '@/machines/setup/prepareMachineRecipeProgram';
 import { getMachineSetupDesiredV1, mutateMachineMetadataFieldV1,
@@ -71,7 +73,10 @@ const errorCode = (error: unknown) => error && typeof error === 'object' && 'cod
 
 /** A public role code is a diagnostic, never a host-control exception. */
 class NativeRoleFailure extends Error {
-  constructor(readonly code: string, readonly refused: boolean, readonly unsettled = false) { super(code); }
+  constructor(readonly code: string, readonly refused: boolean, readonly unsettled = false, failure?: ActionExecuteFailure) {
+    super(code);
+    if (failure) Object.assign(this, createActionExecuteFailureError(failure));
+  }
 }
 
 function providerHost(deps: MachineReachabilityHostDependencies, actionId: string, isCurrent = deps.isCurrent) {
@@ -148,7 +153,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
     const selected = await providers.prepareRole(change.selection, change.intent,
       change.intent === 'join' && change.selection.credentialRefs.some(ref => ref.purpose === 'network.join')
         ? { setupCredentialFile: credentialFilePath(deps.target.installationId) } : {});
-    if (!selected.ok) return refuse(selected.errorCode);
+    if (!selected.ok) throw createActionExecuteFailureError(selected);
     if (!selected.definition.capabilities.includes('privateNetwork')) return refuse('access_provider_target_unsupported');
     if (selected.kind === 'plugin' && state.selections.some(selection => accessProviderRefsEqualV1(selection.provider, selected.selection.provider)
       && !sameStrictJsonValue(selection, selected.selection))) return refuse('provider_conflict');
@@ -219,7 +224,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
           readRecipes: async () => [...(inlineEntry ? [inlineEntry] : []), ...Object.values(buildPluginProjectionFamilyV2({ registry: deps.runtimeRegistry.contributes,
             generation: deps.runtimeRegistry.generation }, machineRecipesProjectionFamily).entriesById)],
         });
-        if ('ok' in planned && !planned.ok) return refuse(planned.errorCode);
+        if ('ok' in planned && !planned.ok) throw createActionExecuteFailureError(planned);
         if (!('recipePlans' in planned) || !planned.recipePlans?.length) return refuse('machine_recipe_unavailable');
         // A cold client is truthfully unavailable here. Retain its concrete
         // reviewed program for full native admission, then recheck it after
@@ -462,7 +467,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           }
           if (!outcome.ok) {
             if (outcome.errorCode === 'plugin_exec_termination_incomplete') machineNativeEffectAdmission.markUnsettled(native);
-            throw new NativeRoleFailure(outcome.errorCode, true, outcome.errorCode === 'plugin_exec_termination_incomplete');
+            throw new NativeRoleFailure(outcome.errorCode, true, outcome.errorCode === 'plugin_exec_termination_incomplete', outcome);
           }
           if (outcome.result.kind !== 'confirmed') {
             throw new NativeRoleFailure(outcome.result.code, true);
@@ -636,7 +641,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
         : !roleMayHaveChangedMembership && (!anyNativeEffectPossible || setupApplied);
       if (!metadataOutcomeUnknown && cleanupConfirmed && definiteRefusal
         && (anyNativeEffectPossible || await restorePriorSelection())) {
-        knownFailure = { ok: false, errorCode: failureCode, error: failureCode, effectAttempted: anyNativeEffectPossible,
+        knownFailure = { ...readActionFailureEnvelope(error), ok: false, errorCode: failureCode, error: failureCode, effectAttempted: anyNativeEffectPossible,
           ...(setupApplied ? { details: { setupOutcome: 'applied' } }
             : error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) };
       } else {

@@ -9,6 +9,8 @@ import axios from 'axios';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol';
 import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { HostReviewedChildrenPlanV1Schema } from '@happier-dev/protocol/actions/executor/hostReviewedChildrenV1';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -18,6 +20,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { reachabilityConnectorSubject } from '@/machines/reachability/prepareReachabilityJoinCredential';
 import * as terminalInput from '@/terminal/prompts/promptInput';
 import * as cliActionExecution from '@/cli/actions/executeCommand';
+import { inspectMachineReachability } from './machineReachabilityHost';
 
 // Generic physical plugin authoring drives the same production factory,
 // custody, parent Action, native admission and retained approval owners.
@@ -33,6 +36,24 @@ it('keeps provider configuration out of the Home connector subject while retaini
   expect(reachabilityConnectorSubject({ ...selection,
     config: { ...selection.config, profileName: 'Different selected profile' },
   }, { machineId, installationId }).connectorId).not.toBe(subject.connectorId);
+});
+
+it('retains a real reviewed-child no_plan cause through selected provider observation', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true);
+  const selected = { ...selection, provider: { pluginId: authoredProvider.pluginId, localId: 'docker-network' } };
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  const input = { serverId: 'generic-home', machineId,
+    change: { kind: 'privateNetwork' as const, intent: 'join' as const, selection: selected } };
+  const context = fixture.context();
+  // Exercise the real canonical port's refusal; no provider or issuer is replaced.
+  const hostReviewedChild = createHostReviewedChildPortV1({
+    actionId: 'machines.reachability.configure', input, context,
+  });
+  await expect(inspectMachineReachability(input, fixture.dependencies({ ...context, hostReviewedChild })))
+    .rejects.toMatchObject({ code: 'credential_scope_denied', errorCode: 'credential_scope_denied',
+      failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: 'no_plan', httpStatus: null } });
+  expect(fixture.hostNative.networkMutations()).toBe(0);
+  expect(fixture.elevation.launches).toHaveLength(0);
 });
 
 // Reuse the Server QB87 disposable SQLite acquisition budget for each fresh
@@ -71,15 +92,36 @@ describe('Manage grantee Saved Secret join', () => {
       }));
       expect(fixture.hostNative.networkMutations()).toBe(0);
       expect(fixture.elevation.launches).toHaveLength(0);
-      const configured = await executeReviewedReachabilityConfigure(fixture, api, review);
+      const configured = await executeReviewedReachabilityConfigure(fixture, api, review, {
+        reviewArtifact(request) {
+          const preview = request.preview;
+          const storedPlan = preview && typeof preview === 'object' && !Array.isArray(preview) && 'hostReviewedChildren' in preview
+            ? preview.hostReviewedChildren : undefined;
+          const plan = HostReviewedChildrenPlanV1Schema.safeParse(storedPlan);
+          // Observe only the real stored review's closed shape, never child operands or credentials.
+          console.info('Manage retained reviewed child plan', {
+            state: storedPlan === undefined ? 'absent' : !plan.success ? 'invalid'
+              : plan.data.children.length === 0 ? 'empty' : 'present',
+            count: plan.success ? plan.data.children.length : undefined,
+            children: plan.success ? plan.data.children.map(child => ({
+              inspectRole: child.role === 'inspect', joinRole: child.role === 'join',
+              selectedInspectAction: typeof child.action !== 'string'
+                && child.action.pluginId === fixture.authoredProvider?.pluginId && child.action.localId === 'inspect',
+              selectedJoinAction: typeof child.action !== 'string'
+                && child.action.pluginId === fixture.authoredProvider?.pluginId && child.action.localId === 'join',
+              inputPresent: child.input !== undefined,
+            })) : undefined,
+          });
+        },
+      });
       expect(disclosures).toHaveBeenCalled();
       for (const [disclosure] of disclosures.mock.calls) {
         expect(disclosure).toMatchObject({ accountId: granteeAccountId, machineId, fullSignIn: true,
           custodian: { accountId: 'generic-owner' } });
       }
-      expect(fixture.home.connectorSetRequesterProofs, 'Actual grant set carries the admitted grantee installation signature').toEqual([true]);
       expect(parseCompletedReachabilityConfigure(configured.result)).toMatchObject({ status: 'applied', selections: [selected],
         observation: { privateNetworks: [expect.objectContaining({ provider: selected.provider, state: 'ready' })] } });
+      expect(fixture.home.connectorSetRequesterProofs, 'Actual grant set carries the admitted grantee installation signature').toEqual([true]);
       expect(fixture.home.secretMaterialReads).toContainEqual({ accountId: granteeAccountId, resourceId: 'generic-join-resource' });
       expect(fixture.home.secretMaterialReads.every(read => read.accountId === granteeAccountId)).toBe(true);
       expect(fixture.home.approvalRequests().map(request => request.actionId)).toEqual(['machines.reachability.configure']);
