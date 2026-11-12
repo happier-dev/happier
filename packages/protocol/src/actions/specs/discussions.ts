@@ -207,7 +207,7 @@ function createDiscussionActionSpecsV1() {
     inputSchema: DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'],
     approvalPresentation: {
       summary: () => null,
-      technicalInputPaths: ['discussionId'],
+      // The destination reads by the Discussion's title (a `discussion` reference); its id stays one disclosure away.
       inputHints: { fields: [
         { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
         { path: 'content.externalSource.senderDisplayName', title: 'From', widget: 'text', visibleWhen: fromChannel },
@@ -474,7 +474,8 @@ function createDiscussionActionSpecsV1() {
     bindings: { mcpToolName: 'discussion_owner_transfer', voiceClientToolName: 'discussion_owner_transfer' },
     serverTransport: { method: 'PUT', path: DISCUSSION_HTTP_PATHS_V1.ownerTransfer },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    inputHints: { description: 'The selected person becomes the owner. You will need their help to transfer ownership back.', fields: [
+    approvalPresentation: { summary: () => 'The selected person becomes the owner. You will need their help to transfer ownership back.' },
+    inputHints: { fields: [
       { path: 'discussionId', title: 'Discussion id', widget: 'text', required: true },
       { path: 'accountId', title: 'Successor Account id', widget: 'text', required: true },
     ] },

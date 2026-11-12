@@ -207,6 +207,8 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     holdNavigation: {
         flexShrink: 1,
         minWidth: 0,
+        // Held to its column wherever it hangs (a phone sheet's subtitle sizes it to its content otherwise).
+        maxWidth: '100%',
     },
     holdNavigationNext: {
         flexShrink: 1,

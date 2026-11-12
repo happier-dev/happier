@@ -177,6 +177,8 @@ export type ApprovalActionReference =
     }>
   | Readonly<{ kind: 'home'; id: string }>
   | Readonly<{ kind: 'account'; id: string }>
+  /** A Discussion, read by the title its viewer can read. */
+  | Readonly<{ kind: 'discussion'; id: string }>
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'setting'; id: string }>
@@ -208,12 +210,13 @@ const SESSION_REFERENCE_KEYS = new Set([
   'underSessionId', 'parentSessionId', 'originSessionId',
 ]);
 
-/** A declared reference key read by its name: a session, a Home or an Account. */
+/** A declared reference key read by its name: a session, a Home, an Account or a Discussion. */
 function describeApprovalKeyReference(key: string | undefined, value: unknown): ApprovalActionReference | undefined {
   if (typeof value !== 'string' || !value.trim() || key === undefined) return undefined;
   if (SESSION_REFERENCE_KEYS.has(key)) return { kind: 'session', id: value.trim() };
   if (key === 'serverId') return { kind: 'home', id: value.trim() };
   if (key === 'accountId') return { kind: 'account', id: value.trim() };
+  if (key === 'discussionId') return { kind: 'discussion', id: value.trim() };
   return readApprovalSavedSecretReference('', key, value);
 }
 
@@ -651,7 +654,7 @@ function appendApprovalStructuredEntries(
     // Inside a JSON value only Home and Account ids name themselves: their ids are exact identities.
     // A session-looking key there stays data, so an arbitrary value cannot borrow a session's name.
     const keyReference = describeApprovalKeyReference(key, value);
-    const reference = keyReference?.kind === 'session' ? undefined : keyReference;
+    const reference = keyReference?.kind === 'session' || keyReference?.kind === 'discussion' ? undefined : keyReference;
     const technical = !reference && (isTechnicalApprovalKey(key) || isEmptyApprovalValue(value)
       || isApprovalSentinelValue(key, value)
       || widgetStructure && key !== undefined && ['id', 'instanceId', 'groupId', 'artifactId', 'pluginId', 'localId', 'pageId', 'area', 'layoutId', 'kind'].includes(key));

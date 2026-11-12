@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { ITEM_TITLE_MAX_LINES_WITHOUT_SUBTITLE } from './itemTextClamp';
 import { HappierOptionRow, useHappierMaterialColorResolver, type HappierFocusable, type HappierOptionRowControlProps, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
 
 
@@ -343,6 +344,8 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         // A menu has no other place to read the rest of a choice's description (a
         // permission mode's risk, a disabled action's recovery), so it wraps.
         subtitleLines={isMenu ? 0 : undefined}
+        // Its title wraps like a grouped row's (a narrow phone menu beside a pin read "Workflo…").
+        titleLines={isMenu ? ITEM_TITLE_MAX_LINES_WITHOUT_SUBTITLE : undefined}
         titleLeading={titleLeading}
         titleAccessory={titleAccessory}
         subtitleLeading={subtitleLeading}

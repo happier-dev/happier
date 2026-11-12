@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, type WorkflowAuthoredInputV1, type WorkflowInvocationLifecycleV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -216,6 +216,16 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const setReading = props.onChangeReading ?? setLocalReading;
     const [openField, setOpenField] = React.useState<string | null>(null);
     const [fullValue, setFullValue] = React.useState<ReviewValueProps | null>(null);
+    const [cardHeight, setCardHeight] = React.useState(0);
+    const [footerHeight, setFooterHeight] = React.useState(0);
+    const onCardLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = Math.round(event.nativeEvent.layout.height);
+        setCardHeight((current) => (current === next ? current : next));
+    }, []);
+    const onFooterLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = Math.round(event.nativeEvent.layout.height);
+        setFooterHeight((current) => (current === next ? current : next));
+    }, []);
     const writeClipboard = useClipboardWrite();
     const closeFullValue = React.useCallback(() => setFullValue(null), []);
     const fullPlan = fullValue?.contract?.kind === 'json' ? readWorkflowPlanResult(fullValue.value) : null;
@@ -331,7 +341,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     // Generate commits and continues without asking again: unlike the quiet words it states its consequence (lab H1).
     const generateRow = !props.readOnly && held && !editing && !props.waitForYou && !props.generation && props.canGenerate !== false && !generatePrimary
         ? <Item title={t('workflows.review.generate')} subtitle={props.parentPaused ? t('workflows.review.startsResume') : t('workflows.review.generateBody')}
-            showChevron={false} rightElement={<RoundButton testID={`${prefix}-generate`} size="small" display="secondary"
+            // Its button moves under the words on a narrow row, as the plan rows' do, rather than squeeze them a letter per line.
+            showChevron={false} accessoryLayout="adaptive" rightElement={<RoundButton testID={`${prefix}-generate`} size="small" display="secondary"
                 title={t('workflows.review.generateShort')} accessibilityLabel={t('workflows.review.generate')}
                 disabled={blocked} onPress={generate} />} /> : null;
     const primaryAction = props.generation && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
@@ -507,13 +518,19 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                     onPress={async () => { if (!blocked) await props.onEditPlan?.(planValue, revision); }} />} /> : null}
         </ItemGroup></ListPresentationProvider>;
     // A sheet sizes a Wait to its content and scrolls it as a whole; a pane pins every decision.
-    const pinned = props.primaryActionPlacement === 'footer' && (!props.waitForYou || props.fillHeight !== true);
+    const scrolls = props.primaryActionPlacement === 'footer' && (!props.waitForYou || props.fillHeight !== true);
+    // Pinned decisions never take more of the card than they leave the result they decide on: past that (a
+    // phone at a large text size) they scroll after it, so the result and every choice stay reachable.
+    const footerCrowds = scrolls && cardHeight > 0 && footerHeight * 2 > cardHeight;
     const fill = props.fillHeight === true ? styles.filled : styles.fitted;
-    return <View testID={prefix} style={[styles.root, pinned ? fill : null]}>
-        {pinned ? <ScrollView testID={`${prefix}-scroll`} style={fill}
+    const footer = props.primaryActionPlacement === 'footer' && primaryAction !== null
+        ? <View onLayout={scrolls ? onFooterLayout : undefined}>{primaryAction}</View> : null;
+    return <View testID={prefix} style={[styles.root, scrolls ? fill : null]} onLayout={scrolls ? onCardLayout : undefined}>
+        {scrolls ? <ScrollView testID={`${prefix}-scroll`} style={fill}
             // The body under a pane's header: its scroll drives that header's shade.
             onScroll={paneHeaderScroll ? (event) => paneHeaderScroll.reportTopDistance(event.nativeEvent.contentOffset.y) : undefined}
-            scrollEventThrottle={16} keyboardShouldPersistTaps="handled">{body}{props.belowResult}</ScrollView> : <>{body}{props.belowResult}</>}
-        {props.primaryActionPlacement === 'footer' ? primaryAction : null}
+            scrollEventThrottle={16} keyboardShouldPersistTaps="handled">{body}{props.belowResult}{footerCrowds ? footer : null}</ScrollView>
+            : <>{body}{props.belowResult}</>}
+        {footerCrowds ? null : footer}
     </View>;
 }

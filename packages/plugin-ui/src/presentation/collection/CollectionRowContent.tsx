@@ -308,7 +308,15 @@ export type HappierCollectionRowMainProps = Readonly<{
   title: ReactNode;
   /** Lines under the title. */
   children?: ReactNode;
+  /**
+   * The text column runs under the identity at the row's full width instead of beside it (a narrow row at a
+   * large text size, where the column beside the mark could not hold a name). The parent lays the row out as a column.
+   */
+  stacked?: boolean;
 }>;
+
+/** A stacked row's text under its identity: the full width, one title gap below the mark. */
+const STACKED_CONTENT_STYLE = { flex: 0, alignSelf: 'stretch', marginTop: M.titleGap } as const;
 
 const PAGE_IDENTITY_COLUMN_STYLE = {
   width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx,
@@ -347,9 +355,10 @@ export function HappierCollectionRowMain(
       <View
         style={[
           contentBase,
-          props.identity != null
-            ? page ? PAGE_CONTENT_GAP_STYLE : { marginLeft: M.contentGap[props.density] }
-            : null,
+          props.stacked === true ? STACKED_CONTENT_STYLE
+            : props.identity != null
+              ? page ? PAGE_CONTENT_GAP_STYLE : { marginLeft: M.contentGap[props.density] }
+              : null,
         ]}
       >
         <View style={titleRow}>{props.title}</View>

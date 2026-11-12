@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useReducer, useRef, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HappierSpinner } from '../feedback/Spinner.js';
@@ -9,7 +9,7 @@ import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT } from '../layout/pageText.js';
 import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
-import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkStatusWordColor, type HappierWorkStatusTone } from './workStatus.js';
 import { HAPPIER_COLLECTION_ROW_METRICS, HappierCollectionRowMain } from '../collection/CollectionRowContent.js';
 import {
@@ -20,6 +20,7 @@ import {
   type HappierWorkTextRole,
   type HappierWorkTheme,
 } from './workTheme.js';
+import { HAPPIER_WORK_MAP_LANE_MIN_WIDTH } from './WorkMapView.js';
 
 /**
  * A Work row: one unit of agent work as every Work list draws it (unified-work lab `session-A`).
@@ -97,6 +98,14 @@ const TRAILING_STATE_STYLE: HappierPortableStyle = { flexShrink: 0, maxWidth: '4
  * edge and a row padding's breath after the row's meta, so it never sits flush on the edge (lab
  * `inbox-I1`, `inbox-I2`).
  */
+/**
+ * A row whose name would get less than a Work name's readable width beside its mark and controls (a phone
+ * at a large text size) stacks: the mark and the row's controls share the first line, and the title and its
+ * facts run under them at the row's full width, so a long name wraps between words instead of inside one.
+ * The shell decides it once from its own measure; its summary reads the decision.
+ */
+const HappierWorkRowStackedContext = createContext(false);
+const TRAILING_GROUP_STYLE = { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WORK_PANE_METRICS.rowPaddingPx } as const;
 const TRAILING_ACCESSORY_ROW_STYLE = {
   flexDirection: 'row',
   alignItems: 'center',
@@ -151,6 +160,7 @@ const PAGE_TRAILING_ACCESSORY_ROW_STYLE = {
 } as const;
 /** A page row centres its mark on its two lines (lab `.uwr-ib-row`), keeping the 30pt identity slot. */
 const PAGE_SUMMARY_STYLE = { alignItems: 'center' } as const;
+const STACKED_SUMMARY_STYLE = { flexDirection: 'column', alignItems: 'flex-start' } as const;
 const TEXT_ROLES = Object.freeze({
   pane: Object.freeze({ title: 'rowTitle', line: 'rowLine', time: 'rowTime', state: 'rowState' }),
   page: Object.freeze({ title: 'pageRowTitle', line: 'pageRowLine', time: 'pageRowTime', state: 'pageRowState' }),
@@ -221,10 +231,52 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
   // A page row is selected as a whole, its own control included (lab `inbox-I1`): the fill spans the
   // row edge to edge under the sheet's hairlines, rather than stopping at the control.
   const rowSelected = page && selected;
+  const rowPadding = (page ? PAGE_ROW_PADDING_PX : HAPPIER_WORK_PANE_METRICS.rowPaddingPx) + HAPPIER_WORK_PANE_METRICS.rowRingPx;
+  const markSpan = page ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx : MARK_SIZE_PX + MARK_TEXT_GAP_PX;
+  // The measured widths only decide whether the controls stack. They live in a ref, and the row
+  // re-renders only when that decision flips: a list mounting many wide rows commits nothing more.
+  const widths = useRef<{ row: number | null; trailing: number }>({ row: null, trailing: 0 });
+  const resolveStacked = (row: number | null, trailingWidth: number) => {
+    if (row === null) return false;
+    const trailingSpan = hasTrailing
+      ? trailingWidth + HAPPIER_WORK_PANE_METRICS.rowPaddingPx + (page ? PAGE_ROW_PADDING_PX : HAPPIER_WORK_PANE_METRICS.rowInsetPx) : 0;
+    return row - level * LEVEL_INDENT_PX - 2 * rowPadding - markSpan - trailingSpan < HAPPIER_WORK_MAP_LANE_MIN_WIDTH;
+  };
+  const stacked = resolveStacked(widths.current.row, widths.current.trailing);
+  const arrangement = useRef({ stacked, resolveStacked });
+  arrangement.current = { stacked, resolveStacked };
+  const [, relayout] = useReducer((count: number) => count + 1, 0);
+  const measure = useCallback((next: Partial<{ row: number; trailing: number }>) => {
+    widths.current = { ...widths.current, ...next };
+    const { stacked: shown, resolveStacked: resolve } = arrangement.current;
+    if (resolve(widths.current.row, widths.current.trailing) !== shown) relayout();
+  }, []);
+  const onRowLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    if (next > 0) measure({ row: next });
+  }, [measure]);
+  const onTrailingLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    measure({ trailing: Math.round(event.nativeEvent.layout.width) });
+  }, [measure]);
+  const trailing = hasTrailing ? (
+    <View onLayout={onTrailingLayout} style={[TRAILING_GROUP_STYLE, stacked ? {
+      // Stacked, the controls close the mark's line and the title runs under both.
+      position: 'absolute', top: rowPadding - HAPPIER_WORK_PANE_METRICS.rowRingPx, right: page ? PAGE_ROW_PADDING_PX : HAPPIER_WORK_PANE_METRICS.rowInsetPx,
+    } : null]}>
+      {props.trailingAccessory}
+      {hasMetaColumn ? (
+        <View testID={`${props.testID}:meta`} style={PAGE_META_COLUMN_STYLE}>
+          {props.trailingMeta ? (
+            <Text role={TEXT_ROLES[page ? 'page' : 'pane'].time} style={{ color: theme.colors.mutedText }}>{props.trailingMeta}</Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  ) : null;
   return (
-    <View style={[level > 0 ? { paddingLeft: level * LEVEL_INDENT_PX } : null,
+    <View onLayout={onRowLayout} style={[level > 0 ? { paddingLeft: level * LEVEL_INDENT_PX } : null,
       rowSelected ? { backgroundColor: theme.colors.selected, borderRadius: ROW_STYLE.borderRadius } : null]}>
-      <View style={hasTrailing ? (page ? PAGE_TRAILING_ACCESSORY_ROW_STYLE : TRAILING_ACCESSORY_ROW_STYLE) : null}>
+      <View style={hasTrailing && !stacked ? (page ? PAGE_TRAILING_ACCESSORY_ROW_STYLE : TRAILING_ACCESSORY_ROW_STYLE) : null}>
         <HappierPressable
           testID={props.testID}
           accessibilityRole="button"
@@ -242,7 +294,7 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
           style={({ hovered, focused, pressed }) => [
             ROW_STYLE,
             page ? PAGE_ROW_STYLE : null,
-            hasTrailing ? { flex: 1, minWidth: 0 } : null,
+            hasTrailing && !stacked ? { flex: 1, minWidth: 0 } : null,
             // The open row already carries its fill; the hover paint would cover it.
             hovered && !rowSelected ? { backgroundColor: theme.colors.hover } : null,
             selected && !rowSelected ? { backgroundColor: theme.colors.selected } : null,
@@ -250,16 +302,9 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
             { opacity: pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1 },
           ]}
         >
-          {props.children}
+          <HappierWorkRowStackedContext.Provider value={stacked}>{props.children}</HappierWorkRowStackedContext.Provider>
         </HappierPressable>
-        {props.trailingAccessory}
-        {hasMetaColumn ? (
-          <View testID={`${props.testID}:meta`} style={PAGE_META_COLUMN_STYLE}>
-            {props.trailingMeta ? (
-              <Text role={TEXT_ROLES[page ? 'page' : 'pane'].time} style={{ color: theme.colors.mutedText }}>{props.trailingMeta}</Text>
-            ) : null}
-          </View>
-        ) : null}
+        {trailing}
       </View>
       {props.belowAccessory ? (
         <View
@@ -352,15 +397,18 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
   const density = props.density ?? 'pane';
   const roles = TEXT_ROLES[density];
   const attentionMark = props.attentionMark !== false;
-  const titleLines = props.titleLines ?? 1;
+  // A stacked row's title has the row's full width: it wraps whole rather than stopping at a line count.
+  const stacked = useContext(HappierWorkRowStackedContext);
+  const titleLines = stacked ? undefined : props.titleLines ?? 1;
   const hasFacts = renderableHappierFacts(props.facts).length > 0;
   const hasTail = renderableHappierFacts([props.factsTail]).length > 0;
 
   return (
     <View testID={testID} accessible accessibilityLabel={props.accessibilityLabel} accessibilityLiveRegion={props.accessibilityLiveRegion}
-      style={[styles.summary, density === 'page' ? PAGE_SUMMARY_STYLE : null]}>
+      style={[styles.summary, density === 'page' ? PAGE_SUMMARY_STYLE : null, stacked ? STACKED_SUMMARY_STYLE : null]}>
       <HappierCollectionRowMain
         density={SUMMARY_DENSITY}
+        stacked={stacked}
         identityColumn={density === 'page' ? 'page' : 'density'}
         identity={props.mark !== null && props.mark !== undefined ? (
           <>

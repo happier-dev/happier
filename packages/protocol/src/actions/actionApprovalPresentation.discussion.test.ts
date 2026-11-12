@@ -41,8 +41,10 @@ describe('Discussion message approval', () => {
     expect(presentation.unrepresentable).toBeNull();
     const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
     expect(JSON.stringify(visible)).toContain('Run two practice mornings before opening.');
+    // A named reference reads by its title; its id is not a readable value.
+    const literal = visible.filter(row => row.kind !== 'value' || !row.reference);
     for (const identity of ['cmw71uacn00bvmc5wlr1nwuze', 'reply-v1:6DQIvaaGNqcJyOWw0fhsFp6LGIgJzKWzohMKKgZIkDU', 'cmw71uagq00bxmc5wo1hqg2xb']) {
-      expect(JSON.stringify(visible)).not.toContain(identity);
+      expect(JSON.stringify(literal)).not.toContain(identity);
     }
   });
 
@@ -53,7 +55,11 @@ describe('Discussion message approval', () => {
     });
     const presentation = describeApprovalActionFields({ actionId, actionArgs });
     const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
-    expect(visible).toEqual([expect.objectContaining({ path: 'content.parts.[].text', title, value: 'Run two practice mornings.' })]);
+    expect(visible).toEqual([
+      // A post names its destination Discussion; a reply reads its destination through the Channel projection.
+      ...(actionId === 'discussion.post' ? [expect.objectContaining({ path: 'discussionId', reference: { kind: 'discussion', id: 'd-1' } })] : []),
+      expect.objectContaining({ path: 'content.parts.[].text', title, value: 'Run two practice mornings.' }),
+    ]);
   });
 
   it('shows the proposed before/after and reason without passage routing or retry identities', () => {
@@ -86,13 +92,14 @@ describe('Discussion message approval', () => {
     expect(presentation.unrepresentable).toBeNull();
     const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
     expect(visible).toEqual([
+      // The Happier destination reads by its title (FIN-QA-XACCOUNT); the outside conversation by its own name.
+      { kind: 'value', path: 'discussionId', title: 'Discussion', value: 'discussion-1', reference: { kind: 'discussion', id: 'discussion-1' } },
       { kind: 'value', path: 'content.externalSource.senderDisplayName', title: 'From', value: 'Jordan from Acme' },
       { kind: 'value', path: 'content.externalSource.conversationDisplayName', title: 'Conversation', value: 'Acme billing' },
       { kind: 'value', path: 'content.parts.[].text', title: 'Message', value: 'Can you check the invoice?' },
     ]);
     expect(JSON.stringify(visible)).not.toContain('binding-1');
     expect(JSON.stringify(visible)).not.toContain('happier.channel.email');
-    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'discussionId', technical: true }));
   });
 
   it('keeps ordinary authored text and document proposals reviewable', () => {
@@ -109,7 +116,9 @@ describe('Discussion message approval', () => {
       expect(presentation.unrepresentable).toBeNull();
       const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
       expect(JSON.stringify(visible)).toContain('parts' in content ? 'The invoice is ready.' : 'Clarify the wording');
-      expect(visible.some(row => row.path === 'discussionId')).toBe(false);
+      // The destination Discussion is named, never left out (an ordinary post had no destination at all).
+      expect(visible).toContainEqual(expect.objectContaining({ path: 'discussionId', title: 'Discussion',
+        reference: { kind: 'discussion', id: 'discussion-1' } }));
     }
   });
 
