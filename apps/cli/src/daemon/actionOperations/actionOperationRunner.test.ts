@@ -6,6 +6,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationSetInputV1Schema, MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
 import { ActionOperationCredentialUseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from './testFixtures/predecessorActionOperationV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -224,7 +225,8 @@ describe('action operation canonical execution observer', () => {
     expect(await runner.observe(request)).toEqual({ ok: true, result: receipt });
     const operation = store.get(scope, 'admin-transition');
     if (outcome === 'not_applied') {
-      expect(operation).toMatchObject({ state: 'failed', error: { errorCode: 'not_preauthorized' }, result: receipt });
+      expect(operation).toMatchObject({ state: 'failed', error: { errorCode: 'not_preauthorized' } });
+      expect(operation).not.toHaveProperty('result');
     } else {
       expect(operation).toMatchObject({ state: 'running', cancellation: 'unsupported',
         observation: { kind: 'outcome_uncertain', code: outcome === 'needs_attendance' ? outcome : 'action_outcome_unknown' } });
@@ -232,6 +234,26 @@ describe('action operation canonical execution observer', () => {
       expect(await runner.observe(request)).toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
       expect(executions).toBe(1);
     }
+  });
+
+  it.each([
+    ['distinctAdministrator', 'Choose an administrator account different from the Machine daemon user, then retry.'],
+    ['administratorSudoToRoot', 'Choose an administrator with its own sudo-to-root right and a valid password, then retry.'],
+  ])('retains the native %s recovery on a refused administrator transition', async (requiredFact, remedy) => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.setup.adminAccess.set');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'admin-transition',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const failure = { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact, remedy };
+    const receipt = MachineAdminAccessMutationResultV1Schema.parse({ status: 'applied',
+      policy: { version: 1, mode: 'ask', administratorUsername: 'ops.admin' }, metadataVersion: 2,
+      effect: { outcome: 'not_applied', reasonCode: failure.kind, failure } });
+    await runner.observe({ actionId: spec.id, scope, requestId: 'reviewed-admin-transition',
+      execute: async () => ({ ok: true as const, result: receipt }) });
+    const operation = ActionOperationSnapshotV1Schema.parse(store.get(scope, 'admin-transition'));
+    expect(operation).toMatchObject({ state: 'failed', error: { errorCode: failure.kind,
+      details: { kind: 'machineSetup', failure } } });
+    expect(operation).not.toHaveProperty('result');
   });
 
   it.each(['already_waiting', 'becomes_waiting'] as const)('returns an active approval hold without settling or replaying the Action (%s)', async timing => {

@@ -29,6 +29,7 @@ import type { MachineNetworkExposureFacts } from './networkExposureFacts';
 import { projectMachineNetworkAccessFacts } from './networkAccessFacts';
 import type { MachineNetworkViewModel } from './MachineNetworkSection';
 import type { MachineNetworkReview } from './useMachineNetworkReview';
+import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 installMachinesSettingsCommonModuleMocks();
 
@@ -129,6 +130,18 @@ async function render(
 }
 
 describe('Machine → Network page', () => {
+  it('renders the native administrator recovery from a refused Network Action', async () => {
+    const remedy = 'The selected administrator needs its own sudo-to-root right and a valid password. Choose an administrator with that right or grant it, then retry.';
+    const failure = { ok: false as const, ...ActionOperationFailureV1Schema.parse({
+      errorCode: 'native_check_unavailable', error: 'native_check_unavailable',
+      details: { kind: 'machineSetup', failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable',
+        requiredFact: 'administratorSudoToRoot', remedy } },
+    }) };
+    const screen = await render(model({ kind: 'settled' }, true), true, { kind: 'failed', failure, plan });
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-review-failed' })?.props.reason)
+      .toBe(remedy);
+  });
+
   it('keeps retained Network facts neutral when Machine presence is unknown', async () => {
     const screen = await render(model({ kind: 'settled' }, null), null);
     const line = findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-stale' });
@@ -728,7 +741,7 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     const unverified = await render(model({ kind: 'settled' }, true), true,
       { kind: 'failed', failure: { ...failure, details: { status: 'rolledBack', remedy: 'Check nftables.' } }, plan });
     expect(findTestInstanceByTypeWithProps(unverified, SurfaceStateCard, { testID: 'machine-network-review-failed' })?.props.reason)
-      .toBe('machineDetailPage.network.applyRecovery');
+      .toBe('errors.machineNativeEffectFailed');
   });
 
   it('names a refused provider default in words and keeps the choice to pick another', async () => {

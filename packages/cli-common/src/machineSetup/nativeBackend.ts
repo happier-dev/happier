@@ -381,6 +381,11 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 // cancellation after dispatch is likewise not proof of rollback.
                 if (result.code !== 0) throw new Error('Administrator establishment outcome unknown');
             } finally { frame.fill(0); }
+            // Called only for an administrator created by this APPLY. Retain
+            // existing memberships while establishing ordinary password sudo.
+            if ((await run('usermod', ['--append', '--groups', 'sudo', '--', step.username])).code !== 0) {
+                throw new MachineSetupEffectError('native_effect_failed');
+            }
         },
         async apply(step) {
             options.signal?.throwIfAborted();

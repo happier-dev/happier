@@ -89,6 +89,9 @@ function nativeFixture() {
     let omitResult = false;
     let passwordPrincipal: string | undefined;
     let passwordless = false;
+    let requireInnerPassword = false;
+    let innerDenied = false;
+    let wrongInnerPrincipal = false;
     const backend: machineSetup.MachineSetupBackend = {
         async observe(step) { return { stepId: step.id, status: installed.has(step.id) ? 'satisfied' : 'drifted', facts: { installed: installed.has(step.id), generation: alterFacts ? 2 : 1 } }; },
         async apply(step) { mutations.push(step.id); installed.add(step.id); },
@@ -113,6 +116,15 @@ function nativeFixture() {
                 authentication.push(answer.value ?? '');
                 if (answer.done || refuse || answer.value !== 'one-use-password') { finish(1); return; }
             }
+            if (input.args.includes('-S') && requireInnerPassword && !passwordless) {
+                const separator = input.args.indexOf('--');
+                const inner = input.args.slice(separator + 1);
+                if (!inner.includes('-S') || innerDenied) { finish(1); return; }
+                stderr.write(`[happier-sudo-root-password:${wrongInnerPrincipal ? 'root' : 'operator'}]\n`);
+                const answer = await iterator.next();
+                authentication.push(answer.value ?? '');
+                if (answer.done || answer.value !== 'one-use-password') { finish(1); return; }
+            }
             stdout.write(JSON.stringify({ type: 'ready' }) + '\n');
             const frame = await iterator.next();
             if (frame.done) { finish(1); return; }
@@ -135,7 +147,9 @@ function nativeFixture() {
         readPolicy: async () => ({ version: 1, mode: 'ask', administratorUsername: 'operator' }), observe: async () => observation,
         verifyCurrent: async () => true, spawn };
     return { backend, dependencies, launches, authentication, mutations, boundaryFailures, changeFacts: () => { alterFacts = true; }, refuse: () => { refuse = true; }, loseResult: () => { omitResult = true; },
-        unexpectedPrincipal: () => { passwordPrincipal = 'root'; }, noPasswordPrompt: () => { passwordless = true; } };
+        unexpectedPrincipal: () => { passwordPrincipal = 'root'; }, noPasswordPrompt: () => { passwordless = true; }, requireAdministratorSudoPassword: () => { requireInnerPassword = true; },
+        denyAdministratorSudo: () => { requireInnerPassword = true; innerDenied = true; },
+        unexpectedInnerPrincipal: () => { requireInnerPassword = true; wrongInnerPrincipal = true; } };
 }
 
 async function planFor(f: ReturnType<typeof nativeFixture>, ids = ['first', 'second']) {
@@ -144,6 +158,53 @@ async function planFor(f: ReturnType<typeof nativeFixture>, ids = ['first', 'sec
 }
 
 describe('one operation-scoped sudo stdin hand-off', () => {
+    it('authenticates both sudo hops with the one attended answer before sending the interpreter frame', async () => {
+        const f = nativeFixture();
+        f.requireAdministratorSudoPassword();
+        const plan = await planFor(f, ['first']);
+        const prompt = vi.fn(async () => ({ password: 'one-use-password' }));
+        const result = await runElevatedEffect({ machineId: 'machine-a', operationId: 'both-sudo-hops',
+            effect: { kind: 'setupOperation', plans: [{ plan }] } }, { ...f.dependencies, prompt });
+        expect(result).toMatchObject({ outcome: 'applied' });
+        expect(prompt).toHaveBeenCalledTimes(1);
+        expect(f.authentication).toEqual(['one-use-password', 'one-use-password']);
+        expect(f.mutations).toEqual(['first']);
+        expect(f.boundaryFailures).toEqual([]);
+    });
+
+    it('refuses Ask as the daemon account before prompting or spawning sudo', async () => {
+        const f = nativeFixture();
+        const prompt = vi.fn(async () => ({ password: 'one-use-password' }));
+        const result = await checkElevatedMachineSetupPlanResult({ machineId: 'machine-a', operationId: 'same-user', basis, steps: [] },
+            { ...f.dependencies, observe: async () => ({ ...observation, daemonUsername: 'operator' }), prompt });
+        expect(result).toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { kind: 'native_check_unavailable', requiredFact: 'distinctAdministrator', remedy: expect.any(String) } });
+        expect(prompt).not.toHaveBeenCalled();
+        expect(f.launches).toEqual([]);
+    });
+
+    it('returns the administrator sudo prerequisite when that account has no existing root permission', async () => {
+        const f = nativeFixture();
+        f.denyAdministratorSudo();
+        const result = await checkElevatedMachineSetupPlanResult({ machineId: 'machine-a', operationId: 'no-admin-sudo', basis, steps: [] },
+            { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) });
+        expect(result).toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { requiredFact: 'administratorSudoToRoot', remedy: expect.any(String) } });
+        expect(f.authentication).toEqual(['one-use-password']);
+        expect(f.mutations).toEqual([]);
+        expect(f.boundaryFailures).toEqual([]);
+    });
+
+    it('never submits the administrator password to an inner prompt for another principal', async () => {
+        const f = nativeFixture();
+        f.unexpectedInnerPrincipal();
+        const result = await checkElevatedMachineSetupPlanResult({ machineId: 'machine-a', operationId: 'wrong-inner-principal', basis, steps: [] },
+            { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) });
+        expect(result).toMatchObject({ outcome: 'not_applied' });
+        expect(f.authentication).toEqual(['one-use-password']);
+        expect(f.mutations).toEqual([]);
+    });
+
     it.each(['none', 'ask', 'preauthorized'] as const)('prepares guest poweroff only for actual promptless daemon elevation (%s)', async mode => {
         const launches: Parameters<MachineElevationSpawn>[0][] = [];
         const spawn: MachineElevationSpawn = launch => {
@@ -420,7 +481,8 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         expect(changed.mutations).toEqual(['first', 'second']);
         const wrong = nativeFixture(); const wrongPlan = await planFor(wrong);
         expect(await runElevatedEffect({ machineId: 'machine-a', operationId: 'wrong', effect: { ...effect, plans: [{ plan: wrongPlan }] } },
-            { ...wrong.dependencies, prompt: async () => ({ password: 'wrong' }) })).toMatchObject({ outcome: 'not_applied', reasonCode: 'denied' });
+            { ...wrong.dependencies, prompt: async () => ({ password: 'wrong' }) })).toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+                failure: { requiredFact: 'administratorSudoToRoot' } });
         expect(wrong.mutations).toEqual([]);
         expect(await runElevatedEffect({ machineId: 'machine-a', operationId: 'absent', effect }, changed.dependencies)).toMatchObject({ outcome: 'needs_attendance' });
         const lost = nativeFixture(); const lostPlan = await planFor(lost); lost.loseResult();

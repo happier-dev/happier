@@ -136,7 +136,19 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         expect(authorityReads).toBe(3);
         expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe(policy.mode === 'preauthorized'
             ? 'alice ALL=(ALL:ALL) NOPASSWD: ALL\n'
-            : 'Defaults:alice targetpw, timestamp_timeout=0\nalice ALL=(ops.admin) PASSWD: ALL\nops.admin ALL=(root) NOPASSWD: ALL\n');
+            : 'Defaults:alice targetpw, timestamp_timeout=0\nalice ALL=(ops.admin) PASSWD: ALL\n');
+    });
+
+    it('refuses an Ask transition to the daemon account before spawning or writing a grant', async () => {
+        const f = await fixture(none, ask, ask.administratorUsername);
+        f.allowRoot();
+        expect(await createMachineAdminAccessHost(f.dependencies).reconcile(f.input)).toMatchObject({
+            outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { kind: 'native_check_unavailable', requiredFact: 'distinctAdministrator' },
+        });
+        expect(f.launches).toEqual([]);
+        expect(f.requests).toEqual([]);
+        await expect(readFile(MANAGED_SUDOERS_PATH, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('refuses an unknown daemon principal before spawning or writing a grant', async () => {

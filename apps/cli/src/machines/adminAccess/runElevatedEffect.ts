@@ -9,9 +9,10 @@ import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/a
 import type { MachineElevatedEffectV1, MachineSetupEffectPlanV1, MachineRecipeStepV1, MachineRecipeCheckV1,
     MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { readMachineSetupStepExecutionUserV1,
+import { MachineSetupEffectError, readMachineSetupStepExecutionUserV1,
     type MachineSetupApplyResultV1, type MachineSetupStageDecisionV1 } from '@happier-dev/cli-common/machineSetup';
 import { buildManagedSudoersSteps } from './managedSudoers';
+import { createSudoPasswordResponder, passwordFrame } from './sudoPasswordResponder';
 import { MachineEffectInternalRecordSchema, type MachineEffectInternalRequest } from '../setup/effectInternalProtocol';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { logger } from '@/ui/logger';
@@ -100,11 +101,6 @@ export async function prepareMachinePoweroff(dependencies: Pick<MachineElevation
     };
 }
 
-function passwordFrame(answer: unknown): Buffer | null {
-    if (!answer || typeof answer !== 'object' || !('password' in answer) || Object.keys(answer).length !== 1
-        || typeof answer.password !== 'string' || answer.password.length === 0 || /[\r\n\0]/.test(answer.password)) return null;
-    return Buffer.from(answer.password + '\n', 'utf8');
-}
 async function writeFrame(stream: Writable, frame: Buffer | string, end = false): Promise<void> {
     await new Promise<void>((resolve, reject) => {
         const done = (error?: Error | null) => error ? reject(error) : resolve();
@@ -207,6 +203,12 @@ export async function checkElevatedMachineSetupPlanResult(input: Parameters<type
         ...(input.checks !== undefined ? { checks: input.checks } : {}) });
 }
 
+function managedPolicyRefusal(error: unknown): Extract<MachineElevatedResultV1, { outcome: 'not_applied' }> | undefined {
+    if (error instanceof MachineSetupEffectError && error.failure) {
+        return { outcome: 'not_applied', reasonCode: error.failure.kind, failure: error.failure };
+    }
+}
+
 /** Only this exact admitted policy transition may use its previous authority. */
 export async function runElevatedAdminAccessTransition(input: RunElevatedAdminAccessTransitionInput,
     dependencies: Omit<MachineElevationDependencies, 'verifyCurrent'>): Promise<MachineElevatedResultV1> {
@@ -231,7 +233,10 @@ export async function runElevatedAdminAccessTransition(input: RunElevatedAdminAc
             basis: { kind: 'adminAccess', machineId: input.machineId, operationId: input.operationId, previousPolicy, policy },
         }, previousPolicy.mode === 'ask' ? previousPolicy : { version: 1, mode: 'preauthorized' }, observation);
         return result.outcome === 'checked' ? { outcome: 'outcome_unknown' } : result;
-    } catch { return { outcome: 'not_applied', reasonCode: input.signal?.aborted ? 'cancelled' : 'denied' }; }
+    } catch (error) {
+        return input.signal?.aborted ? { outcome: 'not_applied', reasonCode: 'cancelled' }
+            : managedPolicyRefusal(error) ?? { outcome: 'not_applied', reasonCode: 'denied' };
+    }
 }
 
 /** One target-daemon operation, using the existing task's transient prompt custody. */
@@ -318,6 +323,15 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     if (observation.reasonCode === 'platformUnsupported') return refused('platform_unsupported');
     if (policy.mode === 'preauthorized' && !hasPromptlessElevation(policy, observation)) return refused('not_preauthorized');
     const ask = policy.mode === 'ask';
+    if (ask) {
+        if (!observation.daemonUsername) return nativeRefused(rememberNativeFailure('native_check_unavailable',
+            'required_fact_unavailable', 'daemonUsername'));
+        try {
+            // The policy producer owns the same native identity constraint at
+            // creation, transition and invocation of an already-saved policy.
+            buildManagedSudoersSteps({ daemonUsername: observation.daemonUsername, previousPolicy: { version: 1, mode: 'none' }, policy });
+        } catch (error) { return managedPolicyRefusal(error) ?? refused('denied'); }
+    }
     if (ask && !dependencies.prompt) return { outcome: 'needs_attendance', operationId: input.operationId,
         prompt: { kind: 'sudo.password', adminUsername: policy.administratorUsername } };
     let password: Buffer | null = null;
@@ -339,7 +353,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     try {
         child = (dependencies.spawn ?? spawnElevation)({ executable: 'sudo', installedCli: dependencies.installedCli, args: [
             ...(ask ? ['-k', '-S', '-p', '[happier-sudo-password:%p]\n', '-u', policy.administratorUsername, '--',
-                'sudo', '-n', '-u', 'root', '--'] : ['-n', '-u', 'root', '--']),
+                'sudo', '-k', '-S', '-p', '[happier-sudo-root-password:%p]\n', '-u', 'root', '--'] : ['-n', '-u', 'root', '--']),
             dependencies.installedCli, ...(dependencies.installedCliArgs ?? []), 'machine', 'effect-internal', `--operation-id=${input.operationId}`,
             `--installation-id=${dependencies.installationId}`,
         ] });
@@ -353,7 +367,10 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     // Diagnostics and password authentication remain private OS streams. Only
     // the closed interpreter records below may enter retained task events.
     child.stdin.on('error', () => {});
-    let submitted = false;
+    const passwordResponder = ask && password ? createSudoPasswordResponder(password, policy.administratorUsername) : undefined;
+    password = null;
+    const administratorSudoRefusal = () => rememberNativeFailure('native_check_unavailable', 'required_fact_unavailable',
+        'administratorSudoToRoot', "The selected administrator could not obtain root using its password. Check the password and this account's own sudo permission to run the Happier CLI as root, then retry or choose another administrator.");
     let requestSent = false;
     let planSent = false;
     let effectStarted = false;
@@ -381,13 +398,9 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     try {
         const auth = (async () => {
             for await (const line of stderr) {
-                if (!ask || !line.includes('[happier-sudo-password:')) continue;
-                if (line !== `[happier-sudo-password:${policy.administratorUsername}]` || submitted || stopReason || !password) {
-                    await stop('denied'); continue;
-                }
-                submitted = true;
-                try { await writeFrame(child.stdin, password); }
-                finally { password.fill(0); password = null; }
+                if (!passwordResponder || stopReason) continue;
+                const refusal = await passwordResponder.answer(line, frame => writeFrame(child.stdin, frame));
+                if (refusal) await stop(refusal === 'administratorSudoToRoot' ? administratorSudoRefusal() : refusal);
             }
         })();
         const records = (async () => {
@@ -416,7 +429,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                 if (record.type === 'ready') {
                     // Sudo may already permit root (for example an incumbent NOPASSWD grant).
                     // Its ready child needs only the request frame, never an unused password.
-                    if (!submitted) { password?.fill(0); password = null; }
+                    passwordResponder?.clear();
                     if (requestSent || stopReason) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                     // CHECK prepares the already-admitted operation. Its
                     // authority boundary is the resulting APPLY frame below.
@@ -594,7 +607,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             throw Object.assign(new Error('Native process termination could not be verified'), { code: terminal.result.reason });
         }
         if (protocolFailed || !terminal) {
-            if (!stopReason && ask && !requestSent && !protocolFailed) return refused('denied');
+            if (!stopReason && ask && !requestSent && !protocolFailed) return passwordResponder?.submitted
+                ? nativeRefused(administratorSudoRefusal()) : refused('denied');
             if (!stopReason) rememberNativeFailure('native_protocol_invalid');
             return planSent ? { outcome: 'outcome_unknown', ...(nativeFailure ? { failure: nativeFailure } : {}) }
                 : nativeRefused(stopReason ?? 'native_protocol_invalid');
@@ -648,7 +662,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         return planSent ? { outcome: 'outcome_unknown', failure: nativeFailure } : nativeRefused(stopReason ?? 'native_protocol_invalid');
     }
     finally {
-        password?.fill(0);
+        passwordResponder?.clear();
         if (connectorSession) connectorSession.frame.token = '';
         input.signal?.removeEventListener('abort', abort);
         connectorSession?.signal.removeEventListener('abort', abort);

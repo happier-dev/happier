@@ -33,3 +33,23 @@ describe.each(validators)('managed sudoers accepted by $name', ({ executable }) 
         } finally { rmSync(root, { recursive: true, force: true }); }
     });
 });
+
+
+describe('Ask policy privilege boundary', () => {
+    it('grants only the daemon-to-administrator hop and leaves the administrator own sudo policy untouched', () => {
+        const [step] = buildManagedSudoersSteps({ daemonUsername: 'alice', previousPolicy: { version: 1, mode: 'none' },
+            policy: { version: 1, mode: 'ask', administratorUsername: 'operator' } });
+        if (step?.content?.kind !== 'literal') throw new Error('Expected the managed sudoers file');
+        expect(step.content.value).not.toContain('NOPASSWD:');
+        expect(step.content.value).not.toContain('operator ALL=');
+        expect(step.content.value).toContain('alice ALL=(operator) PASSWD: ALL');
+    });
+
+    it('refuses an Ask administrator that is the daemon account with a typed recovery', () => {
+        expect(() => buildManagedSudoersSteps({ daemonUsername: 'alice', previousPolicy: { version: 1, mode: 'none' },
+            policy: { version: 1, mode: 'ask', administratorUsername: 'alice' } })).toThrowError(expect.objectContaining({
+                reasonCode: 'required_fact_unavailable',
+                failure: expect.objectContaining({ kind: 'native_check_unavailable', requiredFact: 'distinctAdministrator' }),
+            }));
+    });
+});

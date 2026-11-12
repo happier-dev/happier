@@ -11,7 +11,7 @@ const none = { version: 1, mode: 'none' } as const;
 const preauthorized = { version: 1, mode: 'preauthorized' } as const;
 const ask = { version: 1, mode: 'ask', administratorUsername: 'operator.name' } as const;
 const preauthorizedBytes = 'happier ALL=(ALL:ALL) NOPASSWD: ALL\n';
-const askBytes = 'Defaults:happier targetpw, timestamp_timeout=0\nhappier ALL=(operator.name) PASSWD: ALL\noperator.name ALL=(root) NOPASSWD: ALL\n';
+const askBytes = 'Defaults:happier targetpw, timestamp_timeout=0\nhappier ALL=(operator.name) PASSWD: ALL\n';
 const basis = { kind: 'setup', machineId: 'machine', desiredRevision: 1 } as const;
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });

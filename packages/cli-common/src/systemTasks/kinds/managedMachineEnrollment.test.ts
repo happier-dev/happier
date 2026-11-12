@@ -38,10 +38,12 @@ describe('portable managed enrollment', () => {
     })).resolves.toEqual({ machineId: 'joined' });
   });
   it.each([
-    { requesterEnrollment: false, dedicatedRetry: false },
-    { requesterEnrollment: true, dedicatedRetry: false },
-    { requesterEnrollment: false, dedicatedRetry: true },
-  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry)', async ({ requesterEnrollment, dedicatedRetry }) => {
+    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
+    { requesterEnrollment: true, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
+    { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
+    { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const },
+    { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const },
+  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry, mode=$adminAccessAtCreation, retained=$retainedEnrollment)', async ({ requesterEnrollment, dedicatedRetry, retainedEnrollment, adminAccessAtCreation }) => {
     const commands: string[] = [];
     const phases: string[] = [];
     const events: unknown[] = [];
@@ -58,10 +60,10 @@ describe('portable managed enrollment', () => {
     const enrollment = runManagedMachineEnrollment({ correlation, target, channel: 'stable', operationId: 'admitted-operation',
       onInstalled: async () => { phases.push('installed'); },
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
-      readCurrentManagedRow: async () => { rowReads++; return { ...machine, enrolledMachineId: undefined,
+      readCurrentManagedRow: async () => { rowReads++; return { ...machine, enrolledMachineId: retainedEnrollment ? 'joined' : undefined,
         ...(dedicatedRetry ? { bootstrapInstalled: true as const, enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const,
           username: 'happier' as const, serviceMode: 'user' as const, role: 'server' as const,
-          adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } } } : {}),
+          adminAccessAtCreation, ...(adminAccessAtCreation === 'ask' ? { administrator: { username: 'operator' } } : {}) } } : {}),
         ...(requesterEnrollment ? { enrollmentAccountId: 'requester-account' } : {}) }; },
       createPromptId: () => 'prompt',
       installNativePayload: async input => { phases.push('install'); expect(input).toMatchObject({ os: 'linux', arch: 'x64', home: '/home/guest' });
@@ -76,7 +78,7 @@ describe('portable managed enrollment', () => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
         if (invocation.includes('auth request')) { expect(phases).toEqual(['install', 'installed']); phases.push('request'); return { status: 0, stdout: JSON.stringify(request), stderr: '' }; }
         if (invocation.includes('auth wait')) { phases.push('wait'); return { status: 0, stdout: JSON.stringify(completion), stderr: '' }; }
-        if (invocation.includes('daemon start') || invocation.includes('service start')) running = true;
+        if (invocation.includes('daemon start') || invocation.includes('service start') || invocation.includes('service restart')) running = true;
         const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined',
           services: [], service: { installed: dedicatedRetry }, daemon: { running, healthy: running }, auth: { needsAuth: false, machineId: 'joined' },
           server: { activeServerId: 'guest-home' } };
@@ -98,10 +100,10 @@ describe('portable managed enrollment', () => {
       return;
     }
     expect(await enrollment).toEqual({ machineId: 'joined' });
-    expect(phases).toEqual(['install', 'installed', 'request', 'approve', 'wait']);
+    expect(phases).toEqual(retainedEnrollment ? ['install', 'installed'] : ['install', 'installed', 'request', 'approve', 'wait']);
     expect(running).toBe(true);
     expect(rowReads).toBe(1);
-    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(dedicatedRetry);
+    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(dedicatedRetry && !retainedEnrollment);
     expect(JSON.stringify(events)).not.toContain(pairing.secretB64Url);
   });
 

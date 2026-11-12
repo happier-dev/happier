@@ -4,6 +4,8 @@ import {
   presentMachineAuthorityV1,
   type MachineAuthorityInputV1,
 } from '@happier-dev/protocol';
+import { MachineAdminAccessMutationResultV1Schema, MachineElevatedResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
@@ -11,6 +13,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 import {
@@ -97,6 +100,27 @@ const segmented = (screen: Awaited<ReturnType<typeof render>>) =>
   });
 
 describe('Machine → Security → Administrator power', () => {
+  it.each([
+    ['distinctAdministrator', 'Choose an administrator account different from the Machine daemon user, then retry.'],
+    ['administratorSudoToRoot', 'The selected administrator needs its own sudo-to-root right and a valid password. Choose an administrator with that right or grant it, then retry.'],
+  ])('renders the native %s recovery for immediate and recorded save failures', async (requiredFact, remedy) => {
+    const effect = MachineElevatedResultV1Schema.parse({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+      failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact, remedy } });
+    if (effect.outcome !== 'not_applied') throw new Error('Expected a refused native effect');
+    const receipt = MachineAdminAccessMutationResultV1Schema.parse({ status: 'applied', policy: ask, metadataVersion: 8, effect });
+    const failure = ActionOperationFailureV1Schema.parse({ errorCode: effect.reasonCode, error: effect.reasonCode,
+      details: { kind: 'machineSetup', failure: effect.failure } });
+    for (const result of [{ ok: true as const, result: receipt }, { ok: false as const, ...failure }]) {
+      const screen = await render(authority({ observation: observation(), desiredAdminAccess: ask }), {
+        control: controls({ save: settleAdminAccessSave(result) }),
+      });
+      const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-admin-result' });
+      expect(card?.props.kind).toBe('error');
+      expect(card?.props.reason).toBe(remedy);
+      expect(card?.props.diagnosticCode).toBe('native_check_unavailable');
+    }
+  });
+
   it('leads with standing power the Machine observed, and says agents can’t only when isolation is in effect', () => {
     const isolated = describeAdminPowerHeadline(
       authority({

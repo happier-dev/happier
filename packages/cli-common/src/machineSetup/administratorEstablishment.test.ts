@@ -17,6 +17,7 @@ async function fixture(present = true, appearsBeforeCreate = false) {
     let verifier = present ? 'existing-verifier' : undefined;
     let accountReads = 0;
     let freshAccount: 'root' | 'missing' | undefined;
+    const groups = new Set(['retained-native-group']);
     const effects: string[] = [];
     const inputFrames: Uint8Array[] = [];
     const controller = new AbortController();
@@ -32,6 +33,10 @@ async function fixture(present = true, appearsBeforeCreate = false) {
             return ok(command.args.includes('passwd') ? `${name}:x:${process.getuid?.()}:${process.getgid?.()}::/tmp:/bin/sh\n` : `${name}:x:${process.getgid?.()}:\n`);
         }
         if (command.executable === 'useradd') { effects.push('useradd'); present = true; return ok(); }
+        if (command.executable === 'usermod') {
+            expect(command.args).toEqual(['--append', '--groups', 'sudo', '--', 'alice']);
+            effects.push('administrator-group'); groups.add('sudo'); return ok();
+        }
         if (command.executable === 'passwd') return ok(`alice ${established ? 'P' : 'L'} 2026-01-01 0 99999 7 -1\n`);
         if (command.executable === 'fixture-native') {
             if (command.args[0] === 'check') return { code: 1, stdout: '', stderr: '' };
@@ -55,12 +60,12 @@ async function fixture(present = true, appearsBeforeCreate = false) {
     const user: MachineRecipeStepV1 = { id: 'administrator', kind: 'user', username: 'alice' };
     const grant: MachineRecipeStepV1 = { id: 'grant', kind: 'file', path: join(root, 'sudoers'), owner: userInfo().username,
         group: userInfo().username, mode: 0o440, content: { kind: 'literal', value: '# Happier managed\npolicy\n' }, validate: 'sudoers' };
-    return { backend, effects, inputFrames, controller, user, grant, readVerifier: () => verifier, setLocked() { established = false; }, setUid(value: number) { uid = value; },
+    return { backend, effects, inputFrames, controller, user, grant, readGroups: () => [...groups], readVerifier: () => verifier, setLocked() { established = false; }, setUid(value: number) { uid = value; },
         setFreshAccount(value: typeof freshAccount) { freshAccount = value; }, setOutcome(value: typeof outcome) { outcome = value; } };
 }
 
 describe('one-use bootstrap administrator establishment', () => {
-    it.each([false, true])('sets a password only for a setup-created administrator and preserves an existing login (%s)', async present => {
+    it.each([false, true])('establishes ordinary sudo membership only for a setup-created administrator and preserves existing accounts (%s)', async present => {
         const f = await fixture(present);
         const plan = await checkMachineSetupEffectPlan({ basis, steps: [f.user, f.grant], backend: f.backend });
         const password = Buffer.from('private:password');
@@ -68,7 +73,8 @@ describe('one-use bootstrap administrator establishment', () => {
         const result = await applyMachineSetupEffectPlan({ plan, backend: f.backend,
             administratorEstablishment: { stepId: f.user.id, username: 'alice', password }, onProgress: event => events.push(event) });
         expect(result.status).toBe('applied');
-        expect(f.effects).toEqual([...(present ? [] : ['useradd', 'chpasswd']), 'sudoers']);
+        expect(f.effects).toEqual([...(present ? [] : ['useradd', 'chpasswd', 'administrator-group']), 'sudoers']);
+        expect(f.readGroups()).toEqual(present ? ['retained-native-group'] : ['retained-native-group', 'sudo']);
         expect(f.readVerifier()).toBe(present ? 'existing-verifier' : 'setup-created-verifier');
         expect(await readFile(f.grant.kind === 'file' ? f.grant.path : '', 'utf8')).toContain('policy');
         expect(password.every(byte => byte === 0)).toBe(true);
@@ -85,6 +91,7 @@ describe('one-use bootstrap administrator establishment', () => {
         expect(result.status).toBe('applied');
         expect(f.effects).toEqual(['sudoers']);
         expect(f.readVerifier()).toBe('existing-verifier');
+        expect(f.readGroups()).toEqual(['retained-native-group']);
         expect(password.every(byte => byte === 0)).toBe(true);
     });
 
@@ -96,7 +103,7 @@ describe('one-use bootstrap administrator establishment', () => {
         const result = await applyMachineSetupEffectPlan({ plan, backend: f.backend,
             administratorEstablishment: { stepId: user.id, username: 'alice', password } });
         expect(result.status).toBe('applied');
-        expect(f.effects).toEqual([...(present ? [] : ['useradd', 'chpasswd']), 'sudoers']);
+        expect(f.effects).toEqual([...(present ? [] : ['useradd', 'chpasswd', 'administrator-group']), 'sudoers']);
     });
 
     it.each([false, true])('preserves an existing locked administrator instead of setting or unlocking its password (requires unlocked %s)', async requiresUnlocked => {

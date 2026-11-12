@@ -371,7 +371,9 @@ export function createActionOperationRunner(deps: Readonly<{
               }
               if ('effect' in result && result.effect?.outcome === 'not_applied') {
                 const errorCode = result.effect.reasonCode;
-                deps.store.fail(operationId, { errorCode, error: errorCode }, result);
+                const failure = result.effect.failure;
+                deps.store.fail(operationId, { errorCode, error: errorCode,
+                  ...(failure ? { details: { kind: 'machineSetup', failure } } : {}) });
                 return executionResult;
               }
               if (result.status === 'conflict' || result.status === 'invalid' || result.status === 'locked' || result.status === 'unavailable') {

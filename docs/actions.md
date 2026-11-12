@@ -10428,12 +10428,21 @@ starts, without inspecting protected sudoers content.
 
 In Ask mode, the managed sudoers file uses `targetpw` and
 `timestamp_timeout=0`. The effect runner authenticates the named administrator
-with `sudo -k -S -u <administrator>`, then that administrator invokes root through
-its managed `NOPASSWD` grant. This two-step chain preserves a fresh administrator
-password for each effect on classic sudo and sudo-rs; sudo-rs 0.2.13 does not
-support `runaspw` or `runas_default`. See its [supported defaults](https://github.com/trifectatechfoundation/sudo-rs/blob/v0.2.13/src/defaults/mod.rs)
+with `sudo -k -S -u <administrator>`, then that administrator invokes
+`sudo -k -S -u root` using its own existing sudo permission. The same transient
+answer is supplied separately to each expected administrator prompt and cleared
+when the root interpreter is ready. The private prompt reader accepts both the
+classic prompt and the exact sudo-rs PAM wrapper while retaining the expected
+password principal; see [Ubuntu's prompt differences](https://ubuntu.com/server/docs/reference/other-tools/sudo-rs/). Ask installs no administrator-to-root rule.
+The administrator must differ from the daemon account; otherwise setup and
+effects refuse with a typed recovery. During managed guest creation, the existing
+administrator establishment step appends ordinary `sudo` group membership only
+when that APPLY created the account. Adopted accounts keep their existing rights. If its own sudo permission or password is
+unavailable, the effect explains that prerequisite before any setup mutation.
+This chain requires fresh authentication for each effect on classic sudo and
+sudo-rs; sudo-rs 0.2.13 does not support `runaspw` or `runas_default`. See its
+[supported defaults](https://github.com/trifectatechfoundation/sudo-rs/blob/v0.2.13/src/defaults/mod.rs)
 and [sudoers manual](https://github.com/trifectatechfoundation/sudo-rs/blob/v0.2.13/docs/man/sudoers.5.md).
-Both rules live in the same managed drop-in and change together with the policy.
 
 For mixed root and daemon-user setup, P10 supplies the observed daemon identity
 in the admitted request. The root interpreter resolves its native non-root UID

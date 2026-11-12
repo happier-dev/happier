@@ -498,6 +498,7 @@ function AdminAccessSaveFoot(
             { machine },
           )}
           diagnosticCode={save.kind === 'failed' ? save.code : null}
+          reason={save.kind === 'failed' ? save.message : undefined}
           secondaryAction={{
             label: t('common.close'),
             onPress: props.controls.onDiscard,
