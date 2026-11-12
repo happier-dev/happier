@@ -291,6 +291,7 @@ export function createSessionModelTransitionAuthorizer(params: Readonly<{
   const bindCurrentAuthorizationProof = (
     target: AuthorizedSessionModelTransitionTarget,
   ): AuthorizedSessionModelTransitionTarget => {
+    if (target.providerBinding?.source?.kind === 'connected_account') return target;
     if (target.selection.providerConnectionId === null) {
       return {
         ...target,
@@ -349,6 +350,14 @@ export function createSessionModelTransitionAuthorizer(params: Readonly<{
       runtimeBindingBasis: null,
       revalidateBeforeEffect: async () => false,
     });
+    // A source-backed native ref keeps the custody admitted for this Session.
+    // A different model needs a fresh launch to acquire its managed endpoint.
+    if (active.providerBinding?.source?.kind === 'connected_account') {
+      return active.selection.agentTargetKey === selection.agentTargetKey
+        && active.selection.providerConnectionId === selection.providerConnectionId
+        && active.selection.modelId === selection.modelId
+        ? active : restartTarget();
+    }
     if (selection.providerConnectionId === null) {
       const appliedTeamModel = active.readAppliedTeamCredentialModel ? active.readAppliedTeamCredentialModel() : null;
       return bindCurrentAuthorizationProof({

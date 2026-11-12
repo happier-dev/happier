@@ -1002,7 +1002,6 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       && proposal.source === 'metadata'
       && activeTarget === params.initialActiveTarget
       && activeTarget.providerBinding != null
-      && proposal.selection.providerConnectionId !== null
       && sameSelection(activeTarget.selection, proposal.selection)
       && proposal.callerInputConstraints === undefined;
     try {

@@ -369,6 +369,44 @@ function createHarness(params?: Readonly<{
 }
 
 describe('createSessionModelTransitionCoordinator', () => {
+  it.each(['metadata', 'prompt'] as const)('retains an admitted Connected Account source when %s echoes its native model intent', async source => {
+    const selection = native('meta/muse-spark-1.3-contributor');
+    const descriptor = runtimeBinding(ProviderConnectionIdSchema.parse('pc_fixture'), 'muse-spark-1.3-contributor');
+    let sourceCurrent = true;
+    const initialTarget: AuthorizedSessionModelTransitionTarget = {
+      ...authorized(selection, 'restart_session'),
+      revalidateBeforeEffect: async () => sourceCurrent,
+      providerBinding: {
+        source: { kind: 'connected_account',
+          purpose: { consumer: { pluginId: 'agent.test', localId: 'coding' }, purpose: 'inference' },
+          account: { service: { pluginId: 'connected.test', localId: 'muse' }, accountId: 'selected' } },
+        model: descriptor.model, upstream: descriptor.upstream, materialization: descriptor.materialization,
+      },
+    };
+    const authorize = createSessionModelTransitionAuthorizer({
+      sessionId: 'source-session', machineId: 'machine-1', agentId: 'claude',
+      agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget,
+    });
+    const harness = createHarness({ initialTarget, authorize });
+    try {
+      await expect(harness.coordinator.submit(selection, { source, reuseInitialAdmission: source === 'metadata',
+        runWithActiveSelection: async transfer => {
+          await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {
+            expect(harness.coordinator.readActiveTarget().providerBinding).toEqual(initialTarget.providerBinding);
+          } });
+        },
+      }))
+        .resolves.toMatchObject({ ok: true, status: 'already_active' });
+      expect(harness.coordinator.readActiveTarget().providerBinding).toEqual(initialTarget.providerBinding);
+      expect(harness.applyRuntime).not.toHaveBeenCalled();
+      const replacement = await authorize({ ...selection, modelId: 'meta/another-model' });
+      expect(replacement).toMatchObject({ policy: 'restart_session', providerBinding: null });
+      sourceCurrent = false;
+      expect(await authorize.bindCurrentAuthorizationProof(initialTarget).revalidateBeforeEffect()).toBe(false);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it.each(['native refusal', 'spawn policy', 'provider spawn policy'] as const)('reprepares a %s model inside prompt custody before dispatch', async source => {
     const selection = source === 'provider spawn policy' ? provider('pc_next', 'next') : native('next');
     let runtimeModelId = 'old';

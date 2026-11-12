@@ -1213,6 +1213,13 @@ Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplie
 the Muse client identity. The adopted source is omitted from native credential
 materialization and follows the existing managed endpoint custody lifecycle.
 
+The stored native model intent retains its Agent namespace. The shared native
+runtime projection configures the admitted binding's canonical model id and
+maps that exact model's readback to the original intent; other observed models
+remain runtime drift. Startup metadata and carried prompts retain the admitted
+Connected Account source and its currentness proof. Selecting a different model
+requires a fresh launch admission rather than falling back to native credentials.
+
 Other native purposes consume producer-exported service identities and service
 materializations. Kimi Code key delivery preserves the selected region, and
 Vertex delivery preserves opaque service-account JSON in a private file with its
