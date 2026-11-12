@@ -10,6 +10,7 @@ import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { Tx } from '@/storage/inTx';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx } from '@/app/projects/sources/projectSourceService';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
 import { admitDeploymentMachineInTx, type DeploymentAuthentication } from './deploymentAdmission';
@@ -681,6 +682,21 @@ export async function readDeploymentLinkAdmissionInTx(tx: Tx,
         ? { environmentId: loaded.row.id, owner: loaded.admission.owner } : null;
 }
 
+/**
+ * Adoption's existing-target check opens the runtime own-server links its owner-scoped
+ * inventory read returned on this Machine; nothing outside that owner or Machine.
+ */
+async function isOwnerRuntimeOwnServerLinkContentInTx(tx: Tx, machineId: string, owner: ProjectSourceOwnerV1,
+    artifactId: string): Promise<boolean> {
+    const member = await tx.deploymentTargetLinkMachine.findFirst({ where: { machineId, state: 'active', targetLink: {
+        contentArtifactId: artifactId, role: 'runtime', sourceKind: 'host', targetKind: 'ownServer', deletedAt: null, detachedAt: null,
+    } }, select: { targetLink: { select: { id: true, environment: { select: {
+        runtimeTargetLinkId: true, projectSourceId: true, deletedAt: true } } } } } });
+    const environment = member?.targetLink.environment;
+    return Boolean(environment && environment.runtimeTargetLinkId === member.targetLink.id && !environment.deletedAt
+        && sameStrictJsonValue(await readProjectSourceOwnerInTx(tx, environment.projectSourceId), owner));
+}
+
 /** A target-link inventory read stays inside the one owner its root admitted. */
 function isOwnerTargetLinkListHttpPurpose(serverIdentityId: string, owner: ProjectSourceOwnerV1,
     proof: Readonly<{ method: string; body?: unknown; routeInput?: unknown }>): boolean {
@@ -1245,6 +1261,11 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
         if (!childEffect && admission.source && match[2] === undefined && await tx.projectDeploymentDefaults.findFirst({
             where: { projectSourceId: admission.source.id, contentArtifactId: artifactId }, select: { projectSourceId: true },
         })) return admit(true);
+        // Only adoption looks for an existing native target (findExistingNativeComposeTargetLinkV1).
+        if (binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID && effectActionId === binding.actionId && match[2] === undefined) {
+            const owner = await readCreateAdmissionOwnerInTx(tx, admission);
+            if (owner && await isOwnerRuntimeOwnServerLinkContentInTx(tx, binding.machineId, owner, artifactId)) return admit(true);
+        }
     }
     if (domainEffect) return null;
     if (await readDeploymentCandidatePublicationHttpPurposeInTx(tx, binding, effectActionId, proof)) return admit(true);

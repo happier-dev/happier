@@ -22,6 +22,7 @@ import {
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
 } from '@happier-dev/protocol/actions';
 import { auth } from '@/app/auth/auth';
+import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
@@ -322,6 +323,42 @@ describe('adopt create preparation admission', () => {
       },
       { authentication: 'real' },
     );
+  });
+
+  it('opens only the destination owner\'s own-server links on this Machine when checking for an existing adoption', async () => {
+    const f = await fixture();
+    const root = await f.mint('machines.services.adopt', f.adoptInput(f.destination.id));
+    // Two Environments run on the same Machine: one under the adopt destination's owner, one under another
+    // person's Project that the requester can merely view. Adopt's idempotency check lists the owner's
+    // own-server links and opens each one on this Machine to compare its native origin (J52, #130/#132).
+    const runtimeLink = async (ownerAccountId: string, projectSourceId: string) => {
+      const created = await createArtifact({ actorUserId: ownerAccountId, artifactId: crypto.randomUUID(),
+        kind: 'v1:other:deployment-target-link.v1',
+        header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-target-link.v1', title: 'Runtime' })),
+        body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+        dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+      if (!created.ok) throw new Error(created.error);
+      const content = { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+      const environment = await db.deploymentEnvironment.create({ data: { projectSourceId, createdByAccountId: ownerAccountId,
+        protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.machine.id, ...content } });
+      const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.id, createdByAccountId: ownerAccountId,
+        role: 'runtime', state: 'deployed', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer',
+        machines: { create: [{ machineId: f.machine.id, installationId: f.machine.installationId!, position: 0, state: 'active' }] },
+        ...content } });
+      await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: link.id } });
+      return link.contentArtifactId;
+    };
+    const own = await runtimeLink(f.actor.id, f.destination.id);
+    const other = await runtimeLink(f.stranger.id, f.foreign.id);
+    await withAuthenticatedTestApp((app) => { artifactsRoutes(app); }, async (app) => {
+      const read = (artifactId: string) => app.inject({ method: 'GET', url: `/v1/artifacts/${artifactId}`,
+        headers: f.headers(root, 'machines.services.adopt', 'GET', `/v1/artifacts/${artifactId}`) });
+      const ownRead = await read(own);
+      expect(ownRead.statusCode, ownRead.body).toBe(200);
+      const otherRead = await read(other);
+      expect(otherRead.statusCode, otherRead.body).toBe(401);
+      expect(otherRead.json()).toMatchObject({ authorizationRefusal: 'deployment_preparation' });
+    }, { authentication: 'real' });
   });
 
   it('refuses to issue adopt create authority into a destination the requester cannot manage', async () => {
