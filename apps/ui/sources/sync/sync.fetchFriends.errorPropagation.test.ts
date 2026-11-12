@@ -9,15 +9,17 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
+// Install external transports before loading the real app runtime. Cold module
+// compilation belongs to collection, not the per-test lifecycle hook.
+const network = await installSessionOpsNetworkBoundary();
+const syncBridge = await loadSyncSingletonForTests();
+
 describe('sync fetchFriends error propagation', () => {
-    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
-    let syncBridge: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | undefined;
     let friendsStatus: number;
+    let releaseFriends: (() => void) | undefined;
 
     beforeEach(async () => {
-        vi.resetModules();
         friendsStatus = 200;
-        network = await installSessionOpsNetworkBoundary();
         const home = await network.addHome('https://friends-retry.example.test', 'account-friends');
         const { profileDefaults } = await import('./domains/profiles/profile');
         network.setHttpResponder(async (input) => {
@@ -41,22 +43,24 @@ describe('sync fetchFriends error propagation', () => {
             if (path === '/v1/friends') return Response.json({ friends: [] }, { status: friendsStatus });
             return null;
         });
-        syncBridge = await loadSyncSingletonForTests();
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
         await upsertAndActivateServer({ serverUrl: home.serverUrl });
         await restoreConnectionToActiveServer({ token: home.token });
+        const { sync } = await import('./sync');
+        releaseFriends = sync.acquirePeripheralFeed('friends');
         const { storage } = await import('./domains/state/storage');
         await vi.waitFor(() => expect(storage.getState().friendsLoaded).toBe(true));
         network.httpRequests.length = 0;
     });
 
     afterEach(async () => {
+        releaseFriends?.();
+        releaseFriends = undefined;
         const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
         await disconnectActiveServerConnection();
         await network.dispose();
-        syncBridge?.dispose();
-        syncBridge = undefined;
+        syncBridge.dispose();
         vi.restoreAllMocks();
     });
 
