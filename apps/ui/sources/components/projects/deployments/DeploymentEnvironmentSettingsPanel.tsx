@@ -447,6 +447,13 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               mode="info"
             />
           )}
+          <Item
+            testID={`${section('checks-alerts')}.alerts`}
+            title={t('projects.deployments.alertsRow')}
+            {...(checkLifetime
+              ? { showChevron: true, onPress: () => setOpeningCheckSetup(true) }
+              : { mode: 'info' as const })}
+          />
         </ItemGroup>
         {openingCheckSetup && checkLifetime ? (
           <NewAccountTriggerPopover
@@ -544,10 +551,7 @@ type SectionProps = Readonly<{
   testID: string;
 }>;
 
-/**
- * Checks & alerts: what the Machines running this Environment report about each service now. Only native service
- * health is published; monitors of other kinds and alert routing are not, so they are not drawn as if set up.
- */
+/** Native deployed-service health; saved checks and alerts use the source editor above. */
 function ChecksRows(props: SectionProps) {
   const checks = useDeploymentEnvironmentChecks(props.controller, props.detail.environment.id, props.demand);
   const members = checks.result.items.filter((member) => member.status !== 'unavailable');
@@ -584,14 +588,6 @@ function ChecksRows(props: SectionProps) {
         errorTitle={t('projects.deployments.checksErrorTitle')}
         emptyTitle={t('projects.deployments.checksNoServices')}
       />
-      {checks.result.status === 'ready' || checks.result.status === 'empty' ? (
-        <Item
-          testID={`${props.testID}.alerts`}
-          title={t('projects.deployments.alertsRow')}
-          detail={t('projects.deployments.notAvailableYet')}
-          mode="info"
-        />
-      ) : null}
     </>
   );
 }

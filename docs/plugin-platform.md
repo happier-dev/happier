@@ -280,11 +280,11 @@ branch returns a draft with effective P40 Account/Project alert defaults only wh
 the alert leaf is absent; explicit empty channels remain Off. It enrolls no
 endpoints, writes no source and sends no notification. Its optional
 `destinationSelectionContext` is the existing Machine target of the admitted
-Environment controller or service owner, including first Configure. Destination
-selection waits for this address instead of borrowing the editor's observer.
+Environment controller or saved service-check observer; first Configure uses
+the admitted observer. Destination selection waits for this address.
 An optional `testContext`
-contains only a real saved source revision and its current service owner or
-Environment controller, addressed through the invoking Home profile; changed
+contains only a real saved source revision and its saved service-check observer or
+current Environment controller, addressed through the invoking Home profile; changed
 alert choices do not borrow that saved selector. Reopening setup adopts the saved
 checks and investigation choice from that preview. Save changes updates alert or
 investigation choices through the same Save branch without adding a check. Full
@@ -1215,10 +1215,16 @@ existing `connectedAccountPurpose` credential binding, including the admitted
 purpose, origin, method and header names. The shared HTTP owner retains credential
 custody, withdrawal and redaction through disposal; adapters do not acquire tokens.
 No body-secret substitution or Voice binding is exposed on this read-only method.
-Plugin UI subscriptions remain invalidation signals. Log content is read through
-`readResource`; the existing native log watch owns pushed changes. Provider HTTP
-iterables never cross Action JSON, and reopening a runtime log establishes no
-historical cursor or gap-free replay guarantee.
+Plugin UI subscriptions normally invalidate rereadable Resources. A producer's
+non-replayable finite content pages can instead be delivered by the generic
+`pages` arm to its existing watch's own subscriber. The same Resource content
+schema validates both initial reads and pushed pages. The declared Action's
+existing read observer emits through the invocation's result-normalization and
+redaction owner; its asynchronous delivery acknowledgement preserves downstream
+backpressure. Watch identity and disposal stay with the existing lifecycle;
+there is no read-by-watch-slot field or registry. Provider HTTP iterables never
+cross Action JSON, and reopening a runtime log establishes no historical cursor
+or gap-free replay guarantee.
 
 Trusted in-process filesystem callers may supply their own read/page budgets;
 the service does not impose an additional byte or page-size ceiling. MCP
@@ -6844,8 +6850,9 @@ retirement releases that exact watcher. Plain and E2EE composed checks exercise 
 path through Home and an installed test adapter; they do not establish bundled native
 activation or a loaded development-daemon logs journey.
 Generic Machine Resource RPC does not supply the original Action provenance
-and fails closed. The finite reference selects a page after its existing cursor;
-the native data hook does not itself append pages or advance a viewer's cursor.
+and fails closed. The finite reference selects the initial page after its existing
+cursor, when present. Finite pages delivered by the native watch continue the
+admitted view; they do not create or advance a provider history cursor.
 
 The unreleased Machine Services list uses the same host Resource transport with
 `{ hostRead: 'machines.services.list', input: { serverId, machineId } }`.
@@ -6880,8 +6887,14 @@ withdraws. A watch-only replacement queued behind that read withdraws with its
 last live subscriber; a queued explicit Refresh Action keeps its own waiter.
 Host identity
 includes the Action and its canonical resolved input under the captured
-Account; it never fabricates a plugin id. An invalidation carries no snapshot
-bytes: rereading remains the single snapshot authority. Unsupported older
+Account; it never fabricates a plugin id. Rereadable Resources invalidate without
+carrying bytes, then read their current snapshot. Non-replayable producers instead
+deliver ordered finite `pages` containing the same Resource byte content on the
+existing subscription. Each page reaches the existing projection; native logs
+append it to the loaded view and suppress only repeated nonempty producer row
+identities within that view. Equal unidentified frames remain separate lines.
+Initial bounded reads and live watches may overlap or have gaps when reopened;
+the displayed observation remains explicitly incomplete. Unsupported older
 bridge ceilings refuse the new reference without changing incumbent plugin
 references. Source contract tests do not certify a loaded native/hosted journey.
 
@@ -9095,8 +9108,9 @@ schemas, discovery (`searchActionSpecs`/`getActionSpec`), and the transport tool
 not a new Action id or a replacement for contributed `action.invoke`. Generic
 results retain the MCP executor envelope (`{ok:true,result}` or
 `{ok:false,errorCode,error}`), with target-specific Voice privacy redaction.
-Current-UI and contributed invocation remain hot-path tools. Providers without
-stable effect custody, and all direct SDK callbacks, remain read-only; attached
+Current-UI and contributed invocation remain hot-path tools. Direct SDK
+callbacks remain read-only; effects use the canonical Action executor and its
+approval policy. Attached
 Agents receive only current-UI tools, never this generic executor. No transport
 budget is increased. OpenAI, xAI, Codex and ElevenLabs consume this host projection.
 
@@ -9364,12 +9378,15 @@ calls. Its existing developer context tells the agent to read the request within
 the sharing policy, say that it cannot approve or deny there, and direct the person
 to tap the request or switch to Local Voice. The preference does not widen its
 tool surface or the attached Agent's authority.
-ElevenLabs declares `effectCalls: 'stable_ids'`. Its installed SDK delivers the
+ElevenLabs' installed SDK delivers the
 provider's `client_tool_call` event before invoking the registered callback with
 the same parameters object. The runtime captures that event's `tool_call_id` and
-requires that provenance before emitting a canonical tool call. The shared host
-barrier owns effect admission, duplicate replay and Action approval; missing or
-conflicting custody fails closed.
+uses that real identity for the canonical tool call. The shared host barrier
+deduplicates execution by that call id, and the canonical Action executor owns
+approval. There is no additional provider custody capability or authorization
+gate. Invalid provider call identities are rejected at the wire boundary.
+Provisioned client tools share one 120-second provider response timeout; updating
+an existing agent through its settings action applies that configuration.
 When a failure carries typed details, ElevenLabs receives the canonical failure
 envelope as JSON inside its SDK's required error string. Failures without details
 retain the existing error-code string.
@@ -12195,6 +12212,27 @@ for existing CLI/reinspection callers. The options Resource and Inspect share
 the plugin's coordinate reader, so choice admission supports both forms.
 Hosts do not synthesize that tuple from
 the environment selector, and stored link identity requirements are unchanged.
+
+The unreleased 0.3 hosting-provider descriptor accepts an optional
+`operationActions` mapping for its existing remote provider methods (pull-request
+list/get/create and checkout-reference reads, repository publish-target/create/get
+and clone-target reads). Each mapped method is a declared Account Action with the
+SCM owner's exact input/result schemas; host services and cancellation handles
+are private invocation context. The canonical SCM Action keeps local Git work on
+the requester and invokes the mapped provider child through its reviewed Action
+executor. The SCM owner captures the selected hosting credential purpose once,
+projects that selection to the child's declared purpose for the same service,
+and passes it beside the Action operands. Team brokered execution runs that
+Action at the credential custodian; it returns the operation result, never a
+credential. A broker refusal does not invoke a personal adapter. Existing
+personal authoring, deployment and legacy SCM callers without a reviewed callback
+retain their in-process adapters; the credential owner refuses Team selections
+outside admitted work.
+
+Current development mappings cover GitHub, GitLab and Bitbucket's existing remote
+operations. Azure DevOps keeps its personal/native adapter; a selected Team
+credential returns typed unavailable at the canonical hosting dispatch before
+any legacy or native effect. Full Azure Team execution remains the O-SCM followup.
 
 The unreleased 0.3 hosting-provider descriptor also accepts
 `projectReadinessAction`, a safe, read-only Account Action accepting

@@ -234,3 +234,31 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
     else await vi.waitFor(() => expect(writes).toHaveLength(2));
   } finally { controller.retire(); context.dispose(); }
 });
+
+
+it('opens Environment alert setup before its first deployment instead of showing an unavailable placeholder', async () => {
+  home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings,
+    token: authoringToken, serverIdentityId: `srv_${'9'.repeat(32)}`,
+    handleRequest: async path => path === '/v3/automations/query'
+      ? Response.json({ automations: [], nextCursor: null }) : null });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+  const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
+  const { ModalProvider } = await import('@/modal');
+  const initial = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId! }) });
+  const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
+    transport: createDeploymentReadTransport(context.accountLifetime) });
+  const actions = createDeploymentActions(context.accountLifetime, detail.environment.projectSourceId);
+  try {
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+      definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
+      demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
+      editing={{ actions, serverId: home.scope.serverId, review: { pendingId: null, request() {}, open() {} }, onChanged() {} }}
+      lifetime={context.accountLifetime} /></ModalProvider>);
+    await screen.pressByTestIdAsync('project-deployments.environment.settings.checks-alerts.alerts');
+    await vi.waitFor(() => expect(screen.findByTestId('workflows-column-new-trigger-popover')).not.toBeNull());
+  } finally { controller.retire(); context.dispose(); }
+});
