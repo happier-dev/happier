@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, chmod } from 'node:fs/promises';
+import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DeploymentBackupManifestV1Schema } from '@happier-dev/deployment-protocol';
 
@@ -28,10 +28,19 @@ export const sourceManifest = DeploymentBackupManifestV1Schema.parse({ schemaVer
 
 /** Extend the existing Docker executable at the genuine process boundary only.
  * Native admission, P42 custody, raw streams and the restore owner remain real.
- * This tiny PostgreSQL/restic substitute retains database names across processes.
+ * This PostgreSQL/SQLite/restic substitute retains native state across processes.
  */
 export async function installRestoreBoundary(root: string, mode: string, options?: Readonly<{ toolDirectory: string; environmentId: string }>) {
     const toolDirectory = options?.toolDirectory ?? join(root, 'tools');
+    if (mode === 'sqliteBackup') {
+        // Keep SQLite's actual file/VACUUM behavior beneath the Docker boundary.
+        const { DatabaseSync } = await import('node:sqlite');
+        const directory = join(toolDirectory, 'volume-fixture-physical-data');
+        await mkdir(directory, { recursive: true });
+        const database = new DatabaseSync(join(directory, 'database.sqlite'));
+        try { database.exec("CREATE TABLE records(value TEXT); INSERT INTO records VALUES('retained value');"); }
+        finally { database.close(); }
+    }
     const nativeSnapshot = options ? { ...snapshot, hostname: `happier-env-${options.environmentId}`,
         tags: snapshot.tags.map(tag => tag.startsWith('env:') ? `env:${options.environmentId}` : tag) } : snapshot;
     const executable = join(toolDirectory, 'docker');
@@ -69,7 +78,8 @@ if (args[0] === 'pull' && resticReference) {
     if (!resticReference.includes('@sha256:') || !args.includes('--platform')) throw new Error('unexpected_runtime_pull');
     state.runtimeImageLoaded = true; save(); event({kind:'runtimePull',argv:args}); process.exit(0);
 }
-if (args.includes('create') && (args.includes('--repo') || args.includes('/bin/tar'))) {
+if (args.includes('create') && (args.includes('--repo') || args.includes('/bin/tar') || args.includes('/bin/cat')
+    || args.some(value => native.images[value]?.image.service === 'sqlite'))) {
     const name = args[args.indexOf('--name')+1];
     const id = crypto.createHash('sha256').update(name).digest('hex');
     fs.writeFileSync(path.join(__dirname, 'restic-'+id+'.json'), JSON.stringify(args));
@@ -84,7 +94,35 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     event({kind:'nativeControl',operation:args[0],services:selected.map(row=>row.Config.Labels['com.docker.compose.service'])});
 } else if (args[0] === 'start' && args.includes('--attach')) {
     const request = JSON.parse(fs.readFileSync(path.join(__dirname, 'restic-'+args.at(-1)+'.json'), 'utf8'));
-    if (request.includes('/bin/tar')) {
+    const sqliteIndex = request.findIndex(value => native.images[value]?.image.service === 'sqlite');
+    if (sqliteIndex >= 0 || request.includes('/bin/cat')) {
+        const stage = request.find(value => value.includes('target=/happier/staging'));
+        if (!stage) throw new Error('missing_sqlite_stage');
+        const stagingPath = path.join(__dirname, 'volume-' + /source=([^,]+)/.exec(stage)[1]);
+        const snapshotPath = path.join(stagingPath, 'backup.sqlite');
+        let output = Buffer.alloc(0);
+        if (sqliteIndex >= 0) {
+            const argv = request.slice(sqliteIndex + 1);
+            if (JSON.stringify(argv) !== JSON.stringify(['-batch', '-bail', '-readonly', '/happier/source/database.sqlite',
+                "VACUUM INTO '/happier/staging/backup.sqlite';"])) throw new Error('unexpected_sqlite_snapshot');
+            const source = request.find(value => value.includes('target=/happier/source'));
+            if (!source || !source.includes('readonly')) throw new Error('missing_sqlite_readonly_source');
+            const physicalName = /source=([^,]+)/.exec(source)[1];
+            fs.mkdirSync(stagingPath, {recursive:true});
+            const { DatabaseSync } = require('node:sqlite');
+            const database = new DatabaseSync(path.join(__dirname, 'volume-' + physicalName, 'database.sqlite'), {readOnly:true});
+            try { database.exec("VACUUM INTO '" + snapshotPath.replaceAll("'", "''") + "';"); }
+            finally { database.close(); }
+            state.archive = fs.readFileSync(snapshotPath).toString('base64'); save();
+            event({kind:'sqlite',operation:'vacuum'});
+        } else {
+            if (request.at(-1) !== '/happier/staging/backup.sqlite') throw new Error('unexpected_sqlite_snapshot_read');
+            output = fs.readFileSync(snapshotPath);
+        }
+        native.operationStdoutBase64 = output.toString('base64');
+        fs.writeFileSync(path.join(__dirname, 'docker-state.json'), JSON.stringify(native));
+        require('./docker-original.cjs');
+    } else if (request.includes('/bin/tar')) {
         const imageIndex = request.findIndex(value => native.images[value]?.image.service === 'restic');
         const argv = request.slice(imageIndex + 1);
         const stage = request.find(value => value.includes('target=/happier/staging'));

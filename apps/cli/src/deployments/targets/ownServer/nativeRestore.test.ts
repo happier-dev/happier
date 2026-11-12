@@ -603,8 +603,9 @@ describe('native restore adapter', () => {
                         else expect(command.argv).toContain(`--username=${username}`);
                     }
                 }
-                if (mode === 'volumeBackup' || mode === 'volumeBackupFailure' || mode === 'volumeRestore' || mode === 'volumeRestoreStopped') {
+                if (mode === 'sqliteBackup' || mode === 'volumeBackup' || mode === 'volumeBackupFailure' || mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure') {
                     expect(await docker.readOperationContainerIds()).toEqual([]);
+                    expect(events.some(row => row.kind === 'imported')).toBe(false);
                     return;
                 }
                 if (mode === 'repositoryOnly') {
