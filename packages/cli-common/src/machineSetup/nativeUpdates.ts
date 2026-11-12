@@ -72,17 +72,19 @@ async function dnf(run: NativeRun): Promise<NativeUpdatesObservation> {
     const version = await run('dnf', ['--version'], locale);
     if (version.errorCode === 'ENOENT') return unsupported();
     if (version.code !== 0) return unavailable('dnf', version);
-    if (!/^4\./m.test(version.stdout.trim())) return unsupported('dnf');
+    const dnf5 = /^(?:dnf5 version )?5\./m.test(version.stdout.trim());
+    if (!dnf5 && !/^4\./m.test(version.stdout.trim())) return unsupported('dnf');
     const architecture = await run('rpm', ['--eval', '%{_arch}'], locale);
     const arch = architecture.stdout.trim();
     if (architecture.code !== 0 || !/^[A-Za-z0-9_]+$/.test(arch)) return unavailable('dnf', architecture);
     const selected: { all?: NativeUpdatesCandidates['all']; security?: NativeUpdatesCandidates['security'] } = {};
-    // DNF4 owns --upgrades and --security selection through native repoquery,
-    // never a polling loop or a check-update text parse.
+    // Both DNF versions own upgrade/security selection through native repoquery.
+    // DNF5 needs an explicit row terminator and has no DNF4 exit_on_lock option.
+    // https://dnf5.readthedocs.io/en/stable/commands/repoquery.8.html
     // https://dnf.readthedocs.io/en/stable/command_ref.html
     for (const scope of ['all', 'security'] as const) {
-        const result = await run('dnf', ['--quiet', '--setopt=exit_on_lock=True', 'repoquery', '--upgrades', '--latest-limit=1',
-            ...(scope === 'security' ? ['--security'] : []), '--queryformat', '%{name}\t%{epoch}:%{version}-%{release}\t%{arch}'], locale);
+        const result = await run('dnf', ['--quiet', ...(dnf5 ? [] : ['--setopt=exit_on_lock=True']), 'repoquery', '--upgrades', '--latest-limit=1',
+            ...(scope === 'security' ? ['--security'] : []), '--queryformat', `%{name}\t%{epoch}:%{version}-%{release}\t%{arch}${dnf5 ? '\n' : ''}`], locale);
         if (result.code !== 0) return unavailable('dnf', result);
         const rows = result.stdout.trim().split(/\r?\n/).filter(Boolean).map(line => line.split('\t'));
         if (rows.some(row => row.length !== 3 || row[2] !== arch && row[2] !== 'noarch')) return unavailable('dnf');
@@ -90,10 +92,11 @@ async function dnf(run: NativeRun): Promise<NativeUpdatesObservation> {
         if (!packages) return unavailable('dnf');
         selected[scope] = packages;
     }
-    // needs-restarting -r defines 1 as reboot required, 0 as not required.
+    // DNF5 defaults to the reboot hint; DNF4 needs -r. Both use exit 1/0.
     // A missing plugin also exits 1 but writes an error, never a reboot fact.
     // https://dnf-plugins-core.readthedocs.io/en/latest/needs_restarting.html
-    const reboot = await run('dnf', ['--quiet', 'needs-restarting', '-r'], locale);
+    // https://dnf5.readthedocs.io/en/stable/dnf5_plugins/needs_restarting.8.html
+    const reboot = await run('dnf', ['--quiet', 'needs-restarting', ...(dnf5 ? [] : ['-r'])], locale);
     if ((reboot.code !== 0 && reboot.code !== 1) || reboot.errorCode || reboot.stderr.trim()) return unavailable('dnf', reboot);
     return observed({ manager: 'dnf', all: selected.all!, security: selected.security! }, reboot.code === 1);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { observeNativeUpdates, createNativeUpdatesSteps } from './nativeUpdates.js';
 import type { NativeRun } from './nativeSystemBackend.js';
+import { dnf5Fixtures } from './nativeUpdates.dnf5.fixtures.js';
 
 const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
 const missing = { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
@@ -15,7 +16,71 @@ function aptRun(packages: unknown[], rebootCode = 1): NativeRun {
 const security = { name: 'openssl', version: '3.0.2-1ubuntu1.20', architecture: 'amd64', security: true };
 const ordinary = { name: 'curl', version: '8.5.0-2', architecture: 'amd64', security: false };
 
+
+// Real process output provenance is recorded beside every fixture. Installed rows
+// model repository selections; selector flags still pass through the OS boundary.
+function dnf5Run(mode: 'updates' | 'empty' | 'security-failure' | 'reboot-failure' = 'updates'): NativeRun {
+    return async (executable, args) => {
+        if (executable === 'apt-get') return missing;
+        if (executable === 'rpm') return dnf5Fixtures.architecture.result;
+        if (executable !== 'dnf') throw new Error('Unexpected executable');
+        if (args.includes('--version')) return dnf5Fixtures.version.result;
+        if (args.includes('needs-restarting')) {
+            expect(args).toEqual(['--quiet', 'needs-restarting']);
+            return mode === 'reboot-failure' ? dnf5Fixtures.rebootFailure.result : dnf5Fixtures.reboot.result;
+        }
+        expect(args).toContain('repoquery');
+        expect(args).toContain('--upgrades');
+        expect(args).toContain('--latest-limit=1');
+        expect(args).not.toContain('--setopt=exit_on_lock=True');
+        const security = args.includes('--security');
+        if (security && mode === 'security-failure') return dnf5Fixtures.rebootFailure.result;
+        if (mode === 'empty') return security ? dnf5Fixtures.emptySecurity.result : dnf5Fixtures.emptyAll.result;
+        const format = args[args.indexOf('--queryformat') + 1];
+        return format === dnf5Fixtures.packages.command[6]
+            ? security ? dnf5Fixtures.securityPackage.result : dnf5Fixtures.packages.result
+            : dnf5Fixtures.packagesWithoutNewline.result;
+    };
+}
+
 describe('native OS updates', () => {
+    it('decodes Fedora 41 DNF5 output into the existing observation and exact package steps', async () => {
+        const result = await observeNativeUpdates({ platform: 'linux', run: dnf5Run() });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: false });
+        expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toEqual([
+            { id: 'os-updates', kind: 'package', manager: 'dnf', packages: [
+                { name: 'bash', version: '0:5.2.32-1.fc41' }, { name: 'fedora-release-common', version: '0:41-33' },
+            ] },
+        ]);
+        expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })).toEqual([
+            { id: 'os-updates', kind: 'package', manager: 'dnf', packages: [{ name: 'bash', version: '0:5.2.32-1.fc41' }] },
+        ]);
+    });
+
+    it('recognizes empty DNF5 selections including the no-advisory diagnostic', async () => {
+        const result = await observeNativeUpdates({ platform: 'linux', run: dnf5Run('empty') });
+        expect(result.observation).toEqual({ status: 'satisfied', backend: 'dnf', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false });
+        expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toEqual([]);
+    });
+
+    it('keeps DNF5 security-query and reboot failures unavailable rather than reporting a clean host', async () => {
+        for (const failure of ['security-failure', 'reboot-failure'] as const) {
+            expect(await observeNativeUpdates({ platform: 'linux', run: dnf5Run(failure) })).toEqual({
+                observation: { status: 'unavailable', backend: 'dnf', reason: 'required_fact_unavailable' },
+            });
+        }
+    });
+
+    it('rejects unrepresentable DNF5 multilib and malformed package rows', async () => {
+        for (const stdout of [dnf5Fixtures.packages.result.stdout.replace('x86_64', 'i686'), dnf5Fixtures.packagesWithoutNewline.result.stdout]) {
+            const run: NativeRun = (executable, args, env) => args.includes('repoquery')
+                ? Promise.resolve(ok(stdout)) : dnf5Run()(executable, args, env);
+            expect(await observeNativeUpdates({ platform: 'linux', run })).toEqual({
+                observation: { status: 'unavailable', backend: 'dnf', reason: 'required_fact_unavailable' },
+            });
+        }
+    });
+
     it('plans only exact security candidates and publishes the native reboot marker', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: aptRun([ordinary, security], 0) });
         expect(result.observation).toEqual({ status: 'drifted', backend: 'apt', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true });
