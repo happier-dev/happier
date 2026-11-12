@@ -1,6 +1,6 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
-import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionConfigurationUpdate, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
   AgentSessionHostServices, AgentSessionCompactResult, AgentSessionCancelResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -16,6 +16,7 @@ import { museNativeSkillCatalogItem, readMuseNativeSkills, resolveMuseTurnInput 
 import { readMuseHistoryItems, replayMusePagedHistory } from './externalSessions.js';
 import { reconcileMuseHistoryNotification } from './historyRecovery.js';
 import { recordMuseUsageObservation } from './accountUsage.js';
+import { readMuseUsageRefreshFailure } from '../connectedAccounts/observations.js';
 import { META_API_KEY_ENV_KEY } from '../connectedAccounts/declarations.js';
 
 // Muse 1.4.14 permissionProfile/list and the exported MSP ApprovalMode contract.
@@ -30,24 +31,6 @@ const MUSE_PERMISSIONS = {
   { permissionProfile: string; approvalMode: string }>;
 
 
-/** Keep the native refresh cause without logging response prose or credential-shaped data. */
-function readMuseUsageRefreshFailure(error: unknown): Readonly<Record<string, JsonValue>> {
-  const rejection = readJsonRpcApplicationRejection(error);
-  if (rejection && error instanceof Error) {
-    const response: JsonRpcApplicationError = error;
-    const details: Record<string, JsonValue> = rejection.providerErrorCode === undefined ? {} : { code: rejection.providerErrorCode };
-    const data = response.data;
-    if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
-      if ('kind' in data && (data.kind === 'usageRefreshRateLimited' || data.kind === 'usageRefreshUnavailable' || data.kind === 'usageRefreshFailed')) details.kind = data.kind;
-      if ('retryable' in data && typeof data.retryable === 'boolean') details.retryable = data.retryable;
-      if ('retryAfterMs' in data && typeof data.retryAfterMs === 'number' && Number.isFinite(data.retryAfterMs)) details.retryAfterMs = data.retryAfterMs;
-      // Muse documents this field as a non-secret mint-failure classification.
-      if ('failureKind' in data && typeof data.failureKind === 'string') details.failureKind = data.failureKind;
-    }
-    return details;
-  }
-  return error instanceof PluginError ? { code: error.code } : error instanceof Error ? { errorType: error.name } : {};
-}
 
 function musePermissions(configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'> | undefined) {
   return MUSE_PERMISSIONS[configuration?.workspaceWrites === 'deny' ? 'read-only'

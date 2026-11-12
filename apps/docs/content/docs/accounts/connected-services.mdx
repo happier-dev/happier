@@ -170,9 +170,12 @@ once and may mint an inference key. Reading saved usage does not mint a key.
 Selected Muse accounts use a private native credential file. Device and imported
 logins retain their account identity. When the account has an API key, both model
 listing and Sessions also use that key so native contributor models remain
-available. Muse cannot refresh subscription allowance in this key mode, so
-Happier skips that request and shows Unavailable when no usage was reported.
-OAuth-only accounts keep subscription usage refresh. API-key accounts do not
+available. Sessions in this key mode skip the unsupported native usage refresh.
+When you view stale Account allowance or choose **Refresh**, Happier uses a short
+isolated OAuth-only host for that Account. This takes about 2.3–2.8 seconds and
+mints one fresh key. Native rate limits defer the next attempt; unavailable usage
+shows **Unavailable**. OAuth-only Sessions keep subscription usage refresh.
+API-key accounts do not
 imply a subscription allowance. Native-default launches keep your
 original configuration location. Selected native accounts preserve settings and
 trust, and link other existing top-level configuration entries. New top-level
@@ -681,8 +684,8 @@ Quota / usage surfaces are behind the `connectedServices.quotas` feature gate.
 In 0.3 development, active quota snapshots are available for Codex / ChatGPT,
 Claude subscriptions, Grok subscriptions, Kimi Code, Moonshot platform balances,
 Cursor subscriptions, and Antigravity. Gemini
-API-key accounts report unknown quota. Muse usage comes from observations in
-a Session.
+API-key accounts report unknown quota. Muse subscription usage comes from
+Session observations and on-demand OAuth-only Account allowance refresh.
 
 GitHub connected accounts do not currently expose quota meters in Happier.
 

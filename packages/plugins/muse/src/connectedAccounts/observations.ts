@@ -1,5 +1,6 @@
 import { parseProviderTimestampMs, type ConnectedAccountCompletionObservation, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { readJsonRpcApplicationRejection, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { museRecord } from './nativeAuth.js';
 export type MuseQuotaObservation = Awaited<ReturnType<NonNullable<ConnectedAccountRuntime['quota']>>>;
 export type MuseUsageObservationResult =
@@ -45,10 +46,29 @@ export function parseMuseUsageObservation(value: unknown): MuseUsageObservationR
   return { status: 'supported', observation: { observedAtMs, ...(planLabel ? { planLabel } : {}), limits } };
 }
 
-/** No independently characterized non-acquiring CLI refresh source exists yet. */
-export function readMuseQuotaObservation(): never {
+/** Keep the native refresh cause without logging response prose or credential-shaped data. */
+export function readMuseUsageRefreshFailure(error: unknown): Readonly<Record<string, JsonValue>> {
+  const rejection = readJsonRpcApplicationRejection(error);
+  if (rejection && error instanceof Error) {
+    const response: JsonRpcApplicationError = error;
+    const details: Record<string, JsonValue> = rejection.providerErrorCode === undefined ? {} : { code: rejection.providerErrorCode };
+    const data = response.data;
+    if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      if ('kind' in data && (data.kind === 'usageRefreshRateLimited' || data.kind === 'usageRefreshUnavailable' || data.kind === 'usageRefreshFailed')) details.kind = data.kind;
+      if ('retryable' in data && typeof data.retryable === 'boolean') details.retryable = data.retryable;
+      if ('retryAfterMs' in data && typeof data.retryAfterMs === 'number' && Number.isFinite(data.retryAfterMs)) details.retryAfterMs = data.retryAfterMs;
+      // Muse documents this field as a non-secret mint-failure classification.
+      if ('failureKind' in data && typeof data.failureKind === 'string') details.failureKind = data.failureKind;
+    }
+    return details;
+  }
+  return error instanceof PluginError ? { code: error.code } : error instanceof Error ? { errorType: error.name } : {};
+}
+
+/** Shared unavailable outcome for portable hosts, missing samples and native refusals. */
+export function readMuseQuotaObservation(details: Readonly<Record<string, JsonValue>> = { reason: 'safe_source_unavailable' }): never {
   throw new PluginError({ code: 'plugin_connected_account_usage_unavailable', message: 'Muse has not supplied a safe subscription usage sample.',
-    details: { reason: 'safe_source_unavailable' } });
+    retryable: details.retryable === true, details });
 }
 
 /** Both native notifications and connection completion expose the same allowance meters. */
