@@ -144,6 +144,19 @@ export type MachineAdministrationTargetSelectionOptions = Readonly<{
     explicitSelection?: MachineAdministrationExplicitSelectionPolicy;
 }>;
 
+/** Consume the existing choice without mounting a picker or demanding its inventory. */
+export function useMachineAdministrationSelectedTarget(selectionKey: string): MachineAdministrationTargetV1 | null {
+    const selections = useSetting('machineAdministrationTargetsLocalV1');
+    const scope = useAccountSettingsScope();
+    const observed = useMachineAdministrationTargetObservation(scope, selectionKey);
+    return readSelectedTarget(selections, selectionKey, observed);
+}
+
+function readSelectedTarget(selections: Parameters<typeof readMachineAdministrationTargetPreference>[0],
+    selectionKey: string, observed: MachineAdministrationTargetV1 | null): MachineAdministrationTargetV1 | null {
+    return readMachineAdministrationTargetPreference(selections, selectionKey) ?? observed;
+}
+
 /** Presentation-only canonical Administration rows, without creating a persisted selection. */
 export function useMachineAdministrationTargetPickerRows(): readonly MachineAdministrationTargetPickerRowV1[] {
     return useMachineAdministrationTargetRows().pickerRows;
@@ -253,7 +266,7 @@ export function useMachineAdministrationTargetSelection(
         setInitialTargetIntentState(released);
     }, [initialTargetKey]);
     const initialTargetPending = initialTargetKey !== undefined && !initialTargetIntent.current.applied;
-    const storedTarget = initialTargetPending ? initialTarget : readMachineAdministrationTargetPreference(selections, selectionKey) ?? automaticTarget;
+    const storedTarget = initialTargetPending ? initialTarget : readSelectedTarget(selections, selectionKey, automaticTarget);
     const selectionRevisionRef = React.useRef<MachineAdministrationSelectionRevisionState>({
         selectionKey,
         target: storedTarget,

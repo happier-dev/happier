@@ -25,6 +25,8 @@ import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { checkRegistryAppUpdatesV1, checkRegistryUpstreamV1, createRegistryHostV1, type RegistryRemoteSourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createUiRegistryHttpV1 } from './registryHttpV1';
+import type { DirectoryGroup } from '@/components/store/StoreKindPage';
+import type { StoreDirectorySectionInput } from '@/components/store/discover/StoreDirectorySection';
 
 const transport = vi.hoisted(() => ({ calls: [] as ServerScopedMachineRpcParams<RegistryFetchRequestV1>[], platform: 'web', unreachableList: false }));
 vi.mock('socket.io-client', async importOriginal =>
@@ -35,7 +37,20 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         transport.calls.push(request);
         const input = RegistryFetchRequestV1Schema.parse(request.payload);
         if (input.op === 'link') return { op: 'error', status: { state: 'unreachable' } };
+        if (input.op === 'read' && input.kind === 'browserExtension') return { op: 'read', item: {
+            summary: { sourceId: input.sourceId, kind: 'browserExtension', itemId: input.itemId, title: 'Dark Reader', version: `sha256:${'a'.repeat(64)}` },
+            payload: { kind: 'browserExtension', extension: { kind: 'webStore', extensionId: input.itemId },
+                ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, fetchedAt: 1,
+        } };
         if (input.op !== 'list') throw new Error('Fixture serves registry lists');
+        if (input.sourceId === 'builtin:chrome-web-store') return { op: 'list', page: {
+            sourceId: input.sourceId, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null,
+            items: [{ sourceId: input.sourceId, kind: 'browserExtension', itemId: 'eimadpbcbfnmbkopoojfekhnkhdbieeh', title: 'Dark Reader' }],
+            discovery: { items: [{ id: 'dark', title: 'Dark Reader', reference: { type: 'registryItem', kind: 'browserExtension',
+                sourceId: input.sourceId, itemId: 'eimadpbcbfnmbkopoojfekhnkhdbieeh' } }],
+                categories: [{ id: 'featured', title: 'Featured', items: ['dark'] }], jobs: [] },
+        } };
+
         if (transport.unreachableList) return { op: 'error', status: { state: 'unreachable' } };
         return { op: 'list', page: { sourceId: input.sourceId, status: { state: 'ok', fetchedAt: 1 }, items: input.kind === 'app' && input.sourceId === 'environment-databases'
             ? [{ sourceId: input.sourceId, kind: 'app', itemId: 'postgresql', title: `${request.machineId} database`, appMetadata: { category: 'database' } }]
@@ -963,4 +978,91 @@ it('reads same-Account offline declarations, routes only to suppliers, retries u
         storage.setState({ machines: previousActiveMachines, machineListByServerId: previousMachines, machineListStatusByServerId: previousStatuses });
         await act(async () => { screen.tree.unmount(); });
     }
+});
+
+it('uses the Store Machine choice for search and detail instead of the first live Machine', async () => {
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-store-machine.test', {
+        key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+    });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const identity = 'srv_registry_store_machine';
+    await setServerProfileIdentityForUrl(fixture.home.serverUrl, identity);
+    const account = await captureLazyActionAccountContext(fixture.home.id);
+    onTestFinished(() => account.dispose());
+    await storage.getState().activateSettingsScope(account.accountLifetime.scope);
+    storage.getState().applySettingsForScope(account.accountLifetime.scope, { ...storage.getState().settings,
+        machineAdministrationTargetsLocalV1: { 'plugins.home': { serverIdentityId: identity, machineId: 'store-selected' } } }, 1);
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const inventory = [createMachineFixture({ id: 'first-live', createdAt: 2, activeAt: Date.now() }),
+        createMachineFixture({ id: 'store-selected', createdAt: 1, activeAt: Date.now() })];
+    storage.setState({ machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])),
+        machineListByServerId: { [account.serverId]: inventory }, machineListStatusByServerId: { [account.serverId]: 'idle' } });
+    transport.calls.length = 0;
+    const { useRegistryItem } = await import('./useRegistryItem');
+    const { useRegistryActionRead } = await import('./useRegistryActionRead');
+    const result = await renderHook(() => ({
+        search: useRegistryItems({ kind: 'browserExtension', sourceIds: ['builtin:chrome-web-store'], query: 'ublock' }),
+        detail: useRegistryItem({ kind: 'browserExtension', sourceId: 'builtin:chrome-web-store', itemId: 'eimadpbcbfnmbkopoojfekhnkhdbieeh' }),
+        update: useRegistryActionRead('registries.updates.check', {}, value => value, undefined, false),
+    }));
+    await waitForHomeGovernance(() => expect(result.getCurrent().search.items.map(item => item.title)).toContain('Dark Reader'));
+    await waitForHomeGovernance(() => expect(result.getCurrent().detail.item?.summary.title).toBe('Dark Reader'));
+    const calls = transport.calls.filter(call => 'sourceId' in call.payload && call.payload.sourceId === 'builtin:chrome-web-store');
+    expect(new Set(calls.map(call => call.payload.op))).toEqual(new Set(['list', 'read']));
+    expect(new Set(calls.map(call => call.machineId))).toEqual(new Set(['store-selected']));
+    // A catalog choice cannot narrow the existing Account-wide update carrier contract.
+    expect(result.getCurrent().update.externalActionTarget).toBeUndefined();
+    const beforeInstallRead = transport.calls.length;
+    const installRead = await renderHook(() => useRegistryItem({ kind: 'browserExtension', sourceId: 'builtin:chrome-web-store',
+        itemId: 'eimadpbcbfnmbkopoojfekhnkhdbieeh' }, true, { installMachineId: 'first-live' }));
+    await waitForHomeGovernance(() => expect(installRead.getCurrent().item?.summary.title).toBe('Dark Reader'));
+    expect(transport.calls.slice(beforeInstallRead).filter(call => 'sourceId' in call.payload
+        && call.payload.sourceId === 'builtin:chrome-web-store').map(call => call.machineId)).toEqual(['first-live']);
+});
+
+it('opens a native catalog category through the shared Store category page', async () => {
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-store-native-category.test', {
+        key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+    }, 'updated', { handleExternalRequest: async () => new Response(null, { status: 503 }) });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_native_category');
+    const account = await captureLazyActionAccountContext(fixture.home.id);
+    onTestFinished(() => account.dispose());
+    await storage.getState().activateSettingsScope(account.accountLifetime.scope);
+    storage.getState().applySettingsForScope(account.accountLifetime.scope, { ...storage.getState().settings,
+        machineAdministrationTargetsLocalV1: { 'plugins.home': { serverIdentityId: 'srv_registry_native_category', machineId: 'category-machine' } } }, 1);
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const machine = createMachineFixture({ id: 'category-machine', activeAt: Date.now() });
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.serverId]: [machine] },
+        machineListStatusByServerId: { [account.serverId]: 'idle' } });
+    const { StoreKindPage, Directory } = await import('@/components/store/StoreKindPage');
+    const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+    const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const navigate = vi.fn();
+    const navigation = { push: navigate, pushRetainingCurrent: navigate, replace: () => {}, back: () => {}, setParams: () => {} };
+    const kindPage = await renderScreen(<DestinationInstanceHost tabId="native-category" ref={{ kind: 'plugins',
+        params: { view: 'kind', kind: 'browserExtension', browserProfile: 'selected-profile' } }} pathname="/plugins" focused visible navigation={navigation}>
+        <AppPaneProvider><StoreKindPage kind="browserExtension" presented /></AppPaneProvider>
+    </DestinationInstanceHost>);
+    await waitForHomeGovernance(() => {
+        const directory = kindPage.findAllByType(Directory).find(node => node.props.kind === 'browserExtension');
+        const group = directory?.props.groups.find((group: DirectoryGroup) => group.category?.categoryId === 'featured');
+        expect(group?.category).toEqual({ categoryId: 'featured', catalogSourceId: 'builtin:chrome-web-store', total: 1 });
+        expect(directory?.props.groupAction?.(group?.key)).toMatchObject({ kind: 'link', onPress: expect.any(Function) });
+    });
+    const directory = kindPage.findAllByType(Directory).find(node => node.props.kind === 'browserExtension')!;
+    const group = directory.props.groups.find((group: DirectoryGroup) => group.category?.categoryId === 'featured')!;
+    await act(async () => { directory.props.groupAction(group.key).onPress(); });
+    const destination = new URL(navigate.mock.calls.at(-1)![0], 'https://app.test');
+    expect(destination.searchParams.get('category')).toBe('featured');
+    expect(destination.searchParams.get('catalogSource')).toBe('builtin:chrome-web-store');
+    expect(destination.searchParams.get('browserProfile')).toBe('selected-profile');
+    await kindPage.unmount();
+    const { StoreCategoryPage } = await import('@/components/store/discover/StoreDiscoverPages');
+    const { StoreDirectory } = await import('@/components/store/discover/StoreDirectorySection');
+    const screen = await renderScreen(<AppPaneProvider><StoreCategoryPage categoryId="featured" catalogSourceId="builtin:chrome-web-store" /></AppPaneProvider>);
+    await waitForHomeGovernance(() => expect(screen.findAllByType(StoreDirectory).flatMap(node => node.props.sections as readonly StoreDirectorySectionInput[])
+        .flatMap(section => section.items).map(item => item.title)).toEqual(['Dark Reader']));
 });

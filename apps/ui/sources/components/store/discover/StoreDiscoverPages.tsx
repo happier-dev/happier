@@ -17,7 +17,7 @@ import {
   type RegistryShelfProjection,
 } from '@/components/capabilities/add/RegistryShelf';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
-import { useStoreOpenReference } from '../catalog/useStoreOpenReference';
+import { useStoreOpenReference, useOpenStoreCategory } from '../catalog/useStoreOpenReference';
 import { StoreDiscoverRegistryIdentityScope } from '../catalog/StoreDiscoverRegistryIdentityScope';
 import { StoreListingPaneHost, useOpenStoreListing } from '../StoreListing';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -95,6 +95,7 @@ function useStoreNavigation() {
   const machine = useStoreMachineScope();
   const directory = useStoreDirectoryState().state;
   const openReference = useStoreOpenReference();
+  const openCategory = useOpenStoreCategory();
   const openListing = useOpenStoreListing();
   const navigateWithFocusReturn = useNavigationFocusReturn();
   const go = React.useCallback(
@@ -121,17 +122,7 @@ function useStoreNavigation() {
         go(buildPluginsHomeRoute('app', { view: 'job', job: jobId, catalogSourceId, project, machine,
           query: directory?.query, filters: directory?.filters })),
       openJobs: () => go(buildPluginsHomeRoute('app', { view: 'jobs', project, machine })),
-      openCategory: (categoryId: string, catalogSourceId: string) =>
-        go(
-          buildPluginsHomeRoute('app', {
-            view: 'category',
-            category: categoryId,
-            catalogSourceId,
-            query: directory?.query,
-            filters: directory?.filters,
-            project, machine,
-          }),
-        ),
+      openCategory,
       openKind: (kind: string) =>
         go(kind === 'bot' ? '/plugins/bots' : buildPluginsHomeRoute('app', { view: 'kind', kind, project, machine })),
       openInstalled: () => go(buildPluginsHomeRoute('app', { view: 'installed', project, machine })),
@@ -141,7 +132,7 @@ function useStoreNavigation() {
       search: (query: string) =>
         go(buildPluginsHomeRoute('app', { view: 'search', query, project, machine })),
     }),
-    [go, openListing, openReference, project, machine, directory],
+    [go, openListing, openReference, openCategory, project, machine, directory],
   );
 }
 
@@ -825,8 +816,9 @@ export const StoreCategoryPage = React.memo(function StoreCategoryPage(
   props: Readonly<{ categoryId: string; catalogSourceId?: string | null }>,
 ) {
   const nav = useStoreNavigation();
+  const sourceIds = React.useMemo(() => props.catalogSourceId ? [props.catalogSourceId] : undefined, [props.catalogSourceId]);
   return (
-    <StoreDiscover demand={PRESENTED} project={null}>
+    <StoreDiscover demand={PRESENTED} project={null} sourceIds={sourceIds}>
       {({ curation, presented }) => {
         const category = findStoreDiscoverCategory(
           curation.curation,

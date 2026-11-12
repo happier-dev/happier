@@ -547,7 +547,7 @@ it.each(['applied', 'domain-failure', 'lost-root-reply'] as const)('retains a co
     await review.pressByTestIdAsync('store.app.prepare.confirm');
     await waitForHomeGovernance(() => expect(installs).toHaveLength(1));
     await review.update(tree('phone'));
-    expect(review.findHostByTestId('store.app.prepare.confirm')?.props.disabled).toBe(true);
+    expect(review.findHostByTestId('store.app.prepare.confirm')?.props.accessibilityState.disabled).toBe(true);
     expect(review.findHostByTestId('store.app.prepare.back')).toBeNull();
     expect(review.getTextContent()).not.toContain(t('capabilities.store.appPage.preparedTitle'));
     expect(review.getTextContent()).not.toContain(t('capabilities.store.appPage.prepareDescription'));

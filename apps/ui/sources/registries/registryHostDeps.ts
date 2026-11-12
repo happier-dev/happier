@@ -55,7 +55,7 @@ function* registryCarriersForSource(scope: ServerAccountScope, source?: Registry
 
 /** No polling: a held needs_machine result observes only the carrier owner's recovery inputs. */
 export function useRegistryCarrierRecovery(needsMachine: boolean, refresh: () => Promise<void>,
-    scope: ServerAccountScope | null, sourceIds?: readonly string[], enabled = true): void {
+    scope: ServerAccountScope | null, sourceIds?: readonly string[], enabled = true, target?: ActionExecutorContext['externalActionTarget']): void {
     const idsKey = JSON.stringify(sourceIds);
     const ids = React.useMemo(() => idsKey === undefined ? undefined : JSON.parse(idsKey) as string[], [idsKey]);
     const read = React.useCallback(() => {
@@ -64,11 +64,11 @@ export function useRegistryCarrierRecovery(needsMachine: boolean, refresh: () =>
             ?? { v: 2, sources: [], disabledSourceIds: [] }, pluginSources: projectPluginRegistrySources(
                 readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })) });
         const ready = sources.filter(source => ids === undefined || ids.includes(source.id)).flatMap(source => {
-            const carriers = [...registryCarriersForSource(scope, source)];
+            const carriers = [...registryCarriersForSource(scope, source, { target })];
             return carriers.length ? [[source.id, carriers]] : [];
         });
         return ready.length ? JSON.stringify([scope.serverId, scope.accountId, ready]) : '';
-    }, [enabled, needsMachine, scope, ids]);
+    }, [enabled, needsMachine, scope, ids, target]);
     const subscribe = React.useCallback((notify: () => void) => {
         if (!enabled || !needsMachine || !scope) return () => {};
         const stop = [storage.subscribe(notify, { machines: true, machineListByServerId: true,

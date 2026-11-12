@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { RegistryActionIdV1, RegistrySourceStatusV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
-import { REGISTRY_ITEMS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/registries/registryActionIdsV1';
+import { REGISTRY_ITEMS_LIST_ACTION_ID_V1, REGISTRY_ITEMS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/registries/registryActionIdsV1';
 import { readRegistryFailureStatus, type RegistryFailureStatus } from './describeRegistrySourceStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -16,7 +16,7 @@ class RegistryReadFailure extends Error {
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
 export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId: K, input: unknown,
     parse: (value: ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous: T | null) => T, revision?: unknown, enabled = true,
-    recovery?: Readonly<{ sourceIds?: readonly string[];
+    recovery?: Readonly<{ sourceIds?: readonly string[]; installMachineId?: string | null;
         failures?: (value: T | null) => readonly Readonly<{ sourceId: string; status: RegistrySourceStatusV1 }>[] }>): {
     scopeKey: string;
     inputKey: string;
@@ -36,7 +36,8 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     const demand = React.useRef(enabled);
     demand.current = enabled;
     const scope = useAccountSettingsScope();
-    const externalActionTarget = useStoreActionTarget();
+    const externalActionTarget = useStoreActionTarget(recovery?.installMachineId,
+        actionId === REGISTRY_ITEMS_LIST_ACTION_ID_V1 || actionId === REGISTRY_ITEMS_READ_ACTION_ID_V1);
     const execution = useMountedActionExecution(scope);
     const scopeKey = JSON.stringify([scope?.serverId, scope?.accountId, externalActionTarget]);
     const inputKey = JSON.stringify(input);
@@ -116,7 +117,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         ? state : { scopeKey, inputKey, revision, value: null, loading: enabled, error: null, status: null };
     const failedSources = recovery?.failures?.(current.value).filter(page => page.status.state === 'needs_machine').map(page => page.sourceId) ?? [];
     useRegistryCarrierRecovery(execution.ready && (current.status?.state === 'needs_machine' || failedSources.length > 0), recover, scope,
-        current.status?.state === 'needs_machine' ? recovery?.sourceIds : failedSources, enabled && !current.loading);
+        current.status?.state === 'needs_machine' ? recovery?.sourceIds : failedSources, enabled && !current.loading, externalActionTarget);
     // Credential retirement precedes the Sync store's next Account projection.
     // Never disclose that previous projection through an unbound mounted caller.
     const stale = current.inputKey !== inputKey || !Object.is(current.revision, revision);

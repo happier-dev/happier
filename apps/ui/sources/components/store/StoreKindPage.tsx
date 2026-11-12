@@ -35,7 +35,7 @@ import { useRegistrySources } from '@/registries/useRegistrySources';
 import { registrySourceFailureLine, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { useMcpAdded, useSkillAdded, useAgentAdded, useProviderAdded } from './catalog/storeAdded';
-import { useStoreOpenReference } from './catalog/useStoreOpenReference';
+import { useStoreOpenReference, useOpenStoreCategory } from './catalog/useStoreOpenReference';
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { hydrateStoreRegistryIdentity, StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
 import { StoreListingPaneHost, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
@@ -93,6 +93,8 @@ export type DirectoryGroup = Readonly<{
   key: string;
   title: string;
   description?: string;
+  /** Native categories and collections share Discover's source-qualified browse destination. */
+  category?: Readonly<{ categoryId: string; catalogSourceId: string; total: number }>;
 }>;
 
 /** A Store kind page (lab `h:apps`, translated per kind): header, search with its catalog, then sections of catalog rows. */
@@ -157,34 +159,34 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     case 'browserExtension':
       // A pasted Chrome Web Store link or ID installs that extension, whether or not the catalog lists it or is reachable.
       return frame(<><StoreBrowserExtensionLinkResult query={state.query} />{state.lists.browserExtension
-        ? <RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: props.curation,
+        ? <RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: [...props.curation, ...state.lists.browserExtension.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.browserExtension.sourceFailures],
           items: state.lists.browserExtension.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId}
           showEmptyState={readWebStoreExtensionId(state.query) === null} />
         : <Directory kind={props.kind} rows={[]} groups={[]} list={{ loading: false, hasNextPage: false }} query={state.query} sourceTitle={null}
           showEmptyState={readWebStoreExtensionId(state.query) === null} />}</>);
     case 'starter':
-      if (state.lists.starter) return frame(<RegistryDirectory kind="starter" addLabel={t('capabilities.store.startProject')} list={{ ...state.lists.starter, curation: props.curation,
+      if (state.lists.starter) return frame(<RegistryDirectory kind="starter" addLabel={t('capabilities.store.startProject')} list={{ ...state.lists.starter, curation: [...props.curation, ...state.lists.starter.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.starter.sourceFailures],
           items: state.lists.starter.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'app':
-      if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
+      if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: [...props.curation, ...state.lists.app.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.app.sourceFailures],
         items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'mcpServer':
-      if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: props.curation,
+      if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: [...props.curation, ...state.lists.mcpServer.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.mcpServer.sourceFailures],
         items: state.lists.mcpServer.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'skill':
-      if (state.lists.skill) return frame(<SkillDirectory list={{ ...state.lists.skill, curation: props.curation,
+      if (state.lists.skill) return frame(<SkillDirectory list={{ ...state.lists.skill, curation: [...props.curation, ...state.lists.skill.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.skill.sourceFailures],
         items: state.lists.skill.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'agent':
-      if (state.lists.agent) return frame(<AgentDirectory list={{ ...state.lists.agent, curation: props.curation,
+      if (state.lists.agent) return frame(<AgentDirectory list={{ ...state.lists.agent, curation: [...props.curation, ...state.lists.agent.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.agent.sourceFailures],
         items: state.lists.agent.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} onSeeSource={setSourceId} />);
       break;
@@ -388,7 +390,7 @@ export function useRegistryRows(
     const curatedByIdentity = new Map(curatedItems.map(item => [curatedIdentity(item), item]));
     const categories = new Map<
       string,
-      Readonly<{ title: string; description?: string; members: Set<string> }>
+      Readonly<{ title: string; description?: string; members: Set<string>; category: NonNullable<DirectoryGroup['category']> }>
     >();
     for (const page of list.curation) {
       const byId = new Map(
@@ -406,7 +408,7 @@ export function useRegistryRows(
           ...(category.description
             ? { description: category.description }
             : {}),
-          members,
+          members, category: { categoryId: category.id, catalogSourceId: page.sourceId, total: category.items.length },
         });
       }
     }
@@ -438,6 +440,7 @@ export function useRegistryRows(
             ? {
                 key: `category:${category[0]}`,
                 title: category[1].title,
+                category: category[1].category,
                 ...(category[1].description
                   ? { description: category[1].description }
                   : {}),
@@ -489,7 +492,8 @@ export function useRegistryRows(
     const same = before !== null && before.rows.length === rows.length && before.rows.every((row, index) => row === rows[index])
       && before.groups.length === orderedGroups.length
       && before.groups.every((group, index) => group.key === orderedGroups[index]!.key
-        && group.title === orderedGroups[index]!.title && group.description === orderedGroups[index]!.description);
+        && group.title === orderedGroups[index]!.title && group.description === orderedGroups[index]!.description
+        && group.category?.total === orderedGroups[index]!.category?.total);
     if (same) return before;
     published.current = { rows, groups: orderedGroups };
     return published.current;
@@ -528,11 +532,17 @@ function RegistryDirectory(
 ): React.ReactNode {
   const open = useOpenRegistryItem();
   const add = useAddRegistryItem();
+  const openCategory = useOpenStoreCategory();
   const { sources, sourceTitle } = useSourceCatalog();
   const curated = React.useMemo(() => ({ items: props.list.items, curation: props.list.curation, sources,
     ...(props.browsing ? { curatedKind: props.kind } : {}) }), [props.list.items, props.list.curation, sources, props.browsing, props.kind]);
   const { rows, groups } = useRegistryRows(curated, open, sourceTitle, props.isAdded, add);
   const preview = useSourceSectionPreview(rows, groups, props.list, props.browsing ? props.onSeeSource : undefined);
+  const groupAction = React.useCallback((groupKey: string): CollectionGroupAction | null => {
+    const category = !props.query.trim() ? groups.find(group => group.key === groupKey)?.category : undefined;
+    return category ? { label: t('capabilities.store.search.allOf', { count: category.total }), kind: 'link',
+      onPress: () => openCategory(category.categoryId, category.catalogSourceId) } : preview.groupAction?.(groupKey) ?? null;
+  }, [props.query, groups, openCategory, preview.groupAction]);
   return (
     <Directory
       kind={props.kind}
@@ -543,7 +553,7 @@ function RegistryDirectory(
       query={props.query}
       sourceTitle={sourceTitle}
       showEmptyState={props.showEmptyState}
-      {...(preview.groupAction ? { groupAction: preview.groupAction } : {})}
+      groupAction={groupAction}
     />
   );
 }
@@ -595,7 +605,7 @@ const PickerQuery = React.memo(function PickerQuery(props: Readonly<{ demand: Re
               <CompactSearchField placement="page" testID={`${props.testID}.search`} value={state.query}
                 onChangeText={state.setQuery} placeholder={copy.search} trailing={state.filter.filterButton} />
               {state.filter.tokenRow}
-              {state.lists.app ? <RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
+              {state.lists.app ? <RegistryDirectory kind="app" list={{ ...state.lists.app, curation: [...props.curation, ...state.lists.app.curation],
                 items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={false} />
                 : <SkeletonRows testID={`${props.testID}.loading`} rows={5} accessibilityLabel={t('common.loading')} />}
             </View>

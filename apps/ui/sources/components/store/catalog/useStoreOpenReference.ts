@@ -13,6 +13,27 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useOpenStoreListing } from '../StoreListing';
 import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
+import { useStoreMachineScope, useStoreBrowserProfileScope } from '@/components/settings/plugins/model/useStoreMachineScope';
+import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
+import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
+
+/** Every category/collection opens the same source-qualified Store list, retaining its existing scopes. */
+export function useOpenStoreCategory() {
+  const router = useRouter();
+  const { project } = useStoreProjectScope();
+  const machine = useStoreMachineScope();
+  const browserProfile = useStoreBrowserProfileScope();
+  const directory = useStoreDirectoryState().state;
+  const navigateWithFocusReturn = useNavigationFocusReturn();
+  return React.useCallback((categoryId: string, catalogSourceId: string) => {
+    const href = buildPluginsHomeRoute('app', { view: 'category', category: categoryId, catalogSourceId,
+      project, machine, browserProfile, query: directory?.query, filters: directory?.filters });
+    const result = runGuardedNavigation(() => navigateWithFocusReturn(() => router.pushRetainingCurrent(href as never)));
+    if (result !== true) fireAndForget(result, { tag: 'useOpenStoreCategory' });
+  }, [router, project, machine, browserProfile, directory, navigateWithFocusReturn]);
+}
 
 /** Declaration navigation uses the existing domain route owners, independent of a displayed title. */
 export function resolveStoreContributionRoute(reference: Extract<MarketplaceCatalogReferenceV1, { type: 'providerContribution' | 'agentContribution' }>): string | null {

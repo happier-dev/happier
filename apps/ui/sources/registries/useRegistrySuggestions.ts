@@ -16,11 +16,13 @@ const EMPTY_FAILURES: ReturnType<typeof useRegistryItems>['sourceFailures'] = []
 export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly string[] }> = {}, presented = true) {
     const sources = useRegistrySources(undefined, presented);
     const requested = input.sourceIds;
-    const sourceIds = React.useMemo(() => sources.sources.filter(source => source.enabled
-        && source.format === 'happier-catalog' && source.kinds.includes('plugin')
-        && (requested === undefined || requested.includes(source.id))).map(source => source.id),
+    const selectedSources = React.useMemo(() => sources.sources.filter(source => source.enabled
+        && (requested === undefined ? source.format === 'happier-catalog' && source.kinds.includes('plugin') : requested.includes(source.id))),
     [sources.sources, JSON.stringify(requested)]);
-    const catalog = useRegistryItems({ kind: 'plugin', sourceIds }, presented && sources.hasValue && sourceIds.length > 0);
+    const kind = requested !== undefined && selectedSources.length === 1 && !selectedSources[0]!.kinds.includes('plugin')
+        ? selectedSources[0]!.kinds[0]! : 'plugin';
+    const sourceIds = React.useMemo(() => selectedSources.filter(source => source.kinds.includes(kind)).map(source => source.id), [selectedSources, kind]);
+    const catalog = useRegistryItems({ kind, sourceIds }, presented && sources.hasValue && sourceIds.length > 0);
     // Presentation owns acquisition, not the admitted facts already held by a retained page.
     const admitted = sourceIds.length > 0 && !catalog.stale;
     const pages = React.useMemo(() => admitted ? catalog.pages : [], [admitted, catalog.pages]);
