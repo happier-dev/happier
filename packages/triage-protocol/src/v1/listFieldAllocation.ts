@@ -16,7 +16,7 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
             // them from this finite sub-envelope rather than invent maxima.
             Object.entries(fragment.properties)
                 .filter(([key]) => key !== 'labels' && key !== 'labelColors')
-                .map(([key, child]) => [key,
+                .map(([key, child]): [string, PluginJsonSchema] => [key,
                 ['configuredSources', 'lanes', 'continuations'].includes(key) && child.type === 'array'
                     ? { ...withTaskFactsWitness(child), maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }
                     : key === 'scope' ? { const: {

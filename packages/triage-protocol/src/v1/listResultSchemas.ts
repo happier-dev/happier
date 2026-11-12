@@ -9,7 +9,6 @@ import {
     defineProtocolObject,
     defineProtocolUnion,
     type ProtocolComposableSchema,
-    type ProtocolObjectProjection,
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from './constants.js';
@@ -26,7 +25,7 @@ type TriageListResultSourceSchemasV1 = Pick<ReturnType<typeof createTriageListSo
 // Preserve the DSL's separate authored-input/admitted-output projections. Named
 // boundaries prevent the same snapshot type expanding through rows and arrays.
 type ClosedSchemaV1<TFields extends Readonly<Record<string, ProtocolComposableSchema<unknown, unknown>>>> =
-    ProtocolComposableSchema<ProtocolObjectProjection<TFields, 'input'>, ProtocolObjectProjection<TFields, 'output'>>;
+    ReturnType<typeof defineProtocolObject<TFields, { policy: 'closed' }>>;
 
 function laneContinuationFields(sourceSchemas: TriageListResultSourceSchemasV1) {
     const { TriageScanContinuationV1Schema } = sourceSchemas;
@@ -281,10 +280,10 @@ export function createTriageListResultSchemasV1<TScope, TTaskProjection>(
         listLaneFields(sourceSchemas), { policy: 'closed' },
     );
     const TriageConfiguredSourceSummaryV1Schema: ConfiguredSourceSchemaV1<TScope> = defineProtocolObject(
-        configuredSourceFields(fieldBytes, configuredScope), { policy: 'closed' },
+        configuredSourceFields<TScope>(fieldBytes, configuredScope), { policy: 'closed' },
     );
     const TriageListEntriesResultV1Schema: ListResultSchemaV1<TScope, TTaskProjection> = defineProtocolObject(
-        listResultFields(TriageConfiguredSourceSummaryV1Schema, TriageListRowV1Schema, TriageListLaneV1Schema,
+        listResultFields<TScope, TTaskProjection>(TriageConfiguredSourceSummaryV1Schema, TriageListRowV1Schema, TriageListLaneV1Schema,
             TriageLaneContinuationV1Schema, taskProjection),
         { policy: 'closed' },
     );

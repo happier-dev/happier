@@ -17,14 +17,18 @@ export const TRIAGE_LIST_SORT_FIELDS_V1 = Object.freeze([
 /** Both directions are explicit so a source can order before it paginates. */
 export const TRIAGE_LIST_SORT_DIRECTIONS_V1 = Object.freeze(['asc', 'desc'] as const);
 
-export const TriageListSortFieldV1Schema = defineProtocolUnion(
-    TRIAGE_LIST_SORT_FIELDS_V1.map((field) => defineProtocolLiteral(field)),
-);
+const [firstSortField, secondSortField, ...remainingSortFields] = TRIAGE_LIST_SORT_FIELDS_V1;
+export const TriageListSortFieldV1Schema = defineProtocolUnion([
+    defineProtocolLiteral(firstSortField),
+    defineProtocolLiteral(secondSortField),
+    ...remainingSortFields.map((field) => defineProtocolLiteral(field)),
+]);
 export type TriageListSortFieldV1 = (typeof TRIAGE_LIST_SORT_FIELDS_V1)[number];
 
-export const TriageListSortDirectionV1Schema = defineProtocolUnion(
-    TRIAGE_LIST_SORT_DIRECTIONS_V1.map((direction) => defineProtocolLiteral(direction)),
-);
+export const TriageListSortDirectionV1Schema = defineProtocolUnion([
+    defineProtocolLiteral(TRIAGE_LIST_SORT_DIRECTIONS_V1[0]),
+    defineProtocolLiteral(TRIAGE_LIST_SORT_DIRECTIONS_V1[1]),
+]);
 export type TriageListSortDirectionV1 = (typeof TRIAGE_LIST_SORT_DIRECTIONS_V1)[number];
 
 /** One closed source order. A source must apply it before returning a page. */
