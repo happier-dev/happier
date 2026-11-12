@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistryItems } from '@/registries/useRegistryItems';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -709,6 +710,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 
   return (
     <View testID="newApp" style={styles.root}>
+      <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" enabled={step === 'start'} />
       {dialog ? (
         <View style={styles.dots}>
           <WizardStepDots

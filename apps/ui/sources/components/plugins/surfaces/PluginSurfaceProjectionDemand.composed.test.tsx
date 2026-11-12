@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
+import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createRegistryHostV1, createPluginRegistrySourceDescriptorV1, projectPluginRegistrySourceDeclarationV1, RegistryFetchRequestV1Schema } from '@happier-dev/protocol/registries';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/deployment-templates/src/manifest';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { NewAppScreen } from '@/components/projects/starters/NewAppScreen';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -71,11 +73,12 @@ afterEach(async () => {
 it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
-    const machine = createMachineFixture({ id: 'presented-machine', activeAt: 0, storageMode: 'plain' });
+    const machine = createMachineFixture({ id: 'presented-machine', activeAt: surface === 'starter' ? Date.now() : 0, storageMode: 'plain' });
     const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
     const starterSurface = surface === 'starter';
-    const shippedManifest = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL('../../../../../../packages/plugins/deployment-templates/.happier-plugin/plugin.json', import.meta.url), 'utf8')));
+    const shippedManifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
     const pluginId = starterSurface ? shippedManifest.id : 'acme.preview';
+    const pluginVersion = starterSurface ? shippedManifest.version : '1.0.0';
     const registrySources = starterSurface ? (shippedManifest.contributes.registrySources ?? []).map(definition => ({
         ...projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: shippedManifest.version,
             definition }),
@@ -91,7 +94,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             `../../../../../../packages/plugins/deployment-templates/${source.packageContent.path}`, import.meta.url), 'utf8'), fetchedAt: 1 }) },
     });
     let materialization = PluginMachineMaterializationV1Schema.parse({ serverIdentityId, machineId: machine.id,
-        materializationId: 'preview-install', pluginId, version: '1.0.0', sourceClass: 'localPath',
+        materializationId: 'preview-install', pluginId, version: pluginVersion, sourceClass: 'localPath',
         portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1 });
     const widget = widgetProjectionEntry({ pluginId, localId: 'conversations', target: 'app' });
     // A Machine-local installation reports its runtime occurrence: Administration selects it from these facts.
@@ -135,7 +138,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     }));
     const deferred = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'e'.repeat(64),
         projection: PluginProjectionV2Schema.parse({ v: 2, generation: 41,
-            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Preview', version: '1.0.0',
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Preview', version: pluginVersion,
                 enabled: true, source: { kind: 'localPath', locator: 'preview-install' }, occurrenceId: widget.occurrenceId,
                 executionOrigin, sourceCustody } },
             familiesById: {
@@ -178,7 +181,15 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     const promptCatalog = createPromptLibraryCatalogBoundary();
     let availabilityCursor = 1;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
-        serverIdentityId, accountId, accountMode: 'plain' }], route: async request => {
+        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface }], route: async request => {
+        if (starterSurface && request.path.startsWith('/v1/actions/')) {
+            // The Home HTTP boundary keeps the real Action envelope and registry host.
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
+            const actionId = request.path.split('/')[3];
+            if (actionId !== 'registries.items.list' && actionId !== 'registries.items.read') throw new Error('Unexpected starter Action');
+            return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
+                execution: { ok: true, result: await registryHost.execute(actionId, envelope.input) } }));
+        }
         const promptResponse = await promptCatalog.handle(request.path, { method: request.method });
         if (promptResponse) return promptResponse;
         if (request.path === '/v1/machines') return Response.json(rows);
