@@ -47,9 +47,18 @@ function normalizeErrorMessage(value: unknown): string | null {
   return raw ? raw : null;
 }
 
-function resolveActionFailureMessage(message: string | undefined, failureCause?: ActionFailureCauseV1): string | undefined {
+function resolveActionFailureMessage(
+  message: string | undefined,
+  failureCause?: ActionFailureCauseV1,
+  errorCode?: string,
+  details?: unknown,
+): string | undefined {
   if (failureCause?.errorCode === 'machine_manage_required') {
     return 'This Action needs Manage on this Machine.';
+  }
+  if ((!message || message === errorCode) && errorCode === 'approval_execution_outcome_unknown'
+    && isRecord(details) && details.reasonCode === 'credential_scope_denied') {
+    return 'Approve this request in the Happier app. A terminal credential cannot approve its own request.';
   }
   return message;
 }
@@ -58,7 +67,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
   if (!result.ok) {
     const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(result.goalControlFailure);
     const failureCause = ActionFailureCauseV1Schema.safeParse(result.failureCause);
-    const errorMessage = resolveActionFailureMessage(result.error, failureCause.success ? failureCause.data : undefined);
+    const errorMessage = resolveActionFailureMessage(result.error, failureCause.success ? failureCause.data : undefined, result.errorCode, result.details);
     return {
       ok: false,
       errorCode: result.errorCode,
@@ -83,7 +92,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
     const details = dataObj.details;
     const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(dataObj.goalControlFailure);
     const failureCause = ActionFailureCauseV1Schema.safeParse(dataObj.failureCause);
-    const errorMessage = resolveActionFailureMessage(message, failureCause.success ? failureCause.data : undefined);
+    const errorMessage = resolveActionFailureMessage(message, failureCause.success ? failureCause.data : undefined, errorCode, details);
     return {
       ok: false,
       errorCode,
@@ -101,7 +110,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
 
 /** One output projection for generic and compiled Action commands. */
 export function projectCliActionFailure(failure: CliActionFailure, requestId?: string): Omit<CliActionFailure, 'errorCode' | 'errorMessage'> & Readonly<{ code: string; message?: string }> {
-  const errorMessage = resolveActionFailureMessage(failure.errorMessage, failure.failureCause);
+  const errorMessage = resolveActionFailureMessage(failure.errorMessage, failure.failureCause, failure.errorCode, failure.details);
   const projected = projectActionExecuteFailure({ ok: false, ...failure,
     error: errorMessage ?? failure.errorCode }, requestId);
   return {
@@ -124,7 +133,7 @@ export function normalizeCliActionThrownError(error: unknown): Readonly<{ failur
   }
   const failure = normalizeActionExecutorThrownError(error);
   if (failure.errorCode !== 'action_failed' || failure.failureCause.errorCode !== null) {
-    return { failure: { errorCode: failure.errorCode, errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause),
+    return { failure: { errorCode: failure.errorCode, errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause, failure.errorCode, failure.details),
       failureCause: failure.failureCause,
       ...(failure.details === undefined ? {} : { details: failure.details }),
       ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}) }, unexpected: false };
