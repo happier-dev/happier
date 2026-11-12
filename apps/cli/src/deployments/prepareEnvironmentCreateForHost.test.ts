@@ -9,7 +9,8 @@ import { ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantMutationRespons
     ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema,
     ArtifactRecipientKeyEnvelopeCommitResponseV1Schema,
     type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, DeploymentTargetV1Schema } from '@happier-dev/deployment-protocol';
+import { actionSchema as supabaseDataActionSchema } from '../../../../packages/plugins/deployment-supabase/src/data/schemas';
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1,
     createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -103,6 +104,13 @@ it.each(['plain', 'e2ee'] as const)('prepares %s preview intent from the selecte
         resolveRequestHeaders: () => ({ Authorization: `Bearer ${token}` }),
         // Persistent Environment storage is the boundary; preparation and Artifact codecs stay real.
         async readPreviewTemplate() { return { ...template, targetLinks: template.targetLinks.map(row => row.targetLink) }; } };
+    const previewRefusal = { ok: false as const, errorCode: 'action_forbidden', error: 'action_forbidden',
+        requestId: 'preview-preparation-refusal', failureCause: { phase: 'deployment.preview.prepare',
+            errorClass: 'Error' as const, errorCode: 'action_forbidden', httpStatus: 403 } };
+    await expect(resolveEnvironmentCreatePreviewForHost({ input, context: {} }, { ...host,
+        async readPreviewTemplate() { throw Object.assign(new Error(previewRefusal.errorCode, { cause: previewRefusal }),
+            { code: previewRefusal.errorCode }); },
+    })).resolves.toMatchObject(previewRefusal);
     const prepare = createPrepareEnvironmentCreateForHost(host);
     const materialize = async () => {
         const context = { executionRunWorkflowRunId: 'preview-creation-run' };
@@ -267,7 +275,7 @@ describe('authored Environment creation through protected preparation and the ex
             { purpose: 'variable', name: 'REMOTE', phase: 'runtime', source: { kind: 'reference', environmentId: 'private-reference', export: 'api', via: 'auto' } },
             { purpose: 'variable', name: 'URL', phase: 'runtime', source: { kind: 'deploymentFact', fact: 'primaryUrl' } }];
         const dataLink = createDeploymentTargetLinkHeaderV1({ id: 'source-data', environmentId: source.environment.id, role: 'data',
-            source: { kind: 'plugin', contribution: { pluginId: 'data-plugin', localId: 'database' } },
+            source: { kind: 'plugin', contribution: { pluginId: 'example.data', localId: 'database' } },
             targetKind: 'database', machines: [], members: [] });
         const resource = await createResourceDataKey({ credentials, mode });
         const encode = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
@@ -404,6 +412,63 @@ describe('authored Environment creation through protected preparation and the ex
             context: {} }, host);
         if ('errorCode' in rebound) throw new Error(rebound.errorCode);
         expect(rebound.copyPlan?.bindings[0]).toEqual(reboundSecret);
+        const reusedInput = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ ...input,
+            copyFrom: { ...input.copyFrom!, choices: { ...input.copyFrom!.choices,
+                data: [{ targetLinkId: dataLink.id, kind: 'reuse', bindings: [variable('DATABASE_PASSWORD')] }] } } });
+        const reused = await resolveEnvironmentCreateCopyForHost({ input: reusedInput, context: {} }, host);
+        if ('errorCode' in reused) throw new Error(reused.errorCode);
+        expect(reused.copyPlan?.bindings).toEqual(captured.copyPlan?.bindings);
+        expect(reused.review?.included).toContain(`data:${dataLink.id}:reuse`);
+        expect(JSON.stringify(reused.review)).not.toContain('private-copy-secret');
+        const unselected = await resolveEnvironmentCreateCopyForHost({ input: {
+            ...reusedInput, copyFrom: { ...reusedInput.copyFrom!, choices: { ...reusedInput.copyFrom!.choices,
+                secrets: [{ binding: variable('DATABASE_PASSWORD'), kind: 'omit' }] } },
+        }, context: {} }, host);
+        expect(unselected).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        const missingConnection = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ ...input,
+            copyFrom: { ...input.copyFrom!, choices: { ...input.copyFrom!.choices,
+                data: [{ targetLinkId: dataLink.id, kind: 'reuse' }] } } });
+        expect(await resolveEnvironmentCreateCopyForHost({ input: missingConnection, context: {} }, host))
+            .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        const credentialRef = { service: { pluginId: 'example.data', localId: 'account' }, accountId: 'fresh-account' };
+        const provision = { action: { pluginId: 'example.data', localId: 'provision' }, input: {
+            v: 1, serverId: 'home', providerAccountId: 'organization', credentialRef,
+            credentialPrincipal: { kind: 'account', accountId: 'owner',
+                purpose: { consumer: { pluginId: 'example.data', localId: 'provision' }, purpose: 'manage' },
+                target: { kind: 'account', account: credentialRef } }, providerEnvironment: { kind: 'production' },
+            name: 'private-project-name', password: { ref: 'secret:fresh-password', resourceRevision: 2 },
+            regionSelection: { type: 'specific', code: 'eu-west-1' },
+        } };
+        const closed = { type: 'object', properties: {}, additionalProperties: false };
+        const dataTarget = DeploymentTargetV1Schema.parse({ v: 1, id: 'database', source: dataLink.source,
+            role: 'data', targetKind: 'database', title: 'Database', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+            dataV1: { projects: { provision: { kind: 'plugin', actionId: 'example.data/actions/provision' } } } });
+        const provisionHost = { ...host, async readDataProvisionDeclaration() { return {
+            target: dataTarget, action: provision.action, inputSchema: supabaseDataActionSchema('projects-provision'),
+        }; } };
+        const emptyInput = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ ...input,
+            copyFrom: { ...input.copyFrom!, choices: { ...input.copyFrom!.choices,
+                data: [{ targetLinkId: dataLink.id, kind: 'createEmpty', provision }] } } });
+        const empty = await resolveEnvironmentCreateCopyForHost({ input: emptyInput, context: {} }, provisionHost);
+        if ('errorCode' in empty) throw new Error(empty.errorCode);
+        expect(empty.copyPlan?.data).toEqual([{ targetLinkId: dataLink.id, targetId: 'database', targetKind: 'database',
+            contribution: { pluginId: 'example.data', localId: 'database' }, provision }]);
+        expect(empty.review?.included).toContain(`data:${dataLink.id}:createEmpty`);
+        expect(JSON.stringify(empty.review)).not.toMatch(/fresh-account|fresh-password|private-project-name|eu-west-1/u);
+        const { name: _name, ...missingVendorField } = provision.input;
+        const invalidProvision = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ ...emptyInput,
+            copyFrom: { ...emptyInput.copyFrom!, choices: { ...emptyInput.copyFrom!.choices, data: [{
+                targetLinkId: dataLink.id, kind: 'createEmpty', provision: { ...provision, input: missingVendorField },
+            }] } } });
+        expect(await resolveEnvironmentCreateCopyForHost({ input: invalidProvision, context: {} }, provisionHost))
+            .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        const wrongAction = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ ...emptyInput,
+            copyFrom: { ...emptyInput.copyFrom!, choices: { ...emptyInput.copyFrom!.choices, data: [{
+                targetLinkId: dataLink.id, kind: 'createEmpty', provision: { ...provision,
+                    action: { ...provision.action, localId: 'delete' } },
+            }] } } });
+        expect(await resolveEnvironmentCreateCopyForHost({ input: wrongAction, context: {} }, provisionHost))
+            .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
         const materializeCopy = async (copy = captured, name = captured.input.name) => {
             const result = await createPrepareEnvironmentCreateForHost(host)({ input: { ...copy.input, name,
                 controllerMachineId: 'new-controller' }, context: requesterContext,
@@ -728,6 +793,9 @@ describe('authored Environment creation through protected preparation and the ex
             : { type: 'legacy', secret: new Uint8Array(32).fill(29) } };
         let current = true;
         let retireDuringPreparation = false;
+        const refusal = { ok: false as const, errorCode: 'action_forbidden', error: 'action_forbidden',
+            requestId: 'create-preparation-refusal', failureCause: { phase: 'deployment.content.prepare',
+                errorClass: 'Error' as const, errorCode: 'action_forbidden', httpStatus: 403 } };
         const writes: unknown[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
@@ -751,7 +819,7 @@ describe('authored Environment creation through protected preparation and the ex
         const materialize = createPrepareEnvironmentCreateForHost({ credentials, serverHttpBaseUrl: 'https://home.test',
             async assertCurrent() {
                 const captured = await axios.get<{ current: boolean }>('https://home.test/captured-authority');
-                if (!captured.data.current) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                if (!captured.data.current) throw Object.assign(new Error(refusal.errorCode, { cause: refusal }), { code: refusal.errorCode });
             },
             resolveRequestHeaders: () => ({ Authorization: `Bearer ${token}` }),
         });
@@ -760,7 +828,7 @@ describe('authored Environment creation through protected preparation and the ex
             controllerMachineId: 'controller', retainPreviousDeployments: 1,
             definition: { from: 'compose', document: 'services: {app: {image: nginx:1}}', profiles: [], services: ['app'] } });
         await expect(materialize({ input, context: {}, projectOwner: { kind: 'account', accountId: `retiring-${mode}` } }))
-            .resolves.toMatchObject({ ok: false, errorCode: 'action_forbidden' });
+            .resolves.toMatchObject(refusal);
         expect(retireDuringPreparation, 'the initially admitted caller retires while real private-content preparation is underway').toBe(true);
         expect(writes).toHaveLength(0);
     });

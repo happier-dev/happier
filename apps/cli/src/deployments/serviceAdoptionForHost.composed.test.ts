@@ -34,7 +34,10 @@ describe('watched Compose adoption through the Action host', () => {
     it.skipIf(process.platform === 'win32').each([
         { mode: 'plain', bindingFailure: 'before' }, { mode: 'plain', bindingFailure: 'after' },
         { mode: 'e2ee', bindingFailure: 'before' }, { mode: 'e2ee', bindingFailure: 'after' },
-    ] as const)('reviews value-free input and continues $mode binding failure $bindingFailure application without changing native custody', async ({ mode, bindingFailure }) => {
+        { mode: 'plain', bindingFailure: 'create' }, { mode: 'e2ee', bindingFailure: 'create' },
+        { mode: 'plain', bindingFailure: 'bindings' }, { mode: 'e2ee', bindingFailure: 'bindings' },
+        { mode: 'plain', bindingFailure: 'read' }, { mode: 'e2ee', bindingFailure: 'read' },
+    ] as const)('reviews value-free input and settles $mode adoption failure $bindingFailure without changing native custody', async ({ mode, bindingFailure }) => {
         let phase = 'fixture';
         const requests: string[] = [];
         onTestFailed(() => { console.error(`Compose adoption failed during ${phase}; HTTP ${requests.join(', ')}`); });
@@ -141,6 +144,8 @@ else process.exit(23);
                         audience: [], createdByAccountId: 'owner' } } };
                 if (request.method === 'GET' && path === '/v1/projects/source/deployment-defaults') return { status: 200,
                     data: { ok: true, projectSourceId: 'source', sourceRevision: 1, revision: 0, content: null } };
+                if (request.method === 'GET' && path === '/v1/deployments/environments/adopted-environment' && bindingFailure === 'read') return { status: 401,
+                    data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
                 if (request.method === 'GET' && path === '/v1/deployments/environments/adopted-environment') return { status: 200,
                     data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(row => row.targetLink) } };
                 if (request.method === 'POST' && path === '/v1/deployments/targets/list' && refuseNativeLookup) return { status: 401,
@@ -149,6 +154,8 @@ else process.exit(23);
                     items: creates ? [{ environment: environment.environment, targetLink: environment.targetLinks[0]!.targetLink }] : [],
                     nextCursor: null, coverage: 'complete' } };
                 if (request.method === 'POST' && path === '/v1/deployments/environments') {
+                    if (bindingFailure === 'create') return { status: 503,
+                        data: { error: 'database_transaction_conflict_exhausted', statusCode: 503 } };
                     creates++; writes.push(path);
                     const input = request.data as { contentArtifactId: string; firstTargetLink: { contentArtifactId: string } };
                     environment.environment.contentArtifactId = input.contentArtifactId;
@@ -167,6 +174,8 @@ else process.exit(23);
                         bindingPreparation: { runtimeInstallations: [installation], buildInstallation: installation } } };
                 }
                 if (request.method === 'POST' && path === '/v1/deployments/environments/adopted-environment/bindings') {
+                    if (bindingFailure === 'bindings') return { status: 503,
+                        data: { error: 'database_transaction_conflict_exhausted', statusCode: 503 } };
                     if (loseBindingResponse && bindingFailure === 'before') {
                         loseBindingResponse = false;
                         throw new Error('Binding transport failed before application');
@@ -242,6 +251,19 @@ else process.exit(23);
             const composeCalls = async () => (await readFile(callsPath, 'utf8')).trim().split('\n')
                 .map(line => JSON.parse(line) as { args: string[] }).filter(call => call.args.includes('config')).length;
             const beforeApply = await composeCalls();
+            if (bindingFailure === 'create' || bindingFailure === 'bindings' || bindingFailure === 'read') {
+                phase = `definite ${bindingFailure} refusal`;
+                expect(await executor.execute('machines.services.adopt', apply, context))
+                    .toMatchObject(bindingFailure === 'read' ? { ok: false, errorCode: 'action_home_signed_out' } : {
+                        ok: false, errorCode: 'database_transaction_conflict_exhausted', effectAttempted: false,
+                        details: { requiredFact: 'transaction_commit' },
+                        failureCause: { phase: 'home.database.transaction', httpStatus: 503 },
+                    });
+                expect(creates).toBe(bindingFailure === 'create' ? 0 : 1);
+                expect(writes).toEqual(bindingFailure === 'create' ? [] : ['/v1/deployments/environments']);
+                expect(metadata).toEqual(originalMetadata);
+                return;
+            }
             expect(await executor.execute('machines.services.adopt', apply, context)).toMatchObject({ ok: true,
                 result: { kind: 'partial', environmentId: 'adopted-environment', targetLinkId: 'native-target', errorCode: 'outcome_unknown' } });
             expect(await composeCalls() - beforeApply).toBe(3);

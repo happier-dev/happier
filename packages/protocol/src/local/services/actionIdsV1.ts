@@ -4,6 +4,8 @@ import type { LocalServiceActionKindV1 } from './actions/v1.js';
 
 /** Schema-free ids: Action identity must not initialize its own spec graph. */
 export const MACHINE_SERVICE_ADOPT_ACTION_ID = 'machines.services.adopt' as const;
+export const MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1 = 'adopt-environment' as const;
+export const MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 = 'adopt-bindings' as const;
 export const MACHINE_SERVICE_FRONTDOOR_ACTION_IDS = [
   'machines.services.list', 'machines.services.discovery', 'machines.services.detail',
   'machines.services.watch', 'machines.services.unwatch', MACHINE_SERVICE_ADOPT_ACTION_ID,

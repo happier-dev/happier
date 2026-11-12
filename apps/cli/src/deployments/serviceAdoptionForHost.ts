@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
+import { MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1 as CREATE_ROLE,
+    MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 as BINDINGS_ROLE } from '@happier-dev/protocol/local/services/actionIdsV1';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure,
     DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailure } from './deploymentFailure';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -13,8 +17,6 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 
-const CREATE_ROLE = 'adopt-environment';
-const BINDINGS_ROLE = 'adopt-bindings';
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 type Host = Readonly<{
     serverId: string; machineId: string;
@@ -99,10 +101,15 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                 let environmentId: string | undefined;
                 let revision: number | undefined;
                 let targetLinkId: string | undefined;
-                const partial = (errorCode: string) => prepared ? { ok: true as const, result: MachineServiceAdoptResultV1Schema.parse({
-                    kind: 'partial', errorCode, preparedCreate: prepared,
-                    ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
-                }) } : failure(errorCode);
+                const partial = (refusal: ActionExecuteFailure) => {
+                    if (!prepared) return refusal;
+                    const result = MachineServiceAdoptResultV1Schema.parse({
+                        kind: 'partial', errorCode: refusal.errorCode, preparedCreate: prepared,
+                        ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
+                    });
+                    if (isActionOutcomeUnknownErrorCodeV1(refusal.errorCode)) return { ok: true as const, result };
+                    return refusal.details === undefined ? { ...refusal, details: result } : refusal;
+                };
                 try {
                     const priorOperation = context.operationAcceptance && host.readOperation
                         ? await host.readOperation(context.operationAcceptance.operationId, context) : null;
@@ -120,41 +127,41 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                     if (!environmentId) {
                         const created = await context.hostReviewedChild!.invoke({ action: 'deployments.environments.create', role: CREATE_ROLE,
                             input: projectNativeJsonValueForTransport(prepared) });
-                        if (!created.ok) return partial(created.errorCode);
+                        if (!created.ok) return partial(created);
                         const result = DeploymentEnvironmentCreateResultV1Schema.safeParse(created.result);
-                        if (!result.success) return partial('invalid_action_output');
-                        if (!result.data.ok) return partial(result.data.error);
+                        if (!result.success) return partial(failure('invalid_action_output'));
+                        if (!result.data.ok) return partial(failure(result.data.error));
                         environmentId = result.data.environmentId; revision = result.data.revision;
                     }
                     const current = await host.readEnvironment({ environmentId, context });
                     revision = current.environment.revision;
                     targetLinkId = current.environment.runtimeTargetLinkId ?? undefined;
-                    if (!targetLinkId) return partial('target_mismatch');
+                    if (!targetLinkId) return partial(failure('target_mismatch'));
                     if (!sameStrictJsonValue(current.content.bindings, input.bindings)) {
                         if (current.environment.contentArtifactId !== prepared.contentArtifactId
                             || current.environment.contentHeaderVersion !== prepared.contentHeaderVersion
-                            || current.environment.contentBodyVersion !== prepared.contentBodyVersion) return partial('deployment_conflict');
+                            || current.environment.contentBodyVersion !== prepared.contentBodyVersion) return partial(failure('deployment_conflict'));
                         const runtime = current.targetLinks.find(link => link.id === targetLinkId);
                         if (!sameStrictJsonValue(runtime?.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
-                            prepared.firstTargetLink?.machines)) return partial('approval_stale');
+                            prepared.firstTargetLink?.machines)) return partial(failure('approval_stale'));
                         const applied = await context.hostReviewedChild!.invoke({ action: 'deployments.bindings.set', role: BINDINGS_ROLE,
                             input: normalizeStrictJsonValue({ serverId: input.serverId, environmentId, expectedRevision: revision,
                                 set: input.bindings, remove: [] }) });
-                        if (!applied.ok) return partial(applied.errorCode);
+                        if (!applied.ok) return partial(applied);
                         const result = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
-                        if (!result.success) return partial('invalid_action_output');
-                        if (!result.data.ok) return partial(result.data.error);
+                        if (!result.success) return partial(failure('invalid_action_output'));
+                        if (!result.data.ok) return partial(failure(result.data.error));
                         revision = result.data.revision;
                     }
                     return { ok: true, result: MachineServiceAdoptResultV1Schema.parse({ kind: 'adopted', environmentId, revision, targetLinkId }) };
                 } catch (error) {
-                    return partial(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-                        && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable');
+                    return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
+                        && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error));
                 }
             } });
         } };
     } catch (error) {
-        return failure(request.context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-            && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable');
+        return projectDeploymentFailure(request.context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
+            && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error);
     }
 }

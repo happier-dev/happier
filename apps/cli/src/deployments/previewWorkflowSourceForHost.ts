@@ -33,7 +33,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
     const readEnvironment = (reference: PreviewTemplateRefForHost) => readDeploymentEnvironmentForHost({ environmentId: reference.environmentId, context }, {
         readMetadata: async ({ environmentId }) => {
             const result = await input.executor.execute('deployments.environments.get', { serverId: reference.serverId, environmentId }, context);
-            if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+            if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
             const detail = DeploymentEnvironmentGetResultV1Schema.parse(result.result);
             if (!detail.ok) throw Object.assign(new Error(detail.error), { code: detail.error });
             return detail;
@@ -45,7 +45,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         do {
             const result = await input.executor.execute('deployments.environments.list', { ...selection,
                 serverId: input.templateRef.serverId, ...(cursor ? { cursor } : {}) }, context);
-            if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+            if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
             const page = DeploymentEnvironmentListResultV1Schema.parse(result.result);
             if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error });
             environments.push(...page.items);
@@ -60,7 +60,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
     let selectedTemplate: Awaited<ReturnType<typeof readEnvironment>> | undefined;
     const readInvocations = async (request: Readonly<{ runId: string; cursor?: string }>) => {
         const result = await input.executor.execute('workflow.run.invocations.list', { ...request, includeContent: true }, context);
-        if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+        if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
         return WorkflowInvocationListResultV1Schema.parse(result.result);
     };
     return resolvePreviewWorkflowForHost({ templateRef: input.templateRef, event: input.event, occurrenceKey: input.occurrenceKey,
@@ -77,7 +77,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         readPreviewDomain: request => readPreviewDomainForHost(request, {
             readMetadata: async operand => {
                 const result = await input.executor.execute('deployments.domains.get', operand, context);
-                if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
                 return result.result;
             }, open,
         }),
@@ -95,7 +95,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
                 ? await readDeploymentDomainInventoryForHost({ serverId: input.templateRef.serverId,
                     environmentId: existing.id, signal: input.signal, list: async query => {
                         const result = await input.executor.execute('deployments.domains.list', query, context);
-                        if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                        if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
                         return DeploymentDomainListResultV1Schema.parse(result.result);
                     } }) : undefined;
             if (domains && domains.kind !== 'ready') throw Object.assign(new Error(domains.reason), { code: domains.reason });

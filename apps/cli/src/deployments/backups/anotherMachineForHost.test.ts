@@ -101,13 +101,32 @@ describe('Another Machine configuration through existing Setup children', () => 
         expect(requests.some(request => request.action === 'machines.setup.apply')).toBe(false);
     });
 
-    it('retains the ordinary setup links and actual failure when receiver apply fails', async () => {
+    it.each(['read', 'plan', 'apply'] as const)('retains the definite receiver %s refusal and saved sender references', async failedStep => {
+        const refusal = { ok: false as const, errorCode: 'action_forbidden', error: 'Receiver setup refused',
+            requestId: 'receiver-setup-refusal', failureCause: { phase: 'machines.setup.apply',
+                errorClass: 'Error' as const, errorCode: 'action_forbidden', httpStatus: 403 },
+            details: { ...(failedStep === 'apply' ? { setupOperation: { operationId: 'receiver-operation', runId: 'receiver-run' } } : {}) } };
+        let reads = 0;
+        const invoke: HostReviewedChildPortV1['invoke'] = async request => {
+            if (request.action === 'machines.setup.plan') {
+                reads++;
+                return failedStep === 'read' && reads === 1 || failedStep === 'plan' && reads === 2
+                    ? refusal : { ok: true, result: plan() };
+            }
+            return refusal;
+        };
+        await expect(prepareBackupAnotherMachineForHost({ serverId: 'home', setup,
+            context: { surface: 'agent', hostReviewedChild: { invoke } } }, host)).rejects.toMatchObject({
+                code: refusal.errorCode, cause: { ...refusal, details: { ...refusal.details, destinationSetup: setup } } });
+    });
+
+    it('retains setup continuation when its acknowledgement is genuinely unknown', async () => {
         const invoke: HostReviewedChildPortV1['invoke'] = async request => request.action === 'machines.setup.plan'
-            ? { ok: true, result: plan() } : { ok: false, errorCode: 'machine_setup_child_failed', error: 'Receiver setup failed',
+            ? { ok: true, result: plan() } : { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown',
                 details: { setupOperation: { operationId: 'receiver-operation', runId: 'receiver-run' } } };
         expect(await prepareBackupAnotherMachineForHost({ serverId: 'home', setup,
             context: { surface: 'agent', hostReviewedChild: { invoke } } }, host)).toMatchObject({ status: 'partial',
-                errorCode: 'machine_setup_child_failed', senderIdentity,
+                errorCode: 'outcome_unknown', senderIdentity,
                 setupOperation: { operationId: 'receiver-operation', runId: 'receiver-run' } });
     });
 

@@ -3,7 +3,11 @@ import type { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-de
 import type { DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectDeploymentFailure } from './deploymentFailure';
+import { copyEnvironmentDataForHost } from './copyEnvironmentDataForHost';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 
 export const COPY_ENVIRONMENT_BINDINGS_ROLE = 'copy-bindings';
@@ -23,18 +27,34 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
     const { input, context } = request;
     const plan = input.copyPlan;
     if (!input.copyFrom || !plan) return failure('client_required');
-    if (plan.bindings.length && !context.hostReviewedChild) return failure('client_required');
+    if ((plan.bindings.length || plan.data?.length) && !context.hostReviewedChild) return failure('client_required');
     const stored = await host.create('deployments.environments.create', input, context, request.creationReview);
-    if ('errorCode' in stored) return stored;
+    if ('ok' in stored && !stored.ok && 'errorCode' in stored) return stored;
     const parsed = DeploymentEnvironmentCreateResultV1Schema.safeParse(stored);
     if (!parsed.success) return failure('invalid_action_output');
     const created = parsed.data;
-    if (!created.ok || !plan.bindings.length) return created;
-    let continuation: Continuation = { actionId: 'deployments.environments.create', input };
-    const partial = (errorCode: string): ActionExecuteFailure => ({ ...failure(errorCode), effectAttempted: true, details: {
-        kind: 'partial', phase: 'bindings', errorCode, savedSecrets: [],
-        environmentId: created.environmentId, revision: created.revision, continuation,
-    } satisfies PartialResult });
+    if (!created.ok) return created;
+    if (created.replayed && plan.data?.length) return { ...failure('deployment_conflict'), details: {
+        kind: 'partial', phase: 'environment', environmentId: created.environmentId, revision: created.revision,
+        errorCode: 'deployment_conflict', savedSecrets: [],
+        requiredFact: plan.data.map(row => `data:${row.targetLinkId}:createEmpty`).join(', '),
+        remedy: 'This Create already allocated its Environment. Inspect its database attachments and provider outcomes. Open the Environment Overview and add/manage a managed database. Link exact resources already created or explicitly create/configure remaining resources. Do not replay Duplicate.',
+    } satisfies PartialResult };
+    const finish = (revision: number) => copyEnvironmentDataForHost({ input, context, environmentId: created.environmentId, revision });
+    if (!plan.bindings.length) return finish(created.revision);
+    let continuation: Continuation | undefined;
+    const partial = (cause: string | ActionExecuteFailure): ActionExecuteFailure => {
+        const errorCode = typeof cause === 'string' ? cause : cause.errorCode;
+        const inherited = typeof cause === 'string' ? undefined
+            : projectDeploymentFailureRecoveryV1(isRecord(cause.details) ? cause.details : {}, cause.errorCode);
+        return { ...(typeof cause === 'string' ? failure(cause) : cause), effectAttempted: true, details: {
+            kind: 'partial', phase: 'bindings', errorCode, savedSecrets: [],
+            environmentId: created.environmentId, revision: created.revision, ...(continuation ? { continuation } : {}),
+            ...(inherited ? { requiredFact: inherited.requiredFact, remedy: inherited.remedy } : {}),
+            ...(plan.data?.length ? { requiredFact: [inherited?.requiredFact, ...plan.data.map(row => `data:${row.targetLinkId}:createEmpty`)].filter(Boolean).join(', '),
+                remedy: `${inherited ? `${inherited.remedy} ` : ''}Recover bindings, then open the Environment Overview and add/manage a managed database. Explicitly create/configure these unattempted resources; inspect the provider and link exact resources already created. Do not replay Duplicate.` } : {}),
+        } satisfies PartialResult };
+    };
     try {
         const current = await host.readEnvironment({ environmentId: created.environmentId, context });
         const bindings = plan.bindings.map(binding => {
@@ -43,9 +63,7 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
                 throw Object.assign(new Error('deployment_unavailable'), { code: 'deployment_unavailable' });
             return { ...binding, targetLinkId: current.environment.runtimeTargetLinkId };
         });
-        if (sameStrictJsonValue(current.content.bindings, bindings)) return {
-            ok: true, environmentId: created.environmentId, revision: current.environment.revision,
-        };
+        if (sameStrictJsonValue(current.content.bindings, bindings)) return finish(current.environment.revision);
         const bindingInput = { serverId: input.serverId, environmentId: created.environmentId,
             expectedRevision: current.environment.revision, set: bindings, remove: [] };
         continuation = { actionId: 'deployments.bindings.set', input: bindingInput };
@@ -61,15 +79,15 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
         }
         const applied = await context.hostReviewedChild!.invoke({ action: 'deployments.bindings.set',
             role: COPY_ENVIRONMENT_BINDINGS_ROLE, input: bindingInput });
-        if (!applied.ok) return partial(applied.errorCode);
+        if (!applied.ok) return partial(applied);
         const settled = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
         if (!settled.success) return partial('invalid_action_output');
         if (!settled.data.ok) return partial(settled.data.error);
         return settled.data.environmentId === created.environmentId
-            ? { ok: true, environmentId: settled.data.environmentId, revision: settled.data.revision } : partial('invalid_action_output');
+            ? finish(settled.data.revision) : partial('invalid_action_output');
     } catch (error) {
-        return partial(context.signal?.aborted ? 'cancelled'
+        return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
             : error instanceof Error && 'code' in error && typeof error.code === 'string'
-                ? error.code : 'deployment_content_unavailable');
+                ? error.code : 'deployment_content_unavailable', error));
     }
 }

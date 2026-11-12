@@ -22,6 +22,7 @@ import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest,
   type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import { previewRepositoryForDefinition, provisionRepositoryForDefinition } from '@/scm/actions/provisionRepositoryForDefinition';
 import { ADMITTED_CHECKOUT_OWNER_REQUIRED } from './admittedCheckoutRepositoryFiles';
+import { projectDeploymentFailure } from './deploymentFailure';
 
 /** A definition Move reads Environment content only, never runtime target-link content. */
 type MoveEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
@@ -86,7 +87,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
         } };
       }
       const loaded = await host.readSource({ serverId: input.serverId, sourceId: current.environment.projectSourceId }, context);
-      if (!loaded.ok) return fail('errorCode' in loaded ? loaded.errorCode : loaded.error);
+      if (!loaded.ok) return 'errorCode' in loaded ? loaded : fail(loaded.error);
       let created: Extract<Awaited<ReturnType<typeof provisionRepositoryForDefinition>>, { kind: 'provisioned' }> | undefined;
       let createdWorkspace: WorkspaceRefV1 | undefined;
       if (input.createRepository) {
@@ -144,7 +145,8 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
             errorCode: 'project_requester_authority_unavailable', continuation: continuation() };
           const attached = await host.updateSource({ serverId: input.serverId, sourceId: source.id,
             expectedRevision: loaded.source.revision, patch: { repository: source.repository } }, context);
-          if (!attached.ok) return { kind: 'partial', phase: 'source',
+          if (!attached.ok) return { kind: 'partial',
+            phase: ('failureCause' in attached ? attached.failureCause?.phase : undefined) ?? 'source',
             errorCode: 'errorCode' in attached ? attached.errorCode : attached.error, continuation: continuation() };
           source = attached.source;
           await host.acceptWorkspace(workspace, source, input.repository, context);
@@ -157,7 +159,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       if (context.signal?.aborted) return fail('cancelled');
       const code = codeOf(error);
       // The reviewed checkout belongs to another Account's Machine: a typed refusal, before any repository effect.
-      return code === ADMITTED_CHECKOUT_OWNER_REQUIRED ? { kind: 'refused', reason: code } : fail(code);
+      return code === ADMITTED_CHECKOUT_OWNER_REQUIRED ? { kind: 'refused', reason: code } : projectDeploymentFailure(code, error);
     }
   };
 
