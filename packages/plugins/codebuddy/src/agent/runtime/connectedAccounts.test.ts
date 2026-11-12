@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH } from './continuity.js';
-import { CODEBUDDY_CODEX_PURPOSE, CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
-
-const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected-chatgpt' };
+import { CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
 
 describe('CodeBuddy connected-account declaration', () => {
   it('uses the admitted Session account instead of re-reading a durable default', async () => {
@@ -22,17 +19,7 @@ describe('CodeBuddy connected-account declaration', () => {
     try { expect(expectedAccounts).toEqual(['session-selected']); } finally { prepared?.dispose(); }
   });
 
-  it('refuses a stale ChatGPT selection before any credential materialization', async () => {
-    const materialize = vi.fn<ConnectedAccountsService['materialize']>();
-    const getBinding = vi.fn(async (purpose: string) => purpose === CODEBUDDY_CODEX_PURPOSE
-      ? { purpose, service: account.service, account, target: { kind: 'account' as const, displayName: 'ChatGPT' } } : null);
-    await expect(prepareCodeBuddyConnectedAccount({ modelId: 'gpt-5.6-sol' }, {
-      services: { connectedAccounts: { getBinding, materialize } },
-    })).rejects.toMatchObject({ code: 'codebuddy_chatgpt_account_unsupported', retryable: false });
-    expect(materialize).not.toHaveBeenCalled();
-  });
-
-  it('does not advertise ChatGPT when no supported account is selected', async () => {
+  it('retains the native launch when no supported account is selected', async () => {
     const getBinding = vi.fn(async () => null);
     const prepared = await prepareCodeBuddyConnectedAccount({ modelId: 'gpt-5.6-sol' }, {
       services: { connectedAccounts: { getBinding, materialize: vi.fn() } },

@@ -4,6 +4,7 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CODEBUDDY_PLUGIN } from '../../manifest.js';
 import { createCodeBuddyAgentRuntime } from './factory.js';
+import { CODEBUDDY_KEY_ACCOUNTS } from './connectedAccounts.js';
 
 async function resolver() {
   let options: AgentAcpRuntimeOptions | undefined;
@@ -37,9 +38,9 @@ describe('CodeBuddy native deferred tool codec', () => {
 describe('CodeBuddy selected account default', () => {
   it('uses the same model refusal for selected-account preflight before materialization', async () => {
     const activation = await createPluginTestkit({ manifest: CODEBUDDY_PLUGIN.manifest, module: CODEBUDDY_PLUGIN });
-    const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
+    const account = { service: CODEBUDDY_KEY_ACCOUNTS[0].service, accountId: 'selected' };
     const materialize = vi.fn(async () => { throw new Error('Model selection must precede credential acquisition'); });
-    const getBinding = vi.fn<ConnectedAccountsService['getBinding']>(async purpose => purpose === 'openai-codex-model-request' ? { account, service: account.service,
+    const getBinding = vi.fn<ConnectedAccountsService['getBinding']>(async purpose => purpose === CODEBUDDY_KEY_ACCOUNTS[0].purpose ? { account, service: account.service,
       purpose, target: { kind: 'account' as const, displayName: 'Selected' } } : null);
     try {
       const prepare = activation.registration('agents', 'codebuddy')?.preflightSessionControls?.prepareLaunchEnvironment;
@@ -63,10 +64,10 @@ describe('CodeBuddy selected account default', () => {
     { value: 'default', selectionSource: 'inherited' as const },
   ])('requires a concrete account model before native effects ($value/$selectionSource)', async model => {
     const activation = await createPluginTestkit({ manifest: CODEBUDDY_PLUGIN.manifest, module: CODEBUDDY_PLUGIN });
-    const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
+    const account = { service: CODEBUDDY_KEY_ACCOUNTS[0].service, accountId: 'selected' };
     const materialize = vi.fn(async () => { throw new Error('Model selection must precede credential acquisition'); });
     const open = vi.fn(async () => { throw new Error('Model selection must precede native startup'); });
-    const context = { services: { connectedAccounts: { getBinding: async (purpose: string) => purpose === 'openai-codex-model-request' ? { account, service: account.service,
+    const context = { services: { connectedAccounts: { getBinding: async (purpose: string) => purpose === CODEBUDDY_KEY_ACCOUNTS[0].purpose ? { account, service: account.service,
       purpose, target: { kind: 'account', displayName: 'Selected' } } : null, materialize } },
       protocols: { acp: { open } } } as unknown as AgentRuntimeContext;
     try {

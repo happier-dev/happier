@@ -13,20 +13,27 @@ import { createKimiConnectedAccountRuntime } from '../../../../kimi/src/connecte
 import { createXaiConnectedAccountRuntime } from '../../../../grok/src/connectedAccounts/runtime.js';
 import { CODEBUDDY_KEY_ACCOUNTS } from './connectedAccounts.js';
 import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from '../acp/runtimeDeclaration.js';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
+import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import { projectConnectedAccountPurposeDeclarationsToHostAccess } from '@/plugins/runtime/hostAccess/resolve';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import { projectAgentConnectedAccountLaunchCatalogEntry } from '../../../../../../apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.js';
 
 describe('CodeBuddy selected native API keys', () => {
-  it.each(['session', 'preflight'] as const)('delivers the selected OpenAI account to the native child through the public ACP composer (%s)', async entry => {
+  it.each(['session', 'preflight', 'provider'] as const)('launches through manifest-scoped Connected Accounts and the public ACP composer (%s)', async entry => {
     const source = CODEBUDDY_KEY_ACCOUNTS.find(row => row.purpose === 'openai-api-key')!;
     const account = { service: source.service, accountId: 'selected' };
     const materializationContext = { signal: new AbortController().signal, configuration: { values: {} },
       credentials: { async get(key: string) { return key === 'token' ? 'fake-native-openai' : null; } },
     } as Parameters<ConnectedAccountRuntime['materialize']>[1];
-    const accounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> = {
-      async getBinding(purpose) { return purpose === source.purpose ? { purpose, service: source.service, account,
-        target: { kind: 'account', displayName: 'Selected' } } : null; },
-      materialize(_purpose, request) { return openAiConnectedAccountRuntime.materialize(request, materializationContext); },
-    };
+    const purposeOwner = createForegroundPurposeOwnerFixture({
+      consumer: { pluginId: CODEBUDDY_PLUGIN.manifest.id, localId: 'codebuddy' },
+      service: source.service, accountId: account.accountId, purpose: source.purpose,
+      materializeAccount: ({ request }) => openAiConnectedAccountRuntime.materialize(request, materializationContext),
+    });
+    if (entry === 'provider') await purposeOwner.store.update(() => ({ v: 1, bindings: [] }));
+    const connectedHost = createStablePluginConnectedAccountsHost(purposeOwner.owner);
     const activation = await createPluginTestkit({ manifest: CODEBUDDY_PLUGIN.manifest, module: CODEBUDDY_PLUGIN });
     const cwd = await mkdtemp(join(tmpdir(), 'codebuddy-account-launch-'));
     let session: AgentSessionRuntime | undefined;
@@ -38,13 +45,21 @@ describe('CodeBuddy selected native API keys', () => {
       if (!parsed.ok) throw new Error('Invalid authored manifest');
       const declaration = parsed.manifest.contributes.agents.find(row => row.id === 'codebuddy');
       if (!declaration) throw new Error('Missing CodeBuddy Agent');
+      const signal = new AbortController().signal;
+      const accounts = connectedHost.bind({
+        plugin: { id: parsed.manifest.id, version: parsed.manifest.version },
+        contribution: { id: declaration.id, qualifiedId: `${parsed.manifest.id}/agents/${declaration.id}` },
+        occurrenceId: 'codebuddy-account-occurrence', correlationId: 'codebuddy-account-launch',
+        surface: 'agent', session: { id: 'account' }, signal, isOccurrenceCurrent: () => true,
+      }, projectConnectedAccountHostAccessScopes(parsed.manifest.id,
+        projectConnectedAccountPurposeDeclarationsToHostAccess(declaration.connectedAccounts ?? [])));
       fixture = createAcpMcpPolicyFixture({ agent: declaration, pluginId: CODEBUDDY_PLUGIN.manifest.id, toolWireFormat: 'underscore',
         async factory(context) {
           const native = await agent.factory!(context);
           return { ...native, sessions: { ...native.sessions, open(request, host) {
             if (entry === 'preflight') return (async () => {
               const input = { modelId: 'selected-model', environment: { CODEBUDDY_API_KEY: 'ambient' },
-                connectedAccounts: { ...accounts, watch() { return { dispose() {} }; } }, signal: materializationContext.signal };
+                connectedAccounts: accounts, signal: materializationContext.signal };
               const prepared = await agent.preflightSessionControls!.prepareLaunchEnvironment!(input);
               if (!prepared) throw new Error('Expected prepared native launch');
               disposePreflight = prepared.dispose;
@@ -55,25 +70,41 @@ describe('CodeBuddy selected native API keys', () => {
                   env: prepared.environment }, definition: CODEBUDDY_ACP_RUNTIME_DECLARATION.definition,
               });
             })();
-            return native.sessions!.open(request, { ...host, services: { ...host.services,
-              connectedAccounts: { ...host.services.connectedAccounts, ...accounts } } });
+            // The OS harness replaces the outer launch environment with its isolated HOME.
+            // Supply the admitted Provider environment at this native Session boundary.
+            const nativeRequest = entry === 'provider' ? { ...request, launchEnvironment: {
+              values: { ...request.launchEnvironment?.values, CODEBUDDY_API_KEY: 'fake-provider-bearer' },
+              unset: request.launchEnvironment?.unset ?? [],
+            } } : request;
+            return native.sessions!.open(nativeRequest, { ...host, services: { ...host.services,
+              connectedAccounts: accounts } });
           } } };
         },
       });
       await fixture.fixtureServer.prepare({ cwd });
-      session = await fixture.openSession({ kind: 'create', sessionId: 'account', cwd, configuration: {
+      session = await fixture.openSession({ kind: 'create', sessionId: 'account', cwd,
+        ...(entry === 'provider' ? {
+          providerBinding: { connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
+            model: { id: 'selected-model', name: 'Selected' }, materialization: { v: 1 as const, kind: 'spawnEnv' as const } },
+        } : {}), configuration: {
         model: { value: 'selected-model', updatedAtMs: 1, selectionSource: 'explicit' }, mode: { value: null, updatedAtMs: 0 },
         permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {},
       } });
       const launch = fixture.observeLaunch();
-      expect(JSON.parse(launch.env.ACC_PRODUCT_CONFIG_V3!).models).toEqual([expect.objectContaining({
-        id: 'selected-model', apiKey: 'fake-native-openai', api: 'openai-completions',
-        url: 'https://api.openai.com/v1/chat/completions',
-      })]);
-      expect(launch.env.CODEBUDDY_API_KEY).toBe('');
-      expect(launch.argv.join(' ')).not.toContain('fake-native-openai');
-      expect(launch.argv).toContain('selected-model');
+      if (entry === 'provider') {
+        expect(launch.env.CODEBUDDY_API_KEY).toBe('fake-provider-bearer');
+        expect(launch.argv).not.toContain('--settings');
+      } else {
+        expect(JSON.parse(launch.env.ACC_PRODUCT_CONFIG_V3!).models).toEqual([expect.objectContaining({
+          id: 'selected-model', apiKey: 'fake-native-openai', api: 'openai-completions',
+          url: 'https://api.openai.com/v1/chat/completions',
+        })]);
+        expect(launch.env.CODEBUDDY_API_KEY).toBe('');
+        expect(launch.argv.join(' ')).not.toContain('fake-native-openai');
+        expect(launch.argv).toContain('selected-model');
+      }
     } finally {
+      connectedHost.retire();
       try { await session?.dispose(); } finally {
         try { await disposePreflight?.(); await fixture?.fixtureServer.dispose(); } finally { await activation.dispose(); await rm(cwd, { recursive: true, force: true }); }
       }

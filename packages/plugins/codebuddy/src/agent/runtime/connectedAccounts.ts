@@ -6,7 +6,6 @@ import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
 
-export const CODEBUDDY_CODEX_PURPOSE = 'openai-codex-model-request';
 export const CODEBUDDY_KEY_ACCOUNTS = [
   { purpose: 'openai-api-key', service: OPENAI_CONNECTED_ACCOUNT_SERVICE, key: OPENAI_SELECTED_API_KEY_ENV, base: 'https://api.openai.com/v1', baseKey: null },
   { purpose: 'kimi-code-api-key', service: KIMI_CONNECTED_ACCOUNT_SERVICE, key: KIMI_SELECTED_CODE_API_KEY_ENV, base: null, baseKey: KIMI_CODE_API_BASE_ENV },
@@ -76,32 +75,26 @@ export async function prepareCodeBuddyConnectedAccount(
   context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ): Promise<ReturnType<typeof createCodeBuddySubscriptionLaunch> | null> {
   const accounts = context.services.connectedAccounts;
-  const binding = await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
-  if (binding) refuse('codebuddy_chatgpt_account_unsupported', 'CodeBuddy requires a CodeBuddy login or provider API key; a ChatGPT account is not supported.');
   const selectedKeys = [];
   for (const row of CODEBUDDY_KEY_ACCOUNTS) {
     const selected = await accounts.getBinding(row.purpose, { signal: context.signal });
     if (selected) selectedKeys.push({ row, binding: selected });
   }
-  if (!binding && selectedKeys.length === 0) return null;
+  const selectedKey = selectedKeys[0];
+  if (!selectedKey) return null;
   if (selectedKeys.length > 1) refuse('codebuddy_connected_account_conflict', 'Select one connected model account for CodeBuddy.');
   if (request.providerBinding) refuse('codebuddy_subscription_provider_conflict', 'Select either a connected model account or a Provider connection for CodeBuddy.');
   const modelId = request.modelId?.trim();
   if (!modelId || modelId === 'default') {
     modelSelectionRequired();
   }
-  const selectedKey = selectedKeys[0];
-  if (selectedKey) {
-    const { row } = selectedKey;
-    const materialized = await accounts.materialize(row.purpose, { kind: 'environment',
-      keys: [row.key, ...(row.baseKey ? [row.baseKey] : [])] }, { signal: context.signal, expectedAccount: selectedKey.binding.account });
-    if (materialized.kind !== 'environment') refuse('codebuddy_key_materialization_invalid', 'The selected account did not supply an API key.');
-    const key = materialized.env[row.key];
-    const base = row.baseKey ? materialized.env[row.baseKey] : row.base;
-    if (!key || !base) refuse('codebuddy_key_materialization_invalid', 'The selected account did not supply its API key and endpoint.');
-    return createCodeBuddySubscriptionLaunch(buildCodeBuddyNativeConfiguration({ modelId,
-      api: 'openai-completions', url: `${base.replace(/\/+$/, '')}/chat/completions`, apiKey: key, customHeaders: '' }));
-  }
-  throw new PluginError({ code: 'codebuddy_chatgpt_account_unsupported', retryable: false,
-    message: 'CodeBuddy requires a CodeBuddy login or provider API key; a ChatGPT account is not supported.' });
+  const { row } = selectedKey;
+  const materialized = await accounts.materialize(row.purpose, { kind: 'environment',
+    keys: [row.key, ...(row.baseKey ? [row.baseKey] : [])] }, { signal: context.signal, expectedAccount: selectedKey.binding.account });
+  if (materialized.kind !== 'environment') refuse('codebuddy_key_materialization_invalid', 'The selected account did not supply an API key.');
+  const key = materialized.env[row.key];
+  const base = row.baseKey ? materialized.env[row.baseKey] : row.base;
+  if (!key || !base) refuse('codebuddy_key_materialization_invalid', 'The selected account did not supply its API key and endpoint.');
+  return createCodeBuddySubscriptionLaunch(buildCodeBuddyNativeConfiguration({ modelId,
+    api: 'openai-completions', url: `${base.replace(/\/+$/, '')}/chat/completions`, apiKey: key, customHeaders: '' }));
 }

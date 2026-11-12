@@ -12,7 +12,7 @@ import { createKiloAgentRuntime } from '../../../../../packages/plugins/kilo/src
 import { KILO_CODEX_PURPOSE } from '../../../../../packages/plugins/kilo/src/agent/runtime/connectedAccounts.js';
 import { createPiAgentRuntime } from '../../../../../packages/plugins/pi/src/agent/runtime/engine.js';
 import { createCodeBuddyAgentRuntime } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/factory.js';
-import { CODEBUDDY_CODEX_PURPOSE } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/connectedAccounts.js';
+import { CODEBUDDY_KEY_ACCOUNTS } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/connectedAccounts.js';
 import { createDroidAgentRuntime } from '../../../../../packages/plugins/droid/src/agent/runtime/factory.js';
 import { DROID_CHATGPT_PURPOSE } from '../../../../../packages/plugins/droid/src/agent/runtime/connectedAccount.js';
 import { createCopilotAgentRuntime } from '../../../../../packages/plugins/copilot/src/agent/runtime/factory.js';
@@ -65,9 +65,10 @@ describe('Connected Account default refusal', () => {
       pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, kilo: createKiloAgentRuntime, copilot: createCopilotAgentRuntime, opencode: createOpenCodeAgentRuntime,
     };
     const purpose = { pi: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE, copilot: COPILOT_OPENAI_CODEX_PURPOSE_ID,
+      codebuddy: CODEBUDDY_KEY_ACCOUNTS[0].purpose, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE, copilot: COPILOT_OPENAI_CODEX_PURPOSE_ID,
       opencode: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID }[agentId];
-    const service = agentId === 'opencode' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
+    const service = agentId === 'codebuddy' ? CODEBUDDY_KEY_ACCOUNTS[0].service
+      : agentId === 'opencode' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
       : { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     // The Connected Account and OS adapters are genuine host boundaries. Keep the
     // Agent preparation, refusal, host classifiers and persistence writer real.
