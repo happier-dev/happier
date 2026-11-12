@@ -127,7 +127,9 @@ export type MachineElevatedResultV1 = z.infer<typeof MachineElevatedResultV1Sche
 
 export const MachineAdminAccessInspectResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ observation: MachineAdminAccessObservationV1Schema,
-    checkedAt: z.number().check(z.int(), z.nonnegative()) }),
+    checkedAt: z.number().check(z.int(), z.nonnegative()),
+    adminAccess: MachineAdminAccessV1Schema,
+    metadataVersion: z.number().check(z.int(), z.nonnegative()) }),
   z.strictObject({ status: z.enum(['locked', 'invalid', 'unavailable']) }),
 ]));
 export type MachineAdminAccessInspectResultV1 = z.infer<typeof MachineAdminAccessInspectResultV1Schema>;

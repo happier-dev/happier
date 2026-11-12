@@ -134,9 +134,13 @@ export function registerDaemonMachineAdminAccessRpcHandlers(rpc: RpcHandlerRegis
         return MachineAdminAccessMutationResultV1Schema.parse(result.status === 'unavailable' && context?.signal.aborted
           ? { status: 'cancelled' } : result);
       }
+      const port = options.captureMetadataPort();
       const result = await options.observer.inspect().catch(() => ({ status: 'unavailable' as const }));
+      const current = 'observation' in result ? await getMachineAdminAccessV1(port) : null;
       context.signal.throwIfAborted();
-      return MachineAdminAccessInspectResultV1Schema.parse(result);
+      return MachineAdminAccessInspectResultV1Schema.parse(current?.status === 'ready'
+        ? { ...result, adminAccess: current.policy, metadataVersion: current.metadataVersion }
+        : current ?? result);
       };
       if (actionId !== 'machines.setup.adminAccess.set') return await run(ingress);
       if (!ingress) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);

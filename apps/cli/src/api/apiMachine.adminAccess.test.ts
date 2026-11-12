@@ -620,6 +620,25 @@ describe.runIf(process.platform !== 'win32')('administrator Action desired-first
 });
 
 describe('target-daemon desired administrator policy', () => {
+  it.each(['plain', 'e2ee'] as const)('uses the inspected %s administrator policy and revision to drive set CAS', async mode => {
+    const ask = { version: 1, mode: 'ask', administratorUsername: 'alice.admin' } as const;
+    const h = await createDesiredPolicyHarness(mode, { initialPolicy: ask, nativeDependencies: { platform: 'win32' } });
+    try {
+      await h.refresh({ ...h.machine, metadataVersion: 7 });
+      const inspected = MachineAdminAccessInspectResultV1Schema.parse(await h.client.invokeLocalMachineAction(
+        RPC_METHODS.MACHINE_ADMIN_ACCESS_INSPECT, { machineId: 'machine' },
+        { signal: h.context().signal, rpcContext: h.context() }));
+      expect(inspected).toMatchObject({ adminAccess: ask, metadataVersion: 7 });
+      if (!('observation' in inspected)) throw new Error('Administrator inspection unavailable');
+      expect(await h.set({ expectedAdminAccess: inspected.adminAccess, expectedMetadataVersion: inspected.metadataVersion,
+        adminAccess: preauthorized, comparison: 'revision' }))
+        .toEqual({ status: 'applied', policy: preauthorized, metadataVersion: 8 });
+      expect(h.client.getMachineMetadataSnapshot()).toMatchObject({
+        metadata: { ...metadata, adminAccess: preauthorized }, metadataVersion: 8,
+      });
+    } finally { await h.close(); }
+  });
+
   it.each(['plain', 'e2ee'] as const)('accepts an admitted %s owner across client-local Home aliases without repeating admission', async mode => {
     const h = await createDesiredPolicyHarness(mode);
     try {
@@ -823,9 +842,10 @@ describe('daemon administrator inspection composition', () => {
     const routes = createRoutes();
     // Exercise the production attachment and ApiMachine registration, not an injected dispatcher.
     cache.attachMachineAdminAccessRoutes(routes);
-    const attach = (daemonState: Machine['daemonState'] = { status: 'running', runtimeId: 'current-runtime' }) => {
+    const attach = (daemonState: Machine['daemonState'] = { status: 'running', runtimeId: 'current-runtime' },
+      machineMetadata: Machine['metadata'] = { ...metadata }) => {
       const machine = { id: target.machineId, encryptionMode: 'plain' as const,
-        metadata: null, metadataVersion: 0, daemonState, daemonStateVersion: 0 };
+        metadata: machineMetadata, metadataVersion: 0, daemonState, daemonStateVersion: 0 };
       const codec = createMachineContentCodec(machine);
       active = new ApiMachineClient('inspection-token', machine, { runtimeId: 'current-runtime' }, {
         isDaemonQuiescing: () => quiescing,
@@ -915,13 +935,6 @@ describe('daemon administrator inspection composition', () => {
       expect(publications).toBe(6);
       expect(presentRights()).toMatchObject({ hostAuthority: 'administrator',
         tailscaledOperator: { currentAuthorization: 'allowed' } });
-      // This fixture has no opened Machine metadata: unavailable is a CAS input
-      // fact, not a dependency on host reconciliation (proved independently above).
-      await expect(replacement.invokeLocalMachineAction(RPC_METHODS.MACHINE_ADMIN_ACCESS_SET, {
-        serverId: target.serverId, machineId: 'machine', expectedMetadataVersion: 0,
-        expectedAdminAccess: { version: 1, mode: 'none' }, adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field',
-      }, { rpcContext: context(RPC_METHODS.MACHINE_ADMIN_ACCESS_SET) })).resolves.toEqual({ status: 'unavailable' });
-      expect(publications).toBe(6);
       await expect(inspect(replacement, { serverId: `${target.serverId}-other`, machineId: 'machine' })).resolves.toHaveProperty('observation');
       const readsBeforeRefusal = nativeReads;
       const admitted = context();
@@ -953,6 +966,14 @@ describe('daemon administrator inspection composition', () => {
       await inspect(restarted);
       expect(presentRights(restarted)).toMatchObject({ hostAuthority: 'ordinary', rootEquivalentGroups: [],
         groupMembership: { state: 'current' } });
+      // Unopened metadata still refuses CAS without a host reconciliation.
+      const unopened = attach(undefined, null);
+      const beforeUnavailable = publications;
+      await expect(unopened.invokeLocalMachineAction(RPC_METHODS.MACHINE_ADMIN_ACCESS_SET, {
+        serverId: target.serverId, machineId: 'machine', expectedMetadataVersion: 0,
+        expectedAdminAccess: { version: 1, mode: 'none' }, adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field',
+      }, { rpcContext: context(RPC_METHODS.MACHINE_ADMIN_ACCESS_SET) })).resolves.toEqual({ status: 'unavailable' });
+      expect(publications).toBe(beforeUnavailable);
     } finally {
       await Promise.all(clients.map(client => client.shutdown()));
       home.mockRestore();

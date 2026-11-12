@@ -102,7 +102,7 @@ describe('Storage receipt through the captured UI Action Home', () => {
             daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid',
             tailscaledOperator: { authorization: 'denied' } } as const;
         const receipt = operation === 'set' ? { status: 'applied', policy: input.adminAccess, metadataVersion: 2 }
-            : { observation, checkedAt: 20 };
+            : { observation, checkedAt: 20, adminAccess: { version: 1, mode: 'none' }, metadataVersion: 1 };
         rpc.machine.mockImplementationOnce(async () => {
             controller.abort();
             return receipt;

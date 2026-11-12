@@ -26,7 +26,8 @@ const adminAccessEffect = { actionId: 'machines.setup.adminAccess.set',
     effect: { outcome: 'applied', observation: adminAccessObservation } } } as const;
 const reads = [
   { actionId: 'machines.setup.adminAccess.inspect', input: { machineId: 'selected' },
-    receipt: { observation: adminAccessObservation, checkedAt: 20 } },
+    receipt: { observation: adminAccessObservation, checkedAt: 20,
+      adminAccess: { version: 1, mode: 'none' }, metadataVersion: 1 } },
   { actionId: 'machines.processes.get', input: { machineId: 'selected', ref: 'process-ref' }, receipt: { row: null } },
   { actionId: 'machines.guard.activity.list', input: { machineId: 'selected', range: 'today' },
     receipt: { entries: [], counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 1 } },
@@ -170,7 +171,8 @@ describe('CLI captured Machine acknowledgement settlement', () => {
   });
 
   it.each([adminAccessEffect, { actionId: 'machines.setup.adminAccess.inspect', input: { machineId: 'selected' },
-    receipt: { observation: adminAccessObservation, checkedAt: 20 } }] as const)(
+    receipt: { observation: adminAccessObservation, checkedAt: 20,
+      adminAccess: { version: 1, mode: 'none' }, metadataVersion: 1 } }] as const)(
     'dispatches administrator Action $actionId to the selected daemon without a client metadata writer', async action => {
     const transport = await import('@/session/transport/rpc/machineRpc');
     const rpc = vi.spyOn(transport, 'callExactMachineRpc').mockResolvedValue(action.receipt);
