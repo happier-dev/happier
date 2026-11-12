@@ -618,7 +618,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             const current = await readNativeComposeEngine({ io: input.io, command: launch.command, prefix,
                 cwd: launch.cwd, env, signal: options?.signal });
             if (current.id !== engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation engine changed' });
-            return { engineId, run: (args, signal, inputBytes, options) =>
+            return { engineId, engineKind: current.kind, run: (args, signal, inputBytes, options) =>
                 run(args, signal, undefined, inputBytes, options?.allowTruncatedStdout) };
         },
         nativeInstances() {
@@ -1628,9 +1628,10 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                         const listed = (await run(['ps', '--all', '--no-trunc', '--filter',
                             `label=com.docker.compose.project=${projectName}`, '--format', '{{.ID}}'], request.signal)).stdout.trim().split('\n').filter(Boolean);
                         const introduced = listed.filter(id => !preexisting.includes(id));
-                        if (!introduced.length) throw error;
-                        const inspected = await run(['inspect', '--type', 'container', ...introduced], request.signal);
-                        const rows: unknown = JSON.parse(inspected.stdout);
+                        // A successful listing also proves cleanup settled when
+                        // up failed before introducing any candidate containers.
+                        const rows: unknown = introduced.length
+                            ? JSON.parse((await run(['inspect', '--type', 'container', ...introduced], request.signal)).stdout) : [];
                         if (!Array.isArray(rows) || rows.length !== introduced.length) throw error;
                         const expected = new Map<string, string>();
                         for (const row of rows) {
@@ -1647,7 +1648,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                             ownedNames: await readNativeComposeProjectVolumeNames({ projects: [projectName],
                                 run: args => run(args, request.signal) }),
                         }).filter(name => !preexistingPreviewVolumes.has(name)) : [];
-                        const removed = await removeWitnessedContainers({ ids: introduced, project: projectName, services: current.services,
+                        const removed = !introduced.length || await removeWitnessedContainers({ ids: introduced, project: projectName, services: current.services,
                             run: args => run(args, request.signal, undefined, false, authority) });
                         const volumeFailure = removed ? await settleNativeComposeVolumeRemoval({ names: freshPreviewVolumes,
                             run: args => run(args, request.signal, undefined, false, authority) }) : undefined;

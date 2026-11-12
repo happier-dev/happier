@@ -10,7 +10,7 @@ import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/o
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 
-it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
+it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
     const root = await mkdtemp(join(tmpdir(), 'happier-first-deploy-'));
     const captures = new Set<ProjectNativeEffectCaptureForHost>();
     try {
@@ -31,10 +31,13 @@ it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRe
             .createInvocation({ signal, retainCapture(capture) { captures.add(capture); } });
         const candidateController = new AbortController();
         let cancelAfterUp = false;
+        let failBeforeCreate = false;
         let removalUnproved = false;
         // Lost caller custody immediately after Docker's real OS effect. This
         // boundary interruption must not be interpreted as proven failure.
         const io = { ...realIo, async run(request: Parameters<typeof realIo.run>[0]) {
+            // Docker can refuse up before creating a candidate container.
+            if (failBeforeCreate && request.args.includes('up')) return { exitCode: 1, stdout: '', stderr: 'fixture up refused before create' };
             if (removalUnproved && ['ps', 'inspect'].includes(request.args[0]!)) return { exitCode: 1, stdout: '[]', stderr: '' };
             const output = await realIo.run(request);
             if (cancelAfterUp && request.args.includes('up')) candidateController.abort();
@@ -64,6 +67,7 @@ it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRe
         }, volumes: { app_data: {}, db_data: {} } }));
         const project = native(['app', 'db'], [image, database]);
         cancelAfterUp = mode === 'cancelled';
+        failBeforeCreate = mode === 'beforeCreate';
         const candidateSignal = mode === 'cancelled' ? candidateController.signal : signal;
         try {
             const rendered = await project.render();
@@ -73,18 +77,18 @@ it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRe
             if (mode === 'previewExisting') await docker.seedVolume(appVolume, rendered.projectName);
             const activation = machineNativeEffectAdmission.run({ operation: { operationId: 'first', kind: 'deployments.deploy', signal: candidateSignal }, keys: rendered.keys },
                 context => project.activate({ render: rendered, context, cleanupOnFailure: true, signal: candidateSignal }));
-            if (mode === 'proven' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
-                details: { reason: 'deployment_activation_failed', firstDeployCleanup: 'removed' } });
+            if (mode === 'proven' || mode === 'beforeCreate' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
+                details: { reason: mode === 'beforeCreate' ? 'native_compose_command_failed' : 'deployment_activation_failed', firstDeployCleanup: 'removed' } });
             else if (mode === 'unprovedRemoval') {
                 await expect(activation).rejects.toMatchObject({ code: 'native_failed', details: { reason: 'deployment_activation_failed' } });
                 await expect(activation).rejects.not.toMatchObject({ details: { firstDeployCleanup: 'removed' } });
             } else await expect(activation).rejects.toBeDefined();
             expect(await docker.readRunningImageConfig('app')).toBe(mode === 'cancelled' ? image.configDigest : null);
             expect(await docker.readRunningImageConfig('db')).toBe(database.configDigest);
-            expect(await docker.readVolumeNames()).toEqual((mode === 'previewFresh'
+            expect(await docker.readVolumeNames()).toEqual((mode === 'previewFresh' || mode === 'beforeCreate'
                 ? [dbVolume, 'source-postgres-data'] : [appVolume, dbVolume, 'source-postgres-data']).sort());
             const invocations = await docker.readInvocations();
-            expect(invocations.some(call => call.args[0] === 'container' && call.args[1] === 'rm')).toBe(mode !== 'cancelled');
+            expect(invocations.some(call => call.args[0] === 'container' && call.args[1] === 'rm')).toBe(mode !== 'cancelled' && mode !== 'beforeCreate');
             expect(invocations.filter(call => call.args[0] === 'container' && call.args[1] === 'rm')
                 .some(call => incumbentIds.some(id => call.args.includes(id)))).toBe(false);
             expect(invocations.some(call => call.args.includes('down') || call.args.includes('--volumes') || call.args.includes('prune'))).toBe(false);
