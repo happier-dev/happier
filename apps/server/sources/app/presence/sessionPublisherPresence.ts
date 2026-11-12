@@ -1106,7 +1106,6 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         expectedAccountId: string;
         expectedSessionId: string;
         initialProjection: unknown;
-        readLatestProjection: () => Promise<unknown>;
         operation: (authority: CurrentSessionPublisherAuthority) => Promise<T>;
     }>): Promise<RunAsProjectedCurrentPublisherResult<T>> => {
         const initialAuthority = await resolveProjectedCurrentPublisher({
@@ -1117,15 +1116,6 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         if (!initialAuthority) return { status: "unavailable" };
 
         const value = await params.operation(initialAuthority);
-        const latestProjection = await params.readLatestProjection();
-        const latestAuthority = await resolveProjectedCurrentPublisher({
-            expectedAccountId: params.expectedAccountId,
-            expectedSessionId: params.expectedSessionId,
-            projection: latestProjection,
-        });
-        if (!latestAuthority || !sameBinding(initialAuthority, latestAuthority)) {
-            return { status: "unavailable" };
-        }
         return { status: "current", value };
     };
 

@@ -849,6 +849,14 @@ Cargo bin directory to the child path while preserving existing path precedence
 and Windows `Path` spelling; this does not install a compiler during construction.
 Worker source mirrors exclude Iroh's `native/` and `native-test/` outputs so a
 later synchronization barrier preserves the worker's architecture-specific addon.
+
+The 0.3 native release profile uses panic unwinding. The native lifecycle JSON
+boundary catches operation panics before they cross the C ABI and returns the
+existing typed `unavailable` error, with a fixed message that omits the panic
+payload. Safe Rust lifecycle entries use that same boundary. Optional Iroh
+failure can therefore settle through the caller's existing unavailable path
+without terminating the daemon. This does not recover poisoned lifecycle state;
+a later explicit restart recreates that process-local state.
 Apply changed exclusions to existing mirrors through the routing producer's
 `dev-targets sync-service start --detached`; ordinary flushes use the existing
 project's rules.

@@ -4902,18 +4902,9 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             },
             timeout: vi.fn(() => ({ emitWithAck: currentEmitWithAck })),
         };
-        const refreshedCurrentTarget = {
-            ...currentTarget,
-            data: {
-                sessionPublisherAuthority: {
-                    ...currentTarget.data.sessionPublisherAuthority,
-                    committedFenceMs: 3,
-                },
-            },
-        };
         const { io, fetchSockets } = createTargetRoutingIo({
             [`rpc:user-1:${method}`]: [staleTarget, currentTarget],
-            "z-current": [refreshedCurrentTarget],
+            "z-current": [],
         });
         const caller = createFakeSocket({
             id: "caller-socket",
@@ -4929,7 +4920,6 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
                 (params.projection as { committedFenceMs?: unknown } | null)?.committedFenceMs === 2
             )),
             runAsProjectedCurrentPublisher: async <T>(params: {
-                readLatestProjection: () => Promise<unknown>;
                 operation: (authority: CurrentSessionPublisherAuthority) => Promise<T>;
             }): Promise<RunAsProjectedCurrentPublisherResult<T>> => {
                 const value = await params.operation({
@@ -4938,8 +4928,6 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
                     sessionId: "sess_1",
                     committedFence: new Date(2),
                 });
-                const latest = await params.readLatestProjection();
-                expect(latest).toMatchObject({ committedFenceMs: 3 });
                 return { status: "current" as const, value };
             },
         };
@@ -4959,7 +4947,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
 
         expect(staleEmitWithAck).not.toHaveBeenCalled();
         expect(currentEmitWithAck).toHaveBeenCalledTimes(1);
-        expect(fetchSockets).toHaveBeenCalledWith("z-current");
+        expect(fetchSockets).not.toHaveBeenCalledWith("z-current");
         expect(callback).toHaveBeenCalledWith({ ok: true, result: exactResult });
     });
 
@@ -5030,7 +5018,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         });
     });
 
-    it("reports an unknown model-transition outcome when post-effect publisher revalidation fails", async () => {
+    it("returns the applied model transition when its publisher disappears after submission", async () => {
         sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
         const method = `sess_1:${SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION}`;
         const effect = vi.fn().mockResolvedValue({ ok: true, status: "applied" });
@@ -5064,17 +5052,15 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             resolveProjectedCurrentPublisher: vi.fn(async () => null),
             isCurrentPublisherProjection: vi.fn(async () => true),
             runAsProjectedCurrentPublisher: async <T>(params: {
-                readLatestProjection: () => Promise<unknown>;
                 operation: (authority: CurrentSessionPublisherAuthority) => Promise<T>;
             }): Promise<RunAsProjectedCurrentPublisherResult<T>> => {
-                await params.operation({
+                const value = await params.operation({
                     accountId: "user-1",
                     machineId: "machine-current",
                     sessionId: "sess_1",
                     committedFence: new Date(2),
                 });
-                await params.readLatestProjection();
-                return { status: "unavailable" as const };
+                return { status: "current" as const, value };
             },
         };
 
@@ -5092,10 +5078,6 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         );
 
         expect(effect).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith({
-            ok: false,
-            error: "RPC target changed after request submission",
-            errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN,
-        });
+        expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true, status: "applied" } });
     });
 });

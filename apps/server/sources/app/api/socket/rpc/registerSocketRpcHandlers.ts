@@ -274,7 +274,7 @@ function createCurrentSessionPublisherTargetGuard(params: Readonly<{
             }
             return currentTargets.length === 1 ? currentTargets : [];
         },
-        runOperation: async ({ target, operation, readLatestTarget }) => {
+        runOperation: async ({ target, operation }) => {
             if (!params.presence) return { status: "unavailable" };
             const initialProjection = readSessionPublisherAuthorityProjection(target.data);
             if (!initialProjection || params.machineId && initialProjection.machineId !== params.machineId) return { status: "unavailable" };
@@ -282,11 +282,6 @@ function createCurrentSessionPublisherTargetGuard(params: Readonly<{
                 expectedAccountId: params.targetUserId,
                 expectedSessionId: sessionId,
                 initialProjection,
-                readLatestProjection: async () => {
-                    const latestTarget = await readLatestTarget();
-                    const projection = latestTarget ? readSessionPublisherAuthorityProjection(latestTarget.data) : null;
-                    return projection && (!params.machineId || projection.machineId === params.machineId) ? projection : null;
-                },
                 operation: async () => await operation(),
             });
         },

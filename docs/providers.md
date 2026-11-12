@@ -3019,6 +3019,10 @@ existing explicit runner restart. A next-prompt configuration is not proof
 that the running model changed. Runtime-origin drift likewise reports the
 observed model without automatically restoring a previous selection.
 
+Home validates the current publisher before dispatching a model transition.
+Once the operation returns, Home relays its exact result; a later publisher
+change does not turn a known applied switch into an unavailable outcome.
+
 At launch, Happier persists the structured model selection plus exact non-secret resolution metadata: connection revision, chosen protocol, `compatibilityFingerprint`, `bindingSecurityFingerprint`, and the materialization kind. It does not persist a transient compatibility status, a derived materialization fingerprint, or credentials in session metadata.
 
 In 0.3 development, resume continuity uses the retained runtime binding basis

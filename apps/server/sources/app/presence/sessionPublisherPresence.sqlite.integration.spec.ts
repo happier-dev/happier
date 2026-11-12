@@ -1963,13 +1963,12 @@ describe("session publisher presence on SQLite", () => {
             expectedAccountId: seeded.binding.accountId,
             expectedSessionId: seeded.binding.sessionId,
             initialProjection,
-            readLatestProjection: async () => predecessor.data.sessionPublisherAuthority,
             operation,
         })).resolves.toEqual({ status: "unavailable" });
         expect(operation).not.toHaveBeenCalled();
     });
 
-    it("suppresses a guarded result when a successor publisher wins during the effect", async () => {
+    it("returns the applied result without rediscovery when a successor publisher wins during the effect", async () => {
         const seeded = await seed();
         let now = new Date(seeded.fence.getTime() + 10);
         const presence = createSessionPublisherPresence({ now: () => now });
@@ -1997,9 +1996,8 @@ describe("session publisher presence on SQLite", () => {
             expectedAccountId: seeded.binding.accountId,
             expectedSessionId: seeded.binding.sessionId,
             initialProjection,
-            readLatestProjection: async () => predecessor.data.sessionPublisherAuthority,
             operation: effect,
-        })).resolves.toEqual({ status: "unavailable" });
+        })).resolves.toEqual({ status: "current", value: { ok: true, status: "applied" } });
         expect(effect).toHaveBeenCalledTimes(1);
     });
 
@@ -2025,7 +2023,6 @@ describe("session publisher presence on SQLite", () => {
             expectedAccountId: seeded.binding.accountId,
             expectedSessionId: seeded.binding.sessionId,
             initialProjection,
-            readLatestProjection: async () => socket.data.sessionPublisherAuthority,
             operation: async () => {
                 now = new Date(registered.committedFence.getTime() + 10);
                 const touched = await presence.touchPublisher({ socket });

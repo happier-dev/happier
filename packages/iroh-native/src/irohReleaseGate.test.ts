@@ -51,9 +51,9 @@ describe('Iroh mobile release build contract', () => {
     );
   });
 
-  it('uses abort-on-panic for release native libraries', () => {
+  it('allows native lifecycle panics to unwind into typed failure responses', () => {
     const workspaceManifest = readPackageFile('rust/Cargo.toml');
-    expect(workspaceManifest).toMatch(/\[profile\.release\][\s\S]*?panic\s*=\s*"abort"/u);
+    expect(workspaceManifest).toMatch(/\[profile\.release\][\s\S]*?panic\s*=\s*"unwind"/u);
   });
 
   it('keeps Android ABI and API declarations aligned with the Rust artifacts', () => {

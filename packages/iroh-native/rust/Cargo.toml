@@ -3,4 +3,4 @@ members = ["happier-iroh-core", "happier-iroh-native", "happier-iroh-node", "hap
 resolver = "2"
 
 [profile.release]
-panic = "abort"
+panic = "unwind"

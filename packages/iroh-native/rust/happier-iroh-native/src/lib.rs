@@ -398,8 +398,15 @@ fn next_id() -> String {
     format!("iroh-{}", state().next_id.fetch_add(1, Ordering::Relaxed))
 }
 
-fn response(value: Value) -> *mut c_char {
-    CString::new(value.to_string())
+// Catch at the lifecycle owner before a panic can cross a non-unwinding
+// host ABI. Do not expose a panic payload, which can contain private input.
+fn lifecycle_result(operation: impl FnOnce() -> Value) -> Value {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
+        .unwrap_or_else(|_| error_response("unavailable", "Iroh native lifecycle panicked"))
+}
+
+fn response(operation: impl FnOnce() -> Value) -> *mut c_char {
+    CString::new(lifecycle_result(operation).to_string())
         .expect("JSON has no NUL bytes")
         .into_raw()
 }
@@ -425,7 +432,7 @@ fn invoke_json_request(request: &str, operation: fn(*const c_char) -> Value) -> 
         Ok(request) => request,
         Err(_) => return error_response("invalid-request", "request contains a NUL byte"),
     };
-    operation(request.as_ptr())
+    lifecycle_result(|| operation(request.as_ptr()))
 }
 
 /// Copies a C UTF-8 request before returning to safe Rust.
@@ -1473,10 +1480,12 @@ pub fn start_machine_http_tunnel_with_handshake_provider_json(
     request: &str,
     handshake_provider: MachineHandshakeProvider,
 ) -> Value {
-    match serde_json::from_str::<StartMachineTunnelRequest>(request) {
-        Ok(input) => start_machine_http_tunnel_input(input, Some(handshake_provider)),
-        Err(_) => error_response("invalid-request", "request is not valid JSON"),
-    }
+    lifecycle_result(|| {
+        match serde_json::from_str::<StartMachineTunnelRequest>(request) {
+            Ok(input) => start_machine_http_tunnel_input(input, Some(handshake_provider)),
+            Err(_) => error_response("invalid-request", "request is not valid JSON"),
+        }
+    })
 }
 
 fn stop_machine_tunnel(value: *const c_char) -> Value {
@@ -1641,50 +1650,54 @@ fn begin_endpoint_shutdown(
 /// already-saturated worker pool cannot queue shutdown behind new starts. The
 /// aggregate shutdown below remains the sole cleanup/join owner.
 pub fn begin_endpoint_shutdown_json(request: &str) -> Value {
-    let input = match serde_json::from_str::<EndpointHandleRequest>(request) {
-        Ok(v) => v,
-        Err(error) => return error_response("invalid-request", error.to_string()),
-    };
-    let found = begin_endpoint_shutdown(&input).is_some();
-    json!({"ok": true, "result": {"found": found}})
+    lifecycle_result(|| {
+        let input = match serde_json::from_str::<EndpointHandleRequest>(request) {
+            Ok(v) => v,
+            Err(error) => return error_response("invalid-request", error.to_string()),
+        };
+        let found = begin_endpoint_shutdown(&input).is_some();
+        json!({"ok": true, "result": {"found": found}})
+    })
 }
 
 /// Safe JSON lifecycle entry point for the explicit process shutdown of one
 /// endpoint (and its acceptors/leases). The persistent key file is retained;
 /// identity is never rotated or deleted.
 pub fn shutdown_endpoint_json(request: &str) -> Value {
-    let input = match serde_json::from_str::<EndpointHandleRequest>(request) {
-        Ok(v) => v,
-        Err(error) => return error_response("invalid-request", error.to_string()),
-    };
-    let Some((identity, lifecycle)) = begin_endpoint_shutdown(&input) else {
-        return json!({"ok": true, "result": {"stopped": false}});
-    };
-    // Close admission before taking any resource snapshot. Endpoint shutdown
-    // also wakes outgoing Iroh connects; the per-operation cancellation arm
-    // ensures a caller that was admitted earlier settles without publishing a
-    // late handle.
-    stop_endpoint_resources(&input.endpoint_handle);
-    let stopped_before_settle = runtime().block_on(state().manager.shutdown(&identity));
-    lifecycle.wait_for_admitted();
+    lifecycle_result(|| {
+        let input = match serde_json::from_str::<EndpointHandleRequest>(request) {
+            Ok(v) => v,
+            Err(error) => return error_response("invalid-request", error.to_string()),
+        };
+        let Some((identity, lifecycle)) = begin_endpoint_shutdown(&input) else {
+            return json!({"ok": true, "result": {"stopped": false}});
+        };
+        // Close admission before taking any resource snapshot. Endpoint shutdown
+        // also wakes outgoing Iroh connects; the per-operation cancellation arm
+        // ensures a caller that was admitted earlier settles without publishing a
+        // late handle.
+        stop_endpoint_resources(&input.endpoint_handle);
+        let stopped_before_settle = runtime().block_on(state().manager.shutdown(&identity));
+        lifecycle.wait_for_admitted();
 
-    // Admitted work checks the lifecycle before publishing. Sweep again as a
-    // defensive owner-boundary invariant and close an endpoint whose bind won
-    // the manager race after the first shutdown snapshot.
-    stop_endpoint_resources(&input.endpoint_handle);
-    let stopped_after_settle = runtime().block_on(state().manager.shutdown(&identity));
-    let mut handles = state()
-        .endpoint_handles
-        .lock()
-        .expect("endpoint handle lock poisoned");
-    if handles
-        .get(&input.endpoint_handle)
-        .is_some_and(|entry| Arc::ptr_eq(&entry.lifecycle, &lifecycle))
-    {
-        handles.remove(&input.endpoint_handle);
-    }
-    let stopped = stopped_before_settle || stopped_after_settle;
-    json!({"ok": true, "result": {"stopped": stopped}})
+        // Admitted work checks the lifecycle before publishing. Sweep again as a
+        // defensive owner-boundary invariant and close an endpoint whose bind won
+        // the manager race after the first shutdown snapshot.
+        stop_endpoint_resources(&input.endpoint_handle);
+        let stopped_after_settle = runtime().block_on(state().manager.shutdown(&identity));
+        let mut handles = state()
+            .endpoint_handles
+            .lock()
+            .expect("endpoint handle lock poisoned");
+        if handles
+            .get(&input.endpoint_handle)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.lifecycle, &lifecycle))
+        {
+            handles.remove(&input.endpoint_handle);
+        }
+        let stopped = stopped_before_settle || stopped_after_settle;
+        json!({"ok": true, "result": {"stopped": stopped}})
+    })
 }
 
 fn acceptor_status_json(status: happier_iroh_core::HomeAcceptorStatus) -> Value {
@@ -1744,35 +1757,37 @@ fn get_endpoint_status(value: *const c_char) -> Value {
 }
 
 pub fn get_tunnel_status_json(request: &str) -> Value {
-    let input = match serde_json::from_str::<TunnelHandleRequest>(request) {
-        Ok(v) => v,
-        Err(error) => return error_response("invalid-request", error.to_string()),
-    };
-    let tunnels = state().tunnels.lock().expect("lease lock poisoned");
-    match tunnels.get(&input.tunnel_id) {
-        None => json!({"ok": true, "result": Value::Null}),
-        Some(lease) => {
-            let tunnel_status = lease.tunnel.status();
-            let observed_path = tunnel_status
-                .observed_path
-                .as_ref()
-                .map(|snapshot| snapshot.observed_path.as_str())
-                .unwrap_or("unknown");
-            #[cfg(feature = "test-relay-fixture")]
-            record_test_observed_path(observed_path);
-            json!({"ok": true, "result": {
-                "tunnelId": input.tunnel_id,
-                "homeServerIdentityId": lease.home_server_identity_id,
-                "runtimeOrigin": lease.runtime_origin,
-                "carrier": "iroh",
-                "observedPath": observed_path,
-                "connectionActive": tunnel_status.connection_active,
-                "streamsOpened": tunnel_status.streams_opened,
-                "startedAtMs": lease.started_at_ms,
-                "endpointHandle": lease.endpoint_handle,
-            }})
+    lifecycle_result(|| {
+        let input = match serde_json::from_str::<TunnelHandleRequest>(request) {
+            Ok(v) => v,
+            Err(error) => return error_response("invalid-request", error.to_string()),
+        };
+        let tunnels = state().tunnels.lock().expect("lease lock poisoned");
+        match tunnels.get(&input.tunnel_id) {
+            None => json!({"ok": true, "result": Value::Null}),
+            Some(lease) => {
+                let tunnel_status = lease.tunnel.status();
+                let observed_path = tunnel_status
+                    .observed_path
+                    .as_ref()
+                    .map(|snapshot| snapshot.observed_path.as_str())
+                    .unwrap_or("unknown");
+                #[cfg(feature = "test-relay-fixture")]
+                record_test_observed_path(observed_path);
+                json!({"ok": true, "result": {
+                    "tunnelId": input.tunnel_id,
+                    "homeServerIdentityId": lease.home_server_identity_id,
+                    "runtimeOrigin": lease.runtime_origin,
+                    "carrier": "iroh",
+                    "observedPath": observed_path,
+                    "connectionActive": tunnel_status.connection_active,
+                    "streamsOpened": tunnel_status.streams_opened,
+                    "startedAtMs": lease.started_at_ms,
+                    "endpointHandle": lease.endpoint_handle,
+                }})
+            }
         }
-    }
+    })
 }
 
 fn get_tunnel_status(value: *const c_char) -> Value {
@@ -1788,41 +1803,41 @@ fn get_tunnel_status(value: *const c_char) -> Value {
 
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_create_endpoint_json(value: *const c_char) -> *mut c_char {
-    response(create_endpoint(value))
+    response(|| create_endpoint(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_start_home_acceptor_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(start_home_acceptor(value))
+    response(|| start_home_acceptor(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_stop_home_acceptor_json(value: *const c_char) -> *mut c_char {
-    response(stop_home_acceptor(value))
+    response(|| stop_home_acceptor(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_ensure_home_tunnel_json(value: *const c_char) -> *mut c_char {
-    response(ensure_home_tunnel(value))
+    response(|| ensure_home_tunnel(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_release_home_tunnel_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(release_home_tunnel(value))
+    response(|| release_home_tunnel(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_shutdown_endpoint_json(value: *const c_char) -> *mut c_char {
-    response(shutdown_endpoint(value))
+    response(|| shutdown_endpoint(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_get_endpoint_status_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(get_endpoint_status(value))
+    response(|| get_endpoint_status(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_get_tunnel_status_json(value: *const c_char) -> *mut c_char {
-    response(get_tunnel_status(value))
+    response(|| get_tunnel_status(value))
 }
 
 #[cfg(feature = "test-relay-fixture")]
@@ -1830,7 +1845,7 @@ pub extern "C" fn happier_iroh_native_get_tunnel_status_json(value: *const c_cha
 pub extern "C" fn happier_iroh_native_test_force_direct_only_json(
     _value: *const c_char,
 ) -> *mut c_char {
-    response(force_direct_only_for_tests())
+    response(|| force_direct_only_for_tests())
 }
 
 #[cfg(feature = "test-relay-fixture")]
@@ -1838,7 +1853,7 @@ pub extern "C" fn happier_iroh_native_test_force_direct_only_json(
 pub extern "C" fn happier_iroh_native_test_force_relay_only_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(force_relay_only_for_tests(value))
+    response(|| force_relay_only_for_tests(value))
 }
 
 #[cfg(feature = "test-relay-fixture")]
@@ -1846,7 +1861,7 @@ pub extern "C" fn happier_iroh_native_test_force_relay_only_json(
 pub extern "C" fn happier_iroh_native_test_restore_automatic_json(
     _value: *const c_char,
 ) -> *mut c_char {
-    response(restore_automatic_for_tests())
+    response(|| restore_automatic_for_tests())
 }
 
 /// Synchronous observed-path read for the test-only controller. This symbol
@@ -1867,49 +1882,49 @@ pub fn happier_iroh_native_test_relay_url() -> Option<String> {
 pub extern "C" fn happier_iroh_native_start_machine_acceptor_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(start_machine_acceptor(value))
+    response(|| start_machine_acceptor(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_stop_machine_acceptor_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(stop_machine_acceptor(value))
+    response(|| stop_machine_acceptor(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_get_machine_acceptor_status_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(get_machine_acceptor_status(value))
+    response(|| get_machine_acceptor_status(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_start_machine_tunnel_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(start_machine_tunnel(value))
+    response(|| start_machine_tunnel(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_start_machine_http_tunnel_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(start_machine_http_tunnel(value))
+    response(|| start_machine_http_tunnel(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_stop_machine_tunnel_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(stop_machine_tunnel(value))
+    response(|| stop_machine_tunnel(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_wait_machine_tunnel_closed_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(wait_machine_tunnel_closed(value))
+    response(|| wait_machine_tunnel_closed(value))
 }
 #[no_mangle]
 pub extern "C" fn happier_iroh_native_get_machine_tunnel_status_json(
     value: *const c_char,
 ) -> *mut c_char {
-    response(get_machine_tunnel_status(value))
+    response(|| get_machine_tunnel_status(value))
 }
 
 #[no_mangle]
@@ -2101,6 +2116,36 @@ mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_panic_settles_as_unavailable() {
+        const CHILD: &str = "HAPPIER_IROH_PANIC_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // A separate test process keeps the deliberately poisoned owner
+            // isolated from every other lifecycle test, and detects aborts.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .current_dir(std::env::temp_dir())
+                .args(["--exact", "tests::lifecycle_panic_settles_as_unavailable", "--nocapture"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "native lifecycle panic killed its host: {}",
+                String::from_utf8_lossy(&output.stderr));
+            return;
+        }
+        let _ = std::thread::spawn(|| {
+            let _guard = state().endpoint_handles.lock().unwrap();
+            panic!("poison the endpoint owner for the panic-boundary regression");
+        }).join();
+        let request = CString::new(r#"{"endpointHandle":"unknown"}"#).unwrap();
+        let raw = happier_iroh_native_get_endpoint_status_json(request.as_ptr());
+        let result: Value = serde_json::from_str(unsafe { CStr::from_ptr(raw) }.to_str().unwrap()).unwrap();
+        happier_iroh_native_free_string(raw);
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["error"]["code"], "unavailable");
+        let direct = begin_endpoint_shutdown_json(request.to_str().unwrap());
+        assert_eq!(direct["error"]["code"], "unavailable");
+    }
 
     #[test]
     fn lifecycle_dispatch_uses_one_autonomous_network_worker() {
