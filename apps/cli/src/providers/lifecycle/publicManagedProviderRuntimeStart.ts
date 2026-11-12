@@ -1,3 +1,4 @@
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { constants } from 'node:os';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -43,12 +44,14 @@ export type PublicManagedProviderRuntimeStartupFailure = Readonly<{
   phase: 'runtime_start';
   errorClass: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>['errorClass'];
   errorCode?: string;
+  message?: string;
+  stderrLine?: string;
   exitCode?: number;
   signal?: string;
 }>;
 
 // Public ManagedServices translates supervisor failures into this host-owned
-// vocabulary. PluginError's arbitrary code/message/details are not log data.
+// vocabulary. Diagnostic prose passes through the native failure projection.
 const MANAGED_START_ERROR_CODES: ReadonlySet<string> = new Set([
   'plugin_managed_service_establishment_failed', 'plugin_managed_service_health_timeout',
   'plugin_managed_service_spec_invalid', 'plugin_managed_service_unavailable',
@@ -71,8 +74,13 @@ function readStartupFailure(error: unknown): PublicManagedProviderRuntimeStartup
     ? establishment : null;
   const exitCode = terminal && 'exitCode' in terminal ? terminal.exitCode : undefined;
   const signal = terminal && 'signal' in terminal ? terminal.signal : undefined;
+  const message = readNativeStartupFailureDetail(cause).providerErrorMessage;
+  const stderrLine = terminal && 'lastStderrLine' in terminal
+    ? readNativeStartupFailureDetail(terminal.lastStderrLine).providerErrorMessage : undefined;
   return Object.freeze({
     phase: 'runtime_start', errorClass: diagnostic.errorClass,
+    ...(message ? { message } : {}),
+    ...(stderrLine ? { stderrLine } : {}),
     ...(errorCode ? { errorCode } : {}),
     ...(typeof exitCode === 'number' && Number.isSafeInteger(exitCode) ? { exitCode } : {}),
     ...(typeof signal === 'string' && Object.hasOwn(constants.signals, signal) ? { signal } : {}),

@@ -69,9 +69,9 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
       })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       expect(diagnostic).toHaveBeenCalledWith('[Provider] Managed runtime start refused', {
         startFailureCode: 'managed_provider_start_failed',
-        startupFailure: { phase: 'runtime_start', errorClass: 'Error' },
+        startupFailure: { phase: 'runtime_start', errorClass: 'Error', message: expect.stringContaining('Worker must not start') },
       });
-      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('Worker must not start');
+
     } finally { await fixture.cleanup(); }
   });
 });
