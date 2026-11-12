@@ -3263,6 +3263,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     });
 
     it('executes declared Voice account operations through the provider runtime owner', async () => {
+        const manifest = readExampleManifest('public-authoring');
         const voiceModule = await import(pathToFileURL(
             join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
         ).href) as Readonly<{
