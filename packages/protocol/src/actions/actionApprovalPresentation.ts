@@ -995,7 +995,7 @@ export function describeApprovalActionFields(input: Readonly<{
     const place = reachPlace ? ReachPlaceV1Schema.safeParse(values[0]) : null;
     const selectedOptions: readonly Pick<ActionInputOption, 'label' | 'labelKey'>[] | undefined = option ? [option]
       : (field.widget === 'multiselect' || field.widget === 'text_list') && field.options
-        ? values.flatMap(value => Array.isArray(value) ? value : [value]).map(value =>
+        ? values.flatMap(value => value === undefined ? [] : Array.isArray(value) ? value : [value]).map(value =>
           field.options?.find(candidate => candidate.value === value) ?? { label: String(value) }) : undefined;
     const choices = selectedOptions?.map(option => option.label).join(', ');
     const value = place?.success && place.data.t === 'allMachines' ? 'Everywhere'

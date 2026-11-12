@@ -23,6 +23,19 @@ import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/wo
 import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
 
 describe('approval field presentation', () => {
+  it('omits unset optional choices while retaining supplied selections', () => {
+    for (const actionArgs of [{}, { states: undefined }]) {
+      const presentation = describeApprovalRequestFields({ actionId: 'workflow.run.list', actionArgs });
+      expect(presentation.unrepresentable).toBeNull();
+      expect(presentation.rows.find(row => row.path === 'states')).toBeUndefined();
+    }
+    const selected = describeApprovalRequestFields({ actionId: 'workflow.run.list', actionArgs: { states: ['running'] } });
+    expect(selected.unrepresentable).toBeNull();
+    expect(selected.rows).toContainEqual(expect.objectContaining({
+      kind: 'value', path: 'states', value: expect.stringMatching(/^running$/i),
+    }));
+  });
+
   it('names a nested Voice Saved Secret binding by its retained reference', () => {
     const actionArgs = {
       anchor: 'voiceConversations.provider.acme.voice/realtime.credential',
