@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
 import { isAbsolute } from 'node:path';
+import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 
 import type {
     ExecService,
@@ -150,7 +151,11 @@ export type ProjectNativeContainerObservation = Readonly<{
 /** Host-only borrowed transport from the admitted native generation. */
 export type ProjectNativeDockerPort = Readonly<{
     engineId: string;
-    run(args: readonly string[], signal?: AbortSignal, inputBytes?: Uint8Array): Promise<Readonly<{ exitCode: number; stdout: string; stderr?: string }>>;
+    engineKind?: NativeDockerEngineFacts['kind'];
+    run(args: readonly string[], signal?: AbortSignal, inputBytes?: Uint8Array,
+        options?: Readonly<{ allowTruncatedStdout?: true }>): Promise<Readonly<{
+            exitCode: number; stdout: string; stderr?: string; stdoutTruncated?: boolean;
+        }>>;
 }>;
 
 /** Same-capture effective structural facts, never raw interpolated config or environment. */
@@ -170,7 +175,8 @@ export type ProjectNativeAccountingResult =
 export type ProjectBuiltinNativeLifecycle = Readonly<{
     inspect(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;
     admitServiceCommand?(command: ServiceCommandV1, options: Readonly<{ context: MachineNativeEffectContext;
-        keys: readonly MachineNativeEffectKey[]; signal?: AbortSignal; assertCurrent(): Promise<void> }>): Promise<AdmittedServiceExecContextV1>;
+        keys: readonly MachineNativeEffectKey[]; signal?: AbortSignal; environmentOverrides?: Readonly<Record<string, string>>;
+        sensitiveValues?: readonly string[]; assertCurrent(): Promise<void> }>): Promise<AdmittedServiceExecContextV1>;
     /** Read-only native launch codec; the host retains its lease until shell-session settlement. */
     shell?(options?: Readonly<{ signal?: AbortSignal }>): Promise<HostAuthorizedPluginExecLaunch>;
     start?(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;

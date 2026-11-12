@@ -25,6 +25,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/projectSetupExecution';
+import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
@@ -225,9 +226,12 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const io = createProjectNativeIo().environmentIo.createInvocation({ signal, retainCapture: custody.retain });
                 const profile = { io, command: 'docker', prefix: [], cwd: homedir(), env, signal };
                 const engine = await readNativeComposeEngine(profile);
-                docker = { engineId: engine.id, run: (args, nativeSignal, inputBytes) => io.run({ command: profile.command,
+                docker = { engineId: engine.id, engineKind: engine.kind, run: (args, nativeSignal, inputBytes) => io.run({ command: profile.command,
                     args, cwd: profile.cwd, env: profile.env, signal: nativeSignal ?? signal,
                     ...(inputBytes ? { stdin: inputBytes } : {}) }) };
+            }
+            if (presentMachineAuthorityV1({ engine: docker.engineKind }).deployment.domains === 'unavailableDockerDesktop') {
+                return refuse('unsupported_platform');
             }
             if (job.kind === 'domain' && job.capture.dockerEngineId !== docker.engineId) return refuse('target_mismatch');
             const run = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
