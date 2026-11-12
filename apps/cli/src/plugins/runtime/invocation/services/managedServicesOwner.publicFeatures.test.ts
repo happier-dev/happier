@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type {
     ManagedExecutableRef,
@@ -340,6 +341,28 @@ describe('managed-services SVC09 public feature completeness', () => {
     });
 
     describe('fixed and allocated port collision policy', () => {
+        it.each(['daemon', 'runner'] as const)('retains the typed establishment cause without private content for %s custody', async placement => {
+            // The process boundary reproduces the native preparation refusal; orchestration stays real.
+            const harness = createPublicHarness({ placement, exec: createExec({ spawn: async () => {
+                throw new PluginError({ code: 'outside_root', message: 'private credential',
+                    retryable: false, details: { authorization: 'private credential' } });
+            } }) });
+            try {
+                const error: unknown = await harness.services.supervise(portSpec(
+                    'typed-establishment-cause', { kind: 'fixed', port: 43_131, onCollision: 'fail' }, '127.0.0.1',
+                )).then(handle => handle.waitUntilHealthy()).catch((error: unknown) => error);
+                expect(error).toMatchObject({ code: 'plugin_managed_service_establishment_failed',
+                    cause: { code: 'outside_root', retryable: false } });
+                expect(error).toBeInstanceOf(PluginError);
+                if (!(error instanceof PluginError)) throw error;
+                expect(String(error.cause)).not.toContain('private credential');
+                expect(error.cause).toHaveProperty('details', undefined);
+                expect(JSON.stringify(error.cause)).not.toContain('private credential');
+            } finally {
+                await harness.owner.dispose();
+            }
+        });
+
         type SpawnSpec = Extract<
             ManagedServiceSpec,
             Readonly<{ mode: Readonly<{ kind: 'spawn' }> }>

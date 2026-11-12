@@ -404,8 +404,12 @@ function translateError(error: unknown): never {
         const failure = LocalServiceEstablishmentFailureV1Schema.safeParse(error.details && typeof error.details === 'object'
             && !Array.isArray(error.details) && 'establishmentFailure' in error.details
             ? error.details.establishmentFailure : undefined);
+        // Repeated presentation keeps the original typed refusal without copying private content.
+        const cause = error.code === code && isPluginError(error.cause) ? error.cause : error;
         throw new PluginError({ code, message: 'Managed service establishment failed',
-            ...(failure.success ? { details: { establishmentFailure: failure.data } } : {}) });
+            ...(failure.success ? { details: { establishmentFailure: failure.data } } : {}) }, {
+            cause: new PluginError({ code: cause.code, retryable: cause.retryable }),
+        });
     }
     throw new PluginError({
         code,
