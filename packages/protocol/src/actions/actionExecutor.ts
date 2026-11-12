@@ -1,3 +1,4 @@
+import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
@@ -74,7 +75,7 @@ import { isMachineSetupPlanOrApplyActionIdV1 } from '../machines/managed/actionI
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { hasPendingDeploymentBindingSelectionV1 } from '../deployments/deploymentBindingSelectionNarrowing.js';
 import { withoutClientActionInput } from './clientActionInput.js';
-import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation } from './invocationAuthority.js';
+import { isPresentUserHostInvocation } from './invocationAuthority.js';
 import { ReviewFindingsApplyInputV1Schema } from '../reviews/reviewApplyV1.js';
 import type { ReviewCommentV1 } from '../reviews/comments/v1.js';
 import { buildAcceptedReviewFindingsForVerifyV1,
@@ -107,7 +108,7 @@ import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAc
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema } from '../runtime/input/structuredInputV1.js';
 import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../sessions/creation/sessionSpawnNewResultV1.js';
-import { isSessionStopConfirmed, SessionStopResultSchema, SessionArchiveResultSchema, SessionArchiveActionInputV1Schema, SessionArchiveActionResultV1Schema, type SessionArchiveReportOutcomeV1 } from '../sessions/control/contract.js';
+import { SessionArchiveResultSchema, SessionArchiveActionInputV1Schema, SessionArchiveActionResultV1Schema, type SessionArchiveReportOutcomeV1 } from '../sessions/control/contract.js';
 import { readSessionManagerSessionIdV1 } from '../sessions/follow/sessionManagerV1.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../sessions/listing/query.js';
 import { bindActionSessionTargetOperands, previewActionSessionTargets, readActionSessionTargetField, readActionSessionTargetOperands, replaceActionSessionTargetField, resolveActionSessionAddress, resolveActionSessionTargets } from './executor/sessionTargets.js';
@@ -2272,12 +2273,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const stopThenArchiveSession = async (sessionId: string, childContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
       const stopped = await executeHostChild('session.stop', { sessionId }, childContext);
       if (!stopped.ok || isDeferredApprovalResult(stopped)) return stopped;
-      const stop = SessionStopResultSchema.safeParse(stopped.result);
-      if (!stop.success || stop.data.sessionId !== sessionId || !isSessionStopConfirmed(stop.data)) {
-        const native = readRecord(stopped.result);
-        const code = readNonEmptyString(native.code) ?? 'session_stop_unconfirmed';
-        return { ok: false, errorCode: code, error: readNonEmptyString(native.message) ?? code };
-      }
+      const stopFailure = readSessionStopConfirmationFailure(sessionId, stopped.result);
+      if (stopFailure) return stopFailure;
       return await executeHostChild('session.archive', { sessionId, alsoArchiveReports: false }, childContext);
     };
     const existingAdmission = options?.prepared;
@@ -3175,6 +3172,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Known children's explicit Require belongs to this parent review. Native
     // confirmation answers defaults; it cannot hide that deliberate choice.
     let childReviewRequired = childrenPreparation.reviewRequired;
+    const inputRequired = isNativeSecretFillAction(actionId)
+      || spec.approvalPolicy?.computerConsent === true && computerSelection?.approvalDisplay.requiresTargetSelection === true
+      || actionId === 'deployments.bindings.set' && hasPendingDeploymentBindingSelectionV1(admittedInput);
+    const preparedReviewRequired = discussionDraftReviewRequired || requiredHandoffTargetApproval !== null;
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const resolveBaseApprovalRouting = (executionContext: ActionExecutorContext,
       approvedOperation?: Pick<NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>, 'parent' | 'steps'> | null) => {
@@ -3187,15 +3188,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         input: admittedInput,
         context,
         settings: context.actionsSettings,
-        reviewAdmitted: reviewAdmitted && !childReviewRequired,
+        // Input-only in-flow consent answers its designed review; a newly discovered
+        // mandatory consequence still needs this owner's exact carried review.
+        reviewAdmitted: reviewAdmitted && !childReviewRequired
+          && (!preparedReviewRequired || existingAdmission?.reviewAdmitted === true || confirmedReviewDigest !== undefined),
         childReviewRequired,
+        reviewRequired: preparedReviewRequired,
+        inputRequired,
         ...(approvalScope ? { approvalScope } : {}),
         ...(approvedOperation ? { approvedOperation } : {}),
         ...(sharedRequesterEffect ? { defaultConfirmation: true } : {}),
         ...(retainHostOperationApproval ? { retainHostOperationApproval: true } : {}),
         ...(computerSelection ? { computerConsentGranted: computerSelection.consentGranted } : {}),
         ...(contextualSafety === undefined ? {} : { defaultSafety: contextualSafety }),
-        ...(contextualUiConfirmation === undefined ? {} : { defaultUiConfirmation: contextualUiConfirmation }),
+        ...(widgetNetworkChange ? { defaultUiConfirmation: contextualSafety === 'danger' }
+          : contextualUiConfirmation === undefined ? {} : { defaultUiConfirmation: contextualUiConfirmation }),
         // Pass the raw policy-hook result through (boolean | undefined). When the hook is unwired,
         // `undefined` propagates so `resolveActionApprovalRouting` applies its centralized fail-safe
         // default instead of coercing an unwired dependency to "no approval" here. (F7)
@@ -3259,22 +3266,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const errorCode = mutation.status === 'conflict' ? 'version_mismatch' : 'artifact_organization_unavailable';
       return { ok: false, errorCode, error: errorCode };
     }
-    const confidentialChoiceRequired = isNativeSecretFillAction(actionId) || missingSecretPaths.length > 0;
-    // A consent waiver cannot supply the person's missing binding selection.
-    const deploymentBindingChoiceRequired = actionId === 'deployments.bindings.set'
-      && hasPendingDeploymentBindingSelectionV1(admittedInput);
-    if (confidentialChoiceRequired && ctx.bypassApprovals) {
+    if (inputRequired && isNativeSecretFillAction(actionId) && ctx.bypassApprovals) {
       return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
     }
-    const approvalRouting: ActionApprovalRoutingDecision = confidentialChoiceRequired || discussionDraftReviewRequired || deploymentBindingChoiceRequired
-      ? { required: true, flow: 'deferred' as const, result: 'required' as const }
-      : requiredHandoffTargetApproval
-      ? {
-          required: true,
-          flow: 'deferred' as const,
-          result: 'required' as const,
-        }
-      : requiredDirectoryApproval && baseApprovalRouting.required
+    const approvalRouting: ActionApprovalRoutingDecision = requiredDirectoryApproval && baseApprovalRouting.required
       ? { ...baseApprovalRouting, result: 'required' as const }
       : baseApprovalRouting;
     // The one approval builder: an approval request, the native confirmation, and a review this host carries back.
@@ -3287,6 +3282,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
       ...(deploymentReview === undefined ? {} : { deploymentReview }),
       ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+      ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
       executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
       ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
       ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
@@ -3300,17 +3296,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(review ? { review: projectNativeJsonValueForTransport({ actionArgs: review.actionArgs ?? null, preview: review.preview ?? null }),
           reviewDigest: computeActionReviewDigestV1(actionId, review) } : {}),
       } } : {}) });
-    const carriesOwnReview = ctx.surface === 'ui' && !isApprovalAction
-      && (isPresentUserHostInvocation(ctx) || isHomeAdmittedPresentUserHostInvocation(ctx, actionId));
+    const carriesOwnReview = approvalRouting.uiConfirmationRequired === true;
     const noConfirmationPresenter = !deps.presentUserActionConfirmation || ctx.interactivePresentation === 'unavailable';
     // Only carried-review confirmations require this comparison. Existing in-flow confirmations
     // already passed the input-bound consent owner and need no receiving-host review round trip.
-    if (noConfirmationPresenter && confirmedReviewDigest !== undefined) {
+    if (confirmedReviewDigest !== undefined) {
       // The person confirmed one exact review; changed consequences ask again with the fresh review.
       const review = await prepareCurrentApproval();
       if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       if ('ok' in review) return review;
       if (computeActionReviewDigestV1(actionId, review) !== confirmedReviewDigest) return reviewRefusal(review);
+      if (requiredHandoffTargetApproval) ctx = { ...ctx, handoffTargetReplacementApproval: requiredHandoffTargetApproval };
     }
     if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction
       && (ctx.interactivePresentation === 'unavailable' || carriesOwnReview && noConfirmationPresenter)) {
@@ -3333,6 +3329,29 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // rather than reclassifying contextual effects from their declaration.
     const reviewClassification = options?.reviewOnly
       ? { safety: contextualSafety ?? spec.safetyForInput?.(admittedInput) ?? spec.safety } : {};
+    const retainPreparedAdmission = (input: unknown, context: ActionExecutorContext): PreparedCoreAdmission => ({
+      actionId, input, context,
+      ...(contextualSafety ? { safety: contextualSafety } : {}),
+      ...reviewClassification,
+      ...(hostInternal ? { hostInternal: true } : {}),
+      ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
+      ...(approvalScope ? { approvalScope } : {}),
+      ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),
+      ...(memoryAdmission ? { memoryAdmission } : {}),
+      ...(visualAdmission ? { visualAdmission } : {}),
+      ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
+      ...(memoryAdmission && options?.dispatchImmediately ? { memoryAdmissionAtExecution: true as const } : {}),
+      ...(deploymentReview === undefined ? {} : { deploymentReview }),
+      ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+      ...(observePendingOperation ? { observePendingOperation } : {}),
+      ...(childPolicies ? { hostReviewedChildPolicies: childPolicies } : {}),
+      ...(admittedReviewedChild ? { admittedReviewedChild: true as const } : {}),
+      ...(executeAdmittedAction ? { executeAdmittedAction } : {}),
+      ...(prepareExecutionContext ? { prepareExecutionContext } : {}),
+      ...(reviewAdmitted ? { reviewAdmitted: true as const } : {}),
+      semanticInput,
+      ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
+    });
 
     if (options?.prepareOnly && options.reviewOnly && !isApprovalAction && approvalRouting.required) {
       // This is a review projection, not an admitted effect. Its ordinary run
@@ -3359,53 +3378,44 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             { surface: widgetTarget, instanceId: added.instance.id }, added.instance, ctx);
           if (refusal && !isWidgetAdmissionUndecidableHereV1(refusal)) return refusal;
         }
-        if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting
-          && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && !ctx.bypassApprovals
-          && ctx.presentUserConfirmation?.actionId !== actionId && deps.presentUserActionConfirmation) {
+        if (approvalRouting.uiConfirmationRequired && deps.presentUserActionConfirmation) {
           const confirmedContext = { ...ctx, presentUserConfirmation: { actionId } };
-          // The policy owner consumes the completed native product review.
-          const confirmedRouting = resolveBaseApprovalRouting(confirmedContext);
-          if (!confirmedRouting.required && !confirmedRouting.uiConfirmationRequired) {
-            const confirm = deps.presentUserActionConfirmation;
-            return ready({ actionId, input: admittedInput, context: ctx,
-              ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
-            }, async () => {
-              if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-              const policyReview = await prepareCurrentApproval();
-              if (!policyReview) {
-                const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
-                return classifyExecutionRunStartPreDispatchFailure(actionId, { ok: false, errorCode, error: errorCode });
-              }
-              if ('ok' in policyReview) return policyReview;
-              const confirmationInput = policyReview.actionArgs;
-              const pluginInstallReview = actionId === 'plugins.install'
-                ? readPluginInstallApprovalPendingReview(policyReview.preview) : null;
-              const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
-              if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-              if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
-              // Review projections omit live-only operands. Keep execution on
-              // the admitted invocation, just as blocking approvals do.
-              const executionInput = spec.approvalInputCustody === 'live_only' ? admittedInput : confirmationInput;
-              const executionContext = { ...confirmedContext,
-                ...(pluginInstallReview ? { approvedActionReplay: { pluginInstallReview } } : {}),
-                ...(ctx.actionRequestId ? {
-                  presentUserApproval: recordPresentUserApprovalV1({ actionId, input: executionInput,
-                    requestId: ctx.actionRequestId, requestSurface: ctx.surface,
-                    ...(ctx.runtimeAccountId ? { decidingAccountId: ctx.runtimeAccountId } : {}) }),
-                } : {}) };
-              // A visual copy is already materialized by this invocation. Retain
-              // that admission across native review, as prepared dispatch does;
-              // submitting its host-owned item as fresh caller input is invalid.
-              const reviewedVisual = visualAdmission ? {
-                actionId, input: executionInput, context: executionContext, semanticInput, visualAdmission,
-                ...(contextualSafety ? { safety: contextualSafety } : {}),
-                ...(approvalScope ? { approvalScope } : {}),
-                ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
-              } satisfies PreparedCoreAdmission : undefined;
-              return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : executionInput,
-                executionContext, true, legacyMetadataLabel, reviewedVisual);
-            });
-          }
+          const confirm = deps.presentUserActionConfirmation;
+          return ready({ actionId, input: admittedInput, context: ctx,
+            ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
+          }, async () => {
+            if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            const policyReview = await prepareCurrentApproval();
+            if (!policyReview) {
+              const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
+              return classifyExecutionRunStartPreDispatchFailure(actionId, { ok: false, errorCode, error: errorCode });
+            }
+            if ('ok' in policyReview) return policyReview;
+            const confirmationInput = policyReview.actionArgs;
+            const pluginInstallReview = actionId === 'plugins.install'
+              ? readPluginInstallApprovalPendingReview(policyReview.preview) : null;
+            const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
+            if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
+            // Review projections omit live-only operands. Keep execution on
+            // the admitted invocation, just as blocking approvals do.
+            const executionInput = spec.approvalInputCustody === 'live_only' ? admittedInput : confirmationInput;
+            const executionContext = { ...confirmedContext,
+              ...(pluginInstallReview ? { approvedActionReplay: { pluginInstallReview } } : {}),
+              ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
+              ...(requiredDirectoryApproval ? { sessionCreationDirectoryApproval: requiredDirectoryApproval } : {}),
+              ...(ctx.actionRequestId ? {
+                presentUserApproval: recordPresentUserApprovalV1({ actionId, input: executionInput,
+                  requestId: ctx.actionRequestId, requestSurface: ctx.surface,
+                  reviewDigest: computeActionReviewDigestV1(actionId, policyReview),
+                  ...(ctx.runtimeAccountId ? { decidingAccountId: ctx.runtimeAccountId } : {}) }),
+              } : {}) };
+            // Native confirmation and prepared dispatch retain the same admitted facts.
+            // Re-entering as fresh caller input would discard resolved consequences and choices.
+            const reviewedAdmission = { ...retainPreparedAdmission(executionInput, executionContext), reviewAdmitted: true as const };
+            return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : executionInput,
+              executionContext, true, legacyMetadataLabel, reviewedAdmission);
+          });
         }
         // A product review cannot fall through to an agent-approval Artifact
         // when this invocation has no mounted UI presenter.
@@ -3705,31 +3715,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (options?.prepareOnly) {
-        return ready({
-          actionId,
-          input: admittedInput,
-          context: ctx,
-          ...(contextualSafety ? { safety: contextualSafety } : {}),
-          ...reviewClassification,
-          ...(hostInternal ? { hostInternal: true } : {}),
-          ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
-          ...(approvalScope ? { approvalScope } : {}),
-          ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),
-          ...(memoryAdmission ? { memoryAdmission } : {}),
-          ...(visualAdmission ? { visualAdmission } : {}),
-          ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
-          ...(memoryAdmission && options?.confirmUiDefault ? { memoryAdmissionAtExecution: true as const } : {}),
-          ...(deploymentReview === undefined ? {} : { deploymentReview }),
-          ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
-          ...(observePendingOperation ? { observePendingOperation } : {}),
-          ...(childPolicies ? { hostReviewedChildPolicies: childPolicies } : {}),
-          ...(admittedReviewedChild ? { admittedReviewedChild: true as const } : {}),
-          ...(executeAdmittedAction ? { executeAdmittedAction } : {}),
-          ...(prepareExecutionContext ? { prepareExecutionContext } : {}),
-          ...(reviewAdmitted ? { reviewAdmitted: true as const } : {}),
-          semanticInput,
-          ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
-        });
+        return ready(retainPreparedAdmission(admittedInput, ctx));
       }
 
       // Preparation may identify an existing invocation, but observing it is
@@ -4986,10 +4972,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const stopped = await executeHostChild('session.stop', { sessionId: owned.sessionId }, { ...ctx,
             sessionTargetsV1: { actionId: 'session.stop', field: 'sessionId', targets: exactTarget, selector: false } });
           if (!stopped.ok || isDeferredApprovalResult(stopped)) return stopped;
-          const stop = SessionStopResultSchema.safeParse(stopped.result);
-          if (!stop.success || !isSessionStopConfirmed(stop.data)) {
-            return { ok: false, errorCode: 'session_stop_unconfirmed', error: 'session_stop_unconfirmed' };
-          }
+          const stopFailure = readSessionStopConfirmationFailure(owned.sessionId, stopped.result);
+          if (stopFailure) return stopFailure;
           const archived = await executeHostChild('session.archive', { sessionId: owned.sessionId }, { ...ctx,
             sessionTargetsV1: { actionId: 'session.archive', field: 'sessionId', targets: exactTarget, selector: false } });
           if (!archived.ok || isDeferredApprovalResult(archived)) return archived;
@@ -6674,7 +6658,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       if (actionId === 'approval.request.decide') {
         const delegatedHostDecision = resolveHostStampedAuthority(ctx) !== 'present_user'
-          && (ctx.surface === 'agent' || ctx.surface === 'mcp') && !ctx.externalActionCredential;
+          && (ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'cli') && !ctx.externalActionCredential;
         // Decisions cannot request another approval. Only an explicit persisted
         // waiver delegates ordinary decisions; bypass/replay hints never do.
         if (delegatedHostDecision && (!ctx.actionsSettings
@@ -7303,7 +7287,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     input: unknown,
     context?: ActionExecutorContext,
     hostInternal = false,
-    confirmUiDefault = false,
+    dispatchImmediately = false,
     preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
   ): Promise<PrivatePrepareResult> => {
     const normalizedContext = normalizeActionCallerContext(context ?? {});
@@ -7388,7 +7372,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx,
         false,
         undefined,
-        { prepareOnly: true, hostInternal, confirmUiDefault,
+        { prepareOnly: true, hostInternal, dispatchImmediately,
           ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
           ...(preparedDiscussionPolicy !== undefined ? { discussionPublicationPolicy: preparedDiscussionPolicy } : {}) },
       ));
@@ -7496,7 +7480,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ctx,
       true,
       undefined,
-      { prepareOnly: true, hostInternal, confirmUiDefault, admittedInputSchema: spec.inputSchema,
+      { prepareOnly: true, hostInternal, dispatchImmediately, admittedInputSchema: spec.inputSchema,
         ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
         ...(preparedDiscussionPolicy !== undefined && readRecord(parsedSemanticInput.data).discussionId === originalDiscussionId
           && (ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
@@ -7543,11 +7527,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     input: unknown,
     context?: ActionExecutorContext,
     hostInternal = false,
-    confirmUiDefault = false,
+    dispatchImmediately = false,
     preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
   ): Promise<PrivatePrepareResult> => {
     try {
-      return await prepareInvocationCore(actionId, input, context, hostInternal, confirmUiDefault, preparationOptions);
+      return await prepareInvocationCore(actionId, input, context, hostInternal, dispatchImmediately, preparationOptions);
     } catch (error) {
       if (error instanceof ActionCatalogUnavailableError) {
         return settlePrepareResult(actionId, { ok: false, ...normalizeActionExecutorThrownError(error) });

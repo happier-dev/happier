@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -13,6 +13,13 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import tweetnacl from 'tweetnacl';
 
+// Native dialog boundary: the person confirms Delete; Action admission stays real.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true, spies: { show: config => {
+    const props = config.props as { onAnswer(confirmed: boolean): void };
+    queueMicrotask(() => props.onAnswer(true));
+    return 'stop-delete-review';
+} } }).module);
+
 // Keep Account admission, key hydration, Sync, store and Stop real below HTTP/Socket.IO.
 const boundary = await (await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')).installSessionOpsNetworkBoundary();
 const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
@@ -26,7 +33,9 @@ afterEach(() => { storage.setState(initial, true); });
 afterAll(async () => { await resetServerReachabilitySupervisors(); await boundary.dispose(); });
 
 describe('cold Workflow Session Stop composition', () => {
-    it.each(['plain', 'legacy', 'dataKey'] as const)('records the hold and stops an unopened Workflow Session (%s credentials)', async kind => {
+    it.each((['plain', 'legacy', 'dataKey'] as const).flatMap(kind => [
+        { kind, unavailable: false }, { kind, unavailable: true },
+    ]))('settles an unopened Workflow Session ($kind, unavailable=$unavailable)', async ({ kind, unavailable }) => {
         const mode = kind === 'plain' ? 'plain' : 'e2ee';
         const sessionId = `cold-workflow-${kind}`;
         const accountId = `cold-stop-${kind}`;
@@ -75,6 +84,7 @@ describe('cold Workflow Session Stop composition', () => {
         } : machine;
         boundary.setHttpResponder(async (input, init) => {
             const path = new URL(String(input)).pathname;
+            if (init?.method === 'DELETE') return Response.json({ error: 'Session is active' }, { status: 409 });
             if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
                 return createMachineReadBatchResponseFixture(init.body, () => encryptedMachine);
             }
@@ -86,7 +96,7 @@ describe('cold Workflow Session Stop composition', () => {
             }
             return persistence.handle(input, init);
         });
-        boundary.setRpcAckResponder(async request => {
+        if (!unavailable) boundary.setRpcAckResponder(async request => {
             expect(request).toMatchObject({ targetId: 'machine-1', method: 'stop-session' });
             const transport = machineCipher ? { mode: 'e2ee' as const, cipher: machineCipher } : { mode: 'plain' as const };
             const decoded = await socketRpcCodec.decodeRequestParams(transport, request.payload, `${request.targetId}:${request.method}`);
@@ -99,13 +109,17 @@ describe('cold Workflow Session Stop composition', () => {
         }) } } });
         expect(storage.getState().sessions[sessionId]).toBeUndefined();
 
-        const result = await createDefaultActionExecutor().execute('session.stop', { sessionId }, {
+        const result = await createDefaultActionExecutor().execute(unavailable ? 'session.delete' : 'session.stop', { sessionId }, {
             serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         });
-        expect(result, JSON.stringify({ result, rpc: boundary.requests.map(({ method, targetId }) => ({ method, targetId })) }))
+        if (unavailable) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'session_stop_control_unavailable',
+                details: { sessionId, recovery: 'retry_when_runtime_available' } });
+            expect(boundary.httpRequests.filter(request => request.method === 'DELETE')).toHaveLength(1);
+        } else expect(result, JSON.stringify({ result, rpc: boundary.requests.map(({ method, targetId }) => ({ method, targetId })) }))
             .toMatchObject({ ok: true, result: { sessionId, stopped: true } });
         expect(persistence.writes).toEqual([sessionId]);
-        expect(boundary.requests.filter(request => request.method === 'stop-session').map(request => request.targetId)).toEqual(['machine-1']);
+        if (!unavailable) expect(boundary.requests.filter(request => request.method === 'stop-session').map(request => request.targetId)).toEqual(['machine-1']);
         // The operation's hydrated snapshot must not open or retain a detail view.
         expect(storage.getState().sessions[sessionId]).toBeUndefined();
         expect(storage.getState().sessions[foreign.id]).toBe(foreign);

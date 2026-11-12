@@ -1515,9 +1515,7 @@ with its own facts (`confineWorkspaceTargetPath`) and never falls back to this
 Machine's disk. Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
 destination, swap, restore on failure); folder ZIP download, prepared entry
 exports and prepared entry imports stage through host temp space and reuse the
-existing ZIP and confined capture/apply owners. Language intelligence answers
-`unsupported` for a target until language servers can be started inside it, and
-the requester-isolated native channel refuses a target (requester isolation is a
+existing ZIP and confined capture/apply owners. Language servers of a target Session start inside the target through the source's long-lived `spawn` (`apps/cli/src/lsp/sourceProtocol.ts`); LSP sessions and roots are keyed by source. The requester-isolated native channel refuses a target (requester isolation is a
 host OS-user boundary). No target source ships yet; the session host's holder
 implements the port.
 
@@ -6762,11 +6760,55 @@ channels and exits when the holder closes that connection.
   the Windows session Job), and neither ends when the runner dies, so the Session's
   Agent tree stays in the same unit. Agent isolation is unchanged: the holder runs
   the finalized `sudo … happier agent-launch` tuple and its stdin preamble.
-- Adoption: `attachSessionHolderChild(socketPath)` plus
-  `spawnSupervisedPluginProcess({ sessionHolder: { kind: 'adopt', child } })` gives a
-  replacement runner the same supervised handle over the running Agent. Wiring the
-  daemon's runner respawn to adopt instead of starting a new Agent is not done yet
-  (see the P03-HOLDER report).
+- Roles: only the Session's own Agent is `primary` (its native launch qualifier is
+  issued with that role in `nativeAgentSession.ts`; ACP receives it through
+  `createPublicAcpSession`). Execution runs, probes and replay backends are
+  `auxiliary` and end with their runner as before.
+- Runner crash and respawn (adopt):
+  1. A primary launch reports its holder to the daemon (`POST /session-holder`).
+     The daemon records it on the tracked Session and in the Session marker as
+     `heldAgentsV1`.
+  2. On an unexpected runner exit of a daemon-started, server-backed Session,
+     `onChildExited` asks `sparedHeldAgents.ts`. That owner checks that the holder
+     is the recorded one, its Agent is alive, and adopt state is stored (hello
+     `meta.role`). If so, `endOwnerRemainder` ends the rest of the Session's
+     processes but spares that holder tree (`spare`).
+  3. The respawn owner hands the Agent over through
+     `SpawnSessionOptions.adoptSessionHolder`, which becomes the single-use runner
+     environment token `HAPPIER_SESSION_HOLDER_ADOPT_V1`.
+  4. In the new runner, `resolveAgentSessionHolderLaunch` consumes the token on its
+     first primary launch. It returns `{ kind: 'adopt' }` while the holder and the
+     Agent are alive, and spawns otherwise.
+  5. If the respawn gives up (no restart, Stop, already running, startup failure,
+     respawn not attempted), the spared tree is ended (`sparedHeldAgents.end`). An
+     end never retires a live owner of the Session.
+- Adopt contract (`sessionHolderAdoption.ts`): the one owner every protocol seam
+  uses, each with its own frame codec:
+  - the host JSON-RPC client (`createJsonRpcProcessClient`: Codex per-Session
+    app-server, Pi, Muse, OpenCode);
+  - the ACP stream adapter (`createAcpNdJsonStream`, below the ACP SDK, which is
+    never edited);
+  - the host JSON-stream client (the Claude SDK control channel).
+
+  It stores state in the holder with the `meta` op: handshake results, in-flight
+  request ids, the next free numeric id and an adopt generation. That state is
+  written on the holder socket before the request bytes.
+
+  On adopt:
+  - the handshake is answered locally (ACP `initialize`, plus `session/load` of
+    the same Session);
+  - new ids move away from every id the Agent has seen;
+  - an Agent answer to an id nobody knows is dropped, never delivered;
+  - the previous runner's in-flight requests stay available as `heldRequests()`.
+
+  Without this, a new client's ids restart at 0 or 1, and the replayed answer to the
+  old in-flight request resolves the new request with the same id. ACP resumes a
+  held `session/prompt` as its current turn. Held Agent output waits until the
+  backend knows its Session again (`release`). The adopt launch skips the stdin
+  launch preamble, which the running Agent already consumed.
+- Not held for adopt: the shared Codex app-server. It listens on a unix
+  WebSocket, not holder stdio, and it is shared by Sessions, so no one Session can
+  spare or adopt it. Its clients reconnect to the socket (`connectJsonRpcClient`).
 
 ### Runner start graph
 
@@ -8225,6 +8267,13 @@ from a missing saved Session. CLI and UI both report `already_stopped` with
 that the saved Session is inactive. An active Session or an unavailable read
 leaves termination unconfirmed; cached UI activity and transport errors do not
 prove that a process stopped.
+
+In 0.3 development, dependent Delete and archive Actions retain the Stop owner's
+failure code, diagnostic and recovery hint. Unavailable control requests a retry
+when the runtime is available; an acknowledged request waits for inactivity.
+Neither result permits deletion or archival as a confirmed Stop. The shared
+Action confirmation projector also requires the receipt to name the exact
+Session. The physical lifecycle and inactive-session proof remain owned by Stop.
 
 In 0.3 development source, Stop diagnostics project the original admitted Action
 surface, caller kind, requesting Session and transcript tool-call id when known.
