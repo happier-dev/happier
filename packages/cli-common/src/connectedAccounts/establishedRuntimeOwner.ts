@@ -390,6 +390,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
   getAccountEncryptionMode(signal?: AbortSignal, options?: Readonly<{ usage?: 'fresh-authority' }>): Promise<ConnectedServiceAccountEncryptionMode>;
   readCredential: CredentialSnapshotReader;
   readConfiguration: ConfigurationSnapshotReader;
+  /** Derived export publication is independent of credential availability. */
+  onExportProjectionPublicationFailure?(error: unknown): void;
   publishCredentialHealth?: (input: Readonly<{
     patch: ReturnType<typeof import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4').QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse>;
     signal?: AbortSignal;
@@ -471,14 +473,20 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         && previous.directExportFailure?.code === exportProjection.directExportFailure?.code
         && previous.directExportFailure?.message === exportProjection.directExportFailure?.message)
       || (!previous && exportProjection.directExportContract === null)) return;
-    const result = await params.publishCredentialHealth({ patch: {
-      ref: snapshot.ref, expectedCredentialRevision: snapshot.credentialRevision,
-      expectedConfigurationRevision: snapshot.configurationRevision,
-      health: snapshot.health ?? { v: 1, status: 'connected', reconnectRequired: false }, exportProjection,
-    }, signal });
-    if (result.credentialRevision !== snapshot.credentialRevision
-      || result.configurationRevision !== snapshot.configurationRevision) {
-      throw new Error('Connected-account export projection settled against a different credential basis');
+    try {
+      const result = await params.publishCredentialHealth({ patch: {
+        ref: snapshot.ref, expectedCredentialRevision: snapshot.credentialRevision,
+        expectedConfigurationRevision: snapshot.configurationRevision,
+        health: snapshot.health ?? { v: 1, status: 'connected', reconnectRequired: false }, exportProjection,
+      }, signal });
+      if (result.credentialRevision !== snapshot.credentialRevision
+        || result.configurationRevision !== snapshot.configurationRevision) {
+        throw new Error('Connected-account export projection settled against a different credential basis');
+      }
+    } catch (error) {
+      // Home retains its previous projection. Personal acquisition and status
+      // consume the credential authority, independently of this derived write.
+      params.onExportProjectionPublicationFailure?.(error);
     }
   }
 

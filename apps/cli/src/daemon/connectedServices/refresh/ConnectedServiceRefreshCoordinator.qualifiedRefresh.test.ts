@@ -96,11 +96,11 @@ afterEach(async () => {
 });
 
 describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () => {
-  it('retains the safe HTTP409 health cause through status acquisition, spawn refusal and daemon log', async () => {
+  it('retains the typed HTTP409 cause when authoritative health settlement fails', async () => {
     const harness = await createBuiltInQualifiedRefreshHarness();
     createdRegistries.push(harness);
     const warn = vi.spyOn(logger, 'warn');
-    // Use the real HTTP health adapter instead of fixture-local persistence. Only HTTP is mocked.
+    // This is the authoritative status-health settlement, distinct from the derived export projection.
     harness.mutateCredentialHealth.mockImplementationOnce(async input => {
       await mutateQualifiedConnectedAccountCredentialHealthV4(input);
       return { success: true, credentialRevision: harness.firstRevision, configurationRevision: null };
@@ -117,7 +117,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     });
     const reason = 'connect_credential_mutation_superseded:credential_revision_mismatch';
     expect(result).toMatchObject({ status: 'refresh_failed', reason });
-    if (result.status === 'ready') throw new Error('Expected status acquisition refusal');
+    if (result.status === 'ready') throw new Error('Expected status-health settlement refusal');
     const refusal = buildConnectedServiceCredentialRefreshSpawnErrorResult({ agentId: 'opencode',
       error: new ConnectedServiceSpawnCredentialRefreshError({ kind: 'transient_refresh_failed',
         serviceId: 'happier.agent.codex/openai-codex', profileId: harness.account.accountId, reason: result.reason }),

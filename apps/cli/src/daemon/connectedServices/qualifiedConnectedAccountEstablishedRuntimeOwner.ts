@@ -1,8 +1,11 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
+import { readHttpStatus } from '@/api/client/httpStatusError';
+import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
+import { logger } from '@/utils/logger';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { createConnectedAccountEstablishedRuntimeOwner, readQualifiedConnectedAccountCredentialMaterial as readCredentialMaterial, type ConnectedAccountEstablishedRuntimeRegistry, type QualifiedConnectedAccountEstablishedRuntimeOwner as PortableEstablishedRuntimeOwner, type QualifiedConnectedAccountScheduledReceipt as PortableScheduledReceipt, type QualifiedConnectedAccountMaterialSnapshot, type QualifiedConnectedAccountScheduledOperationOptions, type QualifiedConnectedAccountEstablishedInvocationBasis, type QualifiedConnectedAccountCredentialMutationPreparationInput, type QualifiedConnectedAccountCredentialReplacementPreparation } from '@happier-dev/cli-common/connectedAccounts';
-import { mutateQualifiedConnectedAccountCredentialHealthV4, readQualifiedConnectedAccountConfigurationV4, readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { QualifiedConnectedAccountCredentialConflictError, mutateQualifiedConnectedAccountCredentialHealthV4, readQualifiedConnectedAccountConfigurationV4, readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { requireConnectedAccountCryptoMaterial as requireCryptoMaterial, resolveConnectedAccountCryptoMaterial as resolveCryptoMaterial } from './accountScopedCryptoMaterial';
 import type { AccountEncryptionModeReadOptions, ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { StoredCredentials } from '@/persistence';
@@ -127,6 +130,12 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner<TRegistry
   return createConnectedAccountEstablishedRuntimeOwner<Quota, TRegistry>({
     ...params,
     readScope: createEstablishedAccountReadScope(params),
+    onExportProjectionPublicationFailure: error => {
+      const directExportFailure = error instanceof QualifiedConnectedAccountCredentialConflictError
+        ? { status: readHttpStatus(error), code: error.code, ...(error.reason ? { reason: error.reason } : {}) }
+        : { status: readHttpStatus(error), code: readAxiosResponseErrorCode(error) ?? 'connected_account_export_projection_publication_failed' };
+      logger.warnLocalFile('[CONNECTED ACCOUNT] Export projection publication failed', { directExportFailure });
+    },
     publishCredentialHealth: input => (params.mutateCredentialHealth ?? mutateQualifiedConnectedAccountCredentialHealthV4)({ ...input, token: params.credentials.token }),
     readCredential: input => (params.readCredential ?? readQualifiedConnectedAccountCredentialV4)({ ...input, token: params.credentials.token }),
     readConfiguration: input => (params.readConfiguration ?? readQualifiedConnectedAccountConfigurationV4)({ ...input, token: params.credentials.token }),
