@@ -1,6 +1,7 @@
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import nacl from 'tweetnacl';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -47,9 +48,10 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false],
-    ['plain', 's3', true], ['e2ee', 's3', true]] as const)(
-    'prepares an unsaved %s %s destination on its controller before any target exists (requester %s)', async (mode, destination, requester) => {
+it.each([['plain', 's3', false, 'none'], ['e2ee', 's3', false, 'none'], ['plain', 'local', false, 'none'],
+    ['plain', 's3', true, 'none'], ['e2ee', 's3', true, 'none'],
+    ['plain', 'local', false, 'controller'], ['plain', 'local', false, 'remote']] as const)(
+    'prepares an unsaved %s %s destination on its controller (requester %s, runtime %s)', async (mode, destination, requester, runtimeMachine) => {
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: plugin.manifest,
             files: { [plugin.manifest.entrypoints.daemon]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
@@ -111,7 +113,7 @@ it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false
             async isCurrent() { return true; } });
         const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
             destinationRef: { pluginId: plugin.manifest.id, localId: destination }, occurrenceId: 'candidate',
-            config: destination === 'local' ? { path: '~/candidate-repository' }
+            config: destination === 'local' ? { path: runtimeMachine === 'controller' ? tmpdir() : '~/candidate-repository' }
                 : { endpoint: 'https://storage.invalid', bucket: 'recovery', prefix: 'one', region: 'eu-west-1' },
             credentialBindings: (destination === 'local' ? ['repositoryPassword'] : ['repositoryPassword', 'accessKeyId', 'secretAccessKey']).map(role => ({
                 purpose: 'backupDestination', configKey: 'destination', role })),
@@ -119,8 +121,11 @@ it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false
             sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }] });
         const bindings = configuration.credentialBindings.map(binding => ({ ...binding,
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 1 } }));
-        const environment = { ...detail, environment: { ...detail.environment, controllerMachineId: 'controller', runtimeTargetLinkId: null },
-            content: { ...detail.content, bindings }, targetLinks: [] };
+        const runtimeLink = { ...detail.targetLinks[0]!.targetLink,
+            members: [{ machineId: runtimeMachine, installationId: 'controller-installation', state: 'active' as const }] };
+        const environment = { ...detail, environment: { ...detail.environment, controllerMachineId: 'controller',
+            runtimeTargetLinkId: runtimeMachine === 'none' ? null : runtimeLink.id },
+            content: { ...detail.content, bindings }, targetLinks: runtimeMachine === 'none' ? [] : [runtimeLink] };
         delete environment.content.backup;
         let context: ActionExecutorContext = {};
         if (requester) {
@@ -147,12 +152,7 @@ it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false
             context = { externalActionExecutionAuthorization: authorization };
         }
         let releases = 0;
-        let controllerCapacityReads = 0;
         const host = { credentials: daemonCredentials, serverId: 'home', serverHttpBaseUrl, machineId: 'controller',
-            async capacityForPath(path: string) {
-                controllerCapacityReads++;
-                return { status: 'known' as const, path, freeBytes: 1000, observedAt: 1 };
-            },
             ...(requester ? { authorCustody: resolveRequesterSavedSecretActionCustody({
                 authorization: context.externalActionExecutionAuthorization, credentials: daemonCredentials }) }
                 : { savedSecretOperationContext: operation }), async acquirePluginRuntimeRegistryLease() {
@@ -167,8 +167,11 @@ it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false
         const prepared = await prepareDestination(request);
         let passwordPath: string | undefined;
         try {
-            expect(controllerCapacityReads).toBe(0);
-            if (destination === 'local') expect(prepared.capacity).toMatchObject({ status: 'unknown', path: '~/candidate-repository' });
+            if (destination === 'local') {
+                if (runtimeMachine === 'controller') expect(prepared.capacity).toMatchObject({
+                    status: 'known', path: await realpath(tmpdir()), freeBytes: expect.any(Number), observedAt: expect.any(Number) });
+                else expect(prepared.capacity).toMatchObject({ status: 'unknown', path: '~/candidate-repository' });
+            }
             const attachment = await prepared.execEnv.prepare({ backupDestination: { configKey: 'destination' } });
             const material = await consumeDeploymentExecEnvForHost(attachment);
             try {
@@ -176,7 +179,7 @@ it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false
                 passwordPath = material.env.RESTIC_PASSWORD_FILE;
                 expect(await readFile(material.env.RESTIC_PASSWORD_FILE, 'utf8')).toBe(content.value);
                 if (destination === 's3') expect(prepared.readAccess().repository).toBe('s3:https://storage.invalid/recovery/one/candidate-owner');
-                else expect(prepared.readAccess().local).toEqual({ path: expandHomeDirPath('~/candidate-repository') });
+                else expect(prepared.readAccess().local).toEqual({ path: expandHomeDirPath(String(configuration.config.path)) });
                 expect(JSON.stringify(prepared)).not.toContain(content.value);
             } finally { await material.dispose(); }
             expect(materialReads).toBe(1);

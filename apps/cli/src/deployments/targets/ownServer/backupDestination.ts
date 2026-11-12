@@ -5,6 +5,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRunInputV1, DeploymentRestoreDatabaseDestinationV1 } from '@happier-dev/deployments';
+import { readStoragePathCapacity } from '@/storage/pathCapacity';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createDeploymentBackupEnvironmentForHost, prepareDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
@@ -184,10 +185,18 @@ export function createPrepareDeploymentBackupConfigurationDestinationForHost(hos
                     bindings: input.environment.content.bindings, grants: [], assertCurrent } });
             // Configure executes on the controller; local repository capacity
             // belongs to the linked runtime Machine's Storage owner.
-            const capacity: StoragePathCapacityV1 | undefined = captured.opened.local ? {
-                status: 'unknown', path: captured.opened.local.path,
-                reason: input.environment.environment.runtimeTargetLinkId ? 'runtime_capacity_unavailable' : 'runtime_machine_not_linked',
-            } : undefined;
+            let capacity: StoragePathCapacityV1 | undefined;
+            if (captured.opened.local) {
+                const { selectDeploymentRuntimeTargetLinkV1, selectDeploymentSingleDataMachineV1 } = await import('@happier-dev/deployments');
+                const runtimeMachine = selectDeploymentSingleDataMachineV1(selectDeploymentRuntimeTargetLinkV1({
+                    environment: input.environment.environment,
+                    targetLinks: input.environment.targetLinks.map(targetLink => ({ targetLink })),
+                }));
+                capacity = runtimeMachine?.machineId === host.machineId && runtimeMachine.installationId === identity.installationId
+                    ? await readStoragePathCapacity(captured.opened.local.path, { readVolumes: () => [] })
+                    : { status: 'unknown', path: captured.opened.local.path,
+                        reason: input.environment.environment.runtimeTargetLinkId ? 'runtime_capacity_unavailable' : 'runtime_machine_not_linked' };
+            }
             const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environment.environment.id,
                 bindings: captured.preparation.backupDestinationUses, previousBindings: [], existingGrants: [],
                 runtimeInstallations: [{ machineId: host.machineId, installationId: identity.installationId,
