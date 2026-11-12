@@ -3,7 +3,7 @@ import { humanizeConnectedServiceIdentity, resolveConnectedAccountPrimaryNameV1 
 
 import type { Prisma } from "@prisma/client";
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { ConnectedAccountDirectExportContractV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceCredentialHealthV1Schema, type ConnectedServiceCredentialHealthV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { StoredJsonContentEnvelopeSchema, isStoredJsonContentEnvelopeModeCompatible, type StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialMetadataV4Schema, QualifiedConnectedAccountServiceRefSchema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -444,7 +444,7 @@ type QualifiedCredentialMutationCommonParams = Readonly<{
     authenticationModeId: string;
     content: StoredJsonContentEnvelope;
     metadata: QualifiedConnectedAccountCredentialMetadataV4;
-    directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
+    directExportContract?: ConnectedAccountDirectExportContractV1 | null;
     contributionContractVersion?: string;
     /** Saved Secret resources the sealed content references; omission on an update retains the stored set. */
     savedSecretResourceIds?: readonly string[];
@@ -566,9 +566,7 @@ export type QualifiedConnectedAccountSourceIdentity = Readonly<{
     configurationRevision: string | null;
     authenticationModeId: string;
     status: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>["status"];
-    directExportContract:
-        | typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
-        | null;
+    directExportContract: ConnectedAccountDirectExportContractV1 | null;
     contributionContractVersion: string | null;
 }>;
 
@@ -788,7 +786,7 @@ function prepareQualifiedConnectedAccountCredentialCreate(params: Readonly<{
     accountMode: "plain" | "e2ee";
     content: StoredJsonContentEnvelope;
     metadata: QualifiedConnectedAccountCredentialMetadataV4;
-    directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
+    directExportContract?: ConnectedAccountDirectExportContractV1 | null;
     contributionContractVersion?: string;
     savedSecretResourceIds?: readonly string[];
     initialConfiguration?: Readonly<{
@@ -1025,7 +1023,7 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             storage: "stored_envelope_v1",
             values: metadataSettlement.metadata,
             credentialRevision,
-            ...(retainedDirectExportContract === CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
+            ...(retainedDirectExportContract !== null
                 ? { directExportContract: retainedDirectExportContract }
                 : {}),
             ...(retainedContributionContractVersion

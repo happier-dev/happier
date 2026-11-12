@@ -1,6 +1,6 @@
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1, computeTeamCredentialConnectedAccountSourceVersionV1, computeTeamCredentialPoolMemberSourceVersionV1, computeTeamCredentialSourceMemberKeyV1, parseTeamCredentialSourceVersionV1, type TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { computeTeamCredentialConnectedAccountSourceVersionV1, computeTeamCredentialPoolMemberSourceVersionV1, computeTeamCredentialSourceMemberKeyV1, parseTeamCredentialSourceVersionV1, type TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 
 import type { Tx } from "@/storage/inTx";
@@ -21,13 +21,13 @@ export type { TeamCredentialResourceSourceResolution, TeamCredentialResourceSour
 
 
 function directContributionContractVersion(
-    contributionContractVersion: string | null,
+    source: Pick<QualifiedConnectedAccountSourceIdentity, "directExportContract" | "contributionContractVersion">,
 ): string | null {
-    return contributionContractVersion === null
+    return source.directExportContract === null || source.contributionContractVersion === null
         ? null
         : computeCanonicalDomainSeparatedDigest(
-            TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
-            [contributionContractVersion],
+            source.directExportContract,
+            [source.contributionContractVersion],
         );
 }
 
@@ -181,8 +181,8 @@ export function projectTeamCredentialDirectSourceCurrentnesses(
     }
     const projectAccount = (identity: QualifiedConnectedAccountSourceIdentity, ref: Readonly<{ service: QualifiedConnectedAccountServiceRef; accountId: string }>, poolIncarnation?: string) => {
         const sourceMember = { kind: 'connected_account' as const, service: ref.service, connectedAccountId: ref.accountId };
-        const contributionContractVersion = directContributionContractVersion(identity.contributionContractVersion);
-        if (identity.directExportContract === null || contributionContractVersion === null) return null;
+        const contributionContractVersion = directContributionContractVersion(identity);
+        if (contributionContractVersion === null) return null;
         const connectedAccountSourceVersion = computeTeamCredentialConnectedAccountSourceVersionV1({
             sourceAccountId: ref.accountId, credentialIncarnation: identity.incarnation,
             sourceMember, credentialRevision: identity.credentialRevision,
@@ -309,10 +309,8 @@ export async function resolveTeamCredentialSourceMemberCurrentnessInTx(
         if (computeTeamCredentialSourceMemberKeyV1(sourceMember) !== params.sourceMemberKey) {
             return { status: "unavailable", reason: "source_changed" };
         }
-        const contributionContractVersion = directContributionContractVersion(
-            current.contributionContractVersion,
-        );
-        if (current.directExportContract === null || contributionContractVersion === null) {
+        const contributionContractVersion = directContributionContractVersion(current);
+        if (contributionContractVersion === null) {
             if (params.deliveryMode === 'brokered') return {
                 status: "current", sourceMember, sourceCredentialIncarnation: current.incarnation,
                 sourceVersion: null, directExportSupport: "unsupported",
@@ -362,15 +360,13 @@ export async function resolveTeamCredentialSourceMemberCurrentnessInTx(
     if (current.incarnation !== member.credentialIncarnation) {
         return { status: "unavailable", reason: "source_changed" };
     }
-    const contributionContractVersion = directContributionContractVersion(
-        current.contributionContractVersion,
-    );
+    const contributionContractVersion = directContributionContractVersion(current);
     const sourceMember = {
         kind: "connected_account" as const,
         service: ref.service,
         connectedAccountId: ref.accountId,
     };
-    if (current.directExportContract === null || contributionContractVersion === null) {
+    if (contributionContractVersion === null) {
         if (params.deliveryMode === 'brokered') return {
             status: "current", sourceMember, sourceCredentialIncarnation: current.incarnation,
             sourceVersion: null, directExportSupport: "unsupported",

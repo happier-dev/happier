@@ -103,8 +103,10 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     acceptedProtocols: [...new Set([...registry.providersByContributionKey.values()]
       .flatMap(provider => provider.definition.endpointTemplates.map(endpoint => endpoint.protocol)))],
   }) : [];
+  // Native-only Agents consume admitted Direct purpose material without a Provider model route.
   const modelSourceResources = new Set(selectedPurposes.flatMap(({ scope, selection }) => (
-    relevanceApplications.some(application => (
+    (selection.deliveryMode === 'brokered' || input.applications.length > 0)
+    && relevanceApplications.some(application => (
       scope.serviceRefs.some(service => resolveManagedProviderBrokerPurpose({
         registry, application, service,
       }) !== null)

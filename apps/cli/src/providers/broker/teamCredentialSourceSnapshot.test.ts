@@ -11,6 +11,7 @@ import type { ProviderConnectionBrokerSourceSnapshot } from './providerConnectio
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'service' });
 const account = Object.freeze({ service, accountId: 'account-1' });
 const material = Object.freeze({
+  directExport: { contractVersion: 'happier.team-credential-manual-connected-account-direct.v1' as const },
   credential: Object.freeze({ v: 1 as const, values: Object.freeze({ token: 'secret' }) }),
   configuration: null,
   authenticationModeId: 'manual-token',
@@ -29,6 +30,66 @@ if (parsedAccountSource.kind !== 'connected_account') throw new Error('expected 
 const accountSource = parsedAccountSource;
 
 describe('Team credential source snapshots', () => {
+  it.each(['account', 'pool'] as const)('exports only the declared access token, expiry and metadata for an OAuth Team %s recipient', async route => {
+    const input = {
+      source: accountSource,
+      authenticationKind: 'oauth' as const,
+      material: {
+        ...material,
+        accessOnlyExport: {
+          contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1' as const,
+          accessTokenKey: 'accountToken', expiresAtMsKey: 'expiresAtMs', metadataKeys: ['credentialMode'],
+        },
+        credential: { v: 1 as const, values: { accountToken: 'synthetic-access', expiresAtMs: String(Date.now() + 60_000),
+          credentialMode: 'native', refreshToken: 'synthetic-refresh', inferenceKey: 'synthetic-inference' } },
+      },
+      isPersistedSourceCurrent: async () => true,
+    };
+    const snapshot = route === 'account' ? createConnectedAccountTeamCredentialSourceSnapshot(input)
+      : createConnectedPoolMemberTeamCredentialSourceSnapshot({ ...input,
+        source: { v: 1, kind: 'connected_pool', target: { kind: 'group', service, groupId: 'pool-1' }, poolIncarnation: 'pool-1' },
+        sourceAccount: account, sourceCredentialIncarnation: accountSource.credentialIncarnation, memberEnabled: true });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.material.credential.values).toEqual({ accountToken: 'synthetic-access',
+      expiresAtMs: expect.any(String), credentialMode: 'native' });
+    expect(snapshot?.material.configuration).toBeNull();
+    await expect(snapshot?.currentness.isCurrent()).resolves.toBe(true);
+  });
+  it.each([undefined, '', 'NaN', 'Infinity', '1'])('refuses access-only delivery without a live finite expiry (%s)', expiry => {
+    expect(createConnectedAccountTeamCredentialSourceSnapshot({ source: accountSource, authenticationKind: 'oauth',
+      material: { ...material, accessOnlyExport: {
+        contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+        accessTokenKey: 'access', expiresAtMsKey: 'expiry', metadataKeys: [],
+      }, credential: { v: 1, values: { access: 'synthetic-access', ...(expiry === undefined ? {} : { expiry }) } } },
+      isPersistedSourceCurrent: async () => true })).toBeNull();
+  });
+
+  it('never falls back to exporting the entire vault when a selected export declaration is absent', () => {
+    expect(createConnectedAccountTeamCredentialSourceSnapshot({ source: accountSource,
+      material: { ...material, directExport: undefined, credential: { v: 1, values: { accountToken: 'synthetic-access',
+        refreshToken: 'synthetic-refresh', inferenceKey: 'synthetic-inference' } } },
+      authenticationKind: 'manual', isPersistedSourceCurrent: async () => true })).toBeNull();
+  });
+
+  it('withdraws access-only source currentness at expiry and on persisted revocation', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    let persisted = true;
+    try {
+      const snapshot = createConnectedAccountTeamCredentialSourceSnapshot({ source: accountSource, authenticationKind: 'oauth',
+        material: { ...material, accessOnlyExport: {
+          contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+          accessTokenKey: 'access', expiresAtMsKey: 'expiry', metadataKeys: [],
+        }, credential: { v: 1, values: { access: 'synthetic-access', expiry: '2000' } } },
+        isPersistedSourceCurrent: async () => persisted });
+      await expect(snapshot?.currentness.isCurrent()).resolves.toBe(true);
+      persisted = false;
+      await expect(snapshot?.currentness.isCurrent()).resolves.toBe(false);
+      persisted = true;
+      clock.mockReturnValue(2000);
+      await expect(snapshot?.currentness.isCurrent()).resolves.toBe(false);
+    } finally { clock.mockRestore(); }
+  });
+
   it('binds an exact manual Connected Account incarnation and every material/contribution revision', async () => {
     const persisted = vi.fn(async () => true);
     const snapshot = createConnectedAccountTeamCredentialSourceSnapshot({

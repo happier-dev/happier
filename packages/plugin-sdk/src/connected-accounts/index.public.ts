@@ -98,8 +98,9 @@ export {
 export type { OauthAuthEntry } from '../connectedAccounts.js';
 export type { OauthCredentialRecord } from '../connectedAccounts.js';
 export type { OauthCredentialRecordWithExpiry } from '../connectedAccounts.js';
+export type { PluginConnectedAccountAccessOnlyExportV1 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationModeV2 } from '../connectedAccounts.js';
-export { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '../connectedAccounts.js';
+export { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationV2 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountConfigurationFieldV2 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountConfigurationV2 } from '../connectedAccounts.js';

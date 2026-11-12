@@ -433,3 +433,15 @@ it('keeps native import Machine-local while portable modes and native browser ex
   expect(descriptor.authentication.modes.map(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)))
     .toEqual([null, null, 'native_import', 'browser_unreachable']);
 });
+
+it('admits an explicit access-only projection for OAuth and imported native subscriptions', () => {
+  const accessOnlyExport = { contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+    accessTokenKey: 'access', expiresAtMsKey: 'expiry', metadataKeys: ['mode'] };
+  for (const mode of [
+    { id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' },
+    { id: 'native', kind: 'manual', credentialOrigin: 'native_import', fields: [], outcomeReconciliation: 'none' },
+  ]) {
+    const parsed = PluginConnectedAccountAuthenticationModeV2Schema.parse({ ...mode, accessOnlyExport });
+    expect(parsed).toMatchObject({ accessOnlyExport });
+  }
+});

@@ -4447,6 +4447,24 @@ settings, credentials, endpoint material, and the private Pool roster do not bec
 recipient-visible. The exact Machine then uses the existing encrypted carrier and
 resource admission path.
 
+### Access-only Team subscription delivery (0.3 development contract)
+
+A subscription authentication mode can explicitly declare an access-only Direct
+export. The existing custodian snapshot owner projects only its access token,
+finite future expiry and declared non-secret metadata before recipient encryption.
+Configuration secrets, refresh tokens and the custodian's inference key are not
+part of this projection. Existing Direct consent, recipient Account encryption,
+Home admission and withdrawal apply without a separate transport or credential
+store. Withdrawn Direct material is deleted by the existing reconciliation path.
+
+Muse's device-login declaration uses this contract. Its member-side materializer
+writes access-only `muse/auth.json` into the Happier-managed isolated native home;
+native Muse acquires its own inference key. Missing or expired access-token
+expiry refuses acquisition. Reacquisition uses the next launch or existing
+acquisition after authentication failure, with no timer. A long-running Session
+that outlives the token may require Resume. Startup was characterized against
+Muse 1.4.15; authenticated inference remains a loaded-runtime check.
+
 ### Vendor-native Team credential disclosure (0.3 development contract)
 
 Vendor-native delivery is explicit custodian consent to disclose an admitted

@@ -3,7 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from './pluginConnectedAccountAuthenticationV2.js';
+import { ConnectedAccountDirectExportContractV1Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import {
@@ -22,7 +22,7 @@ const QualifiedConnectedAccountCredentialMutationCommonV4Shape = {
   authenticationModeId: ModeIdZodSchema,
   content: StoredJsonContentEnvelopeSchema,
   metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
-  directExportContract: z.optional(z.nullable(z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1))),
+  directExportContract: z.optional(z.nullable(ConnectedAccountDirectExportContractV1Schema)),
   /**
    * Server-visible custody fact (ids only, no material): the Saved Secret
    * resources this credential references. Omission on an update retains the

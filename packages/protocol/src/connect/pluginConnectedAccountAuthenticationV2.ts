@@ -179,6 +179,27 @@ const PluginConnectedAccountOutcomeReconciliationV2Schema =
 export const CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 =
   'happier.team-credential-manual-connected-account-direct.v1' as const;
 
+export const CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1 =
+  'happier.team-credential-access-only-connected-account-direct.v1' as const;
+
+export const ConnectedAccountDirectExportContractV1Schema = lazyZodSchema(() => z.union([
+  z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1),
+  z.literal(CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1),
+]));
+export type ConnectedAccountDirectExportContractV1 = z.infer<typeof ConnectedAccountDirectExportContractV1Schema>;
+
+/** The plugin declares public metadata explicitly; all other credential/configuration fields remain private. */
+export const PluginConnectedAccountAccessOnlyExportV1Schema = lazyZodSchema(() => z.strictObject({
+  contractVersion: z.literal(CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1),
+  accessTokenKey: QualifiedConnectedAccountCredentialKeyV1Schema,
+  expiresAtMsKey: QualifiedConnectedAccountCredentialKeyV1Schema,
+  metadataKeys: z.array(QualifiedConnectedAccountCredentialKeyV1Schema),
+}).check(z.refine(declaration => {
+  const keys = [declaration.accessTokenKey, declaration.expiresAtMsKey, ...declaration.metadataKeys];
+  return new Set(keys).size === keys.length;
+}, 'Access-only fields must have distinct keys.')));
+export type PluginConnectedAccountAccessOnlyExportV1 = z.infer<typeof PluginConnectedAccountAccessOnlyExportV1Schema>;
+
 export const PluginConnectedAccountDirectExportV2Schema = lazyZodSchema(() => z.strictObject({
   contractVersion: z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1),
 }));
@@ -222,6 +243,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       setup: z.optional(PluginConnectedAccountSetupGuideV2Schema),
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       directExport: z.optional(PluginConnectedAccountDirectExportV2Schema),
+      accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
       /** Verified manual input fields staged under these exact credential keys. */
       credentialFieldKeys: z.optional(z.record(PluginSettingFieldIdV2Schema, QualifiedConnectedAccountCredentialKeyV1Schema)),
       /** Omission is unknown. Import completion never establishes the original sign-in time. */
@@ -231,6 +253,8 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
         fieldKeys: z.record(PluginSettingFieldIdV2Schema, QualifiedConnectedAccountCredentialKeyV1Schema),
       })])),
     }).check(z.superRefine((mode, context) => {
+      if (mode.directExport && mode.accessOnlyExport) context.addIssue({ code: 'custom', path: ['accessOnlyExport'],
+        message: 'A mode has one direct export contract.' });
       if (mode.credentialFieldKeys) {
         const declared = new Set(mode.fields.map(field => field.id));
         const keys = Object.values(mode.credentialFieldKeys);
@@ -267,6 +291,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       clientConfiguration: z.optional(PluginConnectedAccountClientConfigurationV2Schema),
+      accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
     }).check(z.superRefine((mode, context) => {
       if (mode.postAuthenticationFieldIds !== undefined
         && (mode.configuration?.scope !== 'account'
@@ -292,6 +317,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       clientConfiguration: z.optional(PluginConnectedAccountClientConfigurationV2Schema),
+      accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
     }),
   ]).check(z.superRefine((mode, context) => {
     if (mode.kind === 'manual' || mode.clientConfiguration === undefined) return;

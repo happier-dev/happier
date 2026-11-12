@@ -50,6 +50,8 @@ type RevisionedQualifiedConnectedAccountConfigurationSnapshotV4 = Extract<
 >;
 
 export type QualifiedConnectedAccountMaterialSnapshot = Readonly<{
+  accessOnlyExport?: import('@happier-dev/protocol').PluginConnectedAccountAccessOnlyExportV1;
+  directExport?: import('@happier-dev/protocol').PluginConnectedAccountDirectExportV2;
   credential: QualifiedConnectedAccountCredentialPayloadV1;
   configuration: Readonly<{
     values: Readonly<Record<string, JsonValue>>;
@@ -574,6 +576,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     return Object.freeze({
       credential,
       configuration,
+      ...(mode.accessOnlyExport ? { accessOnlyExport: mode.accessOnlyExport } : {}),
+      ...(mode.kind === 'manual' && mode.directExport ? { directExport: mode.directExport } : {}),
       authenticationModeId,
       credentialRevision: snapshots.credential.credentialRevision,
       configurationRevision: snapshots.credential.configurationRevision,

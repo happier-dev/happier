@@ -1273,6 +1273,11 @@ export {
   PluginHostedWebOriginV1Schema,
   PluginHostedWebSecurityPolicyV1Schema,
   CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
+  CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1,
+  ConnectedAccountDirectExportContractV1Schema,
+  PluginConnectedAccountAccessOnlyExportV1Schema,
+  type ConnectedAccountDirectExportContractV1,
+  type PluginConnectedAccountAccessOnlyExportV1,
   PluginConnectedAccountDirectExportV2Schema,
   PluginConnectedAccountAuthenticationModeV2Schema,
   PluginConnectedAccountAuthenticationV2Schema,
@@ -2648,8 +2653,12 @@ export {
 } from './connect/sessionConnectedServiceAuthSwitch.js';
 export { buildRecoveryCreditConsumeIdempotencyKey } from './connect/recoveryCreditConsumeIdempotencyKey.js';
 export {
+  hasConnectedServiceQuotaCreditHeadroom,
+  isConnectedServiceQuotaCreditMeter,
   resolveConnectedServiceQuotaMeterLimitIdentity,
   selectConnectedServiceQuotaMetersForLimitSelection,
+  summarizeConnectedServiceQuotaCredits,
+  type ConnectedServiceQuotaCreditSummary,
 } from './connect/connectedServiceQuotaLimitSelection.js';
 export {
   ConnectedAccountServiceKeySchema,
@@ -4418,6 +4427,11 @@ export {
   SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2,
   SessionLookupByTagsRequestV2Schema,
   SessionLookupByTagsResponseV2Schema,
+  SessionLookupExternalIdentityV2Schema,
+  SessionExternalIdentityTagV1Schema,
+  SessionExternalIdentityClaimRequestV1Schema,
+  SessionExternalIdentityClaimResponseV1Schema,
+  SessionExternalIdentityClaimConflictV1Schema,
   V2SessionByIdNotFoundSchema,
   V2SessionByIdResponseSchema,
   V2SessionListResponseSchema,
@@ -4447,6 +4461,11 @@ export {
   type SessionControlEnvelopeSuccess,
   type SessionLookupByTagsRequestV2,
   type SessionLookupByTagsResponseV2,
+  type SessionLookupExternalIdentityV2,
+  type SessionExternalIdentityTagV1,
+  type SessionExternalIdentityClaimRequestV1,
+  type SessionExternalIdentityClaimResponseV1,
+  type SessionExternalIdentityClaimConflictV1,
   type SessionTurnLifecycleStatusV1,
   type SessionTurnFactsV1,
   type ExactSessionTurnEndMutationV1,

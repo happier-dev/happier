@@ -1,14 +1,18 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { computeCanonicalDomainSeparatedDigest } from "@happier-dev/protocol";
 import { ProviderConnectionIdSchema } from "@happier-dev/protocol/providers";
+import { CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import {
     TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
     computeTeamCredentialConnectedAccountSourceVersionV1,
+    computeTeamCredentialPoolMemberSourceVersionV1,
     computeTeamCredentialSourceMemberKeyV1,
 } from "@happier-dev/protocol/teams";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { mutateQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
+import { parseQualifiedConnectedServiceCredentialStoredMetadataV4 } from '@/app/api/routes/connect/credentialHealthMetadata';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
     createServiceAccountTokenIdentityFields,
@@ -18,6 +22,7 @@ import {
 } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 import {
     listTeamCredentialDirectSourceMembersInTx,
+    projectTeamCredentialDirectSourceCurrentnesses,
     resolveTeamCredentialSourceMemberCurrentnessInTx,
     resolveTeamCredentialResourceSourceInTx,
     resolveTeamCredentialResourceSourcesInTx,
@@ -42,7 +47,7 @@ describe("Team credential source identity", () => {
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-team-resource-source-" });
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-team-resource-source-", initEncrypt: true });
     }, 120_000);
 
     afterAll(async () => { await harness?.close(); });
@@ -51,6 +56,76 @@ describe("Team credential source identity", () => {
     async function createOwner() {
         return await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
     }
+
+    it("retains access-only OAuth export on refresh and uses its contract for Account and Pool source versions", async () => {
+        const owner = await createOwner();
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: owner.id, ref, authenticationModeId: "device-oauth",
+            expectedCredentialRevision: null,
+            content: { t: "plain", v: { accessToken: "synthetic-access-token" } },
+            metadata: { kind: "oauth", scopes: [] },
+            directExportContract: CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1,
+            contributionContractVersion,
+        });
+        expect(created.status).toBe("written");
+        const credential = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id } });
+        const initialMetadata = parseQualifiedConnectedServiceCredentialStoredMetadataV4(credential.metadata);
+        expect(initialMetadata.directExportContract).toBe(CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1);
+        const refreshed = await mutateQualifiedConnectedServiceCredential({
+            accountId: owner.id, ref, authenticationModeId: "device-oauth",
+            expectedCredentialRevision: initialMetadata.credentialRevision,
+            expectedConfigurationRevision: null,
+            content: { t: "plain", v: { accessToken: "synthetic-refreshed-token" } },
+            metadata: { kind: "oauth", scopes: [] },
+        });
+        expect(refreshed.status).toBe("written");
+        const stored = await db.serviceAccountToken.findUniqueOrThrow({ where: { id: credential.id } });
+        const metadata = parseQualifiedConnectedServiceCredentialStoredMetadataV4(stored.metadata);
+        expect(metadata.directExportContract).toBe(CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1);
+        const groupId = "access-only-pool";
+        const pool = await db.connectedServiceAuthGroup.create({ data: {
+            accountId: owner.id, servicePluginId: service.pluginId, serviceLocalId: service.localId,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({ service, groupId }),
+            groupId, displayName: "Access-only pool", policyJson: "{}",
+        } });
+        await db.connectedServiceAuthGroupMember.create({ data: {
+            groupDbId: pool.id, accountId: owner.id, credentialId: credential.id,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({ service, groupId }),
+            qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(ref),
+            enabled: true, priority: 0,
+        } });
+        const sourceMember = { kind: "connected_account" as const, service, connectedAccountId: ref.accountId };
+        const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1(sourceMember);
+        const accountSource = { v: 1 as const, kind: "connected_account" as const,
+            target: { kind: "account" as const, account: ref }, credentialIncarnation: credential.id };
+        const poolSource = { v: 1 as const, kind: "connected_pool" as const,
+            target: { kind: "group" as const, service, groupId }, poolIncarnation: pool.id };
+        const expectedAccountVersion = computeTeamCredentialConnectedAccountSourceVersionV1({
+            sourceAccountId: ref.accountId, credentialIncarnation: credential.id, sourceMember,
+            credentialRevision: metadata.credentialRevision, configurationRevision: null,
+            authenticationModeId: "device-oauth",
+            contributionContractVersion: computeCanonicalDomainSeparatedDigest(
+                CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1, [contributionContractVersion],
+            ),
+        });
+        for (const [source, expectedVersion] of [
+            [accountSource, expectedAccountVersion],
+            [poolSource, computeTeamCredentialPoolMemberSourceVersionV1({
+                connectedAccountSourceVersion: expectedAccountVersion, poolIncarnation: pool.id, memberEnabled: true,
+            })],
+        ] as const) {
+            const currentness = await inTx(tx => resolveTeamCredentialSourceMemberCurrentnessInTx(tx, {
+                deliveryMode: "direct", custodianAccountId: owner.id, source, sourceMemberKey,
+            }));
+            expect(currentness).toMatchObject({ status: "current", sourceVersion: expectedVersion });
+            const resolution = await resolve(owner.id, source);
+            expect(projectTeamCredentialDirectSourceCurrentnesses(source, resolution)).toMatchObject([
+                { status: "current", sourceVersion: expectedVersion },
+            ]);
+        }
+    });
 
     async function createCredential(accountId: string) {
         return await db.serviceAccountToken.create({

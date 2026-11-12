@@ -15,7 +15,7 @@ import type {
 } from './authenticationTypes.js';
 import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner } from './configurationOwner.js';
 import { resolveConnectedAccountAttemptTransactionExpiry, type ConnectedAccountAttemptTransactionRecord, type PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { type ConnectedAccountDirectExportContractV1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -123,7 +123,7 @@ export type ConnectedAccountAttemptSettlementRequest = Readonly<{
     credentialKind?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['kind'];
     includesApiKey?: true;
     accessMode?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['accessMode'];
-    directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
+    directExportContract?: ConnectedAccountDirectExportContractV1 | null;
     contributionContractVersion?: string;
     expectedCredentialRevision: string | null;
     expectedCredentialConfigurationRevision: string | null;
@@ -2100,9 +2100,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             ...(result.includesApiKey ? { includesApiKey: result.includesApiKey } : {}),
             ...(accessMode ? { accessMode } : {}),
             directExportContract:
-                attempt.admission.descriptor.kind === 'manual'
+                attempt.admission.descriptor.accessOnlyExport?.contractVersion
+                ?? (attempt.admission.descriptor.kind === 'manual'
                     ? attempt.admission.descriptor.directExport?.contractVersion ?? null
-                    : null,
+                    : null),
             expectedCredentialRevision: attempt.expectedCredentialRevision,
             expectedCredentialConfigurationRevision:
                 attempt.expectedCredentialConfigurationRevision,

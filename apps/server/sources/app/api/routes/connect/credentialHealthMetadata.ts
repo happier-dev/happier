@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod/mini";
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { ConnectedAccountDirectExportContractV1Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialRevisionV1Schema, type ConnectedServiceCredentialHealthV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
@@ -16,9 +16,7 @@ export const QualifiedConnectedServiceCredentialStoredMetadataV4Schema =
         v: z.literal(4),
         storage: z.literal("stored_envelope_v1"),
         credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-        directExportContract: z.optional(z.literal(
-            CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
-        )),
+        directExportContract: z.optional(ConnectedAccountDirectExportContractV1Schema),
         contributionContractVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
         /** Saved Secret resources the sealed credential references (ids only). */
         savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.minLength(1), z.maxLength(64))),

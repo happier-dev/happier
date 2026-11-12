@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 import { resolveQualifiedConnectedAccountStoredMetadata } from "./credentialStoredMetadataAdapter";
 
 describe("qualified Connected Account stored metadata adapter", () => {
+    it("preserves the declared access-only contract on stored OAuth credentials", () => {
+        expect(resolveQualifiedConnectedAccountStoredMetadata({
+            rowId: "access-only-row",
+            metadata: {
+                v: 4,
+                storage: "stored_envelope_v1",
+                credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
+                directExportContract: CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1,
+                contributionContractVersion: "artifact-access-only",
+                values: { kind: "oauth", scopes: [] },
+            },
+        })).toMatchObject({
+            kind: "oauth",
+            directExportContract: CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1,
+            contributionContractVersion: "artifact-access-only",
+        });
+    });
+
     it.each([
         {
             name: "raw",

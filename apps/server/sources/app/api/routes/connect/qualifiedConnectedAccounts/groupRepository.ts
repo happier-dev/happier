@@ -1,4 +1,4 @@
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { ConnectedAccountDirectExportContractV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceAuthGroupMemberStateV1Schema, ConnectedServiceAuthGroupPolicyV2Schema, ConnectedServiceAuthGroupStateV1Schema, parseConnectedServiceAuthGroupPolicy, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { clearConnectedServiceAuthGroupMemberRuntimeBlockers, readConnectedServiceManualActiveProfileRuntimeBlocker } from '@happier-dev/protocol/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy';
@@ -347,9 +347,7 @@ export type QualifiedConnectedAccountGroupSourceSnapshot = Readonly<{
         configurationRevision: string | null;
         authenticationModeId: string;
         status: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>["status"];
-        directExportContract:
-            | typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
-            | null;
+        directExportContract: ConnectedAccountDirectExportContractV1 | null;
         contributionContractVersion: string | null;
         priority: number;
         enabled: boolean;

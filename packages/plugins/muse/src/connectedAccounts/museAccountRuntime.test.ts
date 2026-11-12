@@ -36,6 +36,28 @@ function deviceMode() {
 }
 
 describe('Muse account runtime', () => {
+  it('materializes an access-only Team snapshot without inference or refresh credentials', async () => {
+    const f = fixture();
+    const expiry = Date.now() + 60_000;
+    for (const [key, value] of Object.entries({ credentialMode: 'native', accountToken: 'synthetic-member-access',
+      expiresAtMs: String(expiry), nativeExpiresAt: String(Math.floor(expiry / 1000)), nativeMechanism: '\"oauth\"',
+      nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'device_code' })) f.values.set(key, value);
+    const result = await runtime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, f.context);
+    if (result.kind !== 'files') throw new Error('Expected files');
+    const auth = JSON.parse(new TextDecoder().decode(result.files['muse/auth.json']));
+    expect(auth.providers.meta).toMatchObject({ access_token: 'synthetic-member-access', mechanism: 'oauth' });
+    expect(auth.providers.meta).not.toHaveProperty('api_key');
+    expect(auth.providers.meta).not.toHaveProperty('refresh_token');
+    expect(f.requests).toEqual([]);
+    await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY', 'MUSE_CODE_CREDENTIAL'] }, f.context))
+      .resolves.toEqual({ kind: 'environment', env: {} });
+    await expect(runtime.materialize({ kind: 'httpHeaders', headerNames: ['Authorization'] }, f.context))
+      .rejects.toMatchObject({ code: 'plugin_connected_account_credentials_unavailable' });
+    f.values.set('expiresAtMs', String(Date.now() - 1));
+    await expect(runtime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, f.context))
+      .rejects.toMatchObject({ code: 'plugin_connected_account_credentials_unavailable' });
+  });
+
   it('routes Muse Meta device grant through Machine only in browsers', () => {
     const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === 'muse-account');
     if (!descriptor) throw new Error('Account descriptor missing');
@@ -91,6 +113,7 @@ describe('Muse account runtime', () => {
     let sequence = 0;
     let storedContent: ReturnType<typeof sealQualifiedConnectedAccountContentEnvelope> | undefined;
     let storedMetadata: unknown;
+    let storedDirectExportContract: unknown;
     let promoted = 0;
     let publishedObservation: ConnectedAccountCompletionObservation | undefined;
     let finishBackground!: (response: { status: string }) => void;
@@ -131,13 +154,14 @@ describe('Muse account runtime', () => {
           ? openQualifiedConnectedAccountContentEnvelope({ kind, accountMode: mode, envelope })
           : openQualifiedConnectedAccountContentEnvelope({ kind, accountMode: mode, envelope, material }),
         parseConfigurationContent: value => value,
-        mutateCredential: async mutation => { writes++; storedContent = mutation.content; storedMetadata = mutation.metadata; return { success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null }; },
+        mutateCredential: async mutation => { writes++; storedContent = mutation.content; storedMetadata = mutation.metadata; storedDirectExportContract = mutation.directExportContract; return { success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null }; },
         promoteCredentialSecrets: async input => {
           promoted++;
           expect(input.secrets).toMatchObject([{ resourceId: 'synthetic-promoted-key', value: 'synthetic-manual-key' }]);
           writes++;
           storedContent = input.credential.content;
           storedMetadata = input.credential.metadata;
+          storedDirectExportContract = input.credential.directExportContract;
           return { status: 'applied', credential: { success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null } };
         },
         mutateCredentialHealth: async () => {}, readCredential: async () => null, readConfiguration: async () => null,
@@ -162,6 +186,7 @@ describe('Muse account runtime', () => {
       expect(f.requests).toHaveLength(5);
       expect(writes).toBe(1);
       expect(storedMetadata).toMatchObject({ includesApiKey: true, accessMode: 'subscription' });
+      expect(storedDirectExportContract).toBe('happier.team-credential-access-only-connected-account-direct.v1');
       expect(publishedObservation).toMatchObject({ providerId: 'meta', observedAtMs: now, meters: [expect.objectContaining({ used: 20 })] });
       expect(storedContent?.t).toBe(accountMode === 'plain' ? 'plain' : 'encrypted');
       if (!storedContent) throw new Error('Expected settled credential envelope');
@@ -193,6 +218,7 @@ describe('Muse account runtime', () => {
       await expect(owner.beginConnect({ service: MUSE_ACCOUNT_SERVICE, modeId: 'api-key' })).resolves.toMatchObject({ status: 'awaitingManual' });
       await expect(owner.submitManual({ attemptId: 'attempt-5', fields: { apiKey: 'synthetic-manual-key' } })).resolves.toMatchObject({ status: 'connected', accessMode: 'apiKey' });
       expect(storedMetadata).toMatchObject({ accessMode: 'apiKey' });
+      expect(storedDirectExportContract).toBe('happier.team-credential-manual-connected-account-direct.v1');
       expect(storedMetadata).not.toHaveProperty('includesApiKey');
       expect(promoted).toBe(1);
       expect(writes).toBe(2);

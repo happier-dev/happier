@@ -1,7 +1,7 @@
 import { sameStrictJsonValue as isDeepStrictEqual } from '@happier-dev/protocol/json/strictJsonValue';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, PluginConnectedAccountConfigurationFieldV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { ConnectedAccountDirectExportContractV1Schema, PluginConnectedAccountConfigurationFieldV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedAccountSourceCustodyV1Schema, connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { QualifiedConnectedAccountAuthenticationProvenanceV4Schema, QualifiedConnectedAccountProviderIdentityV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -53,7 +53,7 @@ const PreparedSettlementShape = {
   credentialKind: z.optional(ConnectedServiceCredentialKindSchema),
   includesApiKey: z.optional(z.literal(true)),
   accessMode: z.optional(ConnectedAccountAccessModeV1Schema),
-  directExportContract: z.optional(z.nullable(z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1))),
+  directExportContract: z.optional(z.nullable(ConnectedAccountDirectExportContractV1Schema)),
   expectedCredentialRevision: z.nullable(z.string().check(z.maxLength(4_096))),
   expectedCredentialConfigurationRevision:
     z.nullable(z.string().check(z.minLength(1), z.maxLength(4_096))),

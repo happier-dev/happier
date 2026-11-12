@@ -65,7 +65,19 @@ function connectedAccountMember(
 
 function accountMaterial(
   snapshot: QualifiedConnectedAccountMaterialSnapshot,
-): ConnectedAccountDirectMaterial {
+): ConnectedAccountDirectMaterial | null {
+  const declaration = snapshot.accessOnlyExport;
+  if (declaration) {
+    const source = snapshot.credential.values;
+    const token = source[declaration.accessTokenKey];
+    const expiry = Number(source[declaration.expiresAtMsKey]);
+    if (!token?.trim() || !Number.isFinite(expiry) || expiry <= Date.now()) return null;
+    const values = Object.fromEntries([declaration.accessTokenKey, declaration.expiresAtMsKey, ...declaration.metadataKeys]
+      .filter(key => source[key] !== undefined).map(key => [key, source[key]]));
+    return Object.freeze({ kind: 'qualified_connected_account', credential: { v: 1, values },
+      configuration: null, authenticationModeId: snapshot.authenticationModeId });
+  }
+  if (!snapshot.directExport) return null;
   return Object.freeze({
     kind: 'qualified_connected_account',
     credential: snapshot.credential,
@@ -74,14 +86,14 @@ function accountMaterial(
   });
 }
 
-function manualConnectedAccountVersion(input: Readonly<{
+function connectedAccountVersion(input: Readonly<{
   account: QualifiedConnectedAccountRef;
   credentialIncarnation: string;
   member: Extract<TeamCredentialSourceMemberV1, { kind: 'connected_account' }>;
   material: QualifiedConnectedAccountMaterialSnapshot;
 }>): string {
   const directContributionContract = computeCanonicalDomainSeparatedDigest(
-    TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
+    input.material.accessOnlyExport?.contractVersion ?? TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
     [input.material.contributionContractVersion],
   );
   return computeTeamCredentialConnectedAccountSourceVersionV1({
@@ -117,10 +129,12 @@ export function createConnectedAccountTeamCredentialSourceSnapshot(input: Readon
   authenticationKind: 'manual' | 'oauth' | 'native';
   isPersistedSourceCurrent(source: ConnectedAccountSource): boolean | Promise<boolean>;
 }>): TeamCredentialSourceSnapshot<ConnectedAccountDirectMaterial> | null {
-  if (input.authenticationKind !== 'manual') return null;
+  if (input.authenticationKind !== 'manual' && !input.material.accessOnlyExport) return null;
+  const material = accountMaterial(input.material);
+  if (!material) return null;
   const account = input.source.target.account;
   const member = connectedAccountMember(account);
-  const sourceVersion = manualConnectedAccountVersion({
+  const sourceVersion = connectedAccountVersion({
     account,
     credentialIncarnation: input.source.credentialIncarnation,
     member,
@@ -131,14 +145,15 @@ export function createConnectedAccountTeamCredentialSourceSnapshot(input: Readon
     sourceVersion,
     async isCurrent() {
       return await safeCurrent(async () => (
-        await input.isPersistedSourceCurrent(input.source)
+        (!input.material.accessOnlyExport || Number(material.credential.values[input.material.accessOnlyExport.expiresAtMsKey]) > Date.now())
+        && await input.isPersistedSourceCurrent(input.source)
         && await input.material.isCurrent()
       ));
     },
   });
   return Object.freeze({
     currentness,
-    material: accountMaterial(input.material),
+    material,
   });
 }
 
@@ -152,14 +167,16 @@ export function createConnectedPoolMemberTeamCredentialSourceSnapshot(input: Rea
   isPersistedSourceCurrent(source: ConnectedPoolSource): boolean | Promise<boolean>;
 }>): TeamCredentialSourceSnapshot<ConnectedAccountDirectMaterial> | null {
   if (
-    input.authenticationKind !== 'manual'
+    (input.authenticationKind !== 'manual' && !input.material.accessOnlyExport)
     || input.source.target.service.pluginId !== input.sourceAccount.service.pluginId
     || input.source.target.service.localId !== input.sourceAccount.service.localId
   ) {
     return null;
   }
+  const material = accountMaterial(input.material);
+  if (!material) return null;
   const member = connectedAccountMember(input.sourceAccount);
-  const accountVersion = manualConnectedAccountVersion({
+  const accountVersion = connectedAccountVersion({
     account: input.sourceAccount,
     credentialIncarnation: input.sourceCredentialIncarnation,
     member,
@@ -175,14 +192,15 @@ export function createConnectedPoolMemberTeamCredentialSourceSnapshot(input: Rea
     async isCurrent() {
       if (!input.memberEnabled) return false;
       return await safeCurrent(async () => (
-        await input.isPersistedSourceCurrent(input.source)
+        (!input.material.accessOnlyExport || Number(material.credential.values[input.material.accessOnlyExport.expiresAtMsKey]) > Date.now())
+        && await input.isPersistedSourceCurrent(input.source)
         && await input.material.isCurrent()
       ));
     },
   });
   return Object.freeze({
     currentness,
-    material: accountMaterial(input.material),
+    material,
   });
 }
 

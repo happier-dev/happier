@@ -909,6 +909,11 @@ export type BackgroundServiceContribution = z.infer<typeof BackgroundServiceCont
 
 export {
   CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
+  CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1,
+  ConnectedAccountDirectExportContractV1Schema,
+  PluginConnectedAccountAccessOnlyExportV1Schema,
+  type ConnectedAccountDirectExportContractV1,
+  type PluginConnectedAccountAccessOnlyExportV1,
   PluginConnectedAccountDirectExportV2Schema,
   PluginConnectedAccountAuthenticationModeV2Schema,
   PluginConnectedAccountAuthenticationV2Schema,
