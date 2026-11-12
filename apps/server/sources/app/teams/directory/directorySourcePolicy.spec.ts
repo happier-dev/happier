@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Tx } from "@/storage/inTx";
+import { homeConfigSnapshotPostgresQueryMock } from "@/app/home/settings/homeConfigSnapshot.testkit";
 
 import {
     isDirectorySourceAllowedInTx,
@@ -45,6 +46,7 @@ describe("directory source completed evidence", () => {
         // Typed persistence-boundary fixture; policy, provider parsing and
         // runtime eligibility are real. Transactional effects have a SQLite test.
         const tx = {
+            ...homeConfigSnapshotPostgresQueryMock,
             homeGovernancePolicy: { findUnique: async () => null },
             // No stored Home settings row: the deployment env decides every feature bit.
             homeSettings: { findUnique: async () => null },
@@ -76,6 +78,7 @@ describe("directory source completed evidence", () => {
             activeReconcileRunId: null,
         };
         const tx = {
+            ...homeConfigSnapshotPostgresQueryMock,
             homeGovernancePolicy: { findUnique: async () => null },
             // No stored Home settings row: the deployment env decides every feature bit.
             homeSettings: { findUnique: async () => null },
