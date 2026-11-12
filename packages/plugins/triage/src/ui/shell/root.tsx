@@ -7,7 +7,7 @@ import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
-import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1, TriageSourceInstanceIdV1 } from '@happier-dev/triage-protocol/v1';
 import { buildTriageActionEditorLaunchInputV1, formatTriageTimestampV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageActionEditorLaunchInputV1 } from '@happier-dev/triage-protocol/v1';
 import { openTriageActionEditorV1 } from '../actions/openActionEditor.js';
 import {
@@ -311,6 +311,8 @@ export type TriageListShellProps = Readonly<{
   createDraft?: import('../../actions/tasksProtocol.js').TriageTaskDraftV1;
   createDraftId?: string;
   onCreateDraftClose?: () => void;
+  /** A one-shot draft placement opens its result before closing; pages select it in place. */
+  onCreateDraftCreated?: (created: Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: TriageSourceInstanceIdV1 }>) => Promise<import('../../composer/openEntryDetails.js').TriageEntryDetailOpenOutcomeV1>;
   /**
    * The host-owned plugin-local location this page was opened at. Triage owns
    * no router: this is read once as the reducer's seed and written back through
@@ -2499,6 +2501,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       {...(props.createDraft === undefined ? {} : { draft: props.createDraft })}
       onApplied={refresh} onClose={closeTaskDraft}
       onCreated={(created) => {
+        if (props.onCreateDraftCreated) {
+          void props.onCreateDraftCreated(created).then(outcome => {
+            if (outcome.kind === 'opened') closeTaskDraft();
+            else if (outcome.kind === 'refused') setRouteWriteFailure('rejected');
+          });
+          return;
+        }
         closeTaskDraft();
         applyLensEdit({ kind: 'rowActivated', sectionId: null, entryRef: created.entryRef, sourceInstanceId: created.sourceInstanceId }, 'selection');
       }} />

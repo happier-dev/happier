@@ -2,6 +2,8 @@
 import * as React from 'react';
 import { act } from 'react';
 import { expect, it } from 'vitest';
+// Reuse the UI testkit's async boundary without importing host runtime into this plugin test.
+import { createDeferred } from '../../../../../apps/ui/sources/dev/testkit/hooks/createDeferred.js';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -121,6 +123,8 @@ it.each([
         throw new Error('This mount opens no UI query');
       },
     };
+    const navigation = createDeferred<void>();
+    const opened: unknown[] = [];
     const settlements: PluginUiEphemeralInputSettlementV1[] = [];
     const locationWrites: string[] = [];
     let createWrites = 0;
@@ -147,6 +151,7 @@ it.each([
           overlays: true,
         }),
         handlers: {
+          openSurface: async request => { opened.push(request); await navigation.promise; },
           settleEphemeralInput: async ({ settlement }) => {
             settlements.push(settlement);
           },
@@ -221,6 +226,12 @@ it.each([
       });
 
       expect(createWrites).toBe(creates);
+      expect(opened).toHaveLength(creates);
+      if (creates) {
+        expect(opened[0]).toMatchObject({ input: { entryRef: { source: source.configuredInstance.instance.source, ...source.getResult.localRef } } });
+        expect(settlements).toEqual([]);
+        await act(async () => { navigation.resolve(); });
+      }
       expect(settlements).toEqual([{ kind: 'cancelled' }]);
       await expect(page.queryByText(DRAFT_PURPOSE)).resolves.toBeUndefined();
       // Nothing took the draft's place while the pane owner closes the tab: no list read, no location write.

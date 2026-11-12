@@ -9,6 +9,7 @@ import { TriageActionEditorLaunchInputV1Schema } from '@happier-dev/triage-proto
 import { TriageResourceSurface } from './resourceSurface.js';
 import { readTriageResourceIntent } from './contributions.js';
 import { useTriageTaskDraftLaunch } from './taskDraftLaunch.js';
+import { openTriageEntryDetails } from '../composer/openEntryDetails.js';
 import { TriageTaskDraftLaunchV1Schema } from '../actions/tasksProtocol.js';
 
 /**
@@ -99,7 +100,12 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
   if (draftLaunched) {
     if (draftEnded) return <></>;
     if (draft.status === 'unavailable') return draft.notice;
-    if (draft.status === 'ready') return <TriageListShell tasksPage {...draft.shellProps} onCreateDraftClose={endDraft} />;
+    if (draft.status === 'ready') return <TriageListShell tasksPage {...draft.shellProps} onCreateDraftClose={endDraft}
+      onCreateDraftCreated={created => openTriageEntryDetails({ hostApi: context.hostApi,
+        entryRef: created.entryRef,
+        sourceInstance: { source: created.entryRef.source, sourceInstanceId: created.sourceInstanceId },
+        signal: context.signal,
+      })} />;
     return <></>;
   }
 
