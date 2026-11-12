@@ -1501,7 +1501,6 @@ class Sync {
       private sessionViewport = new Map<string, SessionViewportSnapshot>();
       private sessionViewportHydratedStorageKey: string | null = null;
       private deferredForwardLoadingSessions = new Set<string>();
-      private explicitSessionTailProbeIds = new Set<string>();
       private sessionTranscriptRetention!: SessionTranscriptRetentionController;
       private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
       private sessionDataKeyEnvelopes = new Map<string, string>(); // Track wrapped DEK envelopes so unchanged keys can be reused safely
@@ -3589,7 +3588,6 @@ class Sync {
         clearSessionViewingActivationsForServerScopeReset();
         clearMountedSessionRealtimeScmConsumerScopes();
         this.deferredForwardLoadingSessions.clear();
-        this.explicitSessionTailProbeIds.clear();
         this.activeServerSessionIds.clear();
         this.hasFetchedSessionsSnapshotForActiveServer = false;
         this.fetchMoreSessionsInFlight = null;
@@ -3833,9 +3831,6 @@ class Sync {
                 this.sessionViewport.set(sessionId, { ...prevViewport, lastUpdatedAt: Date.now() });
             } else {
                 this.markSessionLiveTailIntent(sessionId);
-            }
-            if (storage.getState().sessionMessages[sessionId]?.isLoaded === true) {
-                this.explicitSessionTailProbeIds.add(sessionId);
             }
             this.repairStaleTranscriptIfNeeded(sessionId);
             if (hasDeferredSessionStateHydration(this.deferredSessionStateHydrationState, sessionId)) {
@@ -10518,8 +10513,8 @@ class Sync {
     private ensureInitialSessionMessages(sessionId: string): InvalidateSync {
         this.replayDeferredMessagesFetch(sessionId);
         const messages = this.getOrCreateMessagesSync(sessionId);
-        // Hydration and admission share the initial acquisition. Only an explicit
-        // visibility transition requests a fresh probe of an already loaded tail.
+        // Hydration and admission share the initial acquisition. Visibility uses
+        // the catch-up policy for known gaps rather than forcing another body read.
         if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) messages.invalidateCoalesced();
         return messages;
     }
@@ -10696,14 +10691,12 @@ class Sync {
         // A queued InvalidateSync callback can run after local deletion. It
         // must not recreate an empty loaded transcript for an absent session.
         if (!initialSession) {
-            this.explicitSessionTailProbeIds.delete(sessionId);
             return;
         }
         if (isDemoModeActive()) {
             if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
                 storage.getState().applyMessagesLoaded(sessionId);
             }
-            this.explicitSessionTailProbeIds.delete(sessionId);
             return;
         }
         return await this.withSessionTranscriptRead(sessionId, async read => {
@@ -10757,7 +10750,6 @@ class Sync {
         }
 
           const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
-          const hasExplicitTailProbe = this.explicitSessionTailProbeIds.has(sessionId);
           // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
           // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
           const afterSeq = hasLoadedMessages ? this.readSessionMessagesCatchUpAfterSeq(sessionId) : 0;
@@ -10817,9 +10809,6 @@ class Sync {
                       this.transcriptAuthorityKeyBySessionId.set(sessionId, authorityKey);
                       this.externalSessionTranscriptFenceAuthorityKeyBySessionId.delete(sessionId);
                       storage.getState().setSessionTranscriptLoadIssue(sessionId, null);
-                      if (hasExplicitTailProbe) {
-                          this.explicitSessionTailProbeIds.delete(sessionId);
-                      }
                   }
                   return;
               }
@@ -10838,7 +10827,6 @@ class Sync {
                   this.transcriptAuthorityKeyBySessionId.set(sessionId, authorityKey);
                   this.externalSessionTranscriptFenceAuthorityKeyBySessionId.delete(sessionId);
                   storage.getState().setSessionTranscriptLoadIssue(sessionId, null);
-                  this.explicitSessionTailProbeIds.delete(sessionId);
               }
               return;
           }
@@ -10869,7 +10857,6 @@ class Sync {
                       storage.getState().setSessionTranscriptLoadIssue(sessionId, null);
                   }
               }
-              this.explicitSessionTailProbeIds.delete(sessionId);
               return;
           }
 
@@ -10908,9 +10895,6 @@ class Sync {
                   : fetchSnapshot());
               if (!pageOptions.isCurrent()) return;
               storage.getState().setSessionTranscriptLoadIssue(sessionId, null);
-              if (hasExplicitTailProbe) {
-                  this.explicitSessionTailProbeIds.delete(sessionId);
-              }
               return;
           }
 
@@ -10922,7 +10906,6 @@ class Sync {
                 sessionSeqHint,
                 offlineForMs,
                 hasAcceptedLocalPending,
-                hasExplicitTailProbe,
                 hasDeferredNewer: this.hasDeferredNewerMessages(sessionId),
                 thresholds: {
                     largeGapSeq: this.syncTuning.messageLargeGapSeq,
@@ -11049,9 +11032,6 @@ class Sync {
           await (isCatchUpWork
               ? this.withSessionCatchUpNewer(sessionId, applyCatchUpDecision)
               : applyCatchUpDecision());
-          if (hasExplicitTailProbe && isCatchUpSessionCurrent()) {
-              this.explicitSessionTailProbeIds.delete(sessionId);
-          }
           if (isCatchUpWork && isCatchUpSessionCurrent()) {
               this.markSocketOfflineCatchUpConsumedForSession(sessionId, offlineForMs);
           }
@@ -13029,7 +13009,6 @@ class Sync {
           this.deleteSessionMessagesPaginationStateForSession(sessionId);
           this.deferredMessagesFetchSessionIds.delete(sessionId);
           this.deferredForwardLoadingSessions.delete(sessionId);
-          this.explicitSessionTailProbeIds.delete(sessionId);
           this.socketOfflineCatchUpConsumedSessionIds.delete(sessionId);
           this.sessionMessagesWindowStateBySessionId.set(
               sessionId,

@@ -18,7 +18,6 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     sessionSeqHint: number;
     offlineForMs: number;
     hasAcceptedLocalPending?: boolean;
-    hasExplicitTailProbe?: boolean;
     hasDeferredNewer?: boolean;
     thresholds: MessageCatchUpThresholds;
 }>): MessageCatchUpDecision {
@@ -40,10 +39,6 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     const materializedMaxSeq = Math.max(0, Math.trunc(input.materializedMaxSeq));
     const sessionSeqHint = Math.max(0, Math.trunc(input.sessionSeqHint));
     const gapSeq = sessionSeqHint - materializedMaxSeq;
-
-    if (gapSeq <= 0 && input.hasExplicitTailProbe === true) {
-        return { kind: 'incremental_batched', maxPages: 1 };
-    }
 
     // If we recently reconnected, the session seq hint can be stale (e.g. when the changes feed
     // does not include message entries for the gap). Force a single incremental page so we

@@ -586,7 +586,7 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
         expect(readStoredSessionMessages(storage.getState(), SESSION_ID)).toEqual([]);
     });
 
-    it.each(['success', 'failure'] as const)('keeps catch-up active until a hidden-edit repair settles with %s after the tail probe', async (outcome) => {
+    it.each(['success', 'failure'] as const)('keeps catch-up active until a hidden-edit repair settles with %s without a redundant tail probe', async (outcome) => {
         const { sync } = await seedLoadedHistorySession();
         const syncForTest = sync as unknown as SyncStaleReopenTestAccess;
         const oldRow = readStoredSessionMessages(storage.getState(), SESSION_ID)
@@ -617,9 +617,9 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
         try {
             sync.onSessionVisible(SESSION_ID);
             await sync.refreshSessionMessages(SESSION_ID);
-            expect(messagesRequestPaths().filter((path) => path.includes('afterSeq=14'))).toHaveLength(1);
-            expect(messagesRequestPaths().some((path) => path.includes('afterSeq=20'))).toBe(true);
-            // The tail probe has settled while exact hidden-update repair remains pending.
+            await expect.poll(() => messagesRequestPaths().filter((path) => path.includes('afterSeq=14')).length).toBe(1);
+            expect(messagesRequestPaths().some((path) => path.includes('afterSeq=20'))).toBe(false);
+            // Exact hidden-update repair stays pending without an extra tail read.
             expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(true);
             expect(storage.getState().sessionMessages[SESSION_ID].isLoaded).toBe(true);
             expect(readStoredSessionMessages(storage.getState(), SESSION_ID)).toContain(oldRow);
@@ -637,8 +637,9 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
         }
     });
 
-    it('probes the loaded transcript tail once when reopening with a stale equal sequence hint', async () => {
+    it('reads the loaded transcript tail once when reopening with a newly announced sequence', async () => {
         const { sync } = await seedLoadedHistorySession();
+        storage.getState().applySessions([createSession(SESSION_ID, 21)]);
         markSessionSurfaceVisible(SESSION_ID);
         requestMock.mockImplementation((path: string) => Promise.resolve(
             String(path).includes('afterSeq=20') ? newerMessageResponse() : emptyMessagesResponse(),

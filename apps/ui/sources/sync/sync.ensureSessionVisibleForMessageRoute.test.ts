@@ -53,6 +53,9 @@ vi.mock('react-native-mmkv', () => {
         getString(key: string) {
             return kvStore.get(key);
         }
+        getAllKeys() {
+            return [...kvStore.keys()];
+        }
         set(key: string, value: string) {
             kvStore.set(key, value);
         }
@@ -337,7 +340,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect({ firstReads, reopenReads }).toEqual({ firstReads: 1, reopenReads: 0 });
     });
 
-    it('FLOWBUDGET opens a cold transcript and reuses the warm rendered messages', async () => {
+    it('FLOWBUDGET reads no unopened bodies, one body on open, and none on return', async () => {
         const sessionId = 'flowbudget-open';
         const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: 1 });
         const transport = countTransportRequests(sessionHttpBoundary, (input, init) =>
@@ -358,6 +361,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const open = () => sync.ensureSessionVisibleForMessageRoute(sessionId, {
             hydrateMessages: true, awaitMessageHydration: true,
         });
+        expect(transport.read()[`GET /v1/sessions/${sessionId}/messages`] ?? 0).toBe(0);
         await expect(open()).resolves.toMatchObject({ kind: 'available' });
         expect(readStoredSessionMessages(storage.getState(), sessionId)).toEqual([
             expect.objectContaining({ realID: 'flowbudget-message', kind: 'user-text', text: 'Measured transcript' }),
@@ -368,7 +372,18 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(transport.read()['POST /v2/sessions/read-batch']).toBe(1);
         expect(transport.read()[`GET /v1/sessions/${sessionId}/messages`]).toBe(1);
         const retained = readStoredSessionMessages(storage.getState(), sessionId)[0];
+        // History navigates to the ordinary Session route. Its hydration can
+        // finish before SessionView mounts and announces visibility.
+        markSessionSurfaceVisible(sessionId, getActiveServerSnapshot().serverId);
+        onTestFinished(() => markSessionSurfaceHidden(sessionId, getActiveServerSnapshot().serverId));
+        sync.onSessionVisible(sessionId);
+        // Await the actual loader rather than guessing its completion from elapsed time.
+        const queues = Reflect.get(sync, 'messagesSync') as ReadonlyMap<string, { awaitQueue(): Promise<void> }>;
+        await act(async () => { await queues.get(sessionId)?.awaitQueue(); });
+        expect(transport.read()[`GET /v1/sessions/${sessionId}/messages`]).toBe(1);
         transport.reset();
+        await act(async () => { markSessionSurfaceHidden(sessionId, getActiveServerSnapshot().serverId); });
+        expect(transport.read()[`GET /v1/sessions/${sessionId}/messages`] ?? 0).toBe(0);
         await expect(open()).resolves.toMatchObject({ kind: 'available' });
         expect(readStoredSessionMessages(storage.getState(), sessionId)[0]).toBe(retained);
         console.info('FLOWBUDGET_OPEN_WARM', JSON.stringify(transport.read()));
