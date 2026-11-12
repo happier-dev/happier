@@ -798,7 +798,7 @@ function resolveExpectedApprovalFlow(approval: { flow?: 'blocking' | 'deferred';
 
 describe('Action Spec Registry', () => {
   it('declares origin daemon admission without broadening neighboring Machine Actions or public discovery', () => {
-    for (const actionId of [...PLUGIN_DEV_LOOP_ACTION_IDS_V1, 'machines.services.logs.read'] as const) {
+    for (const actionId of [...PLUGIN_DEV_LOOP_ACTION_IDS_V1, 'machines.services.logs.read', 'machines.services.adopt'] as const) {
       expect(getActionSpec(actionId).originalExecution?.daemonIngressSurfaces, actionId).toEqual(['cli', 'ui']);
     }
     expect(getActionSpec('machines.services.exec').originalExecution?.daemonIngressSurfaces).toEqual(['ui']);
@@ -4338,6 +4338,7 @@ describe('Action Spec Registry', () => {
     expect(projection).toEqual({
       input: {
         creationKey: 'manual:attempt-7',
+        executionTarget: canonicalSessionSpawnInput.executionTarget,
         directory: { kind: 'path', path: '/tmp/project' },
         organizationPlacement: { sectionId: null, tagIds: [] },
         agentTarget: {
@@ -4348,7 +4349,12 @@ describe('Action Spec Registry', () => {
       target: { kind: 'machine', machineId: 'machine-1' },
     });
     expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse(projection.input).success).toBe(true);
-    expect(Object.hasOwn(projection.input, 'executionTarget')).toBe(false);
+    expect(getActionSpec('session.spawn_new').inputSchema.safeParse(projection.input).success).toBe(true);
+    const bound = getActionSpec('session.spawn_new').surfaceBindings?.api?.bindInput?.({
+      ...projection.input, executionTarget: { serverId: 'other-home', machineId: 'other-machine' },
+    }, { actionId: 'session.spawn_new', surface: 'api', caller: { kind: 'host' },
+      serverId: canonicalSessionSpawnInput.executionTarget.serverId, externalActionTarget: projection.target });
+    expect(bound).toEqual(canonicalSessionSpawnInput);
   });
   it('keeps generic API creation terminal before its strict predecessor daemon reader', () => {
     // The generic API sender has no selected-target capability observation.

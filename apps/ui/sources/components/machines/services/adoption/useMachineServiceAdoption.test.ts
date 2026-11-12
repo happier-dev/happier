@@ -6,10 +6,12 @@ import type { MachineServiceAdoptResultV1 } from '@happier-dev/protocol/local/se
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-// Only the Machine RPC transport is substituted: the Action front door, executor, admission and the hook stay real.
+// Only Machine HTTP/RPC transports are substituted: the front door, executor and admission stay real.
 const machineTransport = vi.hoisted(() => ({ rpc: vi.fn() }));
+const adoptionTransport = vi.fn();
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
   const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
   return createServerScopedMachineRpcBoundaryMock(machineTransport.rpc);
@@ -42,14 +44,23 @@ const bindings = [
 beforeEach(async () => {
   await homes.reset();
   machineTransport.rpc.mockReset();
+  machineTransport.rpc.mockResolvedValue({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
+  adoptionTransport.mockReset();
   serverId = await homes.addHome({ name: 'Adopt', serverUrl: 'https://adopt.test', serverIdentityId: 'srv_adopt',
     accountId: 'adopt-owner', currentAccount: true });
+  await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'machines.services.adopt',
+    tokenEpoch: 0, requesterInvocation: 'none',
+    failure: result => {
+      if (typeof result !== 'object' || result === null || !('ok' in result) || result.ok !== false
+        || !('errorCode' in result) || typeof result.errorCode !== 'string'
+        || !('error' in result) || typeof result.error !== 'string') return null;
+      return { errorCode: result.errorCode, error: result.error };
+    }, execute: input => adoptionTransport({ payload: input }) });
 });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
 function adoptCalls() {
-  return machineTransport.rpc.mock.calls.map(([call]) => call as { method: string; payload: Record<string, unknown> })
-    .filter(call => call.method === RPC_METHODS.MACHINES_SERVICE_ADOPT);
+  return adoptionTransport.mock.calls.map(([call]) => call as { payload: Record<string, unknown> });
 }
 
 async function mount() {
@@ -57,21 +68,34 @@ async function mount() {
     service: { serviceId: 'analytics', generation: 'gen-1' } }));
 }
 
-it('routes machines.services.adopt through the real Action front door to the Machine', async () => {
-  machineTransport.rpc.mockImplementation(async () => review);
-  const hook = await mount();
+it.each(['own', 'shared'] as const)('routes %s Machine adoption to the daemon Action owner rather than native observation RPC', async ownership => {
+  const boundary = await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'machines.services.adopt',
+    requesterInvocation: ownership === 'shared' ? 'credentials' : 'none',
+    tokenEpoch: 0, ...(ownership === 'shared' ? { custodian: { accountId: 'another-owner', displayName: 'Another owner' } } : {}),
+    execute: input => adoptionTransport({ payload: input }) });
+  const boundaryFailures: string[] = [];
+  const handle = boundary.handle.bind(boundary);
+  boundary.handle = async (...args) => {
+    try { return await handle(...args); }
+    catch (error) { boundaryFailures.push(String(error)); throw error; }
+  };
+  adoptionTransport.mockResolvedValue(review);
+  const hook = await renderHook(() => useMachineServiceAdoption({ serverId, machineId,
+    service: { serviceId: 'analytics', generation: 'gen-1' } }));
   await act(async () => { await hook.getCurrent().review([]); });
-  expect(hook.getCurrent().state).toMatchObject({ kind: 'review' });
+  expect(hook.getCurrent().state, JSON.stringify({ state: hook.getCurrent().state, boundaryFailures,
+    requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toMatchObject({ kind: 'review' });
   expect(adoptCalls()).toHaveLength(1);
+  expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_ADOPT)).toBe(false);
 });
 
 it('captures a value-free review once, then applies the reviewed digest with confirmed bindings', async () => {
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) =>
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) =>
     payload.mode === 'review' ? review : { kind: 'adopted', environmentId: 'env-1', revision: 2, targetLinkId: 'link-1' });
   const hook = await mount();
   await act(async () => { await hook.getCurrent().review([]); });
   expect(hook.getCurrent().state).toMatchObject({ kind: 'review', review: { services: ['web', 'db'] } });
-  expect(adoptCalls()[0]!.payload).toMatchObject({ serverId: 'srv_adopt', machineId, serviceId: 'analytics', expectedGeneration: 'gen-1',
+  expect(adoptCalls()[0]!.payload).toMatchObject({ serverId, machineId, serviceId: 'analytics', expectedGeneration: 'gen-1',
     mode: 'review', profiles: [] });
   await act(async () => { await hook.getCurrent().apply({ destination, bindings }); });
   expect(hook.getCurrent().state).toMatchObject({ kind: 'adopted', environmentId: 'env-1' });
@@ -82,7 +106,7 @@ it('captures a value-free review once, then applies the reviewed digest with con
 
 it('keeps a partial adoption truthful and continues it under the same request', async () => {
   let applies = 0;
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => {
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => {
     if (payload.mode === 'review') return review;
     applies++;
     return applies === 1
@@ -103,7 +127,7 @@ it('keeps a partial adoption truthful and continues it under the same request', 
 });
 
 it('settles a refusal on its step with the typed code, and re-reads when the future profiles change', async () => {
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string; profiles: string[] } }) => {
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string; profiles: string[] } }) => {
     if (payload.mode === 'review') return { ...review, profiles: payload.profiles };
     return { ok: false, errorCode: 'secret_binding_required', error: 'secret_binding_required' };
   });
@@ -119,7 +143,7 @@ it('settles a refusal on its step with the typed code, and re-reads when the fut
 
 it('keeps one apply in flight and retains the exact request when retrying a refusal', async () => {
   let finish: ((value: unknown) => void) | undefined;
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => {
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => {
     if (payload.mode === 'review') return review;
     return await new Promise(resolve => { finish = resolve; });
   });
@@ -132,14 +156,14 @@ it('keeps one apply in flight and retains the exact request when retrying a refu
   expect(adoptCalls().filter(call => call.payload.mode === 'apply')).toHaveLength(1);
   await act(async () => { finish!({ ok: false, errorCode: 'machine_unreachable', error: 'machine_unreachable' }); await pending; });
   expect(hook.getCurrent().state).toMatchObject({ kind: 'failed', step: 'apply', code: 'machine_unreachable' });
-  machineTransport.rpc.mockResolvedValue({ kind: 'adopted', environmentId: 'env-1', revision: 2, targetLinkId: 'link-1' });
+  adoptionTransport.mockResolvedValue({ kind: 'adopted', environmentId: 'env-1', revision: 2, targetLinkId: 'link-1' });
   await act(async () => { await hook.getCurrent().retry(); });
   expect(hook.getCurrent().state).toMatchObject({ kind: 'adopted' });
   expect(adoptCalls()[2]!.payload).toEqual(adoptCalls()[1]!.payload);
 });
 
 it('starts a new application identity when the person changes a refused binding choice', async () => {
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
     ? review : { ok: false, errorCode: 'secret_binding_required', error: 'secret_binding_required' });
   const hook = await mount();
   await act(async () => { await hook.getCurrent().review([]); });
@@ -152,7 +176,7 @@ it('starts a new application identity when the person changes a refused binding 
 });
 
 it('uses the canonical bindings editor for the reviewed destination draft before one apply', async () => {
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
     ? review : { kind: 'adopted', environmentId: 'env-1', revision: 2, targetLinkId: 'link-1' });
   const hook = await mount();
   await act(async () => { await hook.getCurrent().review([]); });
@@ -170,7 +194,7 @@ it('uses the canonical bindings editor for the reviewed destination draft before
 
 it('keeps a late review from the previous generation out of the new adoption', async () => {
   let finish: ((value: unknown) => void) | undefined;
-  machineTransport.rpc.mockImplementation(async () => await new Promise(resolve => { finish = resolve; }));
+  adoptionTransport.mockImplementation(async () => await new Promise(resolve => { finish = resolve; }));
   const hook = await renderHook(({ generation }: { generation: string }) => useMachineServiceAdoption({ serverId, machineId,
     service: { serviceId: 'analytics', generation } }), { initialProps: { generation: 'gen-1' } });
   let pending: Promise<void> | undefined;
@@ -182,7 +206,7 @@ it('keeps a late review from the previous generation out of the new adoption', a
   await act(async () => { await hook.getCurrent().apply({ destination, bindings }); });
   expect(adoptCalls()).toHaveLength(1);
   const newDigest = `sha256:${'b'.repeat(64)}`;
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
     ? { ...review, reviewedDigest: newDigest }
     : { kind: 'adopted', environmentId: 'env-2', revision: 2, targetLinkId: 'link-2' });
   await act(async () => { await hook.getCurrent().review([]); });
@@ -193,7 +217,7 @@ it('keeps a late review from the previous generation out of the new adoption', a
 
 it('retires the old Account review and draft before another Account can apply it', async () => {
   let finish: ((value: unknown) => void) | undefined;
-  machineTransport.rpc.mockImplementation(async () => await new Promise(resolve => { finish = resolve; }));
+  adoptionTransport.mockImplementation(async () => await new Promise(resolve => { finish = resolve; }));
   const hook = await mount();
   let pending: Promise<void> | undefined;
   await act(async () => { pending = hook.getCurrent().review([]); });
@@ -209,7 +233,7 @@ it('retires the old Account review and draft before another Account can apply it
 
 
 it('clears a typed refusal while retaining the reviewed destination and bindings for correction', async () => {
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => payload.mode === 'review'
     ? review : { ok: false, errorCode: 'secret_binding_required', error: 'secret_binding_required' });
   const hook = await mount();
   await act(async () => { await hook.getCurrent().review([]); });

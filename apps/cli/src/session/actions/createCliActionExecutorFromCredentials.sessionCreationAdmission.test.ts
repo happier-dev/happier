@@ -259,6 +259,42 @@ describe('paired terminal Action admission', () => {
         });
     });
 
+    it.each(['execute', 'prepare'] as const)('delegates Compose adoption %s to its daemon owner before local policy or native observation', async method => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-service-adopt-ingress-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const actionId = 'machines.services.adopt';
+            const input = { serverId: 'srv_home', machineId: 'own-machine', serviceId: 'watched-compose',
+                expectedGeneration: 'generation', requestKey: 'adopt', profiles: [], mode: 'review' };
+            const expected = { ok: true, result: { kind: 'review', reviewedDigest: `sha256:${'a'.repeat(64)}`,
+                originalProfiles: 'unknown', document: 'services: {}', variables: [], services: [], profiles: [], availableProfiles: [] } };
+            vi.spyOn(axios, 'get').mockRejectedValue(new Error('Adoption belongs to the receiving daemon'));
+            vi.spyOn(axios, 'post').mockRejectedValue(new Error('No outer approval may precede adoption preparation'));
+            const requests: unknown[] = [];
+            vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
+                expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
+                const request: unknown = JSON.parse(String(options.body));
+                requests.push(request);
+                expect(request).toMatchObject({ actionId, input, target: { kind: 'machine', machineId: input.machineId } });
+                return Response.json(expected);
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const result = method === 'execute' ? await executor.execute(actionId, input, { surface: 'cli' })
+                : await (async () => {
+                    const prepared = await executor.prepare(actionId, input, { surface: 'cli' });
+                    return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+                })();
+            expect(result).toEqual(expected);
+            expect(requests).toHaveLength(1);
+        });
+    });
+
     it.each([false, true])('routes protected CLI input through its existing Session custody before the native runtime is ready (other local daemon: %s)', async otherLocalDaemon => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-starting-session-input-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 4,
