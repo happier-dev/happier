@@ -11,6 +11,7 @@ import {
   projectUsageRunLengthModel,
   projectUsageSkyModel,
   projectUsageSteeringModel,
+  usageSteeringRecorded,
   projectUsageWeekHours,
   type UsageAgentCalendar,
 } from './usageChartModels';
@@ -223,6 +224,8 @@ describe('Usage chart models', () => {
     }).results[0]!;
     expect(slice.howYouWork!.steering!.inputsObserved).toBe(true);
     const row = projectUsageSteeringModel(slice)!.rows[0]!;
+    // Busy with no steer and no phone answer: a measured zero the body says once, not a flat lane (R8 #5).
+    expect(usageSteeringRecorded(projectUsageSteeringModel(slice)!)).toBe(false);
     expect(row.steers).toBe(0);
     expect(row.steersByHour).toEqual(Array(24).fill(0));
     expect(row.phoneAnswers).toBeNull();
@@ -308,6 +311,18 @@ describe('Usage chart models', () => {
     expect(
       projectUsageRunLengthModel(slice)!.rows.map((row) => row.agentId),
     ).toEqual(['claude', null]);
+  });
+  it('omits a Run length member whose every closed turn took no wall time (R8 #5)', () => {
+    const query = normalizeUsageQuery({ period: { startMs: START, endMs: START + DAY }, includeActivity: true });
+    const hour = 3_600_000;
+    const slice = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail: { status: 'partial',
+      facts: [{ workId: 'a', evidenceId: 'a', agentId: 'claude', machineId: null, kind: 'busy', startMs: START, endMs: START + hour }],
+      closedTurns: [
+        { workId: 'a', agentId: 'claude', status: 'completed', startMs: START, endMs: START + hour },
+        { workId: 'k', agentId: 'kimi', status: 'completed', startMs: START + hour, endMs: START + hour },
+      ],
+      acceptedInputs: [] } }] }).results[0]!;
+    expect(projectUsageRunLengthModel(slice)!.rows.map((row) => row.agentId)).toEqual(['claude']);
   });
   it('omits an Unknown Human loop member whose only fact is a non-phone answer', () => {
     const query = normalizeUsageQuery({

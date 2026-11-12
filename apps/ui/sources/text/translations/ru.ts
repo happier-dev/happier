@@ -17356,7 +17356,7 @@ settingsSession: {
             unavailable: "Сейчас этот источник не читается",
             failed: "Не удалось прочитать источник",
             approvalPending: "Ожидает вашего подтверждения",
-            machineOffline: "Не в сети · прочитаем, когда вернётся",
+            machineOffline: "Не в сети · прочитаем после подключения",
             machineLooking: "Поиск файлов использования агентов",
             machineNone: "Файлы использования агентов не найдены",
             machineCounted: ({ count }: { count: string | number }) => `Учтено источников: ${count}`,

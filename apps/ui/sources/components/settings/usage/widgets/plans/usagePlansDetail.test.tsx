@@ -659,6 +659,24 @@ it('does not materialize curve points for the meter-list presentation', async ()
   expect(curveReads).toBe(0);
 });
 
+it('counts a spent window down to its return in the list row, where "used up · back …" was cut at the row end (R8 #7)', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 10,
+    resetAtMs: now + HOUR, windowDurationMs: DAY }]);
+  const { WidgetPresentationProvider } = await import('@happier-dev/plugin-ui');
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const { UsageMeterRow } = await import('@/components/settings/connectedServices/usage/UsageMeterRow');
+  const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+    footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
+    <UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />
+  </WidgetPresentationProvider>));
+  const spent = screen.findAllByType(UsageMeterRow).find((row) => row.props.testID === 'proj.window.work.weekly');
+  expect(spent?.props.remainingPct).toBe(0);
+  expect(spent?.props.resetsAt).toBe(now + DAY);
+  expect(spent?.props.resetText).toBeUndefined();
+});
+
 it('lists every reported window with its projection beside other widgets, without the burn-up or disclosures', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
@@ -1083,6 +1101,9 @@ it('says "nothing connected" once: Capacity owns the cause, the widgets derived 
     t('usage.board.plans.resetsNoneConnected'),
     t('usage.board.plans.planFitNoneConnected'),
   ]);
+  // Only the cause draws the connect scene; each derived widget is one quiet line beside it (R8 #3).
+  expect(screen.findAllByType(SurfaceStateCard).map((state) => [state.props.scene ?? null, state.props.size ?? null]))
+    .toEqual([['connectAccount', null], [null, 'line'], [null, 'line'], [null, 'line']]);
 });
 
 it('asks whose order to show when several Machines are in scope, instead of calling the order unreadable (QA U2)', async () => {

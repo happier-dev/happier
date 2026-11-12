@@ -17780,7 +17780,7 @@ settingsSession: {
             unavailable: "Impossibile leggere questa fonte ora",
             failed: "Impossibile leggere questa fonte",
             approvalPending: "In attesa della tua approvazione",
-            machineOffline: "Offline · verrà letto al ritorno",
+            machineOffline: "Offline · lettura al ritorno online",
             machineLooking: "Ricerca dei file di utilizzo degli agent",
             machineNone: "Nessun file di utilizzo degli agent trovato",
             machineCounted: ({ count }: { count: string | number }) => `${count} fonti conteggiate`,

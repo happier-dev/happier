@@ -15475,7 +15475,7 @@ settingsSession: {
           unavailable: "Ara mateix no es pot llegir aquesta font",
           failed: "No s’ha pogut llegir aquesta font",
           approvalPending: "Esperant la teva aprovació",
-          machineOffline: "Fora de línia · es llegirà quan torni",
+          machineOffline: "Fora de línia · lectura en tornar en línia",
           machineLooking: "S’estan cercant fitxers d’ús d’agents",
           machineNone: "No s’han trobat fitxers d’ús d’agents",
           machineCounted: ({ count }: { count: string | number }) => `${count} fonts comptades`,

@@ -17517,7 +17517,7 @@ settingsSession: {
             unavailable: "Não é possível ler esta fonte agora",
             failed: "Não foi possível ler esta fonte",
             approvalPending: "Aguardando sua aprovação",
-            machineOffline: "Offline · será lido quando voltar",
+            machineOffline: "Offline · leitura ao voltar online",
             machineLooking: "Procurando arquivos de uso de agentes",
             machineNone: "Nenhum arquivo de uso de agentes encontrado",
             machineCounted: ({ count }: { count: string | number }) => `${count} fontes contadas`,

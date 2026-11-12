@@ -237,10 +237,8 @@ export function UsageSourcesMachines(
           />
         ) : null}
         {emptyCount > 0 ? groupLine('emptyMachines', emptyCount, t('usage.board.sources.machineNone')) : null}
-        {offlineCount > 0 ? <Text testID={`${props.testID}.offline`} style={styles.note}
-          accessibilityLabel={t('machines.widgets.body.fleet.offlineGroup', { count: offlineCount })}>
-          {t('machines.widgets.body.fleet.offlineGroup', { count: offlineCount })}
-        </Text> : null}
+        {/* Offline machines are named as machines and say what happens next: their sources are read when they return. */}
+        {offlineCount > 0 ? groupLine('offline', offlineCount, t('usage.board.sources.machineOffline')) : null}
       </View> : null}
       {consentable ? <ConsentDisclosure testID={`${props.testID}.disclosure`} /> : null}
     </View>

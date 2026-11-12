@@ -395,14 +395,15 @@ export function UsagePlansNothingRead(
   // Settled with no account and nothing failed: nothing is connected. The body is the widget empty state every
   // frame uses (sized by the frame: the connect scene with room, one line when compact). Capacity owns the cause
   // and carries the one sign-in (58d AF1); Home's Get set up drops its own item while Capacity is placed. The
-  // widgets derived from it say only what they will show. A history qualifier means nothing when nothing was read.
+  // widgets derived from it say only what they will show, in one quiet line: the scene belongs to the cause, so a
+  // page with Limits never draws a second empty scene beside it. A history qualifier means nothing when nothing was read.
   if (props.replacesContent !== false && !gaps.some((gap) => gap.status === 'error')) {
     return (
       <SurfaceStateCard
         testID={props.testID}
         kind="empty"
         replacesContent
-        scene="connectAccount"
+        {...(props.ownsCause ? { scene: 'connectAccount' as const } : { layout: 'inline' as const, size: 'line' as const })}
         title={props.ownsCause ? t('usage.board.plans.capacitySignInTitle') : props.promise}
         {...(props.ownsCause ? {
           reason: props.promise,

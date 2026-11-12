@@ -17576,7 +17576,7 @@ settingsSession: {
             unavailable: "Diese Quelle ist gerade nicht lesbar",
             failed: "Diese Quelle konnte nicht gelesen werden",
             approvalPending: "Wartet auf deine Freigabe",
-            machineOffline: "Offline · wird gelesen, sobald es zurück ist",
+            machineOffline: "Offline · wird gelesen, sobald wieder online",
             machineLooking: "Suche nach Nutzungsdateien von Agents",
             machineNone: "Keine Nutzungsdateien von Agents gefunden",
             machineCounted: ({ count }: { count: string | number }) => `${count} Quellen gezählt`,

@@ -12,7 +12,7 @@ import {
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartKeyItem, type UsageChartValuesLabels,
 } from './chartKit.js';
 import type { UsagePlanetSlot } from './usagePlanetSlot.js';
-import { placeUsageOrbitLabels } from './usageOrbitLabelLayout.js';
+import { placeUsageOrbitLabels, usageOrbitAngles } from './usageOrbitLabelLayout.js';
 
 type AgentsProps = UsageChartBaseProps & Readonly<{ agents: readonly UsageChartAgent[] }>;
 const agentOf = (agents: readonly UsageChartAgent[], id: string | null) => agents.find((agent) => agent.id === id);
@@ -138,9 +138,9 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
         const outer = Math.max(60, Math.min(width / 2 - 72, 260));
         const aspect = Math.min(0.75, Math.max(0.42, (height / 2 - 24) / outer));
         const rx0 = Math.min(width * 0.17, 74), step = (outer - rx0) / (orbits - 1);
-        const angles = [-0.12, 3.0, 0.42, 3.62, -0.62, 2.4, 0.95];
+        const angles = usageOrbitAngles(known.length, width < 420);
         const placed = known.map((entry, index) => {
-          const rx = rx0 + index * step, ry = rx * aspect, t = angles[index % angles.length]!;
+          const rx = rx0 + index * step, ry = rx * aspect, t = angles[index]!;
           const x = cx + rx * Math.cos(t), y = cy + ry * Math.sin(t), radius = 3 + Math.sqrt(entry.share) * 13, right = Math.cos(t) >= 0;
           // A label beside its planet, kept inside the body on a narrow width (it moves to the edge, never off it).
           const text = `${shortName(props.agents, entry.agentId, props.labels.unknownAgent)} ${props.labels.percent(entry.share)}`;

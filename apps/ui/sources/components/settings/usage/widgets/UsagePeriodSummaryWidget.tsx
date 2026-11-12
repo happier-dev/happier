@@ -37,10 +37,11 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   const selectedCost = view.pageCost;
   const currency = selectedCost.selection?.currency ?? view.costPresentation.currency;
   // `amountUsd` is authoritative: a candidate basis with an unavailable amount means some usage has
-  // neither a reported cost nor a model price, never "estimated where not reported" under a dash.
+  // neither a reported cost nor a model price, never "estimated where not reported" under a dash. An amount
+  // with no basis is an empty population's measured zero: it names no kind, and is never "Unavailable".
   const costCaption =
-    selectedCost.amountUsd !== null && selectedCost.selection
-      ? usageCostKindPhrase(selectedCost.selection.kind)
+    selectedCost.amountUsd !== null
+      ? selectedCost.selection ? usageCostKindPhrase(selectedCost.selection.kind) : undefined
       : selectedCost.selection
         ? t('usage.board.page.costUnpricedCaption')
         : t('common.unavailable');

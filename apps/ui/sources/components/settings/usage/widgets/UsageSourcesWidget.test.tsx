@@ -442,6 +442,9 @@ describe('Usage Sources body', () => {
     expect(screen.findByTestId('sources.machine.off-a')).toBeFalsy();
     expect(screen.findByTestId('sources.offline')).toBeTruthy();
     expect(screen.findByTestId('sources.offline')?.props.accessibilityLabel).toContain('2');
+    // The line names what is offline and what happens next, never a bare "Offline · 2" (R8 #8).
+    expect(screen.findByTestId('sources.offline')?.props.accessibilityLabel)
+      .toBe('2 machines · usage.board.sources.machineOffline');
   });
   it('discovers only resolved machines and hides inventory outside the resolved Agent scope', async () => {
     const codex: UsageSourceV1 = { ...found, sourceId: 'codex-default',

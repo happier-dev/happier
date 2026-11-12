@@ -21,6 +21,7 @@ import {
 import {
   projectUsageAgentShares, projectUsageConstellationModel, projectUsageDayModel, projectUsageDaylight, projectUsageRiverModel,
   projectUsageRunLengthModel, projectUsageScoreModel, projectUsageShippedModel, projectUsageSkyModel, projectUsageSteeringModel,
+  usageSteeringRecorded,
   projectUsageRecordFacts, projectUsagePortraitModel, projectUsageWeekHours, resolveUsageChartDay, resolveUsageChartMetric,
 } from './usageChartModels';
 import { readUsageChartSources } from './usageSourceSelection';
@@ -333,7 +334,9 @@ export function UsageSteeringStyleBody(props: UsageChartStyleBodyProps) {
   useStyleCaption(t('usage.board.charts.inputSteering'));
   const model = React.useMemo(() => projectUsageSteeringModel(props.slice), [props.slice]);
   const agents = React.useMemo(() => (model?.rows ?? []).flatMap((row) => row.agentId ? [host.agent(row.agentId)] : []), [model, host.agent]);
-  if (!model || model.rows.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.steeringEmptyTitle')} reason={t('usage.board.charts.steeringEmptyReason')} />;
+  // Busy agents that nobody steered or answered from a phone are a measured zero, said once ("No steering recorded"),
+  // never a lane each of flat zeros; once one agent was steered, the others' zero rates compare against it.
+  if (!model || !usageSteeringRecorded(model)) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.steeringEmptyTitle')} reason={t('usage.board.charts.steeringEmptyReason')} />;
   return <View style={{ gap: 12 }} testID={`${props.testID}.steering`}>
     <UsageSteeringTide theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.steeringChart`} label={t('usage.board.charts.steeringA11y')}
       labels={{ clock: usageChartClock, unknownAgent: usageAgentTitle(''), perBusyHourHeader: t('usage.board.charts.steersPerBusyHour'),
@@ -352,7 +355,7 @@ export function UsageRunLengthBody(props: UsageChartStyleBodyProps) {
   const model = React.useMemo(() => projectUsageRunLengthModel(props.slice), [props.slice]);
   const agents = React.useMemo(() => (model?.rows ?? []).flatMap((row) => row.agentId ? [host.agent(row.agentId)] : []), [model, host.agent]);
   const ghost = useChartGhost(props.serverId);
-  if (!model) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.runEmptyTitle')} reason={t('usage.board.charts.runEmptyReason')}
+  if (!model || model.rows.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.runEmptyTitle')} reason={t('usage.board.charts.runEmptyReason')}
     ghost={props.slice.howYouWork ? ghost('runs', props.testID, { ticks: [t('usage.board.charts.tickMinute'), t('usage.board.charts.tickTenMinutes'), t('usage.board.charts.tickHour'), t('usage.board.charts.tickFourHours')] }) : undefined} />;
   return <View style={{ gap: 12 }} testID={`${props.testID}.runLength`}>
     <UsageRunLength theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.runLengthChart`} label={t('usage.board.charts.runA11y')}

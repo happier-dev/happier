@@ -17283,7 +17283,7 @@ settingsSession: {
             unavailable: "Cette source est illisible pour le moment",
             failed: "Impossible de lire cette source",
             approvalPending: "En attente de ton approbation",
-            machineOffline: "Hors ligne · lecture à son retour",
+            machineOffline: "Hors ligne · lecture au retour en ligne",
             machineLooking: "Recherche des fichiers d'utilisation des agents",
             machineNone: "Aucun fichier d'utilisation d'agent trouvé",
             machineCounted: ({ count }: { count: string | number }) => `${count} sources comptées`,

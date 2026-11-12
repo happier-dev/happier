@@ -26,6 +26,7 @@ import {
   UsageCoverageLine,
   isUsageReadFailed,
   isUsageReadOutstanding,
+  usagePeriodPhrase,
   useUsageAnalyticsView,
   useUsagePluginTheme,
   type UsageBodyProps,
@@ -68,10 +69,11 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
     (view?.punchCard.total ?? 0) > 0 || (view?.hourRhythm.total ?? 0) > 0;
   const streak = view?.hero.longestStreakDays ?? 0;
   const pageNothingRecorded = useUsageWidgetPageNothingRecorded();
+  // The caption line always says something: the streak once there is one, otherwise the period (never a blank line).
   useWidgetFrameBodyCaption(
     view && streak > 0
       ? t('usage.board.howYouWork.longestStreak', { count: streak })
-      : null,
+      : usagePeriodPhrase(props.query),
   );
   if (!view || !activity || (!hasCalendar && !hasRhythm)) {
     if (isUsageReadOutstanding(props.slice, ['accounting']))

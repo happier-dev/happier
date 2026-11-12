@@ -20841,7 +20841,7 @@ const enUsage = {
       unavailable: "Can't read this source right now",
       failed: "Couldn't read this source",
       approvalPending: "Waiting for your approval",
-      machineOffline: "Offline · will read when it's back",
+      machineOffline: "Offline · read when back online",
       machineLooking: "Looking for agent usage files",
       machineNone: "No agent usage files found",
       machineCounted: ({ count }: { count: string | number }) => `${count} sources counted`,

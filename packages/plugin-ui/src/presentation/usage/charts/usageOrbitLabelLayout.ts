@@ -41,3 +41,28 @@ export function placeUsageOrbitLabels(
   }
   return y;
 }
+
+/** The lab's hand-set angles: the largest planet just above the right, the next ones alternating sides. */
+const USAGE_ORBIT_WIDE_ANGLES = [-0.12, 3.0, 0.42, 3.62, -0.62, 2.4, 0.95] as const;
+/** How far above or below its side's middle a planet may sit on a narrow body (radians). */
+const USAGE_ORBIT_NARROW_SPREAD = 0.9;
+
+/**
+ * Each planet's angle on its orbit. A wide body with no more planets than the lab drew keeps the lab's angles. A narrow
+ * body (a phone), or one with more planets than those angles, alternates sides and spreads each side's planets evenly
+ * from its middle outward, so no two planets share an angle and their labels start on different lines rather than
+ * crowding beside the largest planet.
+ */
+export function usageOrbitAngles(count: number, narrow: boolean): number[] {
+  if (!narrow && count <= USAGE_ORBIT_WIDE_ANGLES.length) return USAGE_ORBIT_WIDE_ANGLES.slice(0, count);
+  const perSide = [Math.ceil(count / 2), Math.floor(count / 2)];
+  const slots = perSide.map((n) => {
+    const evenly = Array.from({ length: n }, (_, k) => n <= 1 ? 0 : -USAGE_ORBIT_NARROW_SPREAD + 2 * USAGE_ORBIT_NARROW_SPREAD * k / (n - 1));
+    // Middle first, so the largest planets sit level with the centre and the smallest go above and below.
+    return evenly.sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+  });
+  return Array.from({ length: count }, (_, index) => {
+    const side = index % 2, slot = slots[side]![Math.floor(index / 2)]!;
+    return side === 0 ? slot : Math.PI - slot;
+  });
+}

@@ -74,9 +74,10 @@ function formatPeriodUsageValue(viewModel: UsageAnalyticsViewModel, filters: Usa
 
 function formatUsageRecapCost(viewModel: UsageAnalyticsViewModel): string {
     if (viewModel.pageCost) {
-        return viewModel.pageCost.amountUsd === null || !viewModel.pageCost.selection
+        // The amount decides known or unknown; an amount with no basis is an empty population's measured zero.
+        return viewModel.pageCost.amountUsd === null
             ? t('common.unavailable')
-            : formatUsageCost(viewModel.pageCost.amountUsd, viewModel.pageCost.selection.currency);
+            : formatUsageCost(viewModel.pageCost.amountUsd, viewModel.pageCost.selection?.currency ?? viewModel.costPresentation.currency);
     }
     // Legacy report views retain their witnessed presentation; 'none' is never a priced zero.
     return viewModel.costPresentation.source === 'none' ? t('common.unavailable')
@@ -89,10 +90,11 @@ function buildPeriodUsageSubtitle(viewModel: UsageAnalyticsViewModel, filters: U
     }
 
     // Under a token total, missing money says what is missing ("Cost not priced"), never a bare "Unavailable".
-    if (viewModel.pageCost ? viewModel.pageCost.amountUsd === null || !viewModel.pageCost.selection : viewModel.costPresentation.source === 'none')
+    if (viewModel.pageCost ? viewModel.pageCost.amountUsd === null : viewModel.costPresentation.source === 'none')
         return t('usage.board.recap.costNotPriced');
     const amount = formatUsageRecapCost(viewModel);
-    return `${amount} · ${usageCostKindPhrase(viewModel.pageCost?.selection?.kind ?? viewModel.costPresentation.source)}`;
+    const kind = viewModel.pageCost ? viewModel.pageCost.selection?.kind : viewModel.costPresentation.source;
+    return kind ? `${amount} · ${usageCostKindPhrase(kind)}` : amount;
 }
 
 function buildRecentActivity(viewModel: UsageAnalyticsViewModel, timeZoneOffsetMinutes: number): UsageSummaryActivityPoint[] {

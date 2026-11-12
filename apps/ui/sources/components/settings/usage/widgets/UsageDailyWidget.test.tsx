@@ -161,6 +161,24 @@ describe('Daily keeps its shape: declared plot height and a chart-shaped first r
     expect(measured).toBe(first);
     expect(stretched).toBe(first);
   });
+  it('draws an empty population as its flat days beside a partner, and one quiet line where a read reported a gap (R8 #2)', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
+    // The server's empty population: zero totals, coverage 'unknown' with no reason (no source to cover).
+    const empty = (reasons: readonly string[]) => {
+      const props = fixture([], start + 3 * day, false);
+      const accounting = props.slice.accounting!;
+      const slice = { ...props.slice, accounting: { ...accounting, coverage: { ...accounting.coverage!, status: reasons.length ? 'partial' as const : 'unknown' as const,
+        reasons: reasons as never, range: { startMs: start, endMs: start + 3 * day, complete: false } } } };
+      return { ...props, slice, model: { ...props.model, slice } };
+    };
+    const room = { ...medium, geometry: { width: 560, height: 368 } };
+    const read = await renderScreen(<WidgetPresentationProvider value={room}><UsageDailyWidget {...empty([])} /></WidgetPresentationProvider>);
+    const chart = read.findByType(StackedSeriesChart);
+    expect(chart.props.series.flatMap((entry: { points: { y: number | null }[] }) => entry.points.map(point => point.y))).toEqual([0, 0, 0]);
+    expect([chart.props.showScaleValues, chart.props.showPeakValue, chart.props.showLegend]).toEqual([false, false, false]);
+    const unknown = await renderScreen(<WidgetPresentationProvider value={room}><UsageDailyWidget {...empty(['incomplete_history'])} /></WidgetPresentationProvider>);
+    expect(unknown.findAllByType(StackedSeriesChart)).toHaveLength(0);
+  });
   it('holds the settled chart\'s room while its first read is pending, then says what it is still reading', async () => {
     vi.useFakeTimers();
     try {

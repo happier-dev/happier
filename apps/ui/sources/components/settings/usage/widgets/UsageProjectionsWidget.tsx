@@ -716,7 +716,9 @@ function ProjectionRow(
       estimated={window.estimated}
       size={props.stacked ? 'default' : 'wide'}
       layout={props.stacked ? 'stacked' : 'inline'}
-      {...(props.resetOnly ? {} : { resetText: statement.text })}
+      // A used-up window's "0% left" already says it is spent; its reset column counts down to its return, which
+      // fits the row's countdown column where "used up · back Sat 03:02 AM" was cut at the row end (R8 #7).
+      {...(props.resetOnly || statement.kind === 'used_up' ? {} : { resetText: statement.text })}
       {...(window.pace
         ? {
             pace: {

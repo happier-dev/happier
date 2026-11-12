@@ -347,10 +347,17 @@ export function projectUsageSteeringModel(slice: UsageQueryResultSlice): UsageSt
     }) };
 }
 
+/** Whether anyone steered or answered from a phone in the period; busy agents alone are a measured zero, said once. */
+export function usageSteeringRecorded(model: UsageSteeringTideModel): boolean {
+  return model.rows.some((row) => (row.steers ?? 0) > 0 || (row.phoneAnswers ?? 0) > 0);
+}
+
 export function projectUsageRunLengthModel(slice: UsageQueryResultSlice): (UsageRunLengthModel & Readonly<{ openCount: number; croppedCount: number }>) | null {
   const runs = slice.howYouWork?.runLengths;
   if (!runs || runs.sampleCount === 0) return null;
-  return { rows: unknownAgentLast(runs.byAgent.filter((row) => row.sampleCount > 0)).map((row) => ({ agentId: row.agentId, samples: row.sampleCount, medianMs: row.medianMs,
+  // A member whose every closed turn took no wall time has no length to draw on the run axis; it is omitted like a
+  // member with no closed turn, rather than listed as a column of "0 s".
+  return { rows: unknownAgentLast(runs.byAgent.filter((row) => row.sampleCount > 0 && (row.p90Ms ?? 0) > 0)).map((row) => ({ agentId: row.agentId, samples: row.sampleCount, medianMs: row.medianMs,
     p90Ms: row.p90Ms, durationsMs: row.durationsMs })), openCount: runs.openCount, croppedCount: runs.croppedCount };
 }
 

@@ -763,6 +763,23 @@ describe('one selected money basis across Usage bodies', () => {
       .every((entry: { points: { y: number | null }[] }) => entry.points.every(point => point.y === null))).toBe(true);
   });
 
+  it('reads an empty population as a measured zero cost, never zero beside "Unavailable"', async () => {
+    const base = mountedCosts();
+    const zeroTokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+    const empty = { v: 1 as const, totals: { eventCount: 0, tokens: zeroTokens, cost: { reportedUsd: null, estimatedUsd: null,
+      invoiceUsd: null, currency: 'USD', costSource: 'none' as const } }, contributions: [], series: [], breakdowns: {} };
+    for (const metric of ['cost', 'tokens'] as const) {
+      const query = normalizeUsageQuery({ ...base.query, metric });
+      const slice = resolveUsagePageAggregation({ queries: [query],
+        accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse(empty) }] }).results[0]!;
+      const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice}
+        model={{ ...base.model, slice }} id="usage_period_summary" testID="empty" />);
+      const figure = screen.findAllByType(HappierDataMetric)
+        .find(node => metric === 'cost' ? node.props.testID === 'empty.hero' : node.props.label === t('usage.cost'));
+      expect([metric, figure?.props.value, figure?.props.caption]).toEqual([metric, 0, undefined]);
+    }
+  });
+
   it('leads a long breakdown with its largest rows and keeps the tail one press away', () => {
     const rows = Array.from({ length: 16 }, (_, index) => ({ id: `m${index}` }));
     expect(leadingUsageRows(rows, false)).toEqual({ rows: rows.slice(0, 6), hidden: 10 });

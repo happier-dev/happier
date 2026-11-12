@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { placeUsageOrbitLabels } from './usageOrbitLabelLayout.js';
+import { placeUsageOrbitLabels, usageOrbitAngles } from './usageOrbitLabelLayout.js';
 
 const LINE = 15;
 
@@ -32,5 +32,25 @@ describe('placeUsageOrbitLabels', () => {
       expect(y).toBeGreaterThanOrEqual(LINE);
     }
     expect(Math.abs(placed[1]! - placed[0]!)).toBeGreaterThanOrEqual(LINE);
+  });
+});
+
+describe('usageOrbitAngles', () => {
+  it('keeps the lab angles on a wide body with few planets', () => {
+    expect(usageOrbitAngles(3, false)).toEqual([-0.12, 3.0, 0.42]);
+  });
+
+  it('gives every planet its own angle on a phone, alternating sides, so labels do not crowd beside one planet (R8 #6)', () => {
+    for (const narrow of [true, false]) {
+      const angles = usageOrbitAngles(9, narrow);
+      const right = angles.filter((_, index) => index % 2 === 0), left = angles.filter((_, index) => index % 2 === 1);
+      expect(right.every((angle) => Math.cos(angle) > 0)).toBe(true);
+      expect(left.every((angle) => Math.cos(angle) < 0)).toBe(true);
+      // Same-side planets sit on distinct lines: at least a fifth of a radian apart.
+      for (const side of [right, left]) {
+        const sines = side.map(Math.sin).sort((a, b) => a - b);
+        for (let index = 1; index < sines.length; index++) expect(sines[index]! - sines[index - 1]!).toBeGreaterThan(0.2);
+      }
+    }
   });
 });

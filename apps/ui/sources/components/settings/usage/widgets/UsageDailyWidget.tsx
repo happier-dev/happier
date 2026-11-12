@@ -232,8 +232,17 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   const shape = useUsageDailyChartShape();
   const hasGapDay = (series[0]?.points ?? []).some((_, index) => series.every(entry => entry.points[index]?.y == null));
   const height = shape.plotPx;
-  // A period that recorded nothing says so once, rather than drawing its days as unrecorded on a 0-to-0 axis.
-  if (!view || count === 0 || props.slice.accounting?.totals.eventCount === 0)
+  // A period that recorded nothing says so once, rather than drawing its days as unrecorded on a 0-to-0 axis. An empty
+  // population is a measured 0 (its totals are zeros and no read reported a gap): beside a partner the card draws its
+  // days as the flat week they are, so it holds its plot instead of one line over blank room. A phone keeps the line.
+  const accounting = props.slice.accounting;
+  const nothingRecorded = accounting?.totals.eventCount === 0;
+  const measuredZeroWeek = nothingRecorded && !phone && !compact && count > 0 && accounting?.totals.tokens.total === 0
+    && (accounting.coverage?.reasons.length ?? 0) === 0;
+  const drawnSeries = React.useMemo(() => measuredZeroWeek
+    ? chartSeries.map(entry => ({ ...entry, points: entry.points.map(point => ({ ...point, y: point.y ?? 0 })) }))
+    : chartSeries, [chartSeries, measuredZeroWeek]);
+  if (!view || count === 0 || (nothingRecorded && !measuredZeroWeek))
     // Until the first read answers, the body holds the settled chart's shape (its plot, axis and legend room).
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} readingShape={shape} onRetry={props.model.refresh} />;
   return (
@@ -241,7 +250,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     <UsageDailyChart theme={chartTheme} gap={theme.space.s10} testID={props.testID} chart={{
         ...details,
         label: caption,
-        series: chartSeries,
+        series: drawnSeries,
         size: compact ? 'tile' : 'full',
         viewportHeight: height,
         barGap: count > 45 ? 2 : count > 20 ? 4 : 6,
@@ -251,11 +260,11 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         // A near-zero money scale reads in whole cents ($0.05 · $0.10), never "$0.005".
         minimumMaximum: metric === 'cost' ? 0.1 : 1,
         showGrid: true,
-        showScaleValues: true,
+        showScaleValues: !measuredZeroWeek,
         scaleGutter: 44,
-        showPeakValue: dailyShowsPeak(phone, compact),
+        showPeakValue: !measuredZeroWeek && dailyShowsPeak(phone, compact),
         // A hatched day is keyed in the legend, so a day with no figure (Cost: no price) reads as one beside the totals.
-        showLegend: !compact && (series.length > 1 || hasGapDay),
+        showLegend: !compact && !measuredZeroWeek && (series.length > 1 || hasGapDay),
         gapLabel: metric === 'cost' ? t('usage.board.page.factUnpriced') : t('usage.board.howYouWork.notRecorded'),
         ...dailyContext,
         ...motion,
