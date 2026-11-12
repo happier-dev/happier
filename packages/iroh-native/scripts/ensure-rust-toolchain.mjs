@@ -33,6 +33,8 @@ export const IROH_RUST_TARGETS = Object.freeze({
   ios: Object.freeze(['aarch64-apple-ios', 'aarch64-apple-ios-sim', 'x86_64-apple-ios']),
   android: Object.freeze(['aarch64-linux-android', 'x86_64-linux-android']),
   browser: Object.freeze(['wasm32-unknown-unknown']),
+  // Session execution-target holders (build-node-addon.mjs SESSION_TARGET_HOLDER_RUST_TARGETS), built on every native host.
+  'session-targets': Object.freeze(['x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl']),
 });
 
 const PACKAGE_ROOT = new URL('../', import.meta.url);
@@ -95,17 +97,17 @@ export function prepareRustToolchain({ platform, channel, env = process.env }) {
   });
 
   if (plan.status === 'skipped') {
-    process.stdout.write(`[iroh-native] Rust toolchain setup skipped: ${plan.reason}\n`);
+    process.stderr.write(`[iroh-native] Rust toolchain setup skipped: ${plan.reason}\n`);
     return;
   }
 
   if (platform === 'host' && hasRustup
     && spawnSync(rustup, ['run', channel, 'rustc', '--version'], { env, stdio: 'ignore' }).status === 0) {
-    process.stdout.write(`[iroh-native] Rust ${channel} ready for native host\n`);
+    process.stderr.write(`[iroh-native] Rust ${channel} ready for native host\n`);
     return;
   }
 
-  process.stdout.write(
+  process.stderr.write(
     `[iroh-native] preparing Rust ${channel} for ${platform}: ${plan.targets.join(', ')}\n`,
   );
   for (const { command, args } of plan.commands) {

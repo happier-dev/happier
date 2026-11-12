@@ -117,6 +117,10 @@ esac
   assert.ok(installs.includes(channel));
   const second = run();
   assert.equal(second.status, 0, second.stderr);
+  // Callers such as the source-runtime producer parse this process's stdout as a
+  // protocol channel, so progress is diagnostic output on stderr only.
+  assert.equal(first.stdout, '', 'toolchain progress must not write to stdout');
+  assert.equal(second.stdout, '', 'toolchain progress must not write to stdout');
   assert.equal(await readFile(join(cargoHome, 'installs'), 'utf8'), installs, 'a ready compiler must not be reinstalled');
 });
 
