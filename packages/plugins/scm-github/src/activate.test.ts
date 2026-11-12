@@ -201,7 +201,7 @@ describe('activate', () => {
             maxLength: 512,
           },
         },
-        required: ['credentialRef', 'repository'],
+        required: ['repository'],
       },
       inputHints: {
         fields: [{
@@ -270,6 +270,7 @@ describe('activate', () => {
     expect(semanticEvents.map(({ id }) => id).sort()).toEqual([
       'automation/deployment-review-v1',
       'automation/issue-opened-v1',
+      'automation/pull-request-lifecycle-v1',
       'automation/pull-request-merged-v1',
       'automation/pull-request-opened-v1',
       'automation/repository-pushed-v1',
@@ -292,6 +293,11 @@ describe('activate', () => {
         eligible: true,
         source: {
           sourceContractVersion: 1,
+          ...(event.id === 'automation/pull-request-lifecycle-v1' ? {
+            scmPullRequestLifecycle: { providerKind: 'github', previewStatusActionRef: {
+              pluginId: PLUGIN_MANIFEST.id, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus,
+            } },
+          } : {}),
           supportedObservationTransports: ['checkpointedPull', 'durablePush'],
           sourceConfigSchema: expect.objectContaining({
             type: 'object',

@@ -11,7 +11,7 @@ import {
   TriageSourceInstanceDraftV1Schema,
   TriageListScopeUnitsInputV1Schema,
 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_CONNECTED_ACCOUNT_SERVICE, GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { decodeGithubTriageConfiguration } from '../../triage/configuration.js';
@@ -81,7 +81,7 @@ describe('the mounted GitHub PRs & Issues settings page', () => {
     const transport = createStubGithubTransport({
       respond: request => new URL(request.url).pathname === '/user'
         ? { status: 200, body: { login: 'source-owner' } } : undefined,
-      listing: { status: 'complete', accounts: [{ account: GITHUB_TEST_ACCOUNT, displayName: 'Source owner',
+      listing: { status: 'complete', accounts: [{ account: GITHUB_TEST_ACCOUNT, displayName: 'Source owner', state: 'connected',
         connectedAccountOrigins: ['https://api.github.com'], connectedAccountBases: [] }] },
       nativeMaterialization() { throw new Error('Account discovery must not acquire native credentials'); },
     });
@@ -95,9 +95,13 @@ describe('the mounted GitHub PRs & Issues settings page', () => {
         if (ref.pluginId === GITHUB_PLUGIN_ID) return await github.invokeAction(ref.localId, input as JsonValue);
         return { kind: 'read', status: 'complete', instances: [] };
       }, createSurfaceContextFixture({ accountEncryptionMode, machineExecutionReady: false, machineConnectionPending: false }));
+      await act(async () => { await vi.waitFor(() => expect(transport.materializeCount()).toBe(1)); });
       await expect(page.getByRole('button', { name: 'Add source-owner to PRs & Issues' })).resolves.toBeDefined();
       expect(transport.materializeCount()).toBe(1);
-      await act(async () => { await page.press(await page.getByRole('button', { name: 'Refresh' })); });
+      await act(async () => {
+        await page.press(await page.getByRole('button', { name: 'Refresh' }));
+        await vi.waitFor(() => expect(transport.materializeCount()).toBe(2));
+      });
       await expect(page.getByRole('button', { name: 'Add source-owner to PRs & Issues' })).resolves.toBeDefined();
       expect(transport.materializeCount()).toBe(2);
       expect(transport.materializations.every(request => request.account.accountId === GITHUB_TEST_ACCOUNT.accountId)).toBe(true);
