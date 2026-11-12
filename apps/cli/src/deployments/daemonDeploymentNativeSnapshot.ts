@@ -18,10 +18,13 @@ export function createDaemonDeploymentNativeSnapshot(host: Readonly<{
     sendChild(job: DeploymentChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
 }>) {
     async function read(input: Extract<DeploymentBackupRestoreInputV1, { mode: 'prepare' }>, context: ActionExecutorContext): Promise<DeploymentNativeSnapshotOfferV1 | null> {
+        // Home admits this offer read as the managed list Action it calls, scoped to
+        // the restore's own enrolled Machine (readDeploymentTargetRetentionHttpPurpose).
+        const actionId = 'machines.managed.list';
         const body = { homeId: input.serverId, enrolledMachineId: input.machineId };
-        const path = managedMachineActionEndpointPathV1('machines.managed.list');
+        const path = managedMachineActionEndpointPathV1(actionId);
         const response = await axios.post(`${host.serverHttpBaseUrl}${path}`, body, {
-            headers: await ports.headers(context, 'deployments.backups.restore', { method: 'POST', path, body }), signal: context.signal,
+            headers: await ports.headers(context, actionId, { method: 'POST', path, body }), signal: context.signal,
         });
         const machine = ManagedListOutputV1Schema.parse(response.data).machines.find(row => row.enrolledMachineId === input.machineId);
         const provisioner = machine?.reviewedFacts?.provisioner;
