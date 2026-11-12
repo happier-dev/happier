@@ -26,7 +26,7 @@ import { createPrivateBearerCredential } from '@/daemon/privateBearerFile';
 import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
-import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal, readManagedNativeFailureDetails } from './controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineControllerClient, ManagedMachineExecutionOptions } from './acquire';
 import { sshPublicKey } from './bootstrapSshPublicKey';
 import { isRetryableHomeOperationError, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
@@ -400,10 +400,10 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                 if (nativeEffectGuardFailure) throw nativeEffectGuardFailure.error;
                 if (!attempt.matched) throw new ManagedMachineNativeEffectGuardRefusal('provider_unavailable');
                 if (!attempt.result.ok) {
-                    const failureDetails = readManagedNativeFailureDetails(projectContributedActionFailure(attempt.result), { pluginId: contribution.pluginId, localId });
-                    throw attempt.result.actionHandlerInvocation === 'notStarted'
-                        ? new ManagedMachineNativeEffectGuardRefusal(attempt.result.errorCode, undefined, failureDetails)
-                        : new ManagedMachineControllerError(attempt.result.errorCode, undefined, failureDetails);
+                    const ErrorClass = attempt.result.actionHandlerInvocation === 'notStarted'
+                        ? ManagedMachineNativeEffectGuardRefusal : ManagedMachineControllerError;
+                    throw ErrorClass.fromActionFailure(projectContributedActionFailure(attempt.result), params.action,
+                        { pluginId: contribution.pluginId, localId });
                 }
                 const remaining = stdoutDecoder.decode();
                 if (remaining) io?.onStdoutChunk?.(remaining);
@@ -412,7 +412,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                 if (nativeEffectGuardFailure) {
                     const refusal = nativeEffectGuardFailure.error;
                     throw refusal instanceof ManagedMachineControllerError
-                        ? new ManagedMachineNativeEffectGuardRefusal(refusal.code, refusal.status, refusal.details) : refusal;
+                        ? new ManagedMachineNativeEffectGuardRefusal(refusal.code, refusal.status, refusal.details, refusal.failureCause, refusal.cause) : refusal;
                 }
                 throw error;
             } finally { rowCurrent = false; await activation.cleanup(); }
@@ -420,7 +420,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             // Preparation cannot call plugin/native IO. After dispatch, only
             // the dispatcher's explicit notStarted/guard evidence is definite.
             if (!dispatched) throw error instanceof ManagedMachineControllerError
-                ? new ManagedMachineNativeEffectGuardRefusal(error.code, error.status, error.details)
+                ? new ManagedMachineNativeEffectGuardRefusal(error.code, error.status, error.details, error.failureCause, error.cause)
                 : new ManagedMachineNativeEffectGuardRefusal('admission_unavailable');
             throw error;
         }

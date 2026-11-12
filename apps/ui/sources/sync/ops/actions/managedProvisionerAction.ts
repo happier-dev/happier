@@ -9,6 +9,7 @@ import { createManagedMachineActionClient, ManagedMachineActionError } from '@/s
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectConnectedAccountHostAccessScopes, type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { bindManagedMachineRoleCredentials, ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { readUiConnectedAccountActionFormOptions } from '@/sync/ops/connectedAccounts/connectedAccountFormOptions';
 
@@ -106,13 +107,15 @@ export async function prepareUiManagedProvisionerAdmission(
                         invoke: async () => {
                             const invoked = await context.hostReviewedChild!.invoke({ action: identity, role, input: roleInput,
                                 invocationServices: { connectedAccountPurposeBinding: binding } });
-                            if (!invoked.ok) throw new ManagedMachineControllerError(invoked.errorCode ?? 'provider_unavailable');
+                            if (!invoked.ok) throw ManagedMachineControllerError.fromActionFailure(invoked, actionId, identity);
                             return invoked.result;
                         } });
                     return { ok: true, result };
                 } catch (error) {
-                    const code = context.signal?.aborted ? 'cancelled'
-                        : error instanceof ManagedMachineControllerError ? error.code : 'provider_unavailable';
+                    if (!context.signal?.aborted && error instanceof ManagedMachineControllerError) {
+                        return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+                    }
+                    const code = context.signal?.aborted ? 'cancelled' : 'provider_unavailable';
                     return { ok: false, errorCode: code, error: code };
                 } finally { active = false; }
             } };

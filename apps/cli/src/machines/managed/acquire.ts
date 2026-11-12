@@ -46,7 +46,7 @@ import { MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plu
 import { createManagedNativeObservationWait } from './nativeObservationWait';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 
-import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeObservationFailure, readManagedNativeFailureDetails } from './controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeObservationFailure } from './controllerErrors';
 export { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 
 export type ManagedMachineAcquisitionDriverInput = Readonly<{
@@ -764,8 +764,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         context: { surface: 'plugin', invocationSurface: 'plugin', originSurface: 'cli', signal: options.signal, initiatingActionCaller: options.context?.actionCaller },
                     });
                     if (!attempt.matched) throw new ManagedMachineControllerError('provider_unavailable');
-                    if (!attempt.result.ok) throw new ManagedMachineControllerError(attempt.result.errorCode, undefined,
-                        readManagedNativeFailureDetails(projectContributedActionFailure(attempt.result), { pluginId, localId }));
+                    if (!attempt.result.ok) throw ManagedMachineControllerError.fromActionFailure(
+                        projectContributedActionFailure(attempt.result), action, { pluginId, localId });
                     return attempt.result.result;
                 } finally { current = false; await activation.cleanup(); }
                 } });

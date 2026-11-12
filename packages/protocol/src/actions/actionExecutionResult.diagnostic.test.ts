@@ -5,6 +5,18 @@ import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpected
 import * as actionResults from './actionExecutionResult.js';
 
 describe('Action failure error adapter', () => {
+  it('retains an explicitly public child failure in an adapter cause and excludes raw causes', () => {
+    const publicFailure = actionResults.createActionExecuteFailureError({ ok: false,
+      errorCode: 'credential_unavailable', error: 'Sign in to Docker: run sbx login',
+      details: { name: 'PluginError', code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login' },
+    });
+    const adapter = Object.assign(new Error('adapter', { cause: publicFailure }), { code: 'credential_unavailable' });
+    expect(normalizeActionExecutorThrownError(adapter)).toMatchObject({ errorCode: 'credential_unavailable',
+      details: publicFailure.details, error: publicFailure.error });
+    const raw = Object.assign(new Error('adapter', { cause: new Error('PRIVATE_REASON') }), { code: 'credential_unavailable' });
+    expect(JSON.stringify(normalizeActionExecutorThrownError(raw))).not.toContain('PRIVATE_REASON');
+  });
+
   it.each([false, true, undefined])('preserves public cause and effect disposition when throwing a failure (%s)', effectAttempted => {
     const failure = {
       ok: false as const, errorCode: 'RPC_TRANSPORT_UNAVAILABLE', error: 'Transport unavailable',

@@ -90,9 +90,16 @@ function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | u
 }
 
 export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; requestId?: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
-  const failure = parseActionExecuteFailure(error) ?? classifyActionExecutorThrownError(error);
+  // An adapter may retain a child's public failure as its standard Error cause.
+  // Raw exception causes never acquire the public Action contract implicitly.
+  let carried = parseActionExecuteFailure(error);
+  if (!carried && error instanceof Error) {
+    try { carried = parseActionExecuteFailure(error.cause); }
+    catch { /* A private cause accessor cannot replace the original failure. */ }
+  }
+  const failure = carried ?? classifyActionExecutorThrownError(error);
   return { ...failure, error: redactBugReportSensitiveText(failure.error),
-    failureCause: readCarriedActionFailureCause(error) ?? projectActionFailureCauseV1(error, phase) };
+    failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) };
 }
 
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {

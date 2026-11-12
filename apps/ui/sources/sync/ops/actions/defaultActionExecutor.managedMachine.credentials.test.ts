@@ -30,7 +30,7 @@ beforeAll(loadSyncSingletonForTests);
 afterEach(() => { resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); clearPluginAccountAvailabilityProjection(); vi.restoreAllMocks(); });
 
 describe('managed Account credential admission', () => {
-    it.each(['check', 'options'] as const)('binds Account %s credentials only to the requested qualified provisioner', async role => {
+    it.each(['check', 'options'] as const)('binds Account %s credentials and retains an authored provider refusal', async role => {
         const target = await upsertServerProfile({ serverUrl: `https://account-provisioner-credential-${role}.test` });
         const homeId = `srv_account_provisioner_credential_${role}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -62,6 +62,26 @@ describe('managed Account credential admission', () => {
             const exact = await prepare(contribution);
             if (!exact || !('children' in exact)) throw new Error('Expected exact provisioner credential admission');
             expect(exact.children).toEqual([{ action: { pluginId: CRABBOX_PLUGIN_ID, localId: `coordinator-${role}` }, role, input: {} }]);
+            if (!exact.executeAdmittedAction) throw new Error('Expected admitted Account discovery execution');
+            const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+            const { readPluginActionError } = await import('@happier-dev/protocol/plugins/actions/invocation');
+            const refusal = await exact.executeAdmittedAction({ context: { surface: 'ui', serverId: target.id,
+                actionRequestId: `authored-${role}`, hostReviewedChild: { invoke: async () => {
+                    // Account plugin execution is the runtime boundary; credential admission and discovery stay real.
+                    try { throw new PluginError({ code: 'credential_unavailable',
+                        message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' },
+                        details: { privateOutput: 'PRIVATE_PROVIDER_OUTPUT' } }); }
+                    catch (error) {
+                        const failure = readPluginActionError(error);
+                        if (!failure) throw error;
+                        return { ok: false, errorCode: failure.code, error: failure.message, details: failure.data };
+                    }
+                } } } });
+            expect(refusal).toMatchObject({ ok: false, errorCode: 'credential_unavailable', details: {
+                name: 'PluginError', message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' },
+            } });
+            expect(JSON.stringify(refusal)).not.toContain('PRIVATE_PROVIDER_OUTPUT');
+
             expect(await prepare({ ...contribution, localId: CRABBOX_PROVISIONER_ID })).toEqual({
                 ok: false, errorCode: 'credential_unavailable', error: 'credential_unavailable',
             });

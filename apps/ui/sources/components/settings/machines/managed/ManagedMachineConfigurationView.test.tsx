@@ -481,11 +481,15 @@ describe('mounted managed configurator', () => {
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
     } finally { await screen.unmount(); }
   });
-  it('keeps a thrown provider sign-in repair through the managed configuration read and summary', async () => {
+  it.each([false, true])('keeps a thrown provider sign-in repair through the CLI error, configuration read and summary (remediation=%s)', async (withRemediation) => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
     const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
     const { readPluginActionError } = await import('@happier-dev/protocol/plugins/actions/invocation');
+    const { ManagedMachineControllerError } = await import('@happier-dev/cli-common/machines/managed');
+    const { executeManagedProvisionerDiscovery } = await import('@happier-dev/cli-common/machines/managed/provisioners');
+    const { normalizeActionExecutorThrownError } = await import('@happier-dev/protocol/actions/executor/resultProjection');
+    const { ManagedMachineActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://authored-options.example.test',
       serverIdentityId: 'srv_authored_options', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
@@ -498,18 +502,28 @@ describe('mounted managed configurator', () => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
-    // The HTTP boundary projects the real thrown provider error through the public PluginError owner.
-    // All configuration/client/presenter logic below that transport stays real.
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+    // The HTTP boundary runs the shared CLI discovery/error owners; the provider handler is a real thrown SDK error.
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       try {
-        throw new PluginError({ code: 'credential_unavailable', message: '  Sign in to Docker: run sbx login  ',
-          remediation: { kind: 'retry' }, details: { privateNativeOutput: 'PRIVATE_PROVIDER_OUTPUT' } });
+        await executeManagedProvisionerDiscovery({ actionId: 'machines.provisioners.options',
+          value: ManagedMachineActionInputSchemasV1['machines.provisioners.options'].parse(request.input), entries: [provisioner],
+          invoke: async () => {
+            try {
+              throw new PluginError({ code: 'credential_unavailable', message: '  Sign in to Docker: run sbx login  ',
+                ...(withRemediation ? { remediation: { kind: 'retry' } as const } : {}),
+                details: { privateNativeOutput: 'PRIVATE_PROVIDER_OUTPUT' } });
+            } catch (error) {
+              const failure = readPluginActionError(error);
+              if (!failure) throw error;
+              throw ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: failure.code,
+                error: failure.message, details: failure.data }, 'machines.provisioners.options');
+            }
+          } });
+        throw new Error('Expected provider options refusal');
       } catch (error) {
-        const failure = readPluginActionError(error);
-        if (!failure) throw error;
         return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-          execution: { ok: false, errorCode: failure.code, error: failure.message, details: failure.data } } };
+          execution: { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.provisioners.options') } } };
       }
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -519,7 +533,7 @@ describe('mounted managed configurator', () => {
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
       expect(screen.findByTestId('managed-config.summary')?.props.accessibilityLabel)
-        .toContain(`Sign in to Docker: run sbx login ${t('errors.tryAgain')}`);
+        .toContain(`Sign in to Docker: run sbx login${withRemediation ? ` ${t('errors.tryAgain')}` : ''}`);
       expect(screen.getTextContent()).not.toContain('PRIVATE_PROVIDER_OUTPUT');
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);

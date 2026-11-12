@@ -2286,6 +2286,28 @@ describe('managed acquisition durable custody', () => {
         await expect(invocation.invoke('destroy', { resource: {} })).rejects.toThrow();
         expect(providerHttp).toHaveBeenCalledTimes(1);
     });
+    it.each(['check', 'options'] as const)('retains the contributed %s sign-in reason through the CLI error and public Action failure', async role => {
+        const { normalizeActionExecutorThrownError } = await import('@happier-dev/protocol/actions/executor/resultProjection');
+        const handlers = new Map<string, TargetActionInvocationRegistration['handler']>([
+            ...nativeRoles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary',
+        ].map((localId): [string, TargetActionInvocationRegistration['handler']] => [localId, async () => {
+            if (localId === role) throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login',
+                remediation: { kind: 'retry' }, details: { nativeCause: { localCause: 'not_signed_in' }, privateOutput: 'PRIVATE_PROVIDER_OUTPUT' } });
+            return roleResult(localId);
+        }]));
+        const native = nativeFixture({ privateNative: true, actionHandlers: handlers });
+        const probe = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home',
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs });
+        let failure: ReturnType<typeof normalizeActionExecutorThrownError> | undefined;
+        try {
+            await probe.execute(`machines.provisioners.${role}`, { homeId: 'home', controller,
+                contribution: input.selection.launch.provider, ...(role === 'options' ? { selectors: {} } : {}) }, { requestId: `authored-${role}` });
+        } catch (error) { failure = normalizeActionExecutorThrownError(error, `machines.provisioners.${role}`); }
+        expect(failure).toMatchObject({ errorCode: 'credential_unavailable', details: {
+            name: 'PluginError', message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' },
+        } });
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE_PROVIDER_OUTPUT');
+    });
     it.each(['check', 'options'] as const)('retains a contributed %s PluginError native cause through the safe read driver', async role => {
         const nativeCause = { localCause: 'native_options_changed' } as const;
         const handlers = new Map<string, TargetActionInvocationRegistration['handler']>([
