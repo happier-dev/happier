@@ -20,7 +20,7 @@ import { deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/wo
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { renderSessionRoleBlockV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
@@ -699,6 +699,10 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       ...(review ? { review: { ...review, ...(persisted.progress.review?.resultSource ? { resultSource: persisted.progress.review.resultSource } : {}) } } : {}),
       ...(stepProgress ? { stepProgress } : {}) });
     if (loopProgress) progress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, loopProgress });
+    // Compare before sealing: E2EE ciphertext changes even for an equal fact.
+    // Admitting still reaches the final parent/control predicate on every input.
+    if (current.lifecycle === 'pending' && fact.lifecycle === 'pending'
+      && discussionRound === undefined && sameStrictJsonValue(progress, persisted.progress)) return current;
     const index = persisted.index;
     const binding = {
       v: 1 as const, purpose: 'invocation_progress' as const, accountId: this.params.accountId, runId: this.params.runId,
@@ -1755,11 +1759,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       if (exactConsent && exactConsent.operation.approvedBy.accountId === params.accountId) {
         created = { ...created, snapshot: { ...created.snapshot, approvedOperation: structuredClone(exactConsent.operation) } };
       }
-      const candidate = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      const { acceptedEnvelope: candidate, displayEnvelope } = sealWorkflowRunAcceptedEnvelopesV1({
         ...sealMode({ witness: accountEncryption.witness, runCrypto: prepared.runCrypto }),
-        binding: { v: 1, purpose: 'accepted_snapshot', accountId: params.accountId, runId: claim.runId },
-        acceptedSnapshot: created.snapshot,
-      }));
+        accountId: params.accountId, runId: claim.runId, acceptedSnapshot: created.snapshot,
+      });
       const resolution = asRecord(await storage.execute({
         operation: 'accepted-snapshot.resolve',
         accountCurrentness: accountEncryption.witness,
@@ -1769,6 +1772,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         expectedRevision: claim.expectedRevision,
         definitionEnvelope: claim.definitionEnvelope,
         acceptedEnvelope: candidate,
+        displayEnvelope,
         sourceArtifactId,
         ...(created.snapshot.origin?.originSessionId ? { originSessionId: created.snapshot.origin.originSessionId } : {}),
         ...(created.snapshot.resultDelivery ? { resultDelivery: { kind: created.snapshot.resultDelivery.kind } } : {}),

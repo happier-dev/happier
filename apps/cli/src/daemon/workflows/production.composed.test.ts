@@ -340,6 +340,24 @@ async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 're
 }
 
 describe('production workflow coordinator', () => {
+  it.each(['plain', 'e2ee'] as const)('sends no storage request for equal pending facts and retains input admission (%s)', async mode => {
+    const { store, boundary, key, execution } = await commandOutputAdmissionFixture(mode);
+    const before = boundary.calls.length;
+    for (let repeat = 0; repeat < 10; repeat++) await store.commitFact({ key, lifecycle: 'pending' });
+    expect(boundary.calls.slice(before)).toHaveLength(0);
+    const workspace = { descriptor: { machineId, directory: '/repo', checkoutRootPath: '/repo' } };
+    await store.commitFact({ key, lifecycle: 'pending', workspace });
+    const changed = boundary.calls.length;
+    expect(changed - before).toBe(1);
+    for (let repeat = 0; repeat < 10; repeat++) await store.commitFact({ key, lifecycle: 'pending', workspace });
+    expect(boundary.calls.length).toBe(changed);
+    expect(store.read(key)?.workspace).toEqual(workspace);
+    await store.commitFact({ key, lifecycle: 'admitting', execution });
+    const admitted = boundary.calls.length;
+    // Re-presenting input must still consult the final parent/control predicate.
+    await store.commitFact({ key, lifecycle: 'admitting', execution });
+    expect(boundary.calls.length - admitted).toBe(1);
+  });
   it('materializes an explicitly selected model worktree before fresh Session creation', async () => {
     const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
     const authored: WorkflowDefinitionV1 = { version: 1, defaults: {}, inputs: [{ name: 'chosen', valueType: 'json', required: true,
