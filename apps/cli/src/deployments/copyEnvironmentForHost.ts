@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from './outputValidation';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentEnvironmentCreateInputV1,
@@ -31,7 +32,7 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
     const stored = await host.create('deployments.environments.create', input, context, request.creationReview);
     if ('ok' in stored && !stored.ok && 'errorCode' in stored) return stored;
     const parsed = DeploymentEnvironmentCreateResultV1Schema.safeParse(stored);
-    if (!parsed.success) return failure('invalid_action_output');
+    if (!parsed.success) return deploymentOutputValidationFailure('deployments.environments.create', undefined, parsed.error);
     const created = parsed.data;
     if (!created.ok) return created;
     if (created.replayed !== false && plan.data?.length) return { ...failure('deployment_conflict'), details: {
@@ -86,10 +87,10 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
             role: COPY_ENVIRONMENT_BINDINGS_ROLE, input: bindingInput });
         if (!applied.ok) return partial(applied);
         const settled = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
-        if (!settled.success) return partial('invalid_action_output');
+        if (!settled.success) return partial(deploymentOutputValidationFailure('deployments.bindings.set', undefined, settled.error));
         if (!settled.data.ok) return partial(settled.data.error);
         return settled.data.environmentId === created.environmentId
-            ? finish(settled.data.revision) : partial('invalid_action_output');
+            ? finish(settled.data.revision) : partial(deploymentOutputValidationFailure('copyEnvironmentForHost', undefined));
     } catch (error) {
         return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
             : error instanceof Error && 'code' in error && typeof error.code === 'string'

@@ -1,3 +1,5 @@
+import type { core } from 'zod/mini';
+import { projectActionInputIssues } from './actionInputValidation.js';
 import { isRpcError } from '../../rpc/errors.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '../../plugins/actions/invocation.js';
@@ -15,7 +17,7 @@ import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 import { ActionOperationAcceptedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, ActionFailureCauseV1Schema,
-  projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
+  projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
@@ -27,6 +29,35 @@ import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSche
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '../../execution/runs/streaming.js';
 import { ExecutionRunCancelTurnResponseSchema } from '../../execution/runs/cancelTurn.js';
 import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+
+/** In-process diagnostics are deliberately absent from JSON and public failure projection. */
+const outputDiagnostic = Symbol('actionOutputDiagnostic');
+export type ActionOutputDiagnostic = Readonly<{
+  source: string;
+  requestId?: string;
+  issues: readonly Readonly<{ path: readonly (string | number)[]; code: string; expected?: string }>[];
+  failureCause?: ActionFailureCauseV1;
+}>;
+type DiagnosticFailure = ActionExecuteFailure & { [outputDiagnostic]?: ActionOutputDiagnostic };
+
+export function readActionOutputDiagnostic(value: unknown): ActionOutputDiagnostic | undefined {
+  try {
+    if (!value || typeof value !== 'object') return undefined;
+    const direct = (value as DiagnosticFailure)[outputDiagnostic];
+    if (direct) return direct;
+    const cause = value instanceof Error ? value.cause : undefined;
+    return cause && typeof cause === 'object' ? (cause as DiagnosticFailure)[outputDiagnostic] : undefined;
+  } catch { return undefined; }
+}
+
+/** One output-failure owner; the input issue projector alone interprets schema issues. */
+export function invalidActionOutputFailure(error?: core.$ZodError, source = 'action.output', thrown?: unknown): DiagnosticFailure {
+  const issues = error ? projectActionInputIssues(error).map(({ path, code, expected }) => ({ path, code,
+    ...(code === 'invalid_type' && expected ? { expected } : {}) })) : [];
+  return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output',
+    [outputDiagnostic]: { source, issues,
+      ...(thrown === undefined ? {} : { failureCause: projectActionFailureCauseV1(thrown, source) }) } };
+}
 
 export function isDeferredApprovalResult(result: ActionExecuteResult): boolean {
   return result.ok && isRecord(result.result) && result.result.kind === 'approval_request_created';
@@ -47,21 +78,26 @@ function completeUnknownProjectOpenResult(details?: unknown): ActionExecuteResul
  */
 export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult, requestId?: string,
   publicOutputSchema?: Readonly<{ safeParse(value: unknown):
-    Readonly<{ success: true; data: unknown }> | Readonly<{ success: false }> }>,
+    Readonly<{ success: true; data: unknown }> | Readonly<{ success: false; error?: core.$ZodError }> }>,
+  recordDiagnostic?: (diagnostic: ActionOutputDiagnostic) => void,
 ): ActionExecuteResult {
   const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => {
+    const diagnostic = readActionOutputDiagnostic(settled) ?? readActionOutputDiagnostic(result);
+    if (diagnostic) {
+      try { recordDiagnostic?.({ ...diagnostic,
+        source: diagnostic.source === 'action.output' ? `action.output:${actionId}` : diagnostic.source,
+        ...(requestId ? { requestId } : {}) }); } catch { /* Diagnostics cannot replace settlement. */ }
+    }
+    if (!settled.ok && actionId === 'projects.open' && (settled.errorCode === 'outcome_unknown'
+      || settled.errorCode === 'invalid_action_output' || settled.errorCode === 'result_too_large')) {
+      settled = completeUnknownProjectOpenResult(settled.details);
+    }
     const carriedCause = settled.ok ? undefined : readCarriedActionFailureCause(settled);
     const projected = settled.ok ? settled : projectActionExecuteFailure({ ...settled,
       ...(carriedCause ? { failureCause: carriedCause } : {}) }, requestId);
     return result.operationCredentialUses?.length ? { ...projected, operationCredentialUses: result.operationCredentialUses } : projected;
   };
-  if (!result.ok) {
-    if (actionId === 'projects.open' && (result.errorCode === 'outcome_unknown'
-      || result.errorCode === 'invalid_action_output' || result.errorCode === 'result_too_large')) {
-      return withCredentialUses(completeUnknownProjectOpenResult(result.details));
-    }
-    return withCredentialUses(result);
-  }
+  if (!result.ok) return withCredentialUses(result);
   if (isDeferredApprovalResult(result)) return result;
   const spec = getActionSpec(actionId);
   if (spec.operation) {
@@ -70,14 +106,13 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
   }
   const outputSchema = publicOutputSchema ?? spec.outputSchema;
   if (!outputSchema) return result;
-  const invalidOutput = (): ActionExecuteResult => actionId === 'projects.open'
-    ? completeUnknownProjectOpenResult()
-    : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  const invalidOutput = (error?: core.$ZodError, thrown?: unknown): ActionExecuteResult =>
+    invalidActionOutputFailure(error, `action.output:${actionId}`, thrown);
   try {
     const output = outputSchema.safeParse(result.result);
-    return withCredentialUses(output.success ? { ok: true, result: output.data } : invalidOutput());
-  } catch {
-    return withCredentialUses(invalidOutput());
+    return withCredentialUses(output.success ? { ok: true, result: output.data } : invalidOutput(output.error));
+  } catch (error) {
+    return withCredentialUses(invalidOutput(undefined, error));
   }
 }
 
@@ -107,7 +142,8 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
     catch { /* A private cause accessor cannot replace the original failure. */ }
   }
   const failure = carried ?? classifyActionExecutorThrownError(error);
-  return { ...failure, error: redactBugReportSensitiveText(failure.error),
+  const diagnostic = readActionOutputDiagnostic(error);
+  return { ...failure, ...(diagnostic ? { [outputDiagnostic]: diagnostic } : {}), error: redactBugReportSensitiveText(failure.error),
     failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) };
 }
 

@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from '../../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -465,7 +466,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 membershipDeploymentId: input.deploymentId, membershipMachines }, context);
             if ('errorCode' in result) return result;
             const settled = DeploymentActionOutputSchemasV1['deployments.domains.add'].safeParse(result);
-            if (!settled.success) return failure('invalid_action_output');
+            if (!settled.success) return deploymentOutputValidationFailure('deployments.domains.add', undefined, settled.error);
             if (!settled.data.ok) return failure(settled.data.error);
             if (settled.data.domain.state !== 'active') return failure('native_route_unavailable');
             revision = settled.data.revision;

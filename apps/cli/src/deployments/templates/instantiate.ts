@@ -1,3 +1,5 @@
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { deploymentOutputValidationFailure } from '../outputValidation';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import axios from '@/api/client/credentialAxios';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
@@ -368,14 +370,18 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     role: deploymentTemplateBindingsChildRole, input: normalizeStrictJsonValue({ serverId: input.serverId,
                         environmentId: environmentId!, expectedRevision: revision!, set, remove: [] }) });
                 if (!applied.ok) return refuse(applied);
-                const parsed = DeploymentBindingsSetResultV1Schema.parse(applied.result);
+                const parsedOutput = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
+                if (!parsedOutput.success) return refuse(deploymentOutputValidationFailure('deployments.bindings.set', undefined, parsedOutput.error));
+                const parsed = parsedOutput.data;
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
             const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update', input: Parameters<Host['storage']>[1]) => {
                 const result = await host.storage(actionId, input, context, storagePreparation);
                 if ('errorCode' in result) return refuse(result);
-                const parsed = DeploymentEnvironmentCreateResultV1Schema.parse(result);
+                const parsedOutput = DeploymentEnvironmentCreateResultV1Schema.safeParse(result);
+                if (!parsedOutput.success) return refuse(deploymentOutputValidationFailure('deployments.environments.commit', undefined, parsedOutput.error));
+                const parsed = parsedOutput.data;
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
@@ -475,7 +481,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     return refuse(result);
                 }
                 const accepted = DeploymentReceiptAcceptedResultV1Schema.safeParse(result);
-                if (!accepted.success) return refuse('ok' in result && !result.ok && 'error' in result ? result.error : 'invalid_action_output');
+                if (!accepted.success) return refuse('ok' in result && !result.ok && 'error' in result ? result.error : deploymentOutputValidationFailure('deployments.deploy', undefined, accepted.error));
                 deployment = accepted.data;
                 revision = deployment.revision;
                 if ('kind' in deployment) return refuse('deployment_in_progress');
@@ -507,7 +513,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                         }) });
                     if (!result.ok) return refuse(result);
                     const settled = DeploymentDomainMutationResultV1Schema.safeParse(result.result);
-                    if (!settled.success) return refuse('invalid_action_output');
+                    if (!settled.success) return refuse(deploymentOutputValidationFailure('deployments.domains.add', undefined, settled.error));
                     if (!settled.data.ok) return refuse(settled.data.error);
                     revision = settled.data.revision;
                     if (settled.data.domain.state === 'failed') return refuse('native_route_unavailable');
@@ -529,7 +535,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(deployment ? { deployment } : {}),
                 ...(repositoryChange ? { repositoryChange } : {}),
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };
-            return authorizationFailure || diagnostic.failureCause
+            return authorizationFailure || diagnostic.failureCause || readActionOutputDiagnostic(diagnostic)
                 ? { ...diagnostic, details: partial, effectAttempted: true } : partial;
         }
     }
@@ -552,7 +558,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             errorCode: result.errorCode, error: result.errorCode, details: result };
         return 'errorCode' in result ? result : result.kind === 'applied'
             ? { ok: true as const, environmentId: result.environmentId, revision: result.revision }
-            : failure('invalid_action_output');
+            : deploymentOutputValidationFailure('templates/instantiate', undefined);
     }
     function admittedPreparation(plan: Awaited<ReturnType<typeof prepareInput>>, create: boolean): HostReviewedChildrenPreparationV1 {
         return { ...deploymentTemplateReviewedChildren(plan.review), async executeAdmittedAction({ context }): Promise<ActionExecuteResult> {

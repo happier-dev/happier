@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from '../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import type { StoredCredentials } from '@/persistence';
@@ -112,11 +113,11 @@ export function createDeploymentBackupConfigureForHost(host: Host) {
                 const parsed = DeploymentEnvironmentUpdateResultV1Schema.safeParse(response.data);
                 if (!parsed.success) return response.status === 401 || response.status === 403
                     ? projectHomeAuthorizationHttpFailure(response.status, headers, response.data)
-                    : projectDeploymentFailure('invalid_action_output');
+                    : deploymentOutputValidationFailure('deployments.backup.configure', response.status, parsed.error);
                 const saved = parsed.data;
                 if (!saved.ok) return projectDeploymentFailure(saved.error);
                 if (response.status !== 200 || saved.environmentId !== environmentId
-                    || saved.revision !== environment.environment.revision + 1) return projectDeploymentFailure('invalid_action_output');
+                    || saved.revision !== environment.environment.revision + 1) return deploymentOutputValidationFailure('deployments.backup.configure', response.status);
                 return { ok: true as const, environmentId: saved.environmentId, revision: saved.revision };
             },
             async saveBackupBindings({ environmentId, expectedRevision, bindings, context: currentContext }) {

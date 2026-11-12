@@ -1,10 +1,17 @@
+import { invalidActionOutputFailure, readActionOutputDiagnostic, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { logger } from '@/ui/logger';
 import type { core } from 'zod/mini';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentOutputValidationV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 
 /** The canonical issue projector excludes rejected values, unknown keys and custom prose. */
-export function deploymentOutputValidationFailure(source: string, httpStatus: number, error?: core.$ZodError): ActionExecuteFailure {
+export function deploymentOutputValidationFailure(source: string, httpStatus: number | undefined, error?: core.$ZodError): ActionExecuteFailure {
+    const failure = invalidActionOutputFailure(error, source);
+    logger.warnLocalFile('[Deployment] Invalid action output', readActionOutputDiagnostic(failure));
+    if (httpStatus === undefined) {
+        return failure;
+    }
     const details = error ? actionInputValidationFailure(error).details : undefined;
     const issues = details && typeof details === 'object' && !Array.isArray(details) && 'issues' in details ? details.issues : [];
     const validation = DeploymentOutputValidationV1Schema.parse({ source, httpStatus, issues });
@@ -23,6 +30,7 @@ export function readDeploymentOutputValidation(error: unknown) {
 
 export function readDeploymentOutputValidationFailure(errorCode: string, error: unknown): ActionExecuteFailure | null {
     if (errorCode !== 'invalid_action_output') return null;
+    if (readActionOutputDiagnostic(error)) return { ok: false, ...normalizeActionExecutorThrownError(error) };
     const validation = readDeploymentOutputValidation(error);
     return validation ? { ok: false, errorCode, error: errorCode, details: { validation } } : null;
 }

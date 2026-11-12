@@ -1,3 +1,4 @@
+import { invalidActionOutputFailure } from './resultProjection.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { throwIfAborted } from '../../abortSignal.js';
 import { getUsageQueryKey, normalizeUsageQuery, resolveUsageQueryPeriod, type UsageQuery } from '../../inputs/usageQuery.js';
@@ -54,7 +55,7 @@ export function bindPublicProfileActionPorts(input: Readonly<{
       const refused = readActionFailureEnvelope(raw);
       if (refused) return refused;
       const parsed = PublicProfileOwnerReadV1Schema.safeParse(raw);
-      return parsed.success ? parsed.data : failure('invalid_action_output');
+      return parsed.success ? parsed.data : invalidActionOutputFailure(parsed.error);
     },
     dispatchPrepared: (request, context) => input.homeDomainAction({
       actionId: `account.public_profile.${request.operation}`, input: {}, preparedRequest: request, context,
@@ -263,6 +264,6 @@ export async function executePublicProfileAction(effect: PreparedPublicProfileAc
   const refused = readActionFailureEnvelope(raw);
   if (refused) return refused;
   const result = PublicProfileMutationResultV1Schema.safeParse(raw);
-  if (!result.success) return failure('invalid_action_output');
+  if (!result.success) return invalidActionOutputFailure(result.error);
   return { ok: true, result: result.data };
 }

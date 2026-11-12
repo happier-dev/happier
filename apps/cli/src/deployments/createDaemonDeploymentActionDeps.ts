@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from './outputValidation';
 import { projectDeploymentFailure } from './deploymentFailure';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readExpectedDownDomainReferencesForHost } from './targets/ownServer/domainRouteSelection';
@@ -1908,7 +1909,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         await assertCurrent(currentContext);
                         const metadata = DeploymentEnvironmentGetResultV1Schema.parse(read.data);
                         if (!metadata.ok) return refuse(metadata.error);
-                        if (read.status < 200 || read.status >= 300 || metadata.environment.id !== environmentId) return refuse('invalid_action_output');
+                        if (read.status < 200 || read.status >= 300 || metadata.environment.id !== environmentId) return refuse(deploymentOutputValidationFailure('deployments.pending.cancel', undefined));
                         if (!metadata.environment.capabilities.deploy) return refuse('deployment_access_denied');
                         if (!metadata.pendingDeploy) return;
                         if (!isDeepStrictEqual(metadata.pendingDeploy, prepared.input.pendingDeploy)) return refuse('deployment_conflict');
@@ -1925,7 +1926,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         const cleared = DeploymentEnvironmentCreateResultV1Schema.parse(response.data);
                         if (!cleared.ok) return refuse(cleared.error);
                         if (response.status < 200 || response.status >= 300 || cleared.environmentId !== environmentId
-                            || cleared.revision !== metadata.environment.revision + 1) return refuse('invalid_action_output');
+                            || cleared.revision !== metadata.environment.revision + 1) return refuse(deploymentOutputValidationFailure('deployments.pending.cancel', undefined));
                     },
                     async resume(): Promise<ReturnType<typeof DeploymentReceiptResultV1Schema.parse> | ActionExecuteFailure> {
                         if (!host.executePreparedPendingDeploy) return failure('unsupported_action');

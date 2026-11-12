@@ -1,3 +1,5 @@
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { deploymentOutputValidationFailure } from '../outputValidation';
 import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
 import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1,
@@ -79,7 +81,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
         const read = await invoke({ ...BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan, input: target });
         if (!read.ok) return partial(read);
         const current = MachineSetupPlanResultV1Schema.safeParse(read.result);
-        if (!current.success) return partial('invalid_action_output');
+        if (!current.success) return partial(deploymentOutputValidationFailure('deployments.backup.receiver.current', undefined, current.error));
         const item: MachinePresetItemV1 = { kind: 'setupRecipe', selection: { ref: BACKUP_RECEIVER_RECIPE_REF_V1,
             inputs: { ...input.setup.receiverInputs, senderPublicKey: senderIdentity.publicKey } } };
         const sources = receiverSources(current.data.sources, item);
@@ -89,7 +91,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
             input: projectNativeJsonValueForTransport({ ...target, sources, exclusions, mode: 'effects' }) });
         if (!planned.ok) return partial(planned);
         const plan = MachineSetupPlanResultV1Schema.safeParse(planned.result);
-        if (!plan.success) return partial('invalid_action_output');
+        if (!plan.success) return partial(deploymentOutputValidationFailure('deployments.backup.receiver.plan', undefined, plan.error));
         const witness = plan.data.backupReceivers?.find(entry => entry.machineId === input.setup.machineId);
         if (!witness) return partial('receiver_evidence_unavailable');
         if (witness.installationId !== input.setup.expectedInstallationId) return partial('receiver_installation_changed');
@@ -102,7 +104,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
             return partial(applied);
         }
         const settled = MachineSetupApplyResultV1Schema.safeParse(applied.result);
-        if (!settled.success) return partial('invalid_action_output');
+        if (!settled.success) return partial(deploymentOutputValidationFailure('deployments.backup.receiver.settled', undefined, settled.error));
         setupOperation = DeploymentBackupReceiverSetupOperationV1Schema.parse({ operationId: settled.data.operationId,
             ...(settled.data.runId ? { runId: settled.data.runId } : {}), ...(settled.data.terminalId ? { terminalId: settled.data.terminalId } : {}) });
         const evidence = settled.data.backupReceivers?.find(entry => entry.sourceIndex === witness.sourceIndex
@@ -117,7 +119,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
                 const details = isRecord(failure.data.details)
                     ? failure.data.details : {};
                 const retained = details.senderIdentity ?? senderIdentity;
-                throw Object.assign(new Error(failure.data.errorCode, { cause: { ...failure.data, details: { ...details,
+                throw Object.assign(new Error(failure.data.errorCode, { cause: { ...normalizeActionExecutorThrownError(error), ok: false, details: { ...details,
                     destinationSetup: { ...input.setup, ...(retained ? { senderIdentity: retained } : {}) } } } }),
                 { code: failure.data.errorCode });
             }

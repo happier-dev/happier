@@ -1,3 +1,4 @@
+import { logger } from '@/ui/logger';
 import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
@@ -361,7 +362,10 @@ export function createCliActionExecutorHarness(
     };
   }
   const deps = rawDeps as ActionExecutorDeps;
-  const executor = createActionExecutor(deps);
+  const executor = createActionExecutor({ ...deps, recordActionOutputDiagnostic: diagnostic => {
+    logger.warnLocalFile('[Action] Invalid output', diagnostic);
+    deps.recordActionOutputDiagnostic?.(diagnostic);
+  } });
   const runtimeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) ?? undefined : undefined;
   // Received RPC dispatch passes its host-built requester context through this harness.
   const resolveContext = (context: (ActionExecutorContext & Pick<RpcActionExecutorContext, 'machineAdmission'>) | undefined,

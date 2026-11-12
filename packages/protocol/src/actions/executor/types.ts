@@ -2770,6 +2770,8 @@ export type ActionExecutorDeps = Readonly<{
     /** Host-only writer proof; absence preserves uncertainty after acknowledgement loss. */
     writeCommitted?: false;
   }>;
+  /** Host-private output diagnostics; never an Action/RPC field. */
+  recordActionOutputDiagnostic?: (diagnostic: import('./resultProjection.js').ActionOutputDiagnostic) => void;
   /** Code-only host diagnostic for best-effort retirement after an already-confirmed effect. */
   recordApprovalRetirementWarning?: (warning: Readonly<{ artifactId?: string; code: string }>) => void | Promise<void>;
   /** Host-owned Home and resolved Session placement, demanded only when constructing an approval origin. Never serialized. */

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from '../../zodRuntimePolicy.js';
+import { z, type core } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { areServerProfileIdentifiersEquivalent, type ServerProfileScopeResolver } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 
@@ -814,7 +814,7 @@ export type SessionBoardActionPortResultParseV1 =
       data: SessionBoardGetResultV1 | SessionBoardGetCountResultV1 | SessionBoardMutationActionResultV1;
     }>
   | Readonly<{ success: true; kind: 'failure'; data: SessionBoardActionFailureV1 }>
-  | Readonly<{ success: false }>;
+  | Readonly<{ success: false; error?: core.$ZodError }>;
 
 function recordsEqualAfterSchemaParse(schema: z.ZodMiniType, left: unknown, right: unknown): boolean {
   const parsedLeft = schema.safeParse(left);
@@ -990,7 +990,7 @@ export function parseSessionBoardActionPortResultV1(
     return parseBoardFailure(actionId, parsedInput.data, resultRecord, options);
   }
   const parsedOutput = SESSION_BOARD_ACTION_OUTPUT_SCHEMAS_V1[actionId].safeParse(result);
-  if (!parsedOutput.success) return { success: false };
+  if (!parsedOutput.success) return { success: false, error: parsedOutput.error };
   const output = parsedOutput.data;
   // A successful Board result is useful for lost-response recovery only when
   // the invoking adapter supplies the exact Home it targeted. Inferring that

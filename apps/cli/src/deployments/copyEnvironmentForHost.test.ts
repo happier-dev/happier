@@ -1,3 +1,4 @@
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { describe, expect, it } from 'vitest';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -146,4 +147,39 @@ describe('Copy acknowledged step result', () => {
         expect(DeploymentTemplateInstantiationPartialV1Schema.safeParse(result.details).success).toBe(true);
         expect(invocations).toHaveLength(1);
     });
+    it('retains partial recovery and private sanitized issues for malformed binding child output', async () => {
+        const base = createDeploymentEnvironmentDetailV1();
+        const binding = { purpose: 'variable' as const, name: 'PUBLIC', phase: 'runtime' as const,
+            source: { kind: 'value' as const, value: 'included' } };
+        const input = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'home', projectSourceId: 'destination',
+            requestKey: 'copy', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: 'controller', contentArtifactId: base.environment.contentArtifactId,
+            contentHeaderVersion: base.environment.contentHeaderVersion, contentBodyVersion: base.environment.contentBodyVersion,
+            copyIntentCommitment: 'A'.repeat(43),
+            copyFrom: { environmentId: 'source', expectedRevision: 7, choices: { secrets: [],
+                values: [{ binding: { purpose: 'variable', name: 'PUBLIC', phase: 'runtime' }, kind: 'include' }], data: [] } },
+            copyPlan: { bindings: [binding] } });
+        const invocations: unknown[] = [];
+        const context: ActionExecutorContext = { hostReviewedChild: { async invoke(request) {
+            invocations.push(request);
+            return { ok: true, result: { ok: true, environmentId: base.environment.id, revision: 'secret-rejected' } };
+        } } };
+        // Backing Environment storage and the admitted child Action are process boundaries.
+        const result = await createEnvironmentWithCopyForHost({ input, context }, {
+            async create() { return { ok: true, environmentId: base.environment.id, revision: 1 }; },
+            async readEnvironment() { return { environment: { ...base.environment, revision: 1 },
+                content: { ...base.content, bindings: [] }, targetLinks: base.targetLinks.map(link => link.targetLink) }; },
+        });
+        const diagnostics: unknown[] = [];
+        const settled = settleActionOutput('deployments.environments.create', result, undefined, undefined,
+            diagnostic => { diagnostics.push(diagnostic); });
+        expect(settled).toMatchObject({ ok: false, errorCode: 'invalid_action_output', details: {
+            kind: 'partial', environmentId: base.environment.id, revision: 1,
+            continuation: { actionId: 'deployments.bindings.set' } } });
+        expect(diagnostics).toMatchObject([{ issues: expect.arrayContaining([
+            { path: ['revision'], code: 'invalid_type', expected: 'number' },
+        ]) }]);
+        expect(JSON.stringify([settled, diagnostics])).not.toContain('secret-rejected');
+    });
+
 });

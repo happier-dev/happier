@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from './outputValidation';
 import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
@@ -204,6 +205,6 @@ export async function cancelPendingDeploymentForHost(request: Readonly<{
         headers, data: body, signal: context.signal, validateStatus: () => true });
     const failure = DeploymentActionFailureV1Schema.safeParse(response.data);
     if (failure.success) throw new RpcError(failure.data.error, failure.data.error);
-    if (response.status < 200 || response.status >= 300) throw new RpcError('invalid_action_output', 'invalid_action_output');
+    if (response.status < 200 || response.status >= 300) throw Object.assign(new RpcError('invalid_action_output', 'invalid_action_output'), { cause: deploymentOutputValidationFailure('deployments.pending.cancel', undefined) });
     return ActionOperationCancelV1ResponseSchema.parse(response.data);
 }

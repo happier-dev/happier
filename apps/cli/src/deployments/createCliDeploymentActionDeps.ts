@@ -63,7 +63,8 @@ export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironm
   & Readonly<{ environmentIds: readonly string[] }>, context: ActionExecutorContext, effectActionId: string
 ) => Promise<DeploymentEnvironmentAccessResultV1 | ActionExecuteFailure>;
 const normalizeProviderVariables = (value: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>, persisted: boolean) => ({ ...value, persisted });
-const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const failure = (errorCode: string): ActionExecuteFailure => errorCode === 'invalid_action_output'
+  ? deploymentOutputValidationFailure('deployments.home', undefined) : ({ ok: false, errorCode, error: errorCode });
 const domainOperationUnavailable = (requiredFact: 'operationAcceptance' | 'requestId'): ActionExecuteFailure => {
   const phase = requiredFact === 'operationAcceptance'
     ? 'deployment.domain.operation_acceptance_missing' : 'deployment.domain.request_id_missing';

@@ -1,3 +1,4 @@
+import { invalidActionOutputFailure } from './resultProjection.js';
 import { throwIfAborted } from '../../abortSignal.js';
 import { ArtifactActionOutputSchemasV1 } from '../../artifacts/artifactActionsV1.js';
 import { RpcError } from '../../rpc/errors.js';
@@ -30,7 +31,7 @@ export async function preparePublicProfileLayout(layout: PublicProfileLayoutV1 |
         const refused = readActionFailureEnvelope(raw);
         if (refused) throw new RpcError(refused.error, refused.errorCode);
         const parsed = ArtifactActionOutputSchemasV1['artifact.get'].safeParse(raw);
-        if (!parsed.success) throw new RpcError('invalid_action_output', 'invalid_action_output');
+        if (!parsed.success) throw Object.assign(new Error('invalid_action_output', { cause: invalidActionOutputFailure(parsed.error) }), { code: 'invalid_action_output' });
         const artifact = parsed.data.artifact;
         if (!artifact) return null;
         if (artifact.artifactId !== reference.artifactId || artifact.ownerAccountId !== admission.scope.accountId) {

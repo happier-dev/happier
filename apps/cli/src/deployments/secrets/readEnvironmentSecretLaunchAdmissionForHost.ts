@@ -30,6 +30,7 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretGrant';
 
 const refuse = (code: string, cause?: ActionExecuteFailure): never => {
+    cause ??= code === 'invalid_action_output' ? deploymentOutputValidationFailure('deployments.secrets.admission', undefined) : undefined;
     throw Object.assign(new Error(cause?.error ?? code), { code, ...(cause ? { cause } : {}) });
 };
 type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'

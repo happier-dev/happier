@@ -63,7 +63,7 @@ import type { SessionMessageSendAdmission } from './executor/callerContext.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation } from './executor/executionRuns.js';
 import type { ExecutionRunCallOptions } from './executor/executionRuns.js';
 import { normalizeId, readNullableString, readOptionalString } from './executor/inputReading.js';
-import { normalizeActionExecutorThrownError, completeActionResult, completeSessionHandoffActionResult, completeExecutionRunServiceActionResult, completeSpawnActionResult, settleActionOutput, isDeferredApprovalResult } from './executor/resultProjection.js';
+import { normalizeActionExecutorThrownError, completeActionResult, completeSessionHandoffActionResult, completeExecutionRunServiceActionResult, completeSpawnActionResult, settleActionOutput as projectTerminalActionOutput, invalidActionOutputFailure, isDeferredApprovalResult } from './executor/resultProjection.js';
 export { settleActionOutput, completeActionResult } from './executor/resultProjection.js';
 import { MachineServiceLogsReadInputV1Schema, MachineServiceActionIdSchema,
   MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS } from './specs/machine/services.js';
@@ -632,6 +632,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     currentAccount?: Readonly<{ accountId: string; serverId: string; serverIdentityId: string; actionsSettings?: ActionsSettingsV1 }>;
   }>) => Promise<ActionExecuteResult>;
 }> {
+  const settleActionOutput: typeof projectTerminalActionOutput = (actionId, result, requestId, schema) =>
+    projectTerminalActionOutput(actionId, result, requestId, schema, deps.recordActionOutputDiagnostic);
+
   const startExecutionRunWithSelection = async (
     sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0],
     input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1],
@@ -916,7 +919,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (failure) return failure;
     const roster = DiscussionParticipantsListResponseV1Schema.safeParse(rawRoster);
     if (!roster.success || roster.data.discussionId !== readRecord(input).discussionId) {
-      return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+      return invalidActionOutputFailure(roster.success ? undefined : roster.error);
     }
     const participant = roster.data.participants.find(entry => entry.participant.kind === 'session'
       ? entry.participant.sessionId === publisherSessionId : 'sessionId' in entry && entry.sessionId === publisherSessionId);
@@ -1312,7 +1315,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const failure = readActionFailureEnvelope(response);
         if (failure) return failure;
         const delivery = SessionInputAdmissionResultV1Schema.safeParse(response);
-        if (!delivery.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+        if (!delivery.success) return invalidActionOutputFailure(delivery.error);
         if (delivery.data.status !== 'accepted' && delivery.data.status !== 'alreadyAccepted') {
           return { ok: false, errorCode: delivery.data.code,
             error: 'The Action result was recorded, but could not be delivered to its originating Session.' };
@@ -1345,7 +1348,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const transportFailure = readActionFailureEnvelope(response);
     if (transportFailure) return transportFailure;
     const settled = SessionMessageReplyMutationResultV1Schema.safeParse(response);
-    if (!settled.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    if (!settled.success) return invalidActionOutputFailure(settled.error);
     if (!settled.data.ok) {
       const errorCode = settled.data.error === 'unavailable' ? 'approval_context_unavailable' : 'approval_stale';
       return { ok: false, errorCode, error: errorCode };
@@ -4207,7 +4210,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 const failed = readActionFailureEnvelope(read);
                 if (failed) return failed;
                 const state = WidgetSurfaceReadV1Schema.safeParse(read);
-                if (!state.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+                if (!state.success) return invalidActionOutputFailure(state.error);
                 const existing = state.data.instances.find(entry => entry.instance.id === intent.ref.instanceId)?.instance;
                 if (!existing) return { ok: false, errorCode: 'widget_instance_not_found', error: 'widget_instance_not_found' };
                 instance = intent.kind === 'widget_inputs' ? { ...existing,
@@ -4394,7 +4397,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (refusal) return refusal;
           const admitted = ArtifactActionOutputSchemasV1['artifact.get'].safeParse(opened);
           if (!admitted.success || admitted.data.artifact && admitted.data.artifact.artifactId !== artifactInput.artifactId)
-            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            return invalidActionOutputFailure(admitted.success ? undefined : admitted.error);
           if (!admitted.data.artifact) return { ok: false, errorCode: 'not_found', error: 'not_found' };
           const current = admitted.data.artifact;
           const policy = getArtifactKindPolicyV1(current.header.kind);
@@ -4809,7 +4812,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(ctx.serverId ? { expectedServerId: ctx.serverId } : {}),
         });
         if (!validated.success) {
-          return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          return invalidActionOutputFailure(validated.success ? undefined : validated.error);
         }
         return validated.kind === 'failure'
           ? validated.data as Extract<ActionExecuteResult, Readonly<{ ok: false }>>
@@ -4909,12 +4912,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (invite.participant.kind === 'model') {
             const reservation = DiscussionInviteResponseV1Schema.safeParse(result);
             if (!reservation.success) {
-              return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+              return invalidActionOutputFailure(reservation.success ? undefined : reservation.error);
             }
             const modelParticipant = reservation.data.modelParticipant;
             if (reservation.data.discussionId !== invite.discussionId || !modelParticipant
               || modelParticipant.participant.participantSlotId !== invite.participant.participantSlotId) {
-              return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+              return invalidActionOutputFailure(reservation.success ? undefined : reservation.error);
             }
             const started = await executeHostChild('session.spawn_new', projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
               ...modelParticipant.launch,
@@ -4931,7 +4934,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const sessionStart = SessionSpawnNewActionResultV1Schema.safeParse(started.result);
             if (!sessionStart.success || (sessionStart.data.type === 'success' && modelParticipant.sessionId !== null
               && modelParticipant.sessionId !== sessionStart.data.sessionId)) {
-              return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+              return invalidActionOutputFailure(sessionStart.success ? undefined : sessionStart.error);
             }
             return { ok: true, result: { ...reservation.data,
               modelParticipant: { ...modelParticipant,
@@ -4944,13 +4947,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const removal = (parsed.data as z.infer<typeof DiscussionParticipantRemoveInputV1Schema>);
           const response = DiscussionRemoveParticipantResponseV1Schema.safeParse(result);
           if (!response.success || response.data.discussionId !== removal.discussionId) {
-            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            return invalidActionOutputFailure(response.success ? undefined : response.error);
           }
           const owned = response.data.ownedSession;
           if (owned && (owned.discussionId !== removal.discussionId
             || (removal.participant.kind === 'model' ? owned.participantSlotId !== removal.participant.participantSlotId
               : removal.participant.kind !== 'session' || owned.sessionId !== removal.participant.sessionId))) {
-            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            return invalidActionOutputFailure(response.success ? undefined : response.error);
           }
           if (owned) ownedSessions = [owned];
         } else if (discussionActionId === 'discussion.archive') {
@@ -4958,7 +4961,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const discussionId = (parsed.data as z.infer<(typeof DISCUSSION_ACTION_INPUT_SCHEMAS_V1)['discussion.archive']>).discussionId;
           if (!response.success || response.data.discussion.id !== discussionId
             || response.data.ownedSessions?.some(owned => owned.discussionId !== discussionId)) {
-            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            return invalidActionOutputFailure(response.success ? undefined : response.error);
           }
           ownedSessions = response.data.ownedSessions ?? [];
         }
@@ -5473,7 +5476,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             if (failure) return failure;
             const parsed = getActionSpec('action.options.resolve').outputSchema!.safeParse(result);
             return parsed.success ? { ok: true, result: parsed.data }
-              : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+              : invalidActionOutputFailure(parsed.error);
           };
           const resolveTypedFieldOptions = async (field: Parameters<typeof resolveTypedInputFieldOptions>[0]['field'], ownerId: string): Promise<ActionExecuteResult | null> => {
             if (!field.inputType || 'hostType' in field.inputType) return null;
@@ -5878,7 +5881,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!output.success || (output.data.pin === null ? request.pinned
             : output.data.pin.sessionId !== input.sessionId
               || output.data.pin[(request.surface ?? 'list') === 'rail' ? 'railPinned' : 'listPinned'] !== request.pinned)) {
-            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            return invalidActionOutputFailure(output.success ? undefined : output.error);
           }
           return completeActionResult(output.data);
         }
@@ -6881,7 +6884,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const failure = readActionFailureEnvelope(response);
             if (failure) return failure;
             const settled = SessionMessageReplyMutationResultV1Schema.safeParse(response);
-            if (!settled.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            if (!settled.success) return invalidActionOutputFailure(settled.error);
             if (!settled.data.ok) {
               const errorCode = settled.data.error === 'unavailable' ? 'approval_context_unavailable' : 'approval_stale';
               return { ok: false, errorCode, error: errorCode };
@@ -6897,7 +6900,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               || progress.discussion?.discussionId !== reviewDecision.discussionId
               || progress.discussion.messageId !== reviewDecision.messageId || progress.discussion.participantSessionId !== sessionId
               || progress.acceptedTurnId !== returned.acceptedTurnId) {
-              return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+              return invalidActionOutputFailure();
             }
             return null;
           };
@@ -7024,7 +7027,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const listFailure = readActionFailureEnvelope(listed);
             if (listFailure) return listFailure;
             const targets = ComputerTargetsListResponseV1Schema.safeParse(listed);
-            if (!targets.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            if (!targets.success) return invalidActionOutputFailure(targets.error);
             const targetKey = computerTargetKeyV1(choice.data.target);
             if (!targets.data.targets.some(entry => computerTargetKeyV1(entry.target) === targetKey)) {
               return { ok: false, errorCode: 'computer_target_not_available', error: 'computer_target_not_available' };

@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from './outputValidation';
 import type { DeploymentEnvironmentCreateInputV1, ActionExecutorContext, ActionExecuteFailure } from '@happier-dev/protocol';
 import { DeploymentTargetLinkResultV1Schema, type DeploymentTemplateInstantiationPartialV1Schema }
     from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -68,7 +69,7 @@ export async function copyEnvironmentDataForHost(request: Readonly<{
             }
             // Once the provider reports an effect, repeating Create is never its recovery action.
             continuation = undefined;
-            if (!isRecord(created.result)) return partial('invalid_action_output');
+            if (!isRecord(created.result)) return partial(deploymentOutputValidationFailure('copyEnvironmentDataForHost', undefined));
             savedSecrets.push(...producedSavedSecrets(created.result));
             if (created.result.status === 'outcome_unknown' || created.result.status === 'unavailable') {
                 const identity = DeploymentTargetProviderIdentityV1Schema.safeParse(created.result.providerIdentity);
@@ -78,7 +79,7 @@ export async function copyEnvironmentDataForHost(request: Readonly<{
             const provider = DeploymentTargetLinkProviderContentV1Schema.safeParse({
                 credentialPrincipal: row.provision.input.credentialPrincipal,
                 providerIdentity: created.result.providerIdentity, providerEnvironment: created.result.providerEnvironment });
-            if (!provider.success) return partial('invalid_action_output');
+            if (!provider.success) return partial(deploymentOutputValidationFailure('deployments.copy.data.provision', undefined, provider.error));
             createdResource = `${provider.data.providerIdentity.providerAccountId}/${provider.data.providerIdentity.providerResourceId}`;
             const linkInput = { serverId: input.serverId, environmentId, expectedRevision: revision,
                 requestKey: `${input.requestKey}-data-${row.targetLinkId}`, targetId: row.targetId,
@@ -89,9 +90,9 @@ export async function copyEnvironmentDataForHost(request: Readonly<{
                 role: copyEnvironmentDataLinkRole(row.targetLinkId), input: projectNativeJsonValueForTransport(linkInput) });
             if (!linked.ok) return partial(linked);
             const parsed = DeploymentTargetLinkResultV1Schema.safeParse(linked.result);
-            if (!parsed.success) return partial('invalid_action_output');
+            if (!parsed.success) return partial(deploymentOutputValidationFailure('deployments.targets.link', undefined, parsed.error));
             if (!parsed.data.ok) return partial(parsed.data.error);
-            if (parsed.data.environmentId !== environmentId) return partial('invalid_action_output');
+            if (parsed.data.environmentId !== environmentId) return partial(deploymentOutputValidationFailure('copyEnvironmentDataForHost', undefined));
             revision = parsed.data.revision;
             continuation = undefined;
             createdResource = undefined;

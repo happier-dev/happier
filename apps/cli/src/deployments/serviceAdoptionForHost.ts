@@ -1,3 +1,4 @@
+import { deploymentOutputValidationFailure } from './outputValidation';
 import { createHash } from 'node:crypto';
 import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1 as CREATE_ROLE,
@@ -129,7 +130,7 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                             input: projectNativeJsonValueForTransport(prepared) });
                         if (!created.ok) return partial(created);
                         const result = DeploymentEnvironmentCreateResultV1Schema.safeParse(created.result);
-                        if (!result.success) return partial(failure('invalid_action_output'));
+                        if (!result.success) return partial(deploymentOutputValidationFailure('machines.services.adopt', undefined, result.error));
                         if (!result.data.ok) return partial(failure(result.data.error));
                         environmentId = result.data.environmentId; revision = result.data.revision;
                     }
@@ -149,7 +150,7 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                                 set: input.bindings, remove: [] }) });
                         if (!applied.ok) return partial(applied);
                         const result = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
-                        if (!result.success) return partial(failure('invalid_action_output'));
+                        if (!result.success) return partial(deploymentOutputValidationFailure('machines.services.adopt', undefined, result.error));
                         if (!result.data.ok) return partial(failure(result.data.error));
                         revision = result.data.revision;
                     }
