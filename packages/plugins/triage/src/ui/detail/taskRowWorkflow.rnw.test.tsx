@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { afterEach, expect, it } from 'vitest';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -17,6 +17,7 @@ import { planTriageListItemsV1 } from '../list/sections.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import { TriageTaskRowStatusControl } from './taskFields.js';
+import { createTaskActionControlTestkit } from './taskActionControl.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -48,14 +49,15 @@ async function mountSourceRow(descriptor: TriageSourceDescriptorV1, kindId: stri
     }] }] }],
   };
   const writes: ReturnType<typeof TriageTransitionTaskActionInputV1Schema.parse>[] = [];
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createTaskActionControlTestkit>>;
   await act(async () => {
-    fixture = await createPluginUiTestkit({ identity: { instanceId: 'source-task-row', mountNonce: `row-${mounted.length}` },
+    fixture = await createTaskActionControlTestkit({ identity: { instanceId: 'source-task-row', mountNonce: `row-${mounted.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
       surface: defineUiSurface(() => <TriageTaskRowStatusControl task={item.task!} onApplied={async () => undefined}
         address={{ entryRef, sourceInstanceId: selected.sourceInstanceId, lastKnownLocator: selected.observation.locator }} />),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targeted }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit },
+        overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
       handlers: { executeAction: ({ action, input }) => {
         expect(action).toBe('tasks/transition-v1');
         writes.push(TriageTransitionTaskActionInputV1Schema.parse(input));
@@ -76,6 +78,7 @@ it('opens GitHub’s native status menu from its source-derived row glyph before
   await act(async () => { choices.find(choice => choice.textContent === 'Not planned')!.click(); });
   expect(writes).toHaveLength(1);
   expect(writes[0]).toMatchObject({ entryRef, transitionId: 'not_planned' });
+  expect(fixture.rawTaskWrites).toEqual([]);
 });
 
 it('offers the personal task’s declared transitions from its status glyph', async () => {
@@ -88,4 +91,5 @@ it('offers the personal task’s declared transitions from its status glyph', as
   await act(async () => { choices.find(choice => choice.textContent === completed.label)!.click(); });
   expect(writes).toHaveLength(1);
   expect(writes[0]).toMatchObject({ entryRef, transitionId: 'completed' });
+  expect(fixture.rawTaskWrites).toEqual([]);
 });

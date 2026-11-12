@@ -1373,7 +1373,9 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
         expect(document.body.textContent).toContain('Ready');
         await expect(shell.queryByText('Unlinked maintenance task')).resolves.toBeUndefined();
-        await expect(shell.getByText(`${LABEL_B} could not be read. Their entries may be missing or out of date. Not installed or enabled on this machine.`)).resolves.toBeDefined();
+        await expect(shell.getByText('1 other source needs attention')).resolves.toBeDefined();
+        expect([...document.querySelectorAll('[role="status"]')]
+            .some(node => node.textContent?.includes(`${LABEL_B} could not be read`))).toBe(false);
         expect(harness.actionCalls.filter(action => action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1))
             .toHaveLength(relationReads);
     });
@@ -1549,13 +1551,12 @@ describe('the mounted PRs & Issues surface', () => {
             'Replace the duplicated normalizer',
             'Middle change',
             'Older change',
-            // `REQ-01`. Source A answered and source B did not, so the reader is
-            // told *which connection* to go and fix. "Some sources could not be
-            // read" is health without attribution: with two connections
-            // configured it leaves the reader guessing, and with six it is
-            // useless.
-            `${LABEL_B} could not be reached. Their entries may be missing or out of date.`,
         ]);
+        // The source owner qualifies the connection name with its source;
+        // the shared Status announces that failure as one live region.
+        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
+        expect(statusLines, JSON.stringify(statusLines))
+            .toContain(`Example forge · ${LABEL_B} could not be reached. Their entries may be missing or out of date.`);
         await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
         // One cause, one voice: the notice names the connection and why, so the toolbar does not repeat it as
         // "Showing the last known list".
@@ -1773,7 +1774,9 @@ describe('the mounted PRs & Issues surface', () => {
         // Nothing was ever listed, so the body's own failure state is the whole answer. A toolbar line saying
         // the reader is looking at "the last known list" over zero rows would be false, and a second voice for
         // one cause.
-        await visibleTexts(shell, [`${LABEL_A} and ${LABEL_B} could not be reached. Their entries may be missing or out of date.`]);
+        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
+        expect(statusLines, JSON.stringify(statusLines))
+            .toContain(`Example forge · ${LABEL_A} and Example forge · ${LABEL_B} could not be reached. Their entries may be missing or out of date.`);
         await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
     });
 
@@ -1847,9 +1850,8 @@ describe('the mounted PRs & Issues surface', () => {
 
         // One press of one facet, through the shared public option control:
         // rail -> reducer -> window lens -> rows. Every hop is real here.
-        await act(async () => {
-            await shell.press(await filterFacetOption(shell, 'Source', { name: LABEL_B }));
-        });
+        const sourceOption = await filterFacetOption(shell, 'Source', { name: `Example forge · ${LABEL_B}` });
+        await act(async () => { await shell.press(sourceOption); });
         await act(async () => { await Promise.resolve(); });
         await closeFilters(shell);
 
@@ -1858,9 +1860,8 @@ describe('the mounted PRs & Issues surface', () => {
 
         // And the honest empty state when a facet matches nothing: the sources
         // all answered, so the healthy claim is available and false.
-        await act(async () => {
-            await shell.press(await filterFacetOption(shell, 'State', { name: 'Done' }));
-        });
+        const doneOption = await filterFacetOption(shell, 'State', { name: 'Done' });
+        await act(async () => { await shell.press(doneOption); });
         await act(async () => { await Promise.resolve(); });
         await closeFilters(shell);
 
@@ -1876,9 +1877,8 @@ describe('the mounted PRs & Issues surface', () => {
         expect(document.body.textContent).toContain('Needs you');
         await expect(shell.getByText('Nothing needs you right now.')).resolves.toBeDefined();
 
-        await act(async () => {
-            await shell.press(await filterFacetOption(shell, 'Source', { name: LABEL_B }));
-        });
+        const sourceOption = await filterFacetOption(shell, 'Source', { name: `Example forge · ${LABEL_B}` });
+        await act(async () => { await shell.press(sourceOption); });
         await act(async () => { await Promise.resolve(); });
         await closeFilters(shell);
         await visibleTexts(shell, ['Middle change']);

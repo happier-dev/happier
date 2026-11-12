@@ -46,7 +46,7 @@ async function mountUnreadableShell(failure: PluginError, durableStateReachable 
                 // The aggregate read fails; optionally keep the independent
                 // durable pins and saved views reachable.
                 executeAction: async ({ action }) => {
-                    if (durableStateReachable && action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) return { v: 1, views: [] };
+                    if (durableStateReachable && action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
                     if (durableStateReachable && action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
                     throw failure;
                 },
@@ -101,20 +101,20 @@ describe('a PRs & Issues page that could not read anything', () => {
         await expect(shell.queryByText('unavailable')).resolves.toBeUndefined();
         await expect(shell.getByRole('button', { name: 'Details' })).resolves.toBeDefined();
         // A retry can work, so the state offers one beside the message.
-        await expect(shell.getByRole('button', { name: 'Try again' })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         // DETAIL-FOLLOWUP: diagnostics and recovery belong to this one failure line.
         const lines = [...document.querySelectorAll('[role="status"]')].filter(node =>
             node.textContent?.includes('The list could not be read'));
         expect(lines).toHaveLength(1);
-        expect(lines[0]?.parentElement?.textContent).toContain('Try again');
+        expect(lines[0]?.parentElement?.textContent).toContain('Retry');
         expect(lines[0]?.parentElement?.parentElement?.textContent).toContain('Details');
     });
 
     it('offers no retry the host says cannot succeed', async () => {
-        const shell = await mountUnreadableShell(new PluginError({ code: 'unsupported_method', retryable: false }));
+        const shell = await mountUnreadableShell(new PluginError({ code: 'unsupported_method', retryable: false }), true);
 
         await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
-        await expect(shell.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
         await expect(shell.getByRole('button', { name: 'Details' })).resolves.toBeDefined();
     });
 });
