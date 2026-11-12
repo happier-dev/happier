@@ -37,17 +37,22 @@ it.each([
 });
 
 it.each([
-  { signIn: { status: 'unknown', loginSupport: 'unsupported' }, state: 'ready' },
+  { signIn: { status: 'unknown', loginSupport: 'unsupported' }, state: 'ready', configured: true },
   { signIn: { status: 'signedOut', loginSupport: 'unsupported', required: true }, state: 'needsSignIn' },
   { signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, state: 'needsSignIn' },
   { signIn: { status: 'signedIn', loginSupport: 'login_terminal' }, state: 'ready' },
-])('uses canonical Agent readiness in Session status: $state / $signIn.loginSupport', async ({ signIn, state }) => {
+])('uses canonical Agent readiness in Session status: $state / $signIn.loginSupport', async ({ signIn, state, ...selection }) => {
   const sessionId = 'c123456789012345678901234';
+  const configured = 'configured' in selection && selection.configured;
+  const agentId = configured ? 'custom-acp' : 'codex';
+  const definitionId = configured ? 'qa-foldseed-acp' : undefined;
   const row = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
-    metadata: JSON.stringify({ machineId: 'machine-1', flavor: 'codex', path: '/workspace' }),
+    metadata: JSON.stringify({ machineId: 'machine-1', flavor: agentId, path: '/workspace', ...(configured ? {
+      runtimeDescriptorV1: { v: 1, agentId, agent: { definitionId } },
+      acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: definitionId, title: 'Foldseed' } } : {}) }),
     effectiveAccess: { v: 1, level: 'owner', sources: [],
       capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
-  const inventory = MachinesAgentsListOutputSchema.parse({ items: [{ agentId: 'codex', title: 'Codex',
+  const inventory = MachinesAgentsListOutputSchema.parse({ items: [{ agentId: configured ? 'happier.agent.custom-acp/custom-acp' : agentId, definitionId, title: 'Agent',
     installed: true, version: null, latestVersion: null, update: { supported: false, command: null },
     signIn, platform: { supported: true }, dependencies: [],
     install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null } }] });
@@ -63,7 +68,7 @@ it.each([
   const result = await getSessionStatus({ credentials: { token: 'token', encryption: null },
     idOrPrefix: sessionId, live: false, readiness: true,
     readReadinessInventory: async () => inventory });
-  expect(result).toMatchObject({ ok: true, readiness: { agent: { agentId: 'codex', current: true, state } } });
+  expect(result).toMatchObject({ ok: true, readiness: { agent: { agentId, current: true, state } } });
   if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
 });
 

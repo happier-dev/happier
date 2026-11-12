@@ -32,3 +32,30 @@ it.each(['inventory', 'acquire', 'status'] as const)(
       .map(role => SESSION_AGENT_READINESS_CHILDREN_V1[role as keyof typeof SESSION_AGENT_READINESS_CHILDREN_V1].action));
   },
 );
+
+
+it.each(['ready', 'unregistered', 'wrong-definition', 'not-installed'] as const)(
+  'matches configured ACP inventory identity without borrowing another definition: %s', async state => {
+    const result = await prepareSessionAgentReadiness({ machineId: 'machine', serverId: 'home',
+      agentId: 'custom-acp', definitionId: 'qa-foldseed-acp',
+      // Only the Machine Action transport is replaced; parsing and readiness stay real.
+      invoke: async action => {
+        if (state === 'not-installed' && action === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action) {
+          return { ok: true, result: { ok: false, errorCode: 'install_unavailable', error: 'No installer is available' } };
+        }
+        if (action !== SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action) throw new Error('Unexpected acquisition');
+        const agentId = 'happier.agent.custom-acp/custom-acp';
+        const definitionId = state === 'wrong-definition' ? 'another-definition' : 'qa-foldseed-acp';
+        return { ok: true, result: state === 'unregistered'
+          ? { items: [], unavailable: [{ agentId, definitionId, reason: 'probe_failed', errorCode: 'unknown-capability' }] }
+          : { items: [{ agentId, definitionId, title: 'Foldseed', installed: state !== 'not-installed',
+            version: null, latestVersion: null, update: { supported: false, command: null },
+            signIn: { status: 'unknown', loginSupport: 'unsupported' }, platform: { supported: true },
+            install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+          }] } };
+      },
+    });
+    if (state === 'ready' || state === 'unregistered') expect(result).toBeNull();
+    else expect(result).toMatchObject({ result: { code: 'agent_cli_not_ready' } });
+  },
+);

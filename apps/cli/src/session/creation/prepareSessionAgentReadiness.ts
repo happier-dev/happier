@@ -1,6 +1,6 @@
 import type { ActionExecutorDeps, SessionSpawnNewResultV1 } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { MachinesAgentsListOutputSchema, resolveMachineAgentAcquireIntentV1, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { MachinesAgentsListOutputSchema, buildMachineAgentInventoryKey, resolveMachineAgentAcquireIntentV1, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema, type AgentInstallJobConsent } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -33,12 +33,12 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   if (!inventory.ok) return { result: inventory };
   const facts = MachinesAgentsListOutputSchema.safeParse(inventory.result);
   if (!facts.success) return refusal();
-  const agent = facts.data.items.find(item => item.agentId === input.agentId && item.definitionId === input.definitionId);
+  const selectionKey = buildMachineAgentInventoryKey(selection);
+  const agent = facts.data.items.find(item => buildMachineAgentInventoryKey(item) === selectionKey);
   if (!agent) {
     // An unregistered probe says nothing about the executable. The ordinary
     // native launch resolver still decides whether a runnable CLI exists.
-    const unavailable = facts.data.unavailable?.find(item => item.agentId === input.agentId
-      && item.definitionId === input.definitionId);
+    const unavailable = facts.data.unavailable?.find(item => buildMachineAgentInventoryKey(item) === selectionKey);
     return unavailable?.reason === 'probe_failed' && unavailable.errorCode === 'unknown-capability'
       ? null : refusal();
   }

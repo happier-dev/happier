@@ -1,3 +1,4 @@
+import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { projectSessionSummaryV1 } from '@happier-dev/protocol/sessions/control/contract';
@@ -106,7 +107,8 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
       signal?.throwIfAborted();
     }
     const inventory = selectedMachineId ? readMachineAgentsForScope(account.accountLifetime, selectedMachineId) : null;
-    const agent = inventory?.agents.find(agent => agent.agentId === agentId && agent.definitionId === definitionId) ?? null;
+    const selectionKey = agentId ? buildMachineAgentInventoryKey({ agentId, definitionId }) : null;
+    const agent = inventory?.agents.find(agent => buildMachineAgentInventoryKey(agent) === selectionKey) ?? null;
     const targetKey = resolveSessionActionDefaultTargetKey(resolveSessionActionDefaultBackend({ session }));
     const provider = targetKey ? resolveAmbientProviderConnectionForModelIntent({ metadata, agentTargetKey: targetKey, sessionActive: session.active }) : null;
     const machine = selectedMachineId ? resolveServerScopedMachine(storage.getState(), account.serverId, selectedMachineId) : null;

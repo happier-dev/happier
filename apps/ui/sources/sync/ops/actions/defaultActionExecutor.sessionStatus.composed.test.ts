@@ -7,6 +7,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { machineAgentInventoryStore } from '@/agents/machineAgents/machineAgentInventoryStore';
+import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 
 const homes = createHomeGovernanceHarness();
@@ -174,4 +176,26 @@ it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout
   } } });
   else expect(result).not.toHaveProperty('result.acceptedWorkspace');
   expect(homes.requests.filter(request => request.path.includes('/project-rows'))).toHaveLength(0);
+});
+
+
+it('reads qualified configured ACP facts for a Session declaring the bare Agent id', async () => {
+  const serverId = await homes.addHome({ name: 'ACP', serverUrl: 'https://acp-status.test', accountId: 'alice', currentAccount: true });
+  const machineId = 'acp-machine';
+  const definitionId = 'qa-foldseed-acp';
+  const session = createSessionFixture({ id: 'acp-status', encryptionMode: 'plain', access: createSessionAccessFixture('owner'),
+    metadata: { ...createSessionFixture().metadata, machineId,
+      runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: { definitionId } },
+      acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: definitionId, title: 'Foldseed' } } });
+  homes.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+  const key = serverAccountScopedResourceKey({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' }, 'machine-agents', machineId);
+  machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1, items: [{
+    agentId: 'happier.agent.custom-acp/custom-acp', definitionId, title: 'Foldseed', installed: true,
+    version: null, latestVersion: null, update: { supported: false, command: null },
+    signIn: { status: 'unknown', loginSupport: 'unsupported' }, platform: { supported: true }, dependencies: [],
+    install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },
+  }] });
+  const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: session.id, readiness: true },
+    { surface: 'ui', serverId, expectedAccountId: 'alice' });
+  expect(result).toMatchObject({ ok: true, result: { readiness: { agent: { agentId: 'happier.agent.custom-acp/custom-acp', definitionId } } } });
 });

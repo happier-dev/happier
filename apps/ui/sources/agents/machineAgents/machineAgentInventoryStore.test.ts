@@ -16,6 +16,16 @@ const facts = (agentId: string): MachineAgentInventoryItem => ({ agentId, title:
     install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [] });
 
 describe('machine agent inventory store', () => {
+    it('summarizes a configured ACP instance across bare and qualified inventory ids', () => {
+        const store = createMachineAgentInventoryStore();
+        store.publish('machine', { status: 'ready', items: [{
+            ...facts('happier.agent.custom-acp/custom-acp'), definitionId: 'qa-foldseed-acp',
+        }], lastCheckedAt: 1 });
+        expect(store.createHeldAgentSummary(['machine'], 'custom-acp', 'qa-foldseed-acp').getSnapshot())
+            .toEqual({ machineCount: 1, versions: ['1.0.0'], unknownVersionCount: 0, complete: true });
+        expect(store.createHeldAgentSummary(['machine'], 'custom-acp', 'another-definition').getSnapshot().machineCount).toBe(0);
+    });
+
     it('retains a cold classified failure without inventing Agents and publishes only a changed reason', () => {
         const store = createMachineAgentInventoryStore();
         const changed = vi.fn();

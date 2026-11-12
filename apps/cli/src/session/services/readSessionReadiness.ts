@@ -1,7 +1,7 @@
 import { composeSessionReadinessV1, isSessionReadinessNativeSelectionV1, type SessionCredentialReadinessV1, type SessionReadinessAgentV1, type SessionReadinessV1 } from '@happier-dev/protocol/sessions/control/sessionReadinessV1';
 import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
-import { MachinesAgentsListOutputSchema, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { MachinesAgentsListOutputSchema, buildMachineAgentInventoryKey, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { MachinesAgentsListInput } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
@@ -72,8 +72,9 @@ export async function readSessionReadiness(input: Readonly<{
             // An authenticated inventory response proves this transport/key, not the Agent's auth.
             machine = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId, machine: target,
               machineReachable: reachable, requireExactSpawnReadiness: true, keyAvailable: true, rpcAvailable: true });
-            const facts = parsed.data.items.find(item => item.agentId === agentId && item.definitionId === definitionId);
-            const unavailable = parsed.data.unavailable?.some(item => item.agentId === agentId && item.definitionId === definitionId);
+            const selectionKey = buildMachineAgentInventoryKey({ agentId, definitionId });
+            const facts = parsed.data.items.find(item => buildMachineAgentInventoryKey(item) === selectionKey);
+            const unavailable = parsed.data.unavailable?.some(item => buildMachineAgentInventoryKey(item) === selectionKey);
             // An unread owner/selection or connected route cannot borrow native login or the reader's defaults.
             const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
             const ambientProvider = backendTarget ? resolveAmbientProviderConnectionForModelIntent({ metadata,

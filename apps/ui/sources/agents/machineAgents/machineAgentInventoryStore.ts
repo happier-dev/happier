@@ -167,8 +167,9 @@ export function createMachineAgentInventoryStore() {
                 const cached = this.read(key);
                 // This summary asks about one Agent, not all configured instances on the Machine.
                 const inventory = readInstalledMachineAgentInventory(publishedByKey?.get(key), cached, definitionId ? [definitionId] : []);
-                const agent = cached.agents.find(row => row.agentId === agentId && row.definitionId === definitionId);
-                const installed = inventory.agentIds.includes(agentId) && (definitionId === undefined || agent?.installed === true);
+                const selectedKey = buildMachineAgentInventoryKey({ agentId, definitionId });
+                const agent = cached.agents.find(row => buildMachineAgentInventoryKey(row) === selectedKey);
+                const installed = inventory.agentIds.some(id => buildMachineAgentInventoryKey({ agentId: id, definitionId }) === selectedKey) && (definitionId === undefined || agent?.installed === true);
                 const fact = { installed, version: installed && agent?.installed ? agent.version : null, complete: inventory.complete };
                 const previous = facts.get(key);
                 if (previous?.installed === fact.installed && previous.version === fact.version && previous.complete === fact.complete) return false;
