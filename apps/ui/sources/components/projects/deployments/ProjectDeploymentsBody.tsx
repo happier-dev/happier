@@ -1,3 +1,4 @@
+import { UnboundSessionHomeScopeCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -86,7 +87,7 @@ export const ProjectDeploymentsBody = React.memo(
     )>,
   ) {
     const serverId = 'workspaceRef' in props ? props.workspaceRef.serverId : props.serverId;
-    const { binding } = useServerCredentialAccountScopeBinding(
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(
       serverId,
     );
     const sourceId = 'workspaceRef' in props ? props.workspaceRef.source?.sourceId ?? null : props.projectSourceId;
@@ -95,6 +96,15 @@ export const ProjectDeploymentsBody = React.memo(
 
     if (!sourceId) {
       return <ProjectDeploymentsNoSource checkout={'workspaceRef' in props ? props.workspaceRef : null} />;
+    }
+    // A settled non-bound Home (a link without its Home, a signed-out or unreadable credential) says so and
+    // offers its next step; only a Home still resolving, or a bound one whose reads are starting, loads.
+    if (!binding && resolution.kind !== 'resolving' && resolution.kind !== 'bound') {
+      return (
+        <ItemList testID="project-deployments.homeUnavailable">
+          <UnboundSessionHomeScopeCard resolution={resolution} serverId={serverId ?? ''} testIDPrefix="project-deployments" />
+        </ItemList>
+      );
     }
     if (!binding || !controller) {
       return (

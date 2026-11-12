@@ -305,6 +305,8 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
     if (field.path === 'relationshipId') return { kind: 'workspaceSyncRelationship', id: value };
     if (field.path === 'sourceWorkspaceRefId') return { kind: 'workspace', id: value };
   }
+  // A Project workspace Action (forget, update) acts on that accepted checkout: it reads by its folder and machine.
+  if (actionId.startsWith('projects.workspace.') && field.path === 'workspaceId') return { kind: 'workspace', id: value };
   // A Machine id names a Machine on every Action (`machineId`, `executionTarget.machineId`).
   if (leaf === 'machineId') return { kind: 'machine', id: value };
   if ((actionId === 'skills.rules.set' || actionId === 'mcp.rules.set') && field.path === 'change.write.agentId') return { kind: 'agent', id: value };

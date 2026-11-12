@@ -13,11 +13,15 @@ import {
  */
 type ProviderValue = ProjectSourceRepositorySelectorV1['provider'];
 
-function readProviderHost(provider: ProviderValue): string | null {
+function readDeploymentHost(baseUrl: string): string | null {
   try {
-    const base = new URL(provider.baseUrl);
+    const base = new URL(baseUrl);
     return `${base.host}${base.pathname.replace(/\/+$/u, '')}`;
   } catch { return null; }
+}
+
+function readProviderHost(provider: ProviderValue): string | null {
+  return readDeploymentHost(provider.baseUrl);
 }
 
 /** "github.com/happier-dev/happier", or the owner/name alone when the deployment is unknown. */
@@ -27,6 +31,18 @@ export function formatProjectSourceAddress(
   const host = readProviderHost(selector.provider);
   const name = selector.repository.nameWithOwner;
   return host ? `${host}/${name}` : name;
+}
+
+/**
+ * The same text form for a checkout whose repository the SCM owner already resolved (its accepted ref's
+ * `repositoryIdentity`), so saving that checkout as a Source starts on its own address. Null when the
+ * forge deployment is not a readable web address.
+ */
+export function formatRepositoryIdentityAddress(
+  identity: Readonly<{ deployment: string; repository: string }>,
+): string | null {
+  const host = readDeploymentHost(identity.deployment);
+  return host ? `${host}/${identity.repository}` : null;
 }
 
 /**

@@ -529,6 +529,21 @@ describe('Projects model Action admission', () => {
         await hook.unmount();
     });
 
+    it('opens Save as a source on the checkout\'s own repository address', async () => {
+        const { useProjectsSourcesComposition } = await import('./useProjectsSourcesComposition');
+        const opened = new Set<string>();
+        const hook = await renderHook(() => useProjectsSourcesComposition(opened));
+        const listed = await renderHook(() => useProjectsListModel());
+        const ref = listed.getCurrent().groups.projectGroups[0]!.items[0]!;
+        // The SCM owner recorded the cloned checkout's repository on its accepted ref.
+        const cloned = { ...ref, repositoryIdentity: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo' } };
+        await act(async () => { expect(await hook.getCurrent().saveAsSource(cloned)).toMatchObject({ kind: 'editing' }); });
+        expect(hook.getCurrent().sourceCreation.controller.getSnapshot().creationDraft).toMatchObject({ address: 'github.com/owner/repo' });
+        hook.getCurrent().dismissSourceCreation();
+        await listed.unmount();
+        await hook.unmount();
+    });
+
     it('creates a Source through admission and records provenance on the accepted ref without changing its anchor', async () => {
         homes.answer(serverId, '/v1/projects/sources', { body: {
             ok: true, canManage: true, source: { id: 'source-a', revision: 1,

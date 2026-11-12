@@ -12,7 +12,8 @@ installApprovalCommonModuleMocks();
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { storage } = await import('@/sync/domains/state/storage');
-const { useApprovalReferenceReading } = await import('./approvalReferenceReading');
+const { useApprovalReferenceReading, readApprovalReferenceForConfirmation } = await import('./approvalReferenceReading');
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 
 describe('approval Project and Workspace label demand', () => {
     beforeEach(async () => {
@@ -103,6 +104,17 @@ describe('approval Project and Workspace label demand', () => {
         }
         await act(async () => storage.setState({ profileScope: { ...scope, accountId: 'bob' } }));
         expect(hook.getCurrent()).toMatchObject({ text: id, named: false });
+    });
+
+    it('names the workspace a confirmation acts on, as the approval page does', async () => {
+        const { home } = await arrange();
+        const reference = { kind: 'workspace' as const, id: 'checkout-0' };
+        const hook = await renderHook(() => useApprovalReferenceReading(reference, reference.id, home));
+        const account = await captureLazyActionAccountContext(home);
+        try {
+            expect(await readApprovalReferenceForConfirmation(reference, account)).toEqual(hook.getCurrent());
+            expect(hook.getCurrent()).toMatchObject({ text: 'Folder 0', named: true });
+        } finally { account.dispose(); }
     });
 
     it('names only the demanded Sync link endpoints, follows their changes, and settles removal', async () => {

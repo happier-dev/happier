@@ -30,6 +30,29 @@ import { deploymentEnvironmentRoute } from '../deployments/deploymentNavigation'
 import { projectSourceRoute } from '../sources/projectSourceNavigation';
 import { useProjectReadiness } from './useProjectReadiness';
 
+/**
+ * The Environment the person last chose for each Project, for as long as this device holds the Account's credential:
+ * a Fix leaves the Project page and Back mounts the widget again, which must not ask them to choose again. Device-local
+ * presentation memory; it retires with the Account lifetime and is never persisted or synced.
+ */
+const chosenEnvironments = new WeakMap<ServerAccountScopeLifetime, Map<string, string>>();
+
+function useChosenEnvironment(lifetime: ServerAccountScopeLifetime | null, projectId: string | null) {
+  const [chosen, setChosen] = React.useState<Readonly<{ projectId: string; environmentId: string }> | null>(null);
+  const remembered = lifetime && projectId ? chosenEnvironments.get(lifetime)?.get(projectId) ?? null : null;
+  const environmentId = chosen?.projectId === projectId ? chosen.environmentId : remembered;
+  const choose = React.useCallback((environmentId: string) => {
+    if (!projectId) return;
+    if (lifetime) {
+      const byProject = chosenEnvironments.get(lifetime) ?? new Map<string, string>();
+      byProject.set(projectId, environmentId);
+      chosenEnvironments.set(lifetime, byProject);
+    }
+    setChosen({ projectId, environmentId });
+  }, [lifetime, projectId]);
+  return [environmentId, choose] as const;
+}
+
 /** The selected Environment is presentation state; every fact comes from the composite Action. */
 export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurfaceTargetV1; testID: string }>) {
   const { theme } = useUnistyles();
@@ -39,9 +62,9 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
   const demand = { mounted: true, visible, focused: visible };
   const { controller } = useDeploymentProject(lifetime, projectId, demand);
   const collection = useDeploymentCollection(controller, demand);
-  const [selection, setSelection] = React.useState<Readonly<{ projectId: string; environmentId: string }> | null>(null);
-  const selected = selection?.projectId === projectId
-    ? collection.snapshot.value?.items.find(item => item.environment.id === selection.environmentId) : undefined;
+  const [chosenEnvironmentId, chooseEnvironment] = useChosenEnvironment(lifetime, projectId);
+  const selected = chosenEnvironmentId !== null
+    ? collection.snapshot.value?.items.find(item => item.environment.id === chosenEnvironmentId) : undefined;
   const environment = selected?.environment;
   const input = React.useMemo<ProjectReadinessReadInputV1 | null>(() => environment?.controllerMachineId && projectId ? {
     serverId: environment.serverId, machineId: environment.controllerMachineId, projectId,
@@ -57,7 +80,7 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
         label: t('projects.readiness.environment'), valueLabel: selected?.title ?? t('projects.readiness.choose'),
         muted: !selected, selectedId: selected?.environment.id ?? null,
         options: items.map(item => ({ id: item.environment.id, label: item.title })),
-        onChange: environmentId => setSelection({ projectId, environmentId }) }} />
+        onChange: chooseEnvironment }} />
       <SectionActionButton testID={`${props.testID}.refresh`} title={t('common.refresh')} icon="arrow-clockwise"
         loading={readiness.pending} onPress={() => { void (input ? readiness.refresh() : collection.refresh()); }} />
     </View>

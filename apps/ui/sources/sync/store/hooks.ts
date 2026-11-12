@@ -1455,21 +1455,27 @@ export function useMachineDisplaysByServerId(serverIds: readonly string[]): Read
   return usePresentedMachineInventory(select, true);
 }
 
+/** The display names of an already-bounded machine set, read once from a store snapshot. */
+export function readMachineDisplayNamesById(
+  state: Readonly<{ machineDisplayById?: StorageState['machineDisplayById'] }>,
+  machineIds: readonly string[],
+): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const machineId of machineIds) {
+    const metadata = state.machineDisplayById?.[machineId]?.metadata;
+    const name = metadata?.displayName?.trim() || metadata?.host?.trim() || '';
+    if (name) names[machineId] = name;
+  }
+  return names;
+}
+
 /** Subscribe only to display-name changes for an already-bounded machine set. */
 export function useMachineDisplayNamesById(machineIds: readonly string[]): Readonly<Record<string, string>> {
   const normalizedIds = React.useMemo(
     () => [...new Set(machineIds.map((id) => id.trim()).filter(Boolean))].sort(),
     [machineIds],
   );
-  return getStorage()(useShallow((state) => {
-    const names: Record<string, string> = {};
-    for (const machineId of normalizedIds) {
-      const metadata = state.machineDisplayById?.[machineId]?.metadata;
-      const name = metadata?.displayName?.trim() || metadata?.host?.trim() || '';
-      if (name) names[machineId] = name;
-    }
-    return names;
-  }));
+  return getStorage()(useShallow((state) => readMachineDisplayNamesById(state, normalizedIds)));
 }
 
 const noopSessionServerIdSubscribe = () => () => {};

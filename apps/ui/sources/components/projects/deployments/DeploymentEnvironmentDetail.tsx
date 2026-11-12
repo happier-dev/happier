@@ -704,11 +704,14 @@ export const DeploymentEnvironmentDetail = React.memo(
               machine={runtime?.source.kind === 'plugin' ? null : machineLabel} />
           ) : null;
         case 'machineOffline':
+          // The notice slot's column: the line keeps the sheets' edge like every banner in this slot.
           return (
-            <SurfaceFreshnessLine
-              testID="project-deployments.environment.offline"
-              reason={t('projects.deployments.machineOffline', { machine: machineLabel })}
-            />
+            <ItemGroup surface="none" header="none">
+              <SurfaceFreshnessLine
+                testID="project-deployments.environment.offline"
+                reason={t('projects.deployments.machineOffline', { machine: machineLabel })}
+              />
+            </ItemGroup>
           );
         case 'noTarget':
           return (

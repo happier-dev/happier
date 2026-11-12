@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { t } from '@/text';
-import { storage, useArtifact, useMachineDisplayNamesById, useProjectAccountRows, useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
+import { readMachineDisplayNamesById, storage, useArtifact, useMachineDisplayNamesById, useProjectAccountRows, useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -33,6 +33,7 @@ import { readCurrentProjectAccountRows, useProjectAccountWorkspaceRef, type Proj
 import { useApprovalSessionReading } from './useApprovalSessionReading';
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useWorkspaceSyncRelationshipSummary } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
+import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { endpointFor, type WorkspaceSyncRelationshipEndpoint, type WorkspaceSyncRelationshipSummary } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { formatWorkspaceSyncRelationshipTitle } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
@@ -89,6 +90,7 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         providerCatalogLoading: getProviderCatalogSnapshot(scope)?.status === 'loading',
         savedSecret: reference.kind === 'savedSecret'
             ? readSavedSecretCatalogName(scope, reference.id) : undefined,
+        workspace: reference.kind === 'workspace' ? readConfirmationWorkspace(reference.id, projects, scope, state) : null,
     };
     sources.principalName = await readApprovalPrincipalName(reference, scope, signal, () => { account.assertCurrent(); return true; });
     if (sources.principalName !== null) account.assertCurrent();
@@ -115,6 +117,16 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
             ? resolveServerScopedMachine(storage.getState(), account.serverId, sources.managedMachine.enrolledMachineId) : null;
     }
     return resolveApprovalReferenceReading(reference, reference.id, account.serverId, sources);
+}
+
+/** The confirmation's workspace, read from the invoking Account's census the way the approval page reads it. */
+function readConfirmationWorkspace(workspaceRefId: string, rows: ProjectAccountRowsSnapshot | null,
+    scope: Readonly<{ serverId: string; accountId: string }>, state: ReturnType<typeof storage.getState>): WorkspaceSyncRelationshipEndpoint {
+    const refs = rows && rows.scope.accountId === scope.accountId
+        && areServerProfileIdentifiersEquivalent(rows.scope.serverId, scope.serverId) ? rows.workspaceRefs : [];
+    const resolution = resolveWorkspaceRefById(refs, workspaceRefId, scope.serverId);
+    const machineId = resolution.kind === 'resolved' ? resolution.ref.machineId : '';
+    return endpointFor(workspaceRefId, refs, machineId ? readMachineDisplayNamesById(state, [machineId]) : {}, scope.serverId);
 }
 
 export function useApprovalReferenceReading(reference: ApprovalReference | undefined, literal: string, approvalServerId: string | null,

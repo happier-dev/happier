@@ -1535,4 +1535,13 @@ describe('workspace sync approval operands', () => {
       expect.objectContaining({ path: 'targetMachineId', reference: { kind: 'machine', id: 'machine-2' } }),
     ]));
   });
+
+  it('reads the workspace a Project workspace Action forgets or updates by reference', () => {
+    for (const actionId of ['projects.workspace.forget', 'projects.workspace.update'] as const) {
+      const presentation = describeApprovalActionFields({ actionId, actionArgs: { serverId: 'home-1', workspaceId: 'ref-1' } });
+      expect(presentation.rows).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'workspaceId', reference: { kind: 'workspace', id: 'ref-1' } }),
+      ]));
+    }
+  });
 });

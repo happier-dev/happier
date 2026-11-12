@@ -20,7 +20,7 @@ import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
-import { describeProjectSourceRow } from './sources/projectSourceAddress';
+import { describeProjectSourceRow, formatRepositoryIdentityAddress } from './sources/projectSourceAddress';
 
 const NO_ACCOUNT_SCOPE = { serverId: '', accountId: '' } as const;
 
@@ -62,8 +62,14 @@ export function useProjectsSourcesComposition(openedSourceIds: ReadonlySet<strin
         if (!lifetime?.isCurrent() || lifetime.scope.serverId !== ref.serverId || lifetime.scope.accountId !== accountScope?.accountId)
             return { kind: 'unavailable' as const };
         creationTarget.current = { ref, lifetime };
-        sources.controller.beginCreate({ ...(draft ?? { name: resolveWorkspaceRefDisplayName(ref) }), checkoutMachineId: ref.machineId });
-        if (!draft) return { kind: 'editing' as const };
+        // A checkout whose repository its SCM owner already resolved (a clone) starts on that address, read on its Machine.
+        const address = !draft && ref.repositoryIdentity ? formatRepositoryIdentityAddress(ref.repositoryIdentity) : null;
+        sources.controller.beginCreate({ ...(draft ?? { name: resolveWorkspaceRefDisplayName(ref), ...(address ? { address } : {}) }),
+            checkoutMachineId: ref.machineId });
+        if (!draft) {
+            if (address) fireAndForget(sources.controller.resolveAddress(address), { tag: 'projects.saveAsSource.address' });
+            return { kind: 'editing' as const };
+        }
         return saveSourceCreation();
     }, [accountScope?.accountId, saveSourceCreation, sources.controller]);
 

@@ -95,7 +95,7 @@ async function readinessScreen(facts: readonly ProjectReadinessFactV1[], wrap: (
     states: screen.findAllByType(SurfaceStateCard).map(card => ({ kind: card.props.kind, title: card.props.title,
       diagnosticCode: card.props.diagnosticCode })),
   })).toHaveLength(1));
-  return { screen, reads, identity };
+  return { screen, reads, identity, target };
 }
 
 it('selects the saved Environment and renders its source evidence without a Session', async () => {
@@ -136,6 +136,23 @@ it('opens the selected Environment backup setup without a Session', async () => 
       params: expect.objectContaining({ projectSourceId: 'project', deploymentEnvironment: 'staging', deploymentSetup: 'backups' }) }));
     expect(homes.requests.filter(request => request.method === 'POST' && new URL(request.path, 'https://home.test').pathname === '/v1/sessions')).toEqual([]);
   } finally { await screen.unmount(); }
+});
+
+it('keeps the chosen Environment when the person comes back from a Fix', async () => {
+  const { screen, target } = await readinessScreen([{ kind: 'backups', owner: 'deploymentBackups', environmentId: 'staging',
+    status: 'actionNeeded', reason: 'backup_configuration_required' }]);
+  await vi.waitFor(() => expect(screen.findByTestId('readiness.backups.fix')).toBeTruthy());
+  await act(async () => screen.pressByTestId('readiness.backups.fix'));
+  expect(navigation.push).toHaveBeenCalled();
+  // Fix leaves the Project page; Back mounts its widget again.
+  await screen.unmount();
+  const back = await renderScreen(<AccountNoticeInvestigationBoundary>
+    <ProjectReadinessWidgetBody target={target} testID="readiness" />
+  </AccountNoticeInvestigationBoundary>);
+  try {
+    await vi.waitFor(() => expect(back.findByType(SelectionListFilterChip).props.filter.selectedId).toBe('staging'));
+    await vi.waitFor(() => expect(back.findByTestId('readiness.backups.fix')).toBeTruthy());
+  } finally { await back.unmount(); }
 });
 
 it('shows the owner refusal and recovers through explicit Refresh', async () => {

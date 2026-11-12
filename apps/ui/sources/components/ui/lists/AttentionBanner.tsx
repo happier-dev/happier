@@ -1,10 +1,11 @@
 import { HAPPIER_FRESHNESS_LINE_METRICS, HappierBanner, HappierPressable, happierPageTextMetrics, type HappierBannerPoint } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
-import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { HAPPIER_PAGE_METRICS, readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { RoundButton, type RoundButtonDisplay } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -183,7 +184,10 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     );
     // A banner is a box with its own edge, not a bare row: in a contained scope it stays on the column instead of bleeding into
     // its padding, and on a page it keeps the sheets' inset, so its edge is theirs.
-    return props.placement === 'inline' ? banner : <ItemGroup surface="none" containerStyle={contained ? styles.column : undefined}>{banner}</ItemGroup>;
+    // The notice is an Element: over an atmosphere band or wallpaper its tint needs the Elements backing beneath it, or
+    // the art shows through its words (DESIGN.md, "Elements need a backing"). Over a plain page the backing is the card's solid paint.
+    const backed = <GlassSurface surfaceGroup="card" nested finishRole={null} style={styles.backing}>{banner}</GlassSurface>;
+    return props.placement === 'inline' ? backed : <ItemGroup surface="none" containerStyle={contained ? styles.column : undefined}>{backed}</ItemGroup>;
 });
 
 function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner>) {
@@ -282,6 +286,7 @@ const stripStyles = StyleSheet.create((theme) => ({
 
 const stylesheet = StyleSheet.create((theme) => ({
     column: { marginHorizontal: 0 },
+    backing: { borderRadius: HAPPIER_PAGE_METRICS.sheetRadiusPx },
     actions: {
         flexDirection: 'row',
         alignItems: 'center',
