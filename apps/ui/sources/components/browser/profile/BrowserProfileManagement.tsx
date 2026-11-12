@@ -128,7 +128,9 @@ export function BrowserProfileManagement(props: Readonly<{
                     testID={`${props.testID}-profiles-retry`} disabled={!ready} onPress={() => { void refresh(); }} />} /> : null}
             <VirtualizedList data={profiles} keyExtractor={profileKey} renderItem={renderProfile}
                 // Legend lays rows out inside a measured viewport: start from the rows' estimate, then take their real height.
-                style={[stylesheet.list, { height: contentHeight || profiles.length * PROFILE_ROW_ESTIMATE_PX }]}
+                style={[stylesheet.list, { height: contentHeight || profiles.length * PROFILE_ROW_ESTIMATE_PX,
+                    // This content-sized group has no free flex space; keep the rows' measured basis.
+                    flexGrow: 0, flexBasis: 'auto' }]}
                 estimatedItemSize={PROFILE_ROW_ESTIMATE_PX}
                 onContentSizeChange={(_width, height) => setContentHeight(height)}
                 extraData={renderProfile} recycleItems={false} />

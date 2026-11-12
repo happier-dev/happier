@@ -29,11 +29,12 @@ const { BrowserProfileStatus } = await import('./BrowserProfileStatus');
 const { Modal } = await import('@/modal');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 
-const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-profile-select-"]', rowHeight: 28 });
+const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-profile-select-"]', rowHeight: 28,
+    contentSizedHost: true });
 afterEach(async () => { await standardCleanup(); await homes.reset(); });
 afterAll(async () => { await network.dispose(); });
 
-it('gives persisted profiles a visible scroll viewport and usable select/delete controls', async () => {
+it('gives persisted profiles a visible scroll viewport in a content-sized privacy panel and usable select/delete controls', async () => {
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
     const serverUrl = 'https://profile-viewport.test';
     const serverIdentityId = 'srv_profile_viewport';

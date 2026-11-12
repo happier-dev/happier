@@ -3,7 +3,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, vi } from 'vitest';
 
 /** Physical layout/ResizeObserver boundary for the real Legend DOM recycler; its engine stays real. */
-export function createWebListDomHarness(options: Readonly<{ rowSelector: string; rowHeight: number; width?: number; height?: number }>) {
+export function createWebListDomHarness(options: Readonly<{
+    rowSelector: string; rowHeight: number; width?: number; height?: number;
+    /** A popover's content-sized column has no free space for a zero-basis flex child. */
+    contentSizedHost?: boolean;
+}>) {
     const width = options.width ?? 800;
     const height = options.height ?? 400;
     type ResizeObserverRecord = Readonly<{
@@ -51,6 +55,11 @@ export function createWebListDomHarness(options: Readonly<{ rowSelector: string;
             htmlElement.style.overflowY === 'auto'
             || htmlElement.style.overflow === 'auto'
         ) {
+            // Physical layout boundary: Chromium measures this as zero even with an explicit height.
+            // A content-sized popover differs from the harness's default fixed-height pane.
+            if (options.contentSizedHost && window.getComputedStyle(htmlElement).flexBasis === '0%') {
+                return rect(width, 0);
+            }
             return isFillSized(htmlElement) ? rect(width, Math.min(height, Number.parseFloat(htmlElement.style.height) || height)) : rect(width, 0);
         }
         const row = htmlElement.matches(options.rowSelector) ? htmlElement : htmlElement.querySelector<HTMLElement>(options.rowSelector);
