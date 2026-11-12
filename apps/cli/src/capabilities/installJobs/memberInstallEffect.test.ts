@@ -40,7 +40,7 @@ test.skipIf(process.platform !== 'linux')('whole member installer writes and ver
   vi.stubEnv('NPM_CONFIG_USERCONFIG', join(owner, '.npmrc')); vi.stubEnv('PIP_CONFIG_FILE', join(owner, 'pip.conf'));
   vi.stubEnv('HAPPIER_MANAGED_TOOLS_ROOT', join(owner, 'tools')); vi.stubEnv('GITHUB_TOKEN', 'owner-secret');
   try {
-    const spec = vendorSpec('mkdir -p "$HOME/.local/bin"; printf "#!/bin/sh\\nprintf \'fixture-member 1.2.3\\\\n\'\\n" > "$HOME/.local/bin/fixture-member"; chmod 755 "$HOME/.local/bin/fixture-member"; env > "$HOME/installer-environment"');
+    const spec = vendorSpec('mkdir -p "$HOME/.local/bin"; printf "#!/usr/bin/env bash\\nprintf \'fixture-member 1.2.3\\\\n\'\\n" > "$HOME/.local/bin/fixture-member"; chmod 755 "$HOME/.local/bin/fixture-member"; env > "$HOME/installer-environment"');
     input.write(`${JSON.stringify({ kind: 'install', request: { agentId: spec.id, intent: 'install', consent: { vendorRecipe: true } },
       accountId: 'member', registry: { agents: [{ id: spec.id, runtimeSpec: spec }] }, targetInUse: false, runtimeManagedDependencyId: null })}\n`);
     await runMemberAgentInstallEffect(input, output, new AbortController().signal, buildMemberAgentInstallEnvironment(home));
