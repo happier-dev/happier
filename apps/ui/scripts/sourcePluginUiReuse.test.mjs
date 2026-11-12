@@ -44,8 +44,9 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
   for (const { directory } of plugins) {
     const root = join(sourceRoot, 'packages/plugins', directory);
     await write(join(root, 'package.json'), JSON.stringify({ name: `@happier-dev/plugins-${directory}`,
-      version: '0.0.0', exports: { './manifest': './src/manifest.ts', './happier-plugin-ui/panel': { 'happier-source': './src/ui.ts' } } }));
+      version: '0.0.0', files: ['.happier-plugin-build'], exports: { './manifest': './src/manifest.ts', './happier-plugin-ui/panel': { 'happier-source': './src/ui.ts' } } }));
     await write(join(root, 'src/manifest.ts'), 'export { host as PLUGIN_MANIFEST } from "@happier-dev/plugin-sdk";');
+    await write(join(root, '.happier-plugin-build/daemon.js'), 'export const capture = "first";');
     await write(join(root, 'src/ui.ts'), 'export { renderSurface } from "./panel"; export { host } from "@happier-dev/plugin-sdk";');
     await write(join(root, 'src/panel/index.ts'), 'export function renderSurface() { return "original-panel"; }');
   }
@@ -83,15 +84,21 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
     const outputDir = fixture.path(capture, 'preparation');
     const artifactOutputDirs = Object.fromEntries(plugins.map(({ directory }) => [directory,
       fixture.path(capture, 'runtime/plugins', directory, 'dist/happier-plugin-ui')]));
+    const started = performance.now();
     const result = await prepareSourcePluginUiArtifacts({ repoRoot: capturedRoot, outputDir, plugins,
       outputPath: fixture.path(capture, 'runtime/inventory.js'), artifactOutputDirs, retainedInventoryPath, sourceImportConditions });
     assert.deepEqual(result.pluginFailures, []);
+    t.diagnostic(`capture=${capture} seconds=${((performance.now() - started) / 1000).toFixed(3)} graphs=${counts.graphs} artifacts=${counts.artifacts}`);
     return result;
   };
   const first = await prepare('first');
   assert.ok(counts.graphs > 0);
   assert.equal(counts.artifacts, plugins.length);
   counts.graphs = counts.artifacts = 0;
+  // Daemon package output changes between captures; portable UI source does not.
+  for (const { directory } of plugins) {
+    await write(join(sourceRoot, 'packages/plugins', directory, '.happier-plugin-build/daemon.js'), 'export const capture = "second";');
+  }
   const second = await prepare('second', first.outputPath);
   t.diagnostic(`unchanged capture graphs=${counts.graphs} artifacts=${counts.artifacts}`);
   assert.deepEqual(counts, { graphs: 0, artifacts: 0 }, 'unchanged authored inputs need no compiler work');

@@ -287,6 +287,8 @@ function isWorkspaceBuildConfigFile(name) {
 // authored hosted-web tree is an input; its generated parents are not membership.
 export function isGeneratedPluginArtifactPath(path) {
   const parts = String(path).replaceAll('\\', '/').replace(/^packages\/(?:plugins\/)?[^/]+\//, '').split('/');
+  // Daemon bundles are publications too, even when listed in package files.
+  if (parts[0] === '.happier-plugin-build') return true;
   if (parts[0] !== '.happier-plugin') return false;
   return parts[1] !== 'ui' || parts[2] !== 'hosted-web';
 }

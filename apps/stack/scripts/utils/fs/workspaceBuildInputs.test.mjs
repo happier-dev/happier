@@ -217,8 +217,9 @@ test('source UI preparation captures compiler dependencies and invalidates reuse
 test('source plugin UI inputs admit shipped author Resources and exclude their generated publication outputs', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-ui-resource-inputs-' });
   const root = fixture.path('packages/plugins/fixture');
-  const manifest = { name: '@happier-dev/plugins-fixture', files: ['assets', 'dist', '.happier-plugin', 'package.json'] };
+  const manifest = { name: '@happier-dev/plugins-fixture', files: ['assets', 'dist', '.happier-plugin', '.happier-plugin-build', 'package.json'] };
   const paths = ['src/index.ts', 'assets/i18n/en.json', 'dist/happier-plugin-ui/locale.json.bundle',
+    '.happier-plugin-build/daemon.js', '.happier-plugin-build/.happier-daemon-outputs.json',
     '.happier-plugin/plugin.json', '.happier-plugin/ui/generated.json', '.happier-plugin/ui/hosted-web/source.html'];
   await mkdir(root, { recursive: true });
   await writeFile(join(root, 'package.json'), JSON.stringify(manifest));
@@ -239,5 +240,7 @@ test('source plugin UI inputs admit shipped author Resources and exclude their g
   assert.notEqual(changed, initial);
   await writeFile(join(root, 'dist/happier-plugin-ui/locale.json.bundle'), 'generated-output-changed');
   await writeFile(join(root, '.happier-plugin/plugin.json'), 'generated-output-changed');
+  await writeFile(join(root, '.happier-plugin-build/daemon.js'), 'daemon-output-changed');
+  await writeFile(join(root, '.happier-plugin-build/.happier-daemon-outputs.json'), 'daemon-record-changed');
   assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), changed);
 });
