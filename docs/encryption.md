@@ -363,7 +363,11 @@ preferences:
 - on Android, fingerprint unlock keeps a copy of the data key in SecureStore with
   `requireAuthentication`.
 
-Turning the lock on or off re-stores every credential through `TokenStorage.transitionCredentialStorage`.
+Turning the lock on or off re-stores every credential through `TokenStorage.storeAllCredentialsAs`, in an
+order that never strands a sign-in: turning it on saves the lock record first and then seals credentials;
+turning it off stores credentials in plain form first and removes the record only after all of them
+succeeded. After an interrupted change, the boot step after unlock (`resealAppLockCredentials`) seals any
+credential still in plain form while the lock is on.
 Before the first unlock the data key is not in memory, so credentials cannot be read or written and the
 app does not boot. Re-locking a running app retains the data key for background sync, while the
 notification execution owner refuses new permission/question actions and cancels pending preparation.

@@ -30,14 +30,33 @@ import {
 } from './appLockRuntime';
 import { removeAppLockBiometricKey, storeAppLockBiometricKey } from './appLockBiometrics';
 
-/** Turns the lock on for this device and re-seals every stored credential with the data key. */
+/**
+ * Turns the lock on for this device. The lock record is saved first, so the data key stays
+ * recoverable with the password; credentials are sealed afterwards. If that is interrupted, the
+ * leftovers are plain (still readable) and `resealAppLockCredentials` seals them after the next unlock.
+ */
 export async function enableAppLockLocally(record: AppLockRecord, dataKey: Uint8Array): Promise<void> {
-    await TokenStorage.transitionCredentialStorage(() => activateAppLock(record, dataKey));
+    await activateAppLock(record, dataKey);
+    await TokenStorage.storeAllCredentialsAs('sealed');
 }
 
-/** Turns the lock off for this device and stores credentials in plain form again. */
+/**
+ * Turns the lock off for this device. Every credential is stored in plain form first, while the
+ * lock record still wraps the data key; the record is removed only after all of them succeeded.
+ * An interruption leaves the lock on with every credential still openable.
+ */
 export async function disableAppLockLocally(): Promise<void> {
-    await TokenStorage.transitionCredentialStorage(() => deactivateAppLock());
+    await TokenStorage.storeAllCredentialsAs('plain');
+    await deactivateAppLock();
+}
+
+/**
+ * Seals any credential left in plain form while the lock is on (an interrupted enable or disable,
+ * or a sign-in written by a build without app lock). Runs after unlock; a no-op otherwise.
+ */
+export async function resealAppLockCredentials(): Promise<void> {
+    if (!getAppLockDataKey()) return;
+    await TokenStorage.storeAllCredentialsAs('sealed');
 }
 
 function newLockId(): string {

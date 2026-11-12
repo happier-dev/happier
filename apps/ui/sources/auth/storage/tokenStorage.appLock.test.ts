@@ -94,4 +94,68 @@ describe('TokenStorage (web) with the app lock', () => {
         expect(storedCredentialValues(storage).some((value) => value.includes('token-c'))).toBe(true);
         await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-c', secret: 'secret-c' });
     });
+
+    // Storage is the system boundary: make every credential write fail, as a full or failing store would.
+    function failCredentialWrites(handle: LocalStorageMockHandle): void {
+        handle.setItemMock.mockImplementation((key: string, value: string) => {
+            if (key.startsWith('auth_credentials')) throw new Error('storage write failed');
+            handle.store.set(key, value);
+        });
+    }
+
+    async function restartAndUnlock(password: string) {
+        vi.resetModules();
+        (await import('@/sync/domains/server/serverConfig')).setServerUrl(SERVER_URL);
+        const restarted = await import('./tokenStorage');
+        const lock = await import('@/auth/appLock/appLockRuntime');
+        const setup = await import('@/auth/appLock/appLockSetup');
+        await lock.loadAppLock();
+        return { TokenStorage: restarted.TokenStorage, lock, setup, unlocked: await lock.unlockAppLockWithPassword(password) };
+    }
+
+    it('keeps sign-ins recoverable when turning the lock off is interrupted', async () => {
+        storage = installLocalStorageMock();
+        (await import('@/sync/domains/server/serverConfig')).setServerUrl(SERVER_URL);
+        const { TokenStorage } = await import('./tokenStorage');
+        const { enableAppLockLocally, disableAppLockLocally } = await import('@/auth/appLock/appLockSetup');
+        await (await import('@/auth/appLock/appLockRuntime')).loadAppLock();
+        const { record, dataKey } = await buildRecord('pw-off');
+        await enableAppLockLocally(record, dataKey);
+        await TokenStorage.setCredentials({ token: 'token-d', secret: 'secret-d' });
+
+        failCredentialWrites(storage);
+        await expect(disableAppLockLocally()).rejects.toThrow();
+        storage.setItemMock.mockImplementation((key: string, value: string) => {
+            storage!.store.set(key, value);
+        });
+
+        // After a restart the lock is still on, so the password still opens the saved sign-in.
+        const next = await restartAndUnlock('pw-off');
+        expect(next.unlocked).toBe(true);
+        await expect(next.TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-d', secret: 'secret-d' });
+    });
+
+    it('seals leftover plain sign-ins on the next unlock when turning the lock on was interrupted', async () => {
+        storage = installLocalStorageMock();
+        (await import('@/sync/domains/server/serverConfig')).setServerUrl(SERVER_URL);
+        const { TokenStorage } = await import('./tokenStorage');
+        const { enableAppLockLocally } = await import('@/auth/appLock/appLockSetup');
+        await (await import('@/auth/appLock/appLockRuntime')).loadAppLock();
+        await TokenStorage.setCredentials({ token: 'token-e', secret: 'secret-e' });
+
+        const { record, dataKey } = await buildRecord('pw-on');
+        failCredentialWrites(storage);
+        await expect(enableAppLockLocally(record, dataKey)).rejects.toThrow();
+        storage.setItemMock.mockImplementation((key: string, value: string) => {
+            storage!.store.set(key, value);
+        });
+
+        const next = await restartAndUnlock('pw-on');
+        expect(next.unlocked).toBe(true);
+        await expect(next.TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-e', secret: 'secret-e' });
+
+        await next.setup.resealAppLockCredentials();
+        expect(storedCredentialValues(storage).some((value) => value.includes('token-e'))).toBe(false);
+        await expect(next.TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-e', secret: 'secret-e' });
+    });
 });

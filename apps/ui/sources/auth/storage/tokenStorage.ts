@@ -584,10 +584,11 @@ async function sealCredentialForStorage(raw: string): Promise<string | null> {
     return await sealAppLockCredential(sealing.dataKey, raw);
 }
 
-async function readCredentialRawByKey(key: string): Promise<string | null> {
+/** The stored form of a credential (sealed or plain), without opening it. */
+async function readStoredCredentialByKey(key: string): Promise<string | null> {
     if (Platform.OS === 'web') {
         try {
-            return await openStoredCredential(localStorage.getItem(key));
+            return localStorage.getItem(key);
         } catch (error) {
             console.error('Error getting credentials:', error);
             return null;
@@ -595,20 +596,33 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
     }
 
     const cached = credentialsCacheByKey.get(key);
-    if (cached) return await openStoredCredential(cached);
+    if (cached) return cached;
 
     try {
         const stored = await readNativeSecureStoreString(key);
         if (stored) credentialsCacheByKey.set(key, stored);
-        return await openStoredCredential(stored);
+        return stored;
     } catch (error) {
         console.error('Error getting credentials:', error);
         return null;
     }
 }
 
-async function writeCredentialRawByKey(key: string, raw: string): Promise<boolean> {
-    const stored = await sealCredentialForStorage(raw);
+async function readCredentialRawByKey(key: string): Promise<string | null> {
+    try {
+        return await openStoredCredential(await readStoredCredentialByKey(key));
+    } catch (error) {
+        console.error('Error getting credentials:', error);
+        return null;
+    }
+}
+
+/**
+ * Stores a credential. `form` defaults to the current app-lock mode; `plain` is used while turning
+ * the lock off, before the lock record is removed.
+ */
+async function writeCredentialRawByKey(key: string, raw: string, form: 'current' | 'plain' = 'current'): Promise<boolean> {
+    const stored = form === 'plain' ? raw : await sealCredentialForStorage(raw);
     if (stored === null) return false;
     if (Platform.OS === 'web') {
         try {
@@ -901,19 +915,18 @@ export const TokenStorage = {
     },
 
     /**
-     * Re-stores every readable credential across an app-lock transition: values are read in the
-     * current sealing mode, `applyTransition` switches the mode (lock on or off), and the values are
-     * written back in the new mode.
+     * Re-stores every saved credential in one form: `sealed` while the app lock is on (needs the
+     * unlocked data key), `plain` while turning it off (before the lock record is removed). Values
+     * already in that form are left alone, so the pass is safe to repeat after an interruption. A
+     * sealed value that cannot be opened stops the pass instead of being dropped.
      */
-    async transitionCredentialStorage(applyTransition: () => Promise<void>): Promise<void> {
-        const plainByKey = new Map<string, string>();
+    async storeAllCredentialsAs(form: 'sealed' | 'plain'): Promise<void> {
         for (const key of await listAllCredentialStorageKeys()) {
-            const plain = await readCredentialRawByKey(key);
-            if (plain) plainByKey.set(key, plain);
-        }
-        await applyTransition();
-        for (const [key, plain] of plainByKey) {
-            if (!(await writeCredentialRawByKey(key, plain))) {
+            const stored = await readStoredCredentialByKey(key);
+            if (!stored || isSealedAppLockCredential(stored) === (form === 'sealed')) continue;
+            const plain = await openStoredCredential(stored);
+            if (plain === null) throw new Error('A saved sign-in could not be opened for the app lock change');
+            if (!(await writeCredentialRawByKey(key, plain, form === 'plain' ? 'plain' : 'current'))) {
                 throw new Error('Failed to re-store credentials for the app lock change');
             }
         }

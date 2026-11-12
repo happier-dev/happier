@@ -81,6 +81,7 @@ import { installWebFontFaces } from '@/platform/installWebFontFaces';
 import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { configureNotificationCategories } from '@/activity/notifications/runtime/configureNotificationCategories';
 import { loadAppLock, useAppLockSnapshot } from '@/auth/appLock/appLockRuntime';
+import { resealAppLockCredentials } from '@/auth/appLock/appLockSetup';
 import { useAppLockAutoLock } from '@/auth/appLock/appLockAutoLock';
 import { AppLockSurface } from '@/components/appLock/AppLockSurface';
 import { ThemeProfileRuntimeSync } from '@/theme/profiles/ThemeProfileRuntimeSync';
@@ -670,7 +671,13 @@ function AppBoot(props: {
         void runAppBootSequence({
             loadFonts,
             sodiumReady: sodium.ready,
-            resolveCredentials: () => resolveBootCredentials(Platform.OS),
+            resolveCredentials: async () => {
+                // Finish an app-lock change that was interrupted before credentials were re-sealed.
+                await resealAppLockCredentials().catch((error: unknown) => {
+                    console.error('[appLock] Could not re-seal saved sign-ins after unlock:', error);
+                });
+                return await resolveBootCredentials(Platform.OS);
+            },
             prepareWarmCache: prepareWarmCacheStorage,
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
             restoreSync: syncRestore,
