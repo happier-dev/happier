@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { VoiceConversationActionInputSchemas, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { Linking, Platform } from 'react-native';
 import { readMicrophonePermissionState, requestMicrophonePermission, type MicrophonePermissionState } from '@/utils/platform/microphonePermissions';
@@ -280,6 +281,7 @@ export async function executeVoiceConversationAction(
             await voiceSessionManager.toggle(continuedTarget !== undefined ? continuedTarget
                 : current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null, conversationSelection);
         } catch (error) {
+            if (isPluginError(error)) throw error;
             startFailureCode = readSafeVoiceRuntimeFailureCode(error);
             if (!startFailureCode) throw error;
         }

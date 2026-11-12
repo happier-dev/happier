@@ -12,7 +12,7 @@ export type VoiceConversationTranscriptMode = 'native_session' | 'synthetic';
 
 /** Person-selected conversation identity, carried with Start rather than saved as a preference. */
 export type VoiceConversationSelection =
-    | Readonly<{ kind: 'new'; creationKey: string }>
+    | Readonly<{ kind: 'new'; creationKey: string; authoredIntentKey?: string }>
     | Readonly<{ kind: 'continue'; conversationSessionAddress: SessionAddress }>;
 
 export type VoiceSessionBinding = Readonly<{

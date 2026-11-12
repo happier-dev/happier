@@ -829,6 +829,66 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     voiceConversationRuntimeMachine.reset();
   });
 
+  it.each(['creation_conflict', 'update_required'] as const)('carries the typed %s refusal through the Voice producer', async code => {
+    const details = { kind: 'update_required', operation: 'session.spawn_new', component: 'daemon', reason: 'unsupported_protocol' };
+    spawnResponse.mockResolvedValue({ type: 'error', code, retryable: false,
+      ...(code === 'update_required' ? { details } : {}) });
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    const error = await ensureVoiceConversationSessionForVoiceHome().catch((cause: unknown) => cause);
+    const { isPluginError } = await import('@happier-dev/protocol/plugins/errors');
+    expect(isPluginError(error)).toBe(true);
+    expect(error).toMatchObject({ code, ...(code === 'update_required' ? { details } : {}) });
+  });
+
+  it('starts a new admitted creation after pool refusal and source change, preserving plain Retry identity', async () => {
+    state.settings.voice.providers.local_conversation.config.conversationMode = 'agent';
+    const agent = state.settings.voice.providers.local_conversation.config.agent;
+    Object.assign(agent, { agentSource: 'agent', agentId: 'codex', connectedServices: { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+    } } });
+    await loadConversationSession();
+    const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+    const { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } = await import('@/voice/session/voiceAdapterRegistry');
+    const { ensureVoiceConversationBindingResolution } = await import('@/voice/binding/resolveVoiceConversationBindingResolution');
+    const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+    registerVoiceAdapters(assembly.adapters);
+    try {
+      let selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection = {
+        kind: 'new', creationKey: 'ui-session-attempt-pool-source-retry',
+      };
+      const observe = (next: typeof selection) => { selection = next; };
+      spawnResponse.mockResolvedValue({ type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code: 'no_eligible_member', message: 'no_eligible_member' } });
+      const start = () => ensureVoiceConversationBindingResolution({ providerId: 'local_conversation',
+        controlSessionId: '__voice_agent__', settings: storage.getState().settings,
+        conversationSelection: selection, onConversationSelection: observe });
+      await expect(start()).rejects.toMatchObject({ code: 'no_eligible_member' });
+      const refusal = await start().catch((error: unknown) => error);
+      const { isPluginError } = await import('@happier-dev/protocol/plugins/errors');
+      expect(isPluginError(refusal)).toBe(true);
+      const first = spawnRequests.mock.calls.at(-1)![0];
+      await expect(start()).rejects.toMatchObject({ code: 'no_eligible_member' });
+      expect(spawnRequests.mock.calls.at(-1)![0].creationKey).toBe(first.creationKey);
+      agent.connectedServices = null;
+      storage.setState({ settings: settingsParse(state.settings) });
+      // The ordinary Session admission rejects reuse of one creation key with a
+      // different immutable recipe. This boundary models that observed refusal.
+      spawnResponse.mockImplementation(async (input) => input.creationKey === first.creationKey
+        ? { type: 'error', code: 'creation_conflict', retryable: false }
+        : { type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code: 'agent_signed_out', message: 'agent_signed_out' } });
+      await expect(start()).rejects.toMatchObject({ code: 'agent_signed_out' });
+      const changed = spawnRequests.mock.calls.at(-1)![0];
+      expect(changed.creationKey).not.toBe(first.creationKey);
+      expect(changed.connectedServices).toEqual({ v: 2, bindingsByServiceId: {} });
+      await expect(start()).rejects.toMatchObject({ code: 'agent_signed_out' });
+      expect(spawnRequests.mock.calls.at(-1)![0].creationKey).toBe(changed.creationKey);
+    } finally {
+      resetVoiceAdapterRegistryForTests();
+      await assembly.dispose();
+    }
+  });
+
   it.each(['profile', 'group', 'native', 'default'] as const)('uses the persisted Local Voice %s selection for a fresh Home carrier', async selection => {
     const agent = state.settings.voice.providers.local_conversation.config.agent;
     agent.agentSource = 'agent';

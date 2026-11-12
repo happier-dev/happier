@@ -466,7 +466,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const launch = { ...input, processEnv: { ...process.env }, providerAccountUsageStore: usage,
         createConnectedServiceLaunchAuthGroupCoordinator: createCoordinator };
       const quotaRefusal = { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'no_eligible_member',
-        errorDetail: { kind: 'launch_error', code: 'no_eligible_member', connectedAccountPool: {
+        errorDetail: { kind: 'launch_error', code: 'usage_limit', connectedAccountPool: {
           excluded: [expect.objectContaining({ profileId: accountId, reason: 'quota_exhausted' })],
         } } };
       expect(await executeSpawnSessionRequest({ ...launch, options: { ...input.options, agentTarget,

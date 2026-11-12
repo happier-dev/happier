@@ -1,3 +1,8 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizeSessionCreationSelectionIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { createSpawnAttemptKeyForSessionSpawnNewInput } from '@/sync/domains/session/spawn/spawnAttemptKey';
+import type { StrictSessionSpawnNewInput } from '@/sync/ops/actions/sessionSpawnNewAction';
 import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversationBindingTypes';
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -466,12 +471,13 @@ function toVoiceConversationSpawnError(spawned: unknown): Error {
     const safeMessage = isRetryableProviderFailure
         ? 'service_temporarily_unavailable'
         : uxDiagnostic?.code ?? launchErrorCode ?? errorMessage ?? 'voice_conversation_spawn_failed';
+    const code = isRetryableProviderFailure ? 'service_temporarily_unavailable'
+        : errorCode ?? 'VOICE_CONVERSATION_SPAWN_FAILED';
+    const details = StrictJsonValueSchema.safeParse(spawnRecord.details);
     return Object.assign(
-        new Error(safeMessage),
+        new PluginError({ code, message: safeMessage,
+            ...(details.success ? { details: details.data } : {}) }),
         {
-            code: isRetryableProviderFailure
-                ? 'service_temporarily_unavailable'
-                : errorCode ?? 'VOICE_CONVERSATION_SPAWN_FAILED',
             ...readSafeVoiceRuntimeFailureFacts(launchError.success ? launchError.data : spawned),
             ...(errorDetail ? { errorDetail } : {}),
             ...(uxDiagnostic ? { uxDiagnostic } : {}),
@@ -490,6 +496,8 @@ async function spawnVoiceConversationSession(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
     permissionMode: PermissionIntent;
     creationKey: string;
+    conversationSelection?: VoiceConversationSelection;
+    onConversationSelection?: (selection: VoiceConversationSelection) => void;
     connectedServices?: ConnectedServiceBindingsV2;
     modelSelection?: SessionModelSelectionV1;
     startupInstructions?: AgentSessionStartupInstructionsV1;
@@ -515,6 +523,35 @@ async function spawnVoiceConversationSession(params: Readonly<{
             : null;
     const modelSelection = params.modelSelection ?? (configuredModelRef
         ? SessionModelSelectionV1Schema.parse({ v: 1, ref: configuredModelRef, updatedAt: Date.now() }) : undefined);
+    let input: StrictSessionSpawnNewInput = {
+        creationKey: SessionCreationKeyV1Schema.parse(params.creationKey),
+        executionTarget: {
+            serverId: params.serverId,
+            machineId: params.machineId,
+        },
+        directory: params.directory,
+        agentTarget,
+        permissionMode: params.permissionMode,
+        transcriptStorage: 'persisted',
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
+        ...(params.connectedServices
+            ? { connectedServices: params.connectedServices }
+            : {}),
+        ...(params.startupInstructions
+            ? { agentSessionStartupInstructionsV1: params.startupInstructions }
+            : {}),
+    };
+    const machine = resolveMachineForActiveServerFromState(storage.getState(), params.machineId);
+    const fingerprint = () => createSpawnAttemptKeyForSessionSpawnNewInput({ ...input,
+        modelSelection: normalizeSessionCreationSelectionIdentityV1(input).modelSelection ?? undefined,
+    }, machine?.metadata?.homeDir ?? '');
+    const previous = params.conversationSelection;
+    if (previous?.kind === 'new' && previous.authoredIntentKey && previous.authoredIntentKey !== fingerprint()) {
+        // A changed source is a new authored creation. Reusing its predecessor's
+        // key would ask ordinary admission to rejoin a different immutable recipe.
+        input = { ...input, creationKey: SessionCreationKeyV1Schema.parse(createUiSessionSpawnUserAttemptId()) };
+    }
+    params.onConversationSelection?.({ kind: 'new', creationKey: input.creationKey, authoredIntentKey: fingerprint() });
     const lifecycle = getVoiceSessionLifecycleController();
     const controlSessionId = lifecycle?.getSnapshot().sessionId;
     const action = await executeWithInPlaceApprovalReview({
@@ -523,30 +560,13 @@ async function spawnVoiceConversationSession(params: Readonly<{
         onDismissed: () => {
             if (lifecycle && controlSessionId) fireAndForget(lifecycle.stop(controlSessionId));
         },
-        execute: (executor, signal) => executeSessionSpawnNewAction({
-            creationKey: SessionCreationKeyV1Schema.parse(params.creationKey),
-            executionTarget: {
-                serverId: params.serverId,
-                machineId: params.machineId,
-            },
-            directory: params.directory,
-            agentTarget,
-            permissionMode: params.permissionMode,
-            transcriptStorage: 'persisted',
-            ...(modelSelection !== undefined ? { modelSelection } : {}),
-            ...(params.connectedServices
-                ? { connectedServices: params.connectedServices }
-                : {}),
-            ...(params.startupInstructions
-                ? { agentSessionStartupInstructionsV1: params.startupInstructions }
-                : {}),
-        }, {
+        execute: (executor, signal) => executeSessionSpawnNewAction(input, {
             // This prepares the carrier for the host-admitted conversation. Model
             // tools keep the automation-owned Voice Action surface separately.
             surface: 'ui',
             serverId: params.serverId,
             ...(params.accountLifetime ? { expectedAccountId: params.accountLifetime.scope.accountId } : {}),
-            actionRequestId: params.creationKey,
+            actionRequestId: input.creationKey,
             signal,
         }, executor),
     });
@@ -554,6 +574,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
         throw toVoiceConversationSpawnError({
             errorCode: action.errorCode,
             errorMessage: action.errorCode,
+            details: action.details,
         });
     }
     if (action.result.type !== 'success') {
@@ -564,6 +585,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
             ? {
                 errorCode: launchErrorCode ?? action.result.code,
                 errorMessage: launchErrorCode ?? action.result.code,
+                ...('details' in action.result ? { details: action.result.details } : {}),
                 errorDetail: 'launchError' in action.result ? action.result.launchError : undefined,
                 providerError: 'providerError' in action.result ? action.result.providerError : undefined,
                 retryableProviderFailure:
@@ -995,6 +1017,8 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
         backendTarget,
         permissionMode,
         creationKey,
+        conversationSelection,
+        onConversationSelection,
         ...(connectedServices
             ? { connectedServices }
             : {}),
@@ -1112,6 +1136,7 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
     signal?: AbortSignal;
     conversationSelection?: VoiceConversationSelection;
     onAgentSelection?: VoiceAgentSelectionObserver;
+    onConversationSelection?: (selection: VoiceConversationSelection) => void;
 }>): Promise<string> {
     const rootAddress = normalizeSessionAddress(
         params.conversationSelection?.kind === 'continue' ? params.conversationSelection.conversationSessionAddress.serverId : params.sessionRootAddress?.serverId,
@@ -1218,6 +1243,8 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
         ...(modelSelection ? { modelSelection } : {}),
         permissionMode,
         creationKey,
+        conversationSelection: params.conversationSelection,
+        onConversationSelection: params.onConversationSelection,
     });
     const spawnedSessionId = spawned.sessionId;
 
