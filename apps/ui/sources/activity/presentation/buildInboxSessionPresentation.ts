@@ -91,7 +91,10 @@ export function buildInboxSessionPresentation(params: Readonly<{
             // Notification privacy is not the in-app content-readability authority.
             const mayShowDetails = isSessionAwarenessContentReadableV1(candidate.awareness.encryption);
             // Missing exact-Home data must not fall back to the ambient same-id transcript.
-            const messages = mayShowDetails ? params.resolveMessages?.(candidate) ?? [] : [];
+            // Failure/blocked-delivery rows have no request details. Materialize a
+            // transcript only for the request lanes that consume it below.
+            const messages = mayShowDetails && (reasons.includes('permission_required') || reasons.includes('user_action_required'))
+                ? params.resolveMessages?.(candidate) ?? [] : [];
             const permissions = mayShowDetails && reasons.includes('permission_required')
                 ? (candidate.presentationSource ? listSessionListPresentationPermissionRequests(candidate.presentationSource, messages)
                     : 'agentState' in candidate.session ? listPendingPermissionRequests(candidate.session, messages) : []).sort(comparePendingRequestsByAge)

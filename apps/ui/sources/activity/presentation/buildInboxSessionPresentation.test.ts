@@ -14,6 +14,9 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { buildInboxSessionPresentation, classifyInboxSessionCandidate } from './buildInboxSessionPresentation';
 import { buildInboxWorkGroups } from './buildInboxWorkGroups';
 import { buildInboxItems } from '@/components/inbox/inboxItems';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { readActivitySourceAttentionMessages } from '@/activity/source/buildActivityOverviewFromSource';
+import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
 
 function candidate(
     id: string,
@@ -43,6 +46,40 @@ function candidate(
 }
 
 describe('buildInboxSessionPresentation', () => {
+    it('reads transcripts only for request details when a Brief projects a large failed-session inventory', () => {
+        // B3's capture reports many failed Sessions. A scale-shaped Account also has
+        // one actionable request: suppressing all detail reads must not pass.
+        const failed = Array.from({ length: 1_000 }, (_, index) => candidate(`failed-${index}`, ['failed']));
+        const permission = candidate('permission', ['permission_required'], 'server-a', {
+            active: true, activeAt: 1_000,
+            agentState: { requests: { approve: { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 950 } } },
+        });
+        const reads: string[] = [];
+        const candidates = [...failed, permission];
+        const messages: NonNullable<ActivityAttentionSource['sessionMessagesById']> = {};
+        for (const entry of candidates) {
+            const transcript = createSessionMessagesFixture();
+            Object.defineProperty(messages, entry.sessionId, { enumerable: true, get: () => {
+                reads.push(entry.sessionId);
+                return transcript;
+            } });
+        }
+        const source: ActivityAttentionSource = {
+            isDataReady: true,
+            sessionsById: Object.fromEntries(candidates.map(entry => [entry.sessionId,
+                createSessionFixture({ id: entry.sessionId, serverId: 'server-a' })])),
+            sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {},
+            sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {}, sessionMessagesById: messages,
+        };
+        const result = buildInboxSessionPresentation({
+            overview: buildActivityOverviewFromCandidates(candidates),
+            resolveMessages: entry => readActivitySourceAttentionMessages(source, entry.address),
+        });
+        expect(result.sessionsNeedingAttention).toHaveLength(1_001);
+        expect(result.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'permission')?.requestDetails?.permissions)
+            .toMatchObject([{ id: 'approve', tool: 'Bash' }]);
+        expect(reads).toEqual(['permission']);
+    });
     it('carries the canonical effective colour for exact-Home Inbox sessions', () => {
         const first = candidate('same-id', ['permission_required'], 'a');
         const second = candidate('same-id', ['permission_required'], 'b');
