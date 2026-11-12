@@ -1,3 +1,4 @@
+import type { FastifyReply } from "fastify";
 import {
     APP_LOCK_RECOVERY_ROUTES,
     AppLockRecoveryCodeRequestSchema,
@@ -39,7 +40,7 @@ const errorResponses = {
     502: AppLockRecoveryErrorResponseSchema,
 };
 
-function sendFailure(reply: any, failure: { error: AppLockRecoveryErrorCode; retryAfterSeconds?: number }) {
+function sendFailure(reply: FastifyReply, failure: { error: AppLockRecoveryErrorCode; retryAfterSeconds?: number }) {
     return reply.code(STATUS_BY_ERROR[failure.error]).send(
         failure.retryAfterSeconds !== undefined
             ? { error: failure.error, retryAfterSeconds: failure.retryAfterSeconds }
