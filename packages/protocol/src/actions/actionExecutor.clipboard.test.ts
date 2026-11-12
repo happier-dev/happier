@@ -41,7 +41,7 @@ describe('answering-client clipboard Action', () => {
 
   it('keeps policy-confirmed clipboard text in its live invocation and out of the approval Artifact', async () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
-      'clipboard.write': { approvalRequiredSurfaces: ['ui'] },
+      'clipboard.write': { approvalRequiredSurfaces: ['agent'] },
     } });
     const persisted: ApprovalRequest[] = [];
     const written: string[] = [];
@@ -69,7 +69,7 @@ describe('answering-client clipboard Action', () => {
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const text = 'clipboard-private-custody-sentinel 🔐';
     const execution = executor.execute('clipboard.write', { text }, {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
       serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'clipboard-request',
       defaultSessionMachineId: 'clipboard-origin',
       approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'clipboard-session', toolCallId: 'clipboard-tool', toolInput: { text } },

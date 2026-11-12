@@ -51,8 +51,8 @@ describe('npm registry profile Action admission', () => {
       npmRegistryProfileAction: async () => { effects++; return { status: 'outcomeUnknown' }; },
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, asking, context),
     });
-    expect(await askExecutor.execute(id, input, { surface: 'ui', authority: 'present_user' }))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(await askExecutor.execute(id, input, { surface: 'ui', authority: 'present_user', actionsSettings: asking }))
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect(effects).toBe(0);
   });
 

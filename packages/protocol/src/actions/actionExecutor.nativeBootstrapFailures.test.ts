@@ -17,7 +17,10 @@ describe('native bootstrap host trust failures', () => {
           retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
         },
       }, { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.managed.acquire' } });
-      expect(result).toEqual({ ok: false, errorCode: code, error: code });
+      expect(result).toEqual({ ok: false, errorCode: code, error: code, failureCause: {
+        phase: 'machines.managed.acquire', errorCode: code, errorClass: 'Error', httpStatus: null,
+      } });
+      expect(JSON.stringify(result)).not.toContain('private native diagnostic');
     },
   );
 });

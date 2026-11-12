@@ -48,7 +48,8 @@ describe('workflow effect Actions', () => {
       ok: true, result: { exitCode: 0, stdout: '$(touch unwanted)', stderr: '' },
     });
     expect(await executor.execute('webhooks.call', { url: 'https://example.test/hook', body: { value: 1 } }, context))
-      .toEqual({ ok: false, errorCode: 'webhook_failed', error: 'webhook_failed', details: { status: 302, body: 'moved' } });
+      .toEqual({ ok: false, errorCode: 'webhook_failed', error: 'webhook_failed', requestId: context.actionRequestId,
+        details: { status: 302, body: 'moved' } });
     expect(calls[0]).toEqual({ input: command, context });
   });
 });
