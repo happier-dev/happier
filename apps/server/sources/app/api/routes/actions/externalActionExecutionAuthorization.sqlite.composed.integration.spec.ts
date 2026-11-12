@@ -9519,8 +9519,13 @@ describe("external Action execution authorization", () => {
         } });
         if (access === 'shared-use') await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
             machineId: targetMachine.id, principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
-        if (access === 'shared-team-use') await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-            machineId: targetMachine.id, principal: { kind: 'team', teamId: fixture.team.id }, level: 'view' }));
+        if (access === 'shared-team-use') {
+            // A new Team share requires the sharer to belong to that Team.
+            await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: custodian.id, role: 'owner' } });
+            expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+                machineId: targetMachine.id, principal: { kind: 'team', teamId: fixture.team.id }, level: 'view' })))
+                .toMatchObject({ kind: 'saved' });
+        }
         // This original executes on the requester's Machine, not the shared
         // Machine holding the unrelated approval decision's signing key.
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
@@ -9803,8 +9808,11 @@ describe("external Action execution authorization", () => {
                 accountId: fixture.account.id,
                 role: 'member',
             } });
-            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-                machineId: targetMachine.id, principal: { kind: 'team', teamId: team.id }, level: 'view' }));
+            // A new Team share requires the sharer to belong to that Team.
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'owner' } });
+            expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+                machineId: targetMachine.id, principal: { kind: 'team', teamId: team.id }, level: 'view' })))
+                .toMatchObject({ kind: 'saved' });
         }
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
             metadata: '{}', encryptionMode: 'plain' } });
@@ -9969,6 +9977,21 @@ describe("external Action execution authorization", () => {
                 payload: { version: 1, accountId: fixture.account.id, ...source,
                     externalActionOrigin: { homeId, actionId, requestId: envelope.requestId,
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
+            // An installed Workflow cannot turn its execution origin into reviewer consent either.
+            const workflowActionOrigin = { runId: crypto.randomUUID(), requestId: envelope.requestId };
+            const workflowProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                payload: { version: 1, accountId: fixture.account.id, ...source,
+                    externalActionOrigin: { homeId, actionId, requestId: envelope.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin } } });
+            expect((await issue(token, { ...body, workflowActionOrigin, installationProof: workflowProof })).statusCode).toBe(403);
+            const workflowBinding = { ...root.binding, workflowActionOrigin };
+            expect(await verifyCurrentExternalActionPrincipal(workflowBinding)).toBeNull();
+            await expect(auth.mintExternalActionExecutionAuthorization(workflowBinding, { input: envelope.input }))
+                .rejects.toMatchObject({ code: 'credential_scope_denied' });
+            // Controller roots retain their admitted person authority: this correction
+            // must not restore d22730f487e's removed blanket decision/presence floor.
+            expect(await verifyCurrentExternalActionPrincipal({ ...root.binding, actionId: 'machines.managed.acquire' }))
+                .toMatchObject({ accountId: fixture.account.id, authority: 'present_user' });
             expect((await issue(token, { ...body, sessionActionOrigin: origin, sessionActionSource: source, installationProof })).statusCode).toBe(403);
             // Both HTTP ingress and direct daemon dispatch mint through auth.
             // A previously issued binding must also lose decision authority

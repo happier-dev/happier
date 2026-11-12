@@ -755,6 +755,10 @@ async function readCurrentExternalActionPrincipal(
     purpose?: ExternalActionVerificationPurpose,
     deploymentContinuation?: DeploymentReceiptContinuation,
 ): Promise<VerifiedExternalActionPrincipal | null> {
+    // Fresh reviewer roots obey the replay owner's provenance policy at mint
+    // and principal projection; local host approval waivers do not grant replay custody.
+    if (binding.actionId === 'approval.request.decide'
+        && resolveMachineRpcExternalActionEffectV1(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, binding) !== binding.actionId) return null;
     if (binding.workflowActionOrigin) {
         if (!isExternalActionWorkflowActionIdV1(binding.actionId)
             || purpose?.kind !== 'issued-managed-intent-native-fact'
