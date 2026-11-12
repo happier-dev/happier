@@ -38,6 +38,7 @@ import type {
 } from '@happier-dev/protocol';
 import type {
   AgentSessionHostServices,
+  AgentSessionProviderBinding,
   AgentSessionModelsSource,
   AgentSessionModesSource,
   AgentSessionRuntime,
@@ -599,6 +600,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   /** Explicit runtime credential reader for scoped compositions; ordinary hosts use their existing persistence reader. */
   readCredentials?: () => Promise<import('@/persistence').StoredCredentials | null>;
   providerBindingMaterialization?: AgentProviderBindingLaunchMaterializationV1;
+  providerBinding?: AgentSessionProviderBinding;
   /** True only for the exact matching local cross-agent native-return record. */
   strictNativeResumeIdentity?: boolean;
   pendingQueueDeliveryTiming?: AccountSettings['sessionPendingQueueDeliveryTiming'];
@@ -1004,13 +1006,24 @@ function readPersistedTakeoverAdmission(
 function assertProviderBindingHandoffMatchesSelection(input: Readonly<{
   selection: ProviderBoundModelRef;
   handoff: ProviderBindingLaunchHandoffV1;
-}>): NonNullable<ProviderBindingLaunchHandoffV1['sessionBindingMetadata']['model']> {
+}>): void {
+  if (input.handoff.providerBinding) {
+    const admittedSelection = input.handoff.selection;
+    if (input.selection.agentTargetKey !== admittedSelection.agentTargetKey
+      || input.selection.providerConnectionId !== admittedSelection.providerConnectionId
+      || input.selection.modelId !== admittedSelection.modelId) {
+      throw new Error('Provider binding handoff model does not match the selected model');
+    }
+    return;
+  }
   const connectionId = input.selection.providerConnectionId;
+  if (connectionId === null) {
+    throw new Error('Native model selection cannot include a provider binding handoff');
+  }
   const binding = input.handoff.sessionBindingMetadata;
   const model = binding.model;
   if (
-    connectionId === null
-    || binding.connectionId !== connectionId
+    binding.connectionId !== connectionId
     || model === undefined
   ) {
     throw new Error('Provider-bound model selection requires a validated provider binding handoff');
@@ -1021,7 +1034,6 @@ function assertProviderBindingHandoffMatchesSelection(input: Readonly<{
   if (input.handoff.materialization.kind !== binding.materialization) {
     throw new Error('Provider binding handoff materialization does not match its session metadata');
   }
-  return model;
 }
 
 export async function runHostSessionRuntime(
@@ -1203,7 +1215,13 @@ export async function runHostSessionRuntime(
       || selectedProviderConnectionId === undefined)
     && providerBindingHandoff
   ) {
-    throw new Error('Native model selection cannot include a provider binding handoff');
+    if (!runtimeOpts.modelSelection) {
+      throw new Error('Native model selection cannot include a provider binding handoff');
+    }
+    assertProviderBindingHandoffMatchesSelection({
+      selection: runtimeOpts.modelSelection.ref,
+      handoff: providerBindingHandoff,
+    });
   }
   const providerBindingMaterialization = providerBindingHandoff?.materialization;
   const providerBindingMetadataUpdate = providerBindingHandoff?.sessionBindingMetadata
@@ -3108,6 +3126,7 @@ export async function runHostSessionRuntime(
       ? { readCredentials: async () => runtimeAuthority.sessionCredentials }
       : {}),
     ...(providerBindingMaterialization ? { providerBindingMaterialization } : {}),
+    ...(providerBindingHandoff?.providerBinding ? { providerBinding: providerBindingHandoff.providerBinding } : {}),
     ...(isTrackedNativeReturn ? { strictNativeResumeIdentity: true } : {}),
     pendingQueueDeliveryTiming,
     permissionHandler,
@@ -3297,7 +3316,10 @@ export async function runHostSessionRuntime(
       handoff: activeProviderBindingHandoff,
     });
   } else if (activeProviderBindingHandoff) {
-    throw new Error('Native model selection cannot include a provider binding handoff');
+    assertProviderBindingHandoffMatchesSelection({
+      selection: initialActiveSelection,
+      handoff: activeProviderBindingHandoff,
+    });
   }
   const initialActiveTargetBasis: AuthorizedSessionModelTransitionTarget = {
     selection: initialActiveSelection,
@@ -3306,7 +3328,7 @@ export async function runHostSessionRuntime(
       : {}),
     policy: 'live',
     providerBinding: activeProviderBindingHandoff
-      ? projectAgentSessionProviderBindingV1({
+      ? activeProviderBindingHandoff.providerBinding ?? projectAgentSessionProviderBindingV1({
           metadata: activeProviderBindingHandoff.sessionBindingMetadata,
           materialization: activeProviderBindingHandoff.materialization,
         })
@@ -3314,7 +3336,7 @@ export async function runHostSessionRuntime(
     sessionBindingMetadata:
       activeProviderBindingHandoff?.sessionBindingMetadata ?? null,
     runtimeBindingBasis:
-      activeProviderBindingHandoff?.sessionBindingMetadata.runtimeBindingBasis
+      activeProviderBindingHandoff?.sessionBindingMetadata?.runtimeBindingBasis
       ?? null,
     // This basis exists only so the canonical authorizer can bind its current
     // authorization proof before the target is published or coordinator-owned.
@@ -3738,13 +3760,13 @@ export async function runHostSessionRuntime(
     const admittedTarget = authorizeModelTransition.bindCurrentAuthorizationProof({
       selection: activeTarget.selection,
       policy: activeTarget.policy,
-      providerBinding: projectAgentSessionProviderBindingV1({
+      providerBinding: handoff.providerBinding ?? projectAgentSessionProviderBindingV1({
         metadata: handoff.sessionBindingMetadata,
         materialization: handoff.materialization,
       }),
-      sessionBindingMetadata: handoff.sessionBindingMetadata,
+      sessionBindingMetadata: handoff.sessionBindingMetadata ?? null,
       runtimeBindingBasis:
-        handoff.sessionBindingMetadata.runtimeBindingBasis ?? null,
+        handoff.sessionBindingMetadata?.runtimeBindingBasis ?? null,
       revalidateBeforeEffect: async () => false,
     });
     await coordinator.admitReplacementTarget(admittedTarget);

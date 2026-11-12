@@ -5524,6 +5524,50 @@ describe('runHostSessionRuntime', () => {
     }
   });
 
+  it.each(['environment', 'runtime', 'runtime-mismatched-selection'] as const)('uses only the exact Connected Account Provider handoff for a native model selection (%s)', async (admission) => {
+    const harness = createHarness();
+    harness.queue.pushIsolate({ text: 'Original request', localId: 'connected-account-original' }, { permissionMode: 'default' });
+    const selection = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null,
+      modelId: 'subscription/native-model' } as const;
+    const materialization = { v: 1, kind: 'spawnEnv' } as const;
+    const handoff = { v: 1, materialization, selection, providerBinding: {
+      source: { kind: 'connected_account',
+        purpose: { consumer: { pluginId: 'happier.agent.qwen', localId: 'qwen' }, purpose: 'inference' },
+        account: { service: { pluginId: 'happier.accounts', localId: 'subscription' }, accountId: 'account-1' } },
+      model: { id: 'native-model', name: 'Native model' },
+      upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:43123/v1', credential: 'apiKey' },
+      materialization,
+    } } as const;
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
+    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: admission === 'runtime-mismatched-selection'
+      ? { ...selection, modelId: 'subscription/other-model' } : selection };
+    const createRuntime = vi.fn(() => ({ operations: harness.runtime, nativeRuntime: harness.runtime,
+      ...(admission !== 'environment' ? { admittedProviderBindingHandoff: handoff } : {}) }));
+    harness.config.createSessionRuntime = createRuntime;
+    if (admission !== 'environment') harness.config.providerBindingAdmission = 'runtime';
+    else harness.opts.environmentVariables = {
+      [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]: serializeProviderBindingLaunchHandoffForEnv(handoff),
+    };
+    let enteredPromptLoop = false;
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      enteredPromptLoop = true;
+      expect(harness.session.getMetadataSnapshot().providerBindingV1).toBeUndefined();
+    };
+    if (admission === 'runtime-mismatched-selection') {
+      await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+        .rejects.toThrow('Provider binding handoff model does not match the selected model');
+      expect(enteredPromptLoop).toBe(false);
+      return;
+    }
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(enteredPromptLoop).toBe(true);
+    expect(createRuntime).toHaveBeenCalled();
+    if (admission === 'environment') expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      providerBindingMaterialization: materialization,
+      providerBinding: handoff.providerBinding,
+    }));
+  });
+
   it('fails closed when a provider-bound model selection reaches the host without its validated binding handoff', async () => {
     const harness = createHarness();
     harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
@@ -11643,6 +11687,10 @@ describe('runHostSessionRuntime', () => {
     await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps)).rejects.toBe(failure);
     expect(harness.session.enqueueSessionTurnMutation.mock.calls.map(([mutation]: readonly [unknown]) => SessionTurnMutationV1Schema.parse(mutation).action))
       .toEqual(['begin', 'fail']);
+    expect(harness.session.enqueueSessionTurnMutation.mock.calls.map(([mutation]: readonly [unknown]) => SessionTurnMutationV1Schema.parse(mutation)))
+      .toContainEqual(expect.objectContaining({ action: 'fail', issue: expect.objectContaining({
+          failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error' },
+      }) }));
     expect(harness.session.enqueueAgentMessageCommitted).toHaveBeenCalled();
     expect(JSON.stringify(harness.session.enqueueAgentMessageCommitted.mock.calls)).not.toContain('PRIVATE_CONSTRUCTION_CONTEXT');
     expect(harness.runtime.sendPrompt).not.toHaveBeenCalled();
