@@ -11,7 +11,7 @@ import {
 
 /**
  * A section's "…" menu, the same wherever a section is managed (the list's group header, Settings →
- * Sessions → Sections): rename, change icon, optional new session here, archive all and remove.
+ * Sessions → Sections): rename, change icon, optional reordering/new session, archive all and remove.
  * Each choice calls its host's handler; the writes stay with the section Actions.
  */
 export function useSessionSectionMenu(
@@ -27,6 +27,8 @@ export function useSessionSectionMenu(
     onRemove: () => void | Promise<void>;
     onNewSession?: () => void;
     onArchiveAll?: () => void | Promise<void>;
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
   }>,
 ): Readonly<{
   items: DropdownMenuItem[];
@@ -45,8 +47,12 @@ export function useSessionSectionMenu(
   const sectionIcon = resolveSessionSectionIcon(props.icon);
   const hasNewSession = Boolean(props.onNewSession);
   const hasArchiveAll = Boolean(props.onArchiveAll);
+  const hasMoveUp = Boolean(props.onMoveUp);
+  const hasMoveDown = Boolean(props.onMoveDown);
   const items = React.useMemo(
     (): DropdownMenuItem[] => [
+      ...(hasMoveUp ? [{ id: 'move-up', title: t('common.moveUp'), disabled: actionsDisabled, category: 'edit' }] : []),
+      ...(hasMoveDown ? [{ id: 'move-down', title: t('common.moveDown'), disabled: actionsDisabled, category: 'edit' }] : []),
       {
         id: 'rename',
         title: t('common.rename'),
@@ -119,6 +125,8 @@ export function useSessionSectionMenu(
       archiveIconColor,
       hasArchiveAll,
       hasNewSession,
+      hasMoveUp,
+      hasMoveDown,
       iconColor,
       sectionIcon,
       theme.colors.text.secondary,
@@ -140,6 +148,10 @@ export function useSessionSectionMenu(
       if (actionsDisabled) return;
       if (itemId === 'new-session') {
         current.onNewSession?.();
+      } else if (itemId === 'move-up') {
+        current.onMoveUp?.();
+      } else if (itemId === 'move-down') {
+        current.onMoveDown?.();
       } else if (itemId === 'rename') {
         await current.onRename();
       } else if (itemId.startsWith('icon:')) {

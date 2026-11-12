@@ -101,6 +101,7 @@ function discussionSuggestions(screen: Awaited<ReturnType<typeof renderScreen>>)
     return (query: string, signal: AbortSignal) => source(query, signal, () => {});
 }
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let homeSequence = 0;
 afterEach(async () => {
     await standardCleanup();
     await connection?.dispose();
@@ -114,8 +115,11 @@ async function prepareDiscussionHome(configureSocket?: (socket: Socket) => void,
     losePost?: boolean;
     projectRows?: Parameters<typeof createPlainProjectAccountRowListFixture>[0];
 }>) {
-    const serverUrl = 'https://discussion-cost.test';
-    const serverIdentityId = 'srv_discussion_cost';
+    // Each fixture is a cold Home. Reusing an identity also reuses retained
+    // Account projections, turning later cold-read cases into warm refreshes.
+    const sequence = ++homeSequence;
+    const serverUrl = `https://discussion-cost-${sequence}.test`;
+    const serverIdentityId = `srv_discussion_cost_${sequence}`;
     const localServerId = await homes.addHome({ name: 'Discussion costs', serverUrl, serverIdentityId, accountId: 'alice', currentAccount: true });
     const serverId = resolveServerProfileScopeIdForIdentifier(localServerId);
     if (options?.projectRows) homes.answer(serverId, 'POST /v1/account/project-rows/list', {
@@ -162,7 +166,7 @@ async function prepareDiscussionHome(configureSocket?: (socket: Socket) => void,
     await prepareSessionDraftPersistenceStorage();
     const scope = { serverId, accountId: 'alice' };
     const client = createDiscussionClient({ scope, availability: 'available' });
-    return { serverId, serverUrl, scope, fixture, client, roster,
+    return { serverId, serverUrl, serverIdentityId, scope, fixture, client, roster,
         setRoster: (value: typeof roster) => { roster = value; } };
 }
 
@@ -413,7 +417,7 @@ it.each(['pending', 'failed'] as const)('shows readable cold-thread messages whe
 
 it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post from %s before historical approval paging settles', async arrival => {
     const sockets: Socket[] = [];
-    const { serverId, repository, fixture, newMessage } = await prepareLongDiscussion(value => {
+    const { serverId, serverIdentityId, repository, fixture, newMessage } = await prepareLongDiscussion(value => {
         sockets.push(value);
         configureConnectedServerSocketBoundary(value);
     });
@@ -431,10 +435,10 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
         actionArgs, discussionDraftReview: true, summary: 'Review the answer',
         executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'discussion.reply', input: actionArgs,
             targetSessionId: null, context: { surface: 'agent', authority: 'account_automation',
-                serverId: 'daemon-local-profile', serverIdentityId: 'srv_discussion_cost', runtimeAccountId: 'alice',
+                serverId: 'daemon-local-profile', serverIdentityId, runtimeAccountId: 'alice',
                 actionCaller: { kind: 'host' }, defaultSessionId: sessionId, defaultSessionMachineId: 'machine',
                 actionRequestId: actionArgs.localId,
-                discussionReplyReturn: { serverId: 'srv_discussion_cost', requestLocalId: 'original-input', acceptedTurnId: 'turn' } } }),
+                discussionReplyReturn: { serverId: serverIdentityId, requestLocalId: 'original-input', acceptedTurnId: 'turn' } } }),
     });
     const artifactId = '11111111-1111-4111-8111-111111112919';
     const artifact = createPlainArtifactHttpFixture({ id: artifactId, header: buildApprovalRequestArtifactHeaderV1(approval),
@@ -687,6 +691,7 @@ it('keeps unaffected mounted message rows quiet when one message arrives in a 30
     await flushHookEffects();
     const counts = mounted.reduce((sum, [, counter]) => ({ renders: sum.renders + counter.read().renders,
         commits: sum.commits + counter.read().commits }), { renders: 0, commits: 0 });
+    const changedRows = mounted.filter(([, counter]) => counter.read().renders > 0).map(([id]) => id);
     console.info('Discussion arrival cost', { history: 300, mounted: mounted.length, ...counts });
     expect(screen.getTextContent()).toContain('Long discussion');
     // Empty message reads now preserve identity. Real metadata changes must still
@@ -706,7 +711,8 @@ it('keeps unaffected mounted message rows quiet when one message arrives in a 30
     console.info('Discussion screen open reads', { cold, warm });
     expect(cold['/v1/account/project-rows/list'] ?? 0).toBe(0);
     expect(warm['/v1/account/project-rows/list'] ?? 0).toBe(0);
-    expect(counts).toEqual({ renders: 0, commits: 0 });
+    expect(counts, changedRows.join(', '))
+        .toEqual({ renders: 0, commits: 0 });
 });
 
 it('warm-mounts retained former rows from the current roster actor and exposes that author to the composer', async () => {

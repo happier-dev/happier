@@ -746,6 +746,7 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
         icon: props.icon, displayLocked, disabled: props.disabled, memberCount: props.memberCount,
         onRename: props.onRename, onChangeIcon: props.onChangeIcon, onRemove: props.onRemove,
         onNewSession: props.onNewSession, onArchiveAll: props.onArchiveAll,
+        onMoveUp: props.onMoveUp, onMoveDown: props.onMoveDown,
     });
     const sectionAccessibilityActions = React.useMemo(() => {
         const actions: Array<{ name: string; label: string }> = [];

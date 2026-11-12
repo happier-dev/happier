@@ -29,6 +29,16 @@ import { resolveWorkspaceEntityDrop, WORKSPACE_ENTITY_KINDS } from '@/components
 import { presentPaneDropAdmission } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
 import { t } from '@/text';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+
+// Runtime consumers above load Socket.IO during collection; install its external
+// transport boundary before those imports, as required by the connection harness.
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -51,6 +61,11 @@ vi.mock('expo-router', async () => {
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'span', Octicons: 'span' }));
 vi.mock('expo-image', () => ({ Image: 'img' }));
 
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let root: ReturnType<typeof createRoot> | undefined;
 let container: HTMLDivElement;
 let cancelCarry = () => {};
@@ -58,6 +73,9 @@ afterEach(async () => {
     await act(async () => root?.unmount());
     cancelCarry();
     container?.remove();
+    await connection?.dispose();
+    connection = undefined;
+    await homes.reset();
     vi.restoreAllMocks();
 });
 
@@ -127,7 +145,18 @@ describe('SessionListRow real web gesture', () => {
     });
 
     it.each(['session', 'session-folder', 'session-workspace'] as const)('carries the real %s gesture through list interactions and pane registration', async (sourceKind) => {
-        const scope = { serverId: 'server_a', accountId: 'account_a' };
+        const scope = { serverId: 'srv_gesture_home', accountId: 'account_a' };
+        // 472ea6d497b captures the source Home's real credential lifetime.
+        // A storage projection alone no longer supplies a draggable Account.
+        const serverUrl = 'https://gesture-home.test';
+        const homeId = await homes.addHome({ name: 'Gesture Home', serverUrl, serverIdentityId: scope.serverId, accountId: scope.accountId });
+        for (const path of ['/v2/sessions', '/v2/sessions/active', '/v2/session-organization']) {
+            const response = createEmptyAccountBootstrapHttpResponse(path);
+            if (!response) throw new Error(`Missing canonical bootstrap response: ${path}`);
+            homes.answer(homeId, path, { body: await response.json() });
+        }
+        connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId: scope.serverId, accountId: scope.accountId,
+            request: homes.request });
         const session = createSessionFixture({ id: 'sess_pointer', serverId: scope.serverId });
         const sessionKey = sessionAddressKey({ serverId: scope.serverId, sessionId: session.id });
         const rowId = treeRowId.session(scope.serverId, session.id);
@@ -171,7 +200,9 @@ describe('SessionListRow real web gesture', () => {
         const onToggleCollapse = vi.fn();
         let paneMount = 0;
         let runtime: ReturnType<typeof useEntityDragDropRuntime>;
+        let sourceReady = false;
         function ComposedRowAndPane() {
+            sourceReady = useServerCredentialAccountScopeBindings([scope.serverId]).get(scope.serverId)?.isCurrent() === true;
             runtime = useEntityDragDropRuntime();
             cancelCarry = () => runtime.cancel();
             const interactions = useSessionListRowInteractions({
@@ -220,6 +251,7 @@ describe('SessionListRow real web gesture', () => {
         }
         container = document.createElement('div'); document.body.append(container); root = createRoot(container);
         await act(async () => root?.render(<InjectedAuthProvider credentials={{ token: 'test-token' }}><ComposedRowAndPane /></InjectedAuthProvider>));
+        await vi.waitFor(() => expect(sourceReady).toBe(true));
         const host = container.querySelector<HTMLElement>('[data-testid="split-canvas-host"]')!;
         const layout = Reflect.get(host, '__reactLayoutHandler') as (event: unknown) => void;
         await act(async () => layout({ nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } } }));
@@ -231,9 +263,13 @@ describe('SessionListRow real web gesture', () => {
         const row = container.querySelector(`[data-testid="${sourceTestId}"]`)!;
         expect(row).not.toBeNull();
         const body = row.querySelector('[data-entity-drag-body="true"]') ?? row;
+        // Native dragstart originates at the draggable host, not its inner
+        // RNW Pressable (which cancels a drag of its own non-draggable body).
+        const dragSource = row.closest('[draggable="true"]');
+        expect(dragSource).not.toBeNull();
         if (sourceKind !== 'session') {
-            const collapse = sourceKind === 'session-folder'
-                ? row.querySelector('[data-testid="session-folder-collapse-planning"]')! : body;
+            const collapse = row.querySelector('[aria-expanded]')!;
+            expect(collapse).not.toBeNull();
             await act(async () => {
                 pointer(collapse, 'pointerdown', 50, 30);
                 pointer(collapse, 'pointerup', 50, 30);
@@ -243,14 +279,18 @@ describe('SessionListRow real web gesture', () => {
             expect(onToggleCollapse).toHaveBeenCalledTimes(1);
             expect(runtime!.getSnapshot().phase).not.toBe('carrying');
             if (sourceKind === 'session-folder') {
-                const rejected = drag(collapse, 'dragstart', 50, 30);
+                // 6e0d4cdb7ab made the shared label the primary disclosure
+                // action. Its independent menu remains a secondary control.
+                const menu = row.querySelector('[data-testid="session-folder-menu-trigger-planning"]')!;
+                expect(menu).not.toBeNull();
+                const rejected = drag(menu, 'dragstart', 50, 30);
                 expect(rejected.defaultPrevented).toBe(true);
                 expect(runtime!.getSnapshot().phase).not.toBe('carrying');
             }
         }
         await act(async () => pointer(body, 'pointerdown', 50, 30));
         expect(captured.has(1)).toBe(false);
-        await act(async () => drag(body, 'dragstart', 50, 30));
+        await act(async () => drag(dragSource!, 'dragstart', 50, 30));
         // Separate pointer frames permit the real carrying-state row rerender before leaving the list.
         for (const [x, y] of [[80, 30], [120, 30], [600, 380], [1000, 380], [1380, 380]] as const) {
             await act(async () => drag(row, 'dragover', x, y));
@@ -337,11 +377,13 @@ describe('SessionListRow real web gesture', () => {
         ));
         const row = container.querySelector('[data-testid="session-list-item-sess_pointer"]');
         expect(row).not.toBeNull();
+        const dragSource = row!.closest('[draggable="true"]');
+        expect(dragSource).not.toBeNull();
         await act(async () => { pointer(row!, 'pointerdown', 50, 30); });
         expect(captured.has(1)).toBe(false);
         expect(onDragStart).not.toHaveBeenCalled();
-        await act(async () => { drag(row!, 'dragstart', 50, 30); drag(row!, 'dragover', 120, 30); });
-        expect(onDragStart).toHaveBeenCalledWith('sess_pointer');
+        await act(async () => { drag(dragSource!, 'dragstart', 50, 30); drag(row!, 'dragover', 120, 30); });
+        expect(onDragStart).toHaveBeenCalledWith('sess_pointer', 'sess_pointer');
         await act(async () => {
             drag(row!, 'dragover', 800, 30);
             drag(row!, 'dragover', 1000, 30);

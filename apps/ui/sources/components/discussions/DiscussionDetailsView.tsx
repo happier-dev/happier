@@ -1363,7 +1363,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
             pendingMutation={pendingMutation}
             onRetryMutation={repository.retry}
             onRetryDelivery={isCommittedDisplayMessage(item.message) && repository.canRetryDelivery(item.message)
-                ? () => repository.retryDelivery(discussionId, item.message.id) : undefined}
+                ? repository.retryDelivery : undefined}
             onDismissMutation={dismissRefusal}
             clockEnabled={presenceEligible}
             attachmentReader={attachmentReader}
@@ -1696,7 +1696,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     returnHref: string;
     pendingMutation: DiscussionRepositoryMutation | null;
     onRetryMutation: (localId: string) => void;
-    onRetryDelivery?: React.ComponentProps<typeof DiscussionDeliveryNotice>['onRetry'];
+    onRetryDelivery?: DiscussionRepository['retryDelivery'];
     onDismissMutation: () => void;
     clockEnabled: boolean;
     attachmentReader: DiscussionAttachmentReader;
@@ -1843,7 +1843,8 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
             {props.renderReplySend && agentOutcome === 'answer' && !stopped && isCommittedDisplayMessage(message)
                 ? props.renderReplySend(message) : null}
             {isCommittedDisplayMessage(message) ? <DiscussionDeliveryNotice message={message} resolveSessionLabel={props.resolveSessionLabel}
-                onRetry={props.onRetryDelivery} textStyle={styles.meta} errorStyle={styles.error} retryStyle={styles.retry} retryTextStyle={styles.retryText} /> : null}
+                onRetry={props.onRetryDelivery ? () => props.onRetryDelivery!(message.discussionId, message.id) : undefined}
+                textStyle={styles.meta} errorStyle={styles.error} retryStyle={styles.retry} retryTextStyle={styles.retryText} /> : null}
             </>}
             {props.requesterApprovals?.map((approval) => <ApprovalRequesterThreadCard
                 key={approval.artifact.id} approval={approval} serverId={props.serverId}
