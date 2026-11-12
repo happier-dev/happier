@@ -837,6 +837,34 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  it('never defaults to an answering Machine whose Deployments role is off (Machine roles)', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-roles.test', accountId: 'alice',
+      serverIdentityId: `srv_${'q'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      const parkedBase = createMachineFixture({ id: 'a-parked', installationId: 'parked-installation', activeAt: Date.now() });
+      const parked = { ...parkedBase, metadata: { ...parkedBase.metadata!, rolesV1: { active: ['sessions'] } } };
+      const deployer = createMachineFixture({ id: 'z-deployer', installationId: 'deployer-installation', activeAt: Date.now() - 1_000 });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [parked, deployer]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const machine = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')!;
+      // The Deployments-off Machine is listed first and answers; it must still not be the default.
+      expect((machine().props.items as { id: string }[]).map(item => item.id)[0]).toBe('a-parked');
+      expect(machine().props.selectedId).toBe('z-deployer');
+      // With only the Deployments-off Machine, nothing is chosen for the person.
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [parked]);
+      await waitForTestEvent(screen.subscribe, () => machine().props.selectedId, selected => selected === null);
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it.each([[false, false], [true, false], [false, true]])('configures and inspects a platform before Save, then preserves the reviewed choice (link refusal: %s; target disappears: %s)', async (linkRefused, targetDisappears) => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-platform.test', accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
@@ -983,9 +1011,7 @@ describe('Environment draft Machine Home', () => {
         const agentResult = await createFrontDoorActionExecute()('action.invoke', {
           action: { pluginId, localId: 'inspect-beta' }, input: inspections[0],
         }, { surface: 'cli', serverId, expectedAccountId: 'alice' });
-        expect(agentResult, JSON.stringify(agentResult.ok ? { phase: 'cli.frontdoor', ok: true }
-          : { phase: 'cli.frontdoor', ok: false, code: agentResult.errorCode, effectAttempted: agentResult.effectAttempted }))
-          .toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
+        expect(agentResult).toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
       }
       if (linkRefused) {
         expect(saved).toEqual([]);
