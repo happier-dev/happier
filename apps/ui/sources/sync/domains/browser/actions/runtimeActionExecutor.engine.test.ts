@@ -27,8 +27,12 @@ describe('portable Browser engine choice', () => {
         const command = { kind: 'openView', commandId: 'switch-managed', browserSessionId: 'local-browser',
             viewId: 'page', platform: 'ios', target: { kind: 'externalUrl', targetId: 'site', url: 'https://example.com/' } } as const;
         const context = { surface, authority: 'account_automation', bypassApprovals: true,
-            defaultSessionId: 'machine-session', externalActionTarget: { kind: 'machine', machineId: 'machine' } } as const;
-        expect(await execute.execute('browser.view.open', { ...command, engineOverride: 'managed' }, context))
+            defaultSessionId: 'machine-session', externalActionTarget: { kind: 'machine', machineId: 'machine' },
+            ...(surface === 'plugin' ? { actionCaller: { kind: 'plugin', pluginId: 'com.acme.browser',
+                contributionLocalId: 'engine-choice', sourceCustody: { kind: 'development', registeredRootId: 'browser-fixture' } } } : {}),
+        } as const;
+        const admitted = await execute.execute('browser.view.open', { ...command, engineOverride: 'managed' }, context);
+        expect(admitted, JSON.stringify(admitted))
             .toMatchObject({ ok: true, result: { status: 'dispatched', adapterKind: 'chromiumSidecar' } });
         expect(machine.mock.calls[0]?.[0]).toMatchObject({ input: { engineOverride: 'managed', browserSessionId: 'machine-session' } });
         machine.mockClear();
@@ -36,6 +40,27 @@ describe('portable Browser engine choice', () => {
             .toMatchObject({ ok: true, result: { status: 'dispatched', adapterKind: 'externalUrl' } });
         expect(state.viewsById.page).toMatchObject({ engineKind: 'nativeWebView' });
         expect(machine).not.toHaveBeenCalled();
+    });
+
+    it('routes a new Machine view to the Machine when the Session already has a mounted registry', async () => {
+        let state = createBrowserControlState();
+        const machine = vi.fn(async (_args: RuntimeActionExecuteArgs) => ({ v: 1, commandId: 'new-managed',
+            status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] }));
+        const execute = createActionExecutor(createActionExecutorBoundaryFixture({
+            runtimeActionExecute: createBrowserRuntimeActionExecutor({
+                resolveControl: () => ({ readState: () => state,
+                    applyDispatchResult: result => { state = result.state; } }),
+                executeOnMachine: machine,
+            }),
+        }));
+        const result = await execute.execute('browser.view.open', {
+            kind: 'openView', commandId: 'new-managed', browserSessionId: 'local-browser', viewId: 'new-page',
+            platform: 'ios', target: { kind: 'externalUrl', targetId: 'site', url: 'https://example.com/' },
+        }, { surface: 'agent', authority: 'account_automation', bypassApprovals: true,
+            externalActionTarget: { kind: 'machine', machineId: 'machine' } });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+            result: { status: 'dispatched', adapterKind: 'chromiumSidecar' } });
+        expect(state.viewsById).toEqual({});
     });
 
     it('keeps an explicit managed refusal visible instead of opening embedded', async () => {
@@ -84,12 +109,13 @@ describe('portable Browser engine choice', () => {
                 executeOnMachine: machine,
             }),
         }));
-        expect(await execute.execute(kind === 'openView' ? 'browser.view.open' : 'browser.target.set', {
+        const switched = await execute.execute(kind === 'openView' ? 'browser.view.open' : 'browser.target.set', {
             kind, commandId: 'registered-embedded', browserSessionId: 'local-browser', viewId: 'page',
             ...(kind === 'openView' ? { platform: 'ios' } : {}), engineOverride: 'embedded',
             target: { kind: 'externalUrl', targetId: 'site', url: 'https://example.com/' },
         }, { surface: 'agent', authority: 'account_automation', bypassApprovals: true,
-            externalActionTarget: { kind: 'machine', machineId: 'machine' } }))
+            externalActionTarget: { kind: 'machine', machineId: 'machine' } });
+        expect(switched, JSON.stringify(switched))
             .toMatchObject({ ok: true, result: { status: 'dispatched', adapterKind: 'externalUrl' } });
         expect(state.viewsById.page).toMatchObject({ engineKind: 'nativeWebView' });
         expect(machine).not.toHaveBeenCalled();

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 
 import { renderScreen } from '@/dev/testkit';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -27,9 +28,10 @@ vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-    usePreferredServerIdForSession: () => 'server_1',
+    usePreferredServerIdForSession: ({ serverId }: { serverId?: string | null }) => serverId ?? home.serverId,
 }));
 
+const home = vi.hoisted(() => ({ serverId: '' }));
 const paneStub = vi.hoisted(() => ({ current: null as AppPaneScopeApi | null }));
 const sessionRuntimeState = vi.hoisted(() => {
   const contextState = {
@@ -69,11 +71,10 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => paneStub.current,
 }));
 
-// Recording controls are admitted by the mounted Action owner, which needs a signed-in Account lifetime;
-// this screen suite stands that admission in as ready and exercises everything above it for real.
-vi.mock('@/components/approvals/useMountedActionExecution', () => ({
-    useMountedActionExecution: () => ({ execute: vi.fn(), isCurrent: () => true, ready: true }),
-}));
+// Supply the signed-in Home at its HTTP/storage boundary; mounted Action admission stays real.
+const account = createProviderSettingsAccountHarness();
+beforeEach(async () => { home.serverId = (await account.restore({ machines: [], currentAccount: true })).serverId; });
+afterEach(async () => { await account.reset(); });
 
 vi.mock('@/components/sessions/browser/sessionBrowserContextRuntime', () => ({
     useSessionBrowserContextRuntimeContext: () => sessionRuntimeState.runtime,

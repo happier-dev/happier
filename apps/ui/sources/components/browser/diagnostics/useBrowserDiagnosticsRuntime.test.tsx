@@ -16,6 +16,7 @@ import type { BrowserDiagnosticsSnapshotClientInput, BrowserDiagnosticsSnapshotC
 
 import { useBrowserDiagnosticsRuntime as useRuntime, type UseBrowserDiagnosticsRuntimeInput } from './useBrowserDiagnosticsRuntime';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { countTransportRequests, createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { clearBrowserRuntimeControlRegistryForTests, registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
@@ -297,25 +298,24 @@ describe('useBrowserDiagnosticsRuntime', () => {
         const lifetime = new AbortController();
         const retained = createActionExecutor(createActionExecutorBoundaryFixture({
             runtimeActionExecute: createDefaultRuntimeActionExecutor(),
-            hostActionApprovalLifetime: { actionId: 'browser.diagnostics.eval', surface: 'ui', signal: lifetime.signal },
-            isActionApprovalRequired: () => true,
-            isApprovalExecutionOriginCurrent: async () => true,
-            approvalsCreate: async () => ({ artifactId: 'diagnostics_approval' }),
-            approvalsUpdate: async () => ({ ok: true }),
-            approvalsWaitForDecision: async ({ request }) => {
+            // Native own-UI review is a host presentation boundary, not an Artifact waiter.
+            presentUserActionConfirmation: async () => {
                 waitingForDecision = true;
                 await decision.promise;
-                return { decision: 'approve' as const, request, decisionAuthority: 'present_user' as const };
+                return true;
             },
         }));
         const view = createLocalPreviewView({ engineKind: 'nativeWebView' });
         const hook = await renderHook(() => useBrowserDiagnosticsRuntime({ view, enabled: true, actionExecute: retained.execute,
             actionContext: { surface: 'ui', authority: 'present_user', bypassApprovals: false,
-                serverId: 'home_1', defaultSessionId: 'session_1', actionRequestId: 'diagnostics_ask', signal: lifetime.signal } }));
+                serverId: 'home_1', defaultSessionId: 'session_1', actionRequestId: 'diagnostics_ask', signal: lifetime.signal,
+                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                    'browser.diagnostics.eval': { approvalRequiredSurfaces: ['ui'] },
+                } }) } }));
         await act(async () => hook.getCurrent()?.interaction?.onEnableInteraction?.());
         await act(async () => { hook.getCurrent()?.requestEval({ expression: 'document.title' }); });
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(waitingForDecision).toBe(true);
+        expect(waitingForDecision, JSON.stringify(hook.getCurrent()?.interaction?.evalConsole?.entries)).toBe(true);
         expect(hook.getCurrent()?.bridge?.evalRequest).toBeUndefined();
         expect(hook.getCurrent()?.interaction?.evalConsole?.entries).toEqual([]);
         await act(async () => decision.resolve());

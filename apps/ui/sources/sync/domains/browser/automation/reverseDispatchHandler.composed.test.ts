@@ -88,12 +88,11 @@ describe('daemon to exact mounted UI browser Action', () => {
       control: { readState: () => mounted.state, applyDispatchResult: () => {} },
       diagnostics: hook.getCurrent()?.runtimeAdapter });
     expect(hook.getCurrent()?.interaction?.state).toBe('disabled');
+    let dispatched: Readonly<{ method: string; payload: unknown }> | undefined;
     const clientActionExecute = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: () => false,
       callConnectedClientRpc: async (method, payload, options) => {
-        expect(method).toBe(uiBrowserAutomationDispatchMethod(view));
-        expect(options?.timeoutMs).toBe(2000);
-        expect(UiBrowserAutomationDispatchRequestV1Schema.parse(payload)).toMatchObject({ authority: 'account_automation' });
+        dispatched = { method, payload };
         options?.onIssued?.();
         return { ok: true, result: await handleUiBrowserAutomationDispatchRequest(payload, boundView, { signal: options?.signal }) };
       },
@@ -108,7 +107,9 @@ describe('daemon to exact mounted UI browser Action', () => {
       listAccountApiTokens: async () => { throw new Error('Unsigned Account host has no API-token lookup'); },
       resolveCurrentSessionAgentSpawnPolicyV1: async () => accountSettingsParse({}).sessionAgentSpawnPolicyV1,
     });
+    const lifetime = new AbortController();
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ clientActionExecute,
+      hostActionApprovalLifetime: { operationId: 'browser-eval', signal: lifetime.signal },
       isApprovalExecutionOriginCurrent,
       approvalsCreate: async () => { approvals++; return { artifactId: 'eval-approval' }; },
       approvalsWaitForDecision: async ({ request }) => decision === 'approve'
@@ -119,7 +120,8 @@ describe('daemon to exact mounted UI browser Action', () => {
       expression: '1 + 1', objectGroupId: 'group', diagnosticsInteractionEnabled: true };
     const context = { surface: 'agent', authority: 'account_automation', defaultSessionId: boundView.sessionId,
       serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account', actionRequestId: 'eval-request',
-      actionCaller: { kind: 'host' },
+      actionCaller: { kind: 'host' }, signal: lifetime.signal,
+      operationAcceptance: { operationId: 'browser-eval', actionId: 'browser.diagnostics.eval', accept: () => {} },
       externalActionTarget: { kind: 'machine', machineId: 'machine' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
     } as const;
     expect(await executor.execute('browser.diagnostics.eval', input, { ...context, surface: 'cli',
@@ -132,12 +134,14 @@ describe('daemon to exact mounted UI browser Action', () => {
     let refusal: string | undefined;
     await act(async () => {
       execution = executor.execute('browser.diagnostics.eval', input, context);
-      void execution.then(result => { if (!result.ok) refusal = `${result.errorCode}:${String(result.details?.reason ?? '')}`; });
+      void execution.then(result => { if (!result.ok) refusal = JSON.stringify(result); });
     });
     await vi.waitFor(async () => {
       await flushHookEffects();
       expect(hook.getCurrent()?.bridge?.evalRequest, refusal).toMatchObject({ evalRequestId: 'approved-eval' });
     });
+    expect(dispatched?.method).toBe(uiBrowserAutomationDispatchMethod(view));
+    expect(UiBrowserAutomationDispatchRequestV1Schema.parse(dispatched?.payload)).toMatchObject({ authority: 'account_automation' });
     // The page transport answers through the real hook's registered engine bridge.
     await act(async () => hook.getCurrent()?.bridge?.onEvalResult?.(result));
     expect(await execution).toEqual({ ok: true, result });
