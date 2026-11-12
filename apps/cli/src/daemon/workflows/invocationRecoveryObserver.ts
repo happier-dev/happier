@@ -375,6 +375,12 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
       return { ...observed, execution: observed.execution ?? learned };
     };
     if (!execution) {
+      // Action leaves commit correspondence before dispatch. If that CAS
+      // fails without storing it, the coordinator never releases the effect.
+      // Retire only terminal custody; preserve the recorded uncertain outcome.
+      if (input.terminalParent && input.progress.blockKind === 'action' && input.index?.lifecycle === 'outcome_uncertain') {
+        return { kind: 'outcome_uncertain', code: 'workflow_execution_correspondence_missing' };
+      }
       // An in-flight startup can fail before the Workflow observes its
       // accepted reply. An absent original owner closes observation only after
       // Session discovery; it proves neither cancellation nor lack of effects.

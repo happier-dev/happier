@@ -2798,13 +2798,14 @@ export async function deleteWorkflowRun(params: Readonly<{ accountId: string; ru
             });
             if (!exists) throw new WorkflowRunServiceError("run_not_found");
             if (exists.workflowCustodyState === "pending") {
+                const terminalState = AUTOMATION_RUN_TERMINAL_STATES.find(state => state === exists.state);
                 if (exists.revision === params.expectedRevision
-                    && AUTOMATION_RUN_TERMINAL_STATES.some(state => state === exists.state)) {
+                    && terminalState !== undefined) {
                     // A person retrying Delete can rejoin custody observation after
                     // storage recovers. Preserve the outcome and deletion guard;
                     // only the admitted Machine may prove that custody settled.
                     await publishWorkflowRunMachineWakeInTx(tx, { accountId: params.accountId,
-                        run: { ...exists, state: projectAutomationRunState(exists.state) },
+                        run: { ...exists, state: terminalState },
                         cursor: { resolveCursor: () => exists.account.seq } });
                     // Commit the wake before returning the existing typed refusal.
                     return null;

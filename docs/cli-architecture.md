@@ -2775,8 +2775,11 @@ recovery reader verifies the root and current child custody before committing
 the terminal parent state, after which ordinary history deletion is available.
 For a terminal parent, this same recovery pass also retires remaining structural
 frames, including a running loop under a cancelled Run. Startup recovery does
-not restart the interpreter; unresolved leaf effects, outcome uncertainty and
-owed publication still retain custody.
+not restart the interpreter; unresolved native custody and owed publication
+still retain custody. A terminal uncertain Action with no stored execution
+correspondence can retire custody: the coordinator records correspondence
+before dispatch, and a failed write never releases the Action. Recovery keeps
+the uncertain outcome and the invocation's stored content unchanged.
 
 In unreleased 0.3 development source, retrying Delete on a terminal Run with
 pending custody wakes its originally admitted Machine through the existing
@@ -6837,17 +6840,36 @@ channels and exits when the holder closes that connection.
   - Lifetime: `prepareSessionTargetPlacement` (`daemon/spawn/`) registers the
     authority on the spawn's launch resource scope, so a refused spawn ends it at
     once and a launched Session's resources end it at exit.
-  - The runner holds no custody. The daemon serves an owner-only local relay
+  - The runner holds no custody. The daemon serves a relay
     (`subprocess/supervision/sessionTargetRelay.ts`: one `exec` per connection, or a
-    piped channel) and hands its address to the runner in
-    `HAPPIER_SESSION_TARGET_PLACEMENT`; `resolveAgentSessionHolderLaunch` starts
-    every Agent of that Session in the target through it.
-  - Launch step (`deliverSessionTargetLaunch`): the Session's own connected-service
-    Agent home is copied to `~/.happier/sessions/<key>/agent-home` and only env
-    entries pointing into it are rewritten for the Agent. The Agent CLI is placed
-    when it is a Linux ELF for the target's architecture (streamed over the channel,
-    sha256-verified in the guest); otherwise the spawn is refused
-    (`agent_cli_target_unavailable`). Request-auth materializations (a loopback
+    piped channel) on the owner-only local endpoint (`ownerOnlyLocalEndpoint`, pipe
+    prefix `happier-session-target-` on Windows) and admits only the Session runner's
+    kernel-proven pid (same rule as the local Session RPC channel). Its address goes to
+    the runner in `HAPPIER_SESSION_TARGET_PLACEMENT`; `resolveAgentSessionHolderLaunch`
+    starts every Agent of that Session in the target through it, the primary Agent at
+    the daemon-chosen `primarySocketPath`. Target commands cross as the provider exec's
+    input, never as provider argv.
+  - Files/Git: the daemon's filesystem admission resolves a target Session
+    (`daemon/sessions/sessionTargetWorkspaces.ts`) to a workspace client of its primary
+    Agent's holder (`<socket>.ops`), addressed by the Session's own path and mapped to
+    the workspace's path in the guest (`guestRootPath`). Before the Agent's holder runs,
+    requests are refused; this Machine's disk is never a fallback.
+  - Launch step (`deliverSessionTargetLaunch`): only the entries the Agent's provider
+    declares as its auth material (`authIsolation.secretEntries` of its native-home
+    descriptor) are copied from the Session's connected-service Agent home to
+    `~/.happier/sessions/<key>/agent-home`; config, hooks, MCP settings and plugins never
+    cross. Only env entries pointing into that home are rewritten for the Agent. The
+    directory is removed by a cleanup on the launch resource scope (it runs before the
+    authority ends); leftovers of Sessions that ended without it are swept when a later
+    Session is placed, unless an Agent holds the directory's `.live` lock (`flock -s`,
+    taken by every Agent of the Session) or this daemon is placing it. The Agent CLI is
+    placed once per content digest (`~/.happier/agent-cli/<sha256>/`) when it is a Linux
+    ELF for the target's architecture, streamed over the channel and verified in the
+    guest with the digest computed on this Machine (transport integrity only: the guest
+    user can replace its own files); otherwise the spawn is refused
+    (`agent_cli_target_unavailable`). A custody hand-over of the row (pushed row change or
+    the per-call re-check) ends the Session authority and its channels. `exec` and
+    `putFile` never wake a stopped target. Request-auth materializations (a loopback
     proxy on this Machine) are refused (`connected_service_target_unsupported`).
     The target launch maps the command and working directory and passes only that
     environment; nothing else from this Machine's launch crosses.
@@ -6991,8 +7013,86 @@ timers and I/O callbacks only), so on Bun such a rejection in a multi-Session ho
 is logged and ends no Session; the fix belongs at the producer that dropped it.
 Start-up failures are typed errors (`StartupMachineIdMissingError`), not
 `process.exit`. Still process-wide, owned elsewhere: the Windows Job cache (holder)
-and the PID-keyed Session registry (local channel), and the active Account
-settings snapshot (one Account per host).
+and the active Account settings snapshot (one Account per host).
+
+#### The daemon's session host (0.3 development, off by default)
+
+With the client-local feature `sessions.multiSessionHost` enabled
+(`HAPPIER_FEATURE_SESSIONS_MULTI_SESSION_HOST__ENABLED=1`; missing or malformed is
+off), a daemon spawn of a headless Session does not start a runner process. The
+spawn owner (`spawnRegularProcessAndWaitForWebhook.ts`) asks the daemon's one
+session host
+([`daemonSessionHost.ts`](../apps/cli/src/daemon/sessionHost/daemonSessionHost.ts))
+to add the Session; the host is started on first use through the same launch owner
+as runners (`launchDetachedHappierProcess.ts`: binary-safe command, Linux user scope,
+OOM score, sanitized stderr) as `happier session-host`. TTY-bound launches (tmux,
+Windows terminal, adapter hosts) and every Windows spawn keep one runner process per
+Session: Windows callers cannot yet verify the local pipe server's identity.
+
+The daemon adds and ends Sessions on the host's owner-only local endpoint, the same
+peer-checked endpoint as the local Session RPC channel
+(`localSessionRpcChannel.ts`: one `session-host-<pid>.json` descriptor per host
+process, only the daemon's kernel-proven pid is admitted). An add carries the tracking key, the runner argv,
+the Session environment and working directory; the request stays open for the
+Session's life and returns its exit code when it ends. The host
+([`sessionHost.ts`](../apps/cli/src/agent/runtime/lifecycle/sessionHost.ts)) runs
+the ordinary CLI dispatch for each Session in its own hosted scope and holds one
+Account carrier for all of them. A Session's command failure or termination ends
+only that Session (`endSessionCommand` and the termination owner report the end
+through the scope instead of exiting the process); the host holds its own
+termination registration, so signals still reach every Session and the process
+ends with its last registration. The host ends when its last Session has ended;
+the next add starts a new host.
+
+On the daemon side a hosted Session is tracked with `pid` = the host's pid and a
+`hostedSession` handle. Its end is observed for that Session only
+(`ChildExit.trackingKey`); Stop asks the host to end it and waits for that
+observation, never signalling the host pid; startup cancellation does the same. A
+planned restart (connected-service switch, runtime refresh, request-auth source
+cutover) goes through the same restart primitive as a runner's
+(`requestConnectedServiceSessionRestartSignal`): for a hosted Session it asks the host to
+end only that Session instead of sending SIGTERM, keeps the Session's logical owner
+capture instead of the host's process tree, and the Session's end takes the ordinary
+planned-restart respawn, whose add lands back in the host. Restart bookkeeping
+(requested restarts, scheduled respawns, terminal-publication cycles) is keyed by the
+Session's tracking key, so a restart of one hosted Session never reads as, or clears,
+another's.
+
+Host crash: when a host connection breaks, each of its Sessions ends with the host
+process's own exit code or signal (`HostedSessionEnd.hostLost`), so a killed host is
+an unexpected exit of every Session it held. Each one then takes the ordinary
+runner-crash path in `onChildExited`: its adoptable primary holder is spared
+(`sparedHeldAgents.ts`) and the respawn owner re-spawns it with the adopt token in
+its Session environment. Those respawns are adds, so one new host takes all of them;
+a Session without an adoptable holder resumes cold or gives up exactly as a crashed
+runner does.
+
+Daemon restart: markers of hosted Sessions carry the host's pid, birth and command,
+so startup reattach rebuilds them as for runners. The daemon session host then
+adopts every reattached Session whose live process command is `session-host`
+(`adoptReattachedSessions`): it gets its `hostedSession` handle back (Stop goes
+through the host), and its end is re-observed through `/v1/session-host/watch`,
+which returns that Session's exit code like its add. A Session the live host no
+longer runs is observed as ended; a broken connection is the host's death
+(`process-missing`, respawn as above). A live host of the daemon's current runtime
+takes new Sessions. Adoption does not depend on the feature state: a host that
+exists must be stopped through it.
+
+Host update uses the crash path, without its loss. When a reattached live host runs
+an older runtime than the daemon (`isCurrentRuntime`, the runner staleness owner
+`resolveProcessCommandVersionState`), the daemon first re-observes each of its
+Sessions, then asks it to hand over (`/v1/session-host/handover`). The old host stops
+admitting, removes its descriptor, has every attached holder client acknowledge what
+it delivered and close its channel (`handOverSessionHolderClients`), and exits with
+`SESSION_HOST_HANDOVER_EXIT_CODE` (75) without ending any Session, so no Agent is
+ended. Each of its Sessions is then observed as an unexpected end, spared and
+respawned into a current host exactly as after a crash, where it adopts its held
+Agent; the holder replays only output the old host never delivered. There is no
+separate detach mode.
+
+Not yet built: per-Session memory ceilings and stderr inside the host, and one Session
+MCP endpoint per host without a per-Session bridge process. The feature stays off by
+default pending the owner ruling on the gate.
 
 ### One tree terminator and owner-end recovery
 
@@ -8089,12 +8189,35 @@ never reach an unregistered method, so placement uses the advertised role set.
 Roles come in two kinds:
 
 - **Load-split roles** have their own entry, as described above. Split today:
-  `memory` (worker lifetime, Session removal subscription, `daemon.memory.*`)
-  and `voice` (inference worker lifetime, `daemon.voiceInference.*` and
-  `daemon.voiceDiagnostics.*`). `devices`, `broker` and `sessions` are the next
-  load-split roles; they are still registered by machine core in current source.
-  `machineRoles.importGraph.test.ts` keeps each split role out of the core start
-  graph and out of the other roles.
+  `memory` (worker lifetime, Session removal subscription, `daemon.memory.*`),
+  `voice` (inference worker lifetime, `daemon.voiceInference.*` and
+  `daemon.voiceDiagnostics.*`) and `devices` (simulator preview, computer use
+  and the browser runtime with its sidecar, automation, recording and profile
+  storage; `daemon.computer.*`, `daemon.browser.*`, `daemon.devices.*`).
+  `broker` activates through the same runtime (entry `roles/broker/entry.ts`):
+  the provider-broker application starts and advertises `providerBrokerIngress`
+  only while the role is active, and turning it off withdraws the advertisement
+  and closes the application, so the server stops placing brokered requests
+  there. Its application code stays with the daemon's provider-broker owner
+  (about 0.2 MiB exclusive, not worth a second seam). `sessions` is the next
+  load-split role; it is still loaded by machine core in current source. `machineRoles.importGraph.test.ts` keeps each
+  split role out of the core start graph and out of the other roles.
+- **Who activates a role.** One activation owner per role, through the same
+  runtime: `memory` and `voice` follow the Machine connection (machine bootstrap
+  activates them, with the connection's RPC dispatcher, which also owns the
+  `machine_role_inactive` refusal for every split role). `devices` lives as long
+  as the daemon, so the session control runtime activates it. Its routes reach
+  the Machine transport through the route attachment cache, which registers them
+  as one owned set (`ApiMachineClient.replaceDevicesRoleRoutes`) and replays it on
+  each transport replacement; stopping the role withdraws the set. Machine core
+  keeps the requester custody that computer use consumes and the live-stream
+  capture registry (plugin capture sources use it too). While `devices` is off,
+  the process census, Guard, the control server's simulator routes and the
+  browser purge/refresh entry points read nothing from it. Turning `devices` off (not a
+  daemon stop) first purges its Session and ephemeral browser profiles through
+  the profile store, because nothing can reach or purge them while it is off.
+  The broker application follows the registered Machine (bootstrap runtime) and
+  survives Machine transport replacement.
 - **Policy-only roles** (`relay`, `deployments`, `workspaces`, `intake`) are not
   split for loading. Their code is small (about 1 MiB or less each) and sits
   behind owners that are not role wiring: the Home/iroh carrier that every role

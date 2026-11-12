@@ -57,6 +57,48 @@ const now = '2026-09-08T12:00:00.000Z';
 const availability = { pause: false, resumeBoundary: false,
     restoreWorkspace: false, cancel: false, inspectExecution: true, disabledReasons: [] };
 
+it.each([
+  { blockKind: 'action', terminal: true },
+  { blockKind: 'step', terminal: true },
+  { blockKind: 'action', terminal: false },
+] as const)('recovers pre-dispatch custody without replaying an uncertain $blockKind (terminal=$terminal)', async ({ blockKind, terminal }) => {
+  const rootId = '33333333-3333-4333-8333-333333333333';
+  const childId = '44444444-4444-4444-8444-444444444444';
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: blockKind === 'action'
+    ? [{ kind: 'action', id: 'leaf', actionId: 'review.start', input: {} }]
+    : [{ kind: 'step', id: 'leaf', input: [], document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] };
+  // Persistence is the boundary: this is the durable row left when the
+  // coordinator's pre-effect correspondence CAS fails before storing anything.
+  const kit = createWorkflowRunStorageTestkit({ accountId, runId, machineId, now, origin: { kind: 'direct' },
+    acceptedEnvelope: directAcceptedEnvelope({ definition }) });
+  const seal = (root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: root ? rootId : childId,
+      sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+    progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : blockKind,
+      invocationPath: { blockId: root ? '$root' : 'leaf', scope: [] }, attempt: '0',
+      logicalInvocationRecordId: root ? rootId : childId, reason: { code: 'outcome_uncertain' } } }));
+  await kit.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(rootId),
+    rootInvocation: { id: rootId, contentEnvelope: seal(true) } });
+  await kit.execute({ operation: 'invocations.admit', runId, expectedRevision: kit.run().revision, checkpointEnvelope: checkpointEnvelope(rootId),
+    invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0',
+      lifecycle: 'outcome_uncertain', contentEnvelope: seal(false) }] });
+  const state = terminal ? 'outcome_uncertain' : 'interrupted';
+  await kit.execute({ operation: 'transition', runId, expectedRevision: kit.run().revision, state,
+    checkpointEnvelope: checkpointEnvelope(rootId), invocationTransitions: [{ id: rootId, expectedLifecycle: 'pending',
+      expectedContentRevision: kit.rowById(rootId)!.index.contentRevision, lifecycle: 'outcome_uncertain' }] });
+  const childBytes = kit.rowById(childId)!.contentEnvelope;
+  const recover = createWorkflowRunRecoveryReader({ accountId, machineId,
+    storage: { execute: async (operation, options) => operation.operation === 'recovery.list'
+      ? { candidates: kit.run().workflowCustodyState === 'pending' ? [{ run: kit.run(), parentAttempt: 0 }] : [] }
+      : await kit.execute(operation, options) },
+    resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    reconcileInvocation: createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
+      actionExecutor: createActionExecutor(createUnavailableActionTransportDeps()) }) });
+  await recover('control', undefined, runId);
+  expect(kit.run()).toMatchObject({ state, workflowCustodyState: terminal && blockKind === 'action' ? 'settled' : 'pending' });
+  expect(kit.rowById(childId)).toMatchObject({ index: { lifecycle: 'outcome_uncertain' }, contentEnvelope: childBytes });
+});
+
 it.each(['invitation_stale', 'approval_stale', 'approval_pending', 'unknown_native', 'cancelled_running_frame', 'succeeded_running_frame'] as const)('settles terminal structural custody while preserving leaf publication custody (%s)', async outcome => {
   const publication = outcome === 'approval_stale' || outcome === 'approval_pending';
   const runningFrame = outcome === 'cancelled_running_frame' || outcome === 'succeeded_running_frame';
