@@ -1008,7 +1008,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
             ...(sessionInput ? { machineRuntimeDemand: 'required' as const } : {}),
             requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: test.guest.id } });
         if (disposition === 'wrong-requester') await db.machineAccountGrant.deleteMany({ where: {
-            machineId: test.guest.id, accountId: requester.id,
+            machineId: { in: [test.guest.id, test.controller.id] }, accountId: requester.id,
         } });
         if (disposition === 'no-manage') await inTx(tx => setMachineAccessGrantInTx(tx, {
             actorAccountId: test.account.id, machineId: test.controller.id,

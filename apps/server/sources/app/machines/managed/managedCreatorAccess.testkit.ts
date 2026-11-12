@@ -146,11 +146,19 @@ export async function exerciseManagedCreatorAccess() {
     }
     const controls = [
         { action: 'machines.managed.power.set', requestId: randomUUID(), input: { ...target, when: 'now', intent: 'start', expectedRevision: 0 } },
-        { action: 'machines.managed.delete', requestId: randomUUID(), input: { ...target, when: 'now', intent: 'delete', expectedRevision: 0, reviewedDependencies: true } },
         { action: 'machines.managed.resize', requestId: randomUUID(), input: { ...target, size: { cpuCores: 2 } } },
     ] as const;
     for (const input of controls) await expect(admitManagedControl({ actorAccountId: creator.id,
         custodianAccountId: custodian.id, input })).rejects.toMatchObject({ code: 'permission_denied' });
+    const recovery = await create(creator.id);
+    const remove = { action: 'machines.managed.delete' as const, requestId: randomUUID(), input: {
+        homeId, managedId: recovery.id, when: 'now' as const, intent: 'delete' as const,
+        expectedRevision: 0, reviewedDependencies: true,
+    } };
+    await expect(admitManagedControl({ actorAccountId: stranger.id, custodianAccountId: custodian.id, input: remove }))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    expect(await admitManagedControl({ actorAccountId: creator.id, custodianAccountId: custodian.id, input: remove }))
+        .toMatchObject({ machine: { id: recovery.id, creationState: 'canceled', allocation: 'confirmed-absent' } });
     const enrolled = await create(creator.id);
     const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id,
         metadata: '{}', installationId: randomUUID() } });

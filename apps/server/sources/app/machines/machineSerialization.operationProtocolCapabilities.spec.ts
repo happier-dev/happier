@@ -104,16 +104,20 @@ describe('serializeMachineRow operation protocol capabilities', () => {
         }));
     });
 
-    it('fails closed for malformed persisted JSON instead of projecting a usable leaf', () => {
+    it('withdraws an unsupported stored capability without invalidating its sibling or revision', () => {
         expect(serializeMachineRow({
             ...baseMachineRow,
             operationProtocolCapabilities: {
                 sessionSpawn: { protocolVersions: [2] },
+                sessionMessageReply: { protocolVersions: [1] },
             },
             operationProtocolCapabilitiesRevision: 4,
         })).toMatchObject({
-            operationProtocolCapabilities: null,
-            operationProtocolCapabilitiesRevision: null,
+            operationProtocolCapabilities: {
+                sessionSpawn: undefined,
+                sessionMessageReply: { protocolVersions: [1] },
+            },
+            operationProtocolCapabilitiesRevision: 4,
         });
     });
 
