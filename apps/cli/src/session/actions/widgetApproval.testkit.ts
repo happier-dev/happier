@@ -1,3 +1,6 @@
+import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSupersededV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod/mini';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactJsonCreateHttpInputV1Schema, FeaturesResponseSchema, decodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker, type AccountSettings } from '@happier-dev/protocol';
@@ -90,7 +93,12 @@ function registerActionHttpBodyBoundary(app: FastifyInstance) {
 
 /** The Home features and Account facts every CLI Action composition reads before an Artifact write. */
 export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ accountId: string; serverId: string;
-    settings?: Pick<AccountSettings, 'actionsSettingsV1'>; encryptionMode?: 'plain' | 'e2ee' }>) {
+    settings?: Pick<AccountSettings, 'actionsSettingsV1'>; encryptionMode?: 'plain' | 'e2ee';
+    qualifiedCredential?: Readonly<{
+        read(): QualifiedConnectedAccountCredentialSnapshotV4;
+        write(snapshot: QualifiedConnectedAccountCredentialSnapshotV4): void;
+    }>;
+}>) {
     registerActionHttpBodyBoundary(app);
     const mode = input.encryptionMode ?? 'plain';
     app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
@@ -98,6 +106,27 @@ export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ 
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v1/account/profile', async () => ({ id: input.accountId }));
     app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: input.settings ?? {} }, version: 1 }));
+    const credentialStore = input.qualifiedCredential;
+    if (credentialStore) app.patch('/v4/connect/qualified/credential/health', async (request, reply) => {
+        const parsed = QualifiedConnectedAccountCredentialHealthPatchV4Schema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ error: 'invalid-params' });
+        const patch = parsed.data;
+        const credential = credentialStore.read();
+        if (!sameQualifiedConnectedAccountRef(patch.ref, credential.ref)) return reply.code(404).send({ error: 'connect_credential_not_found' });
+        if (patch.expectedCredentialRevision !== credential.credentialRevision
+            || patch.expectedConfigurationRevision !== credential.configurationRevision) {
+            return reply.code(409).send(QualifiedConnectedAccountCredentialMutationSupersededV4Schema.parse({
+                error: 'connect_credential_mutation_superseded',
+                reason: patch.expectedCredentialRevision !== credential.credentialRevision
+                    ? 'credential_revision_mismatch' : 'configuration_revision_mismatch',
+                credentialRevision: credential.credentialRevision, configurationRevision: credential.configurationRevision,
+            }));
+        }
+        credentialStore.write(QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...credential,
+            health: patch.health, ...(patch.exportProjection ? { exportProjection: patch.exportProjection } : {}) }));
+        return QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse({ success: true,
+            credentialRevision: credential.credentialRevision, configurationRevision: credential.configurationRevision });
+    });
     return FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, board: { enabled: true } } },
         capabilities: { serverIdentity: { serverIdentityId: input.serverId } } });
 }

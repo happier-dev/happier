@@ -58,8 +58,12 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
         store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
         selectTarget: unexpected, resolveTarget: createPurposeTargetResolver({ available: true,
             resolveService: async () => ({ service, authentication: descriptor.authentication }), listAccounts: async () => [profile] }),
-        resolveCredentialRevision: async () => revision, materializeAccount: async ({ credentialRevisionBasis }) => {
+        resolveCredentialRevision: async () => revision, materializeAccount: async ({ credentialRevisionBasis, observeMaterializationPublicValues, request }) => {
             acquisitions++; credentialRevisionBasis?.captureCredentialRevision(revision);
+            if (request.kind === 'environment') {
+                observeMaterializationPublicValues?.(['team-selected']);
+                return { kind: 'environment', env: { VERCEL_TEAM_ID: 'team-selected' } };
+            }
             return { kind: 'httpHeaders', headers: { authorization: 'Bearer options-fixture-secret' } };
         }, projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected });
     const requests: string[] = [];
@@ -85,7 +89,7 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
             accountExecution: { credentials, serverUrl: origin, serverId, serverIdentityId: serverId,
                 machineId: 'machine-options', isCurrent: async () => true }, resolveCurrentMachineId: () => 'machine-options' },
         plugins: (platform === 'vercel' ? [vercel.manifest, accountManifest] : [cloudflare.manifest]).map(manifest => ({ manifest,
-            files: { '.happier-plugin/daemon.js': 'export function activate() {}' },
+            files: { [manifest.entrypoints.daemon]: 'export function activate() {}' },
             ...(manifest.id === selectedPlugin.manifest.id ? { instantiateCommittedModule: () => ({ activate: selectedPlugin.activate }) } : {}) })),
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
@@ -116,12 +120,12 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
             return;
         }
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: [
-            { value: 'user-selected' }, { value: 'team-selected' } ] } });
-        expect(requests).toEqual(['/v2/user', '/v2/teams']);
+            { value: 'team-selected', label: 'Selected Vercel' } ] } });
+        expect(requests).toEqual([]);
         expect(acquisitions).toBe(1);
-        expect(await executor.execute('action.options.resolve', { ...request, query: 'selected', cursor: 'from:next-team' }, context))
-            .toMatchObject({ ok: true, result: { options: [{ value: 'team-selected' }] } });
-        expect(requests.at(-1)).toBe('/v2/teams?from=next-team');
+        expect(await executor.execute('action.options.resolve', { ...request, query: 'other-scope' }, context))
+            .toMatchObject({ ok: true, result: { options: [] } });
+        expect(requests).toEqual([]);
         expect(JSON.stringify(result).includes('options-fixture-secret')).toBe(false);
         const readsBeforeMissingCredential = requests.length;
         expect(await executor.execute('action.options.resolve', { ...request, draftInput: {} }, context))
@@ -138,7 +142,8 @@ it.each([false, true])('resolves the captured partial draft through Account plac
     const machineId = 'c7911a7d-73f1-4657-a3ba-0e7d3f4d466b';
     const origin = 'https://r6-options-home.test';
     const app = fastify();
-    const features = registerAccountHomeHttp(app, { accountId, serverId });
+    const features = registerAccountHomeHttp(app, { accountId, serverId,
+        qualifiedCredential: { read: () => credential, write: next => { credential = next; } } });
     const qualifiedFeatures = FeaturesResponseSchema.parse({ ...features,
         features: { ...features.features, connectedServices: { enabled: true } },
         capabilities: { ...features.capabilities, connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } });
@@ -161,7 +166,7 @@ it.each([false, true])('resolves the captured partial draft through Account plac
         revisionSemantics: 'revisioned', credentialRevision: revision, configurationReady: true, configurationRevision,
         kind: 'token', expiresAt: null, displayName: 'Selected Vercel', scopes: [] });
     const sentinel = 'r6-options-fixture-secret';
-    const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: account, authenticationModeId: 'token',
+    let credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: account, authenticationModeId: 'token',
         revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision,
         content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
             payload: { v: 1, values: { token: sentinel } }, randomBytes: length => new Uint8Array(length) }), metadata: { scopes: [] } });
@@ -200,7 +205,7 @@ it.each([false, true])('resolves the captured partial draft through Account plac
         runtimeOptions: { scopedActionRuntime: { credentials, savedSecretOperationContext: operationContext,
             actionsSettingsProvider: createActionSettingsProvider({ accountSettings: snapshot.settings, allowEnvironmentOverride: false }) },
             externalActionHomeBinding: { serverId, serverIdentityId: serverId }, resolveCurrentMachineId: () => machineId },
-        plugins: [{ manifest: vercel.manifest, files: { '.happier-plugin/daemon.js': 'export function activate() {}' },
+        plugins: [{ manifest: vercel.manifest, files: { [vercel.manifest.entrypoints.daemon]: 'export function activate() {}' },
             instantiateCommittedModule: () => ({ activate: vercel.activate }) }],
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
@@ -224,21 +229,21 @@ it.each([false, true])('resolves the captured partial draft through Account plac
         const context = { surface: 'ui' as const, serverId, serverIdentityId: serverId,
             externalActionTarget: { kind: 'machine' as const, machineId }, runtimeAccountId: accountId };
         const result = await daemon.execute('action.options.resolve', input, context);
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: [{ value: 'user-r6' }] } });
-        expect(providerReads).toEqual(['/v2/user', '/v2/teams']);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: [{ value: 'team-r6', label: 'Selected Vercel' }] } });
+        expect(providerReads).toEqual([]);
         expect(credentialReads).toBeGreaterThan(0);
         expect(JSON.stringify(result)).not.toContain(sentinel);
         // This fixture retains one daemon registry. A native Account change
         // retires that registry; a later real ingress acquires its replacement.
-        // Keep the independent paging contract on the unchanged receiver.
+        // Keep filtering the configured scope on the unchanged receiver.
         if (!hydrateReceiver) {
-            const prepared = await daemon.prepare('action.options.resolve', { ...input, query: 'r6', cursor: 'from:next-team' }, context);
+            const prepared = await daemon.prepare('action.options.resolve', { ...input, query: 'other-scope' }, context);
             expect(prepared.kind).toBe('ready');
-            expect(providerReads).toEqual(['/v2/user', '/v2/teams']);
+            expect(providerReads).toEqual([]);
             if (prepared.kind !== 'ready') throw new Error('Options preparation did not retain placement');
             const page = await prepared.invocation.run();
             expect(page, JSON.stringify(page)).toMatchObject({ ok: true, result: { options: [] } });
-            expect(providerReads).toEqual(['/v2/user', '/v2/teams', '/v2/teams?from=next-team']);
+            expect(providerReads).toEqual([]);
         }
     } finally { await mounted.dispose(); restoreHttp(); await app.close(); }
 });

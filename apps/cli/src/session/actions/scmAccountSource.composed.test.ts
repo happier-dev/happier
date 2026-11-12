@@ -57,7 +57,8 @@ it('preserves the admitted request identity on a real public Account provider re
   try {
     env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_SERVER_URL: serverHttpBaseUrl });
     reloadConfiguration();
-    const features = registerAccountHomeHttp(app, { accountId, serverId });
+    const features = registerAccountHomeHttp(app, { accountId, serverId,
+      qualifiedCredential: { read: () => credential, write: next => { credential = next; } } });
     const projectRoot = resolve(import.meta.dirname, '../../../../../packages/plugins/sentry');
     await registerAuthoredAccountActionRelease(app, accountId, { primary: {
       manifest: SENTRY_MANIFEST, projectRoot, entryPath: join(projectRoot, 'src/accountRuntime.ts'),
@@ -71,12 +72,13 @@ it('preserves the admitted request identity on a real public Account provider re
     app.get('/v4/connect/qualified/accounts', async () => ({ service: recorded.service,
       accounts: [QualifiedConnectedAccountProfileV4Schema.parse({ ...revisions, ref: recorded, status: 'connected',
         configurationReady: true, kind: 'token', expiresAt: null, displayName: 'Source Sentry', scopes: [] })] }));
-    app.get('/v4/connect/qualified/credential', async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+    let credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ...revisions, ref: recorded, metadata: { scopes: [] },
       content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
         payload: { v: 1, values: { token: 'synthetic-source-sentry-credential',
           [SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY]: 'https://us.sentry.io' } }, randomBytes: length => new Uint8Array(length) }),
-    }));
+    });
+    app.get('/v4/connect/qualified/credential', async () => credential);
     app.get('/v4/connect/qualified/configuration', async () => QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({
       ...revisions, target: { kind: 'account', ref: recorded },
       configurationContent: sealQualifiedConnectedAccountContentEnvelope({ kind: 'configuration', accountMode: 'plain',
@@ -158,7 +160,8 @@ it.each(['ui', 'rpc'] as const)('captures Files through the source-owned Account
     env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_SERVER_URL: serverHttpBaseUrl });
     reloadConfiguration();
     await updateSettings(settings => ({ ...settings, machineIdByServerId: { [serverId]: machineId } }));
-    registerAccountHomeHttp(app, { accountId, serverId });
+    registerAccountHomeHttp(app, { accountId, serverId,
+      qualifiedCredential: { read: () => credential, write: next => { credential = next; } } });
     await registerAuthoredAccountActionRelease(app, accountId, { primary: {
       manifest: PLUGIN_MANIFEST, projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugins/scm-github'),
       entryPath: resolve(import.meta.dirname, '../../../../../packages/plugins/scm-github/src/accountRuntime.ts'),
@@ -172,12 +175,13 @@ it.each(['ui', 'rpc'] as const)('captures Files through the source-owned Account
       accounts: [QualifiedConnectedAccountProfileV4Schema.parse({ ref: recorded, status: 'connected', authenticationModeId,
         revisionSemantics: 'revisioned', credentialRevision: revision, configurationReady: true, configurationRevision: null,
         kind: 'token', expiresAt: null, displayName: 'Source GitHub', scopes: [] })] }));
-    app.get('/v4/connect/qualified/credential', async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+    let credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: recorded, authenticationModeId, revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision: null,
       content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
         payload: { v: 1, values: { token: 'synthetic-source-github-credential' } }, randomBytes: length => new Uint8Array(length) }),
       metadata: { scopes: [] },
-    }));
+    });
+    app.get('/v4/connect/qualified/credential', async () => credential);
     await app.ready();
     restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
     const repository = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`;
