@@ -292,6 +292,39 @@ it('offers only executable current services when setting up a scheduled Environm
     } finally { await screen.unmount(); }
 }));
 
+it('opens a scheduled Environment service job through the subject starter', () => withPopoverWebGlobals(async () => {
+    const { AutomationDefinitionListResponseSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+    homes.answer(serverId, 'GET /v3/automations', { body: AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }) });
+    const environmentId = 'production';
+    const executable = service('Worker', { environmentId });
+    answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [executable] }));
+    const { SubjectTriggersSection } = await import('@/components/workflows/triggers/SubjectTriggersSection');
+    const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+    const screen = await renderScreen(<SubjectTriggersSection
+        subject={{ kind: 'environment', machineId, environmentId }} subjectName="Production"
+        deploymentEnvironment={{ serverId, projectSourceId: 'application', environmentId }} />);
+    try {
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findHostByTestId('subject-triggers-starter:scheduledJob')).not.toBeNull();
+        });
+        await screen.pressByTestIdAsync('subject-triggers-starter:scheduledJob');
+        await act(async () => reportPopoverContentLayout(screen.tree, { width: 500, height: 600 }));
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findHostByTestId(`scheduled-service-job-service-${executable.serviceId}`)).not.toBeNull();
+        });
+        await screen.pressByTestIdAsync(`scheduled-service-job-service-${executable.serviceId}`);
+        await act(async () => reportPopoverContentLayout(screen.tree, { width: 500, height: 600 }));
+        await vi.waitFor(() => expect(screen.findAllByType(ActionInputFields)).toHaveLength(1));
+        expect(screen.findByType(ActionInputFields).props.input).toMatchObject({ serverId, machineId,
+            target: { kind: 'current', serviceId: executable.serviceId, expectedGeneration: executable.generation },
+            mode: 'exec', argv: [],
+        });
+        expect(homes.requests.some(request => request.method === 'POST' && request.path === '/v3/automations')).toBe(false);
+    } finally { await screen.unmount(); }
+}));
+
 describe('MachineServicesTab rendered production wiring', () => {
     it.each(['deployment', 'adopted'] as const)('investigates an unhealthy %s service using its admitted identity through Triage', async kind => {
         const identity = kind === 'deployment'
@@ -654,7 +687,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId('machine-service-stop')).toBeNull();
     });
 
-    it('retains the current Services list across remounts and still receives a real change', async () => {
+    it('reads the current Services list after remount and still receives a real change', async () => {
         const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Web')] }));
         let mounted = await mount();
         try {
@@ -663,11 +696,11 @@ describe('MachineServicesTab rendered production wiring', () => {
             await mounted.screen.unmount();
             mounted = await mount();
             await vi.waitFor(() => expect(mounted.screen.findHostByTestId('machine-service-web')).not.toBeNull());
-            expect(list.reads, 'current list remount performs zero additional Resource reads').toBe(1);
+            expect(list.reads, 'the last unmount releases the Resource; remount reads it once').toBe(2);
             await list.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Database')] }));
             await measureMountedCollections(mounted.screen);
             await vi.waitFor(() => expect(mounted.screen.findHostByTestId('machine-service-database')).not.toBeNull());
-            expect(list.reads).toBe(2);
+            expect(list.reads).toBe(3);
         } finally { await mounted.screen.unmount(); }
     });
 
@@ -1116,28 +1149,44 @@ it('withdrawn secret notice stops the admitted generation and offers Start only 
     const scope = { serverId, accountId };
     await seedSavedSecretCatalogForTest(scope, []);
     const environmentId = 'production';
-    const row = service('Web', { authority: 'project', environmentId,
+    const row = service('Web', { serviceId: 'instance/web', authority: 'project', environmentId,
         deployment: { deploymentId: 'serving', installationId: 'installation', service: {
             kind: 'deployment', machineId, environmentId, environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } } });
     const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
     const operations: unknown[] = [];
-    answerAction('machines.services.control', envelope => { operations.push(envelope.input); return { kind: 'accepted', operation: { operationId: 'control' } }; });
+    const firstControl = createDeferred<ActionExecuteResult>();
+    answerActionExecution('machines.services.control', envelope => {
+        operations.push(envelope.input);
+        return operations.length === 1 ? firstControl.promise
+            : { ok: true, result: { kind: 'accepted', operation: { operationId: 'control' } } };
+    });
     const target = { serverId, environmentId, machineIds: [machineId], active: true };
     const screen = await renderScreen(<DeploymentSecretBindingsNotice scope={scope} bindings={[{
         purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret',
             ref: formatSharedSavedSecretRefV1('withdrawn'), resourceRevision: 1 },
     }]} {...{ controlTarget: target }} />);
-    const id = 'project-deployments.environment.secret-control.machine.web';
+    const id = 'project-deployments.environment.secret-control.machine.instance/web';
     await vi.waitFor(() => expect(screen.findHostByTestId(id + '.stop')).not.toBeNull());
+    expect(screen.findHostByTestId(id + '.stop')!.props.accessibilityLabel).toBe(t('machineServices.control.stop'));
     await screen.pressByTestIdAsync(id + '.stop');
     await vi.waitFor(() => expect(operations).toHaveLength(1));
     expect(operations[0]).toMatchObject({ serverId, machineId, serviceId: row.serviceId,
         expectedGeneration: row.generation, operation: 'stop' });
     expect(screen.findHostByTestId(id + '.start')).toBeNull();
+    expect(screen.findHostByTestId(id + '.stop')!.props.accessibilityState).toMatchObject({ disabled: true });
+    await screen.pressByTestIdAsync(id + '.stop');
+    expect(operations).toHaveLength(1);
+    await act(async () => { firstControl.resolve({ ok: false, errorCode: 'service_operation_unavailable',
+        error: 'Native control is unavailable' }); });
+    await vi.waitFor(() => expect(screen.findHostByTestId(id + '.outcome')).not.toBeNull());
+    expect(screen.getTextContent()).toContain('service_operation_unavailable');
+    expect(screen.getTextContent()).toContain(t('machineServices.control.unavailableRemedy'));
+    await screen.pressByTestIdAsync(id + '.stop');
+    await vi.waitFor(() => expect(operations).toHaveLength(2));
     await resource.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [{ ...row, state: 'stopped' }] }));
     await vi.waitFor(() => expect(screen.findHostByTestId(id + '.start')).not.toBeNull());
     await screen.pressByTestIdAsync(id + '.start');
-    await vi.waitFor(() => expect(operations).toHaveLength(2));
-    expect(operations[1]).toMatchObject({ serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'start' });
+    await vi.waitFor(() => expect(operations).toHaveLength(3));
+    expect(operations[2]).toMatchObject({ serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'start' });
     await screen.unmount();
 });

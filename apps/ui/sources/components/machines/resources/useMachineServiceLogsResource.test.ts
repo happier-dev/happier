@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { renderHook, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import * as React from 'react';
+import { act, renderHook, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -23,8 +24,28 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
 describe('native Machine logs Resource demand', () => {
+    it('retains no stores or Account callbacks for a render that never mounts', async () => {
+        const callbacks = new Set<() => void>();
+        const accountLifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account' },
+            isCurrent: () => true, onRetire(callback) {
+                callbacks.add(callback);
+                return { dispose() { callbacks.delete(callback); } };
+            } };
+        const pending = new Promise<never>(() => {});
+        const hook = await renderHook(() => {
+            useMachineServiceLogsResource({ accountLifetime, active: true, follow: true, reference: {
+                hostRead: 'machines.services.logs', input: { serverId, machineId: 'machine', serviceId: 'worker' },
+                expectedGeneration: 'generation', sourceRevision: 'native-worker',
+            } });
+            throw pending;
+        }, { wrapper: ({ children }) => React.createElement(React.Suspense, { fallback: null }, children) });
+        expect(callbacks.size).toBe(0);
+        expect(homes.requests).toHaveLength(0);
+        await hook.unmount();
+    });
+
     it.each(['runtime', 'build'] as const)('%s keeps hidden work at zero and retains one bounded page until an explicit source change', async kind => {
-        const reference: Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'deployments.logs' }> = kind === 'build' ? {
+        let reference: Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'deployments.logs' }> = kind === 'build' ? {
             hostRead: 'deployments.logs', input: { serverId, machineId: 'machine', installationId: 'installation',
                 environmentId: 'environment', deploymentId: 'deployment', targetLinkId: 'target', kind: 'build', ref: 'build', tail: true },
             sourceRevision: 'native-worker',
@@ -32,8 +53,13 @@ describe('native Machine logs Resource demand', () => {
             hostRead: 'machines.services.logs', input: { serverId, machineId: 'machine', serviceId: 'worker' },
             expectedGeneration: 'generation', sourceRevision: 'native-worker',
         };
+        const retirementCallbacks = new Set<() => void>();
+        let current = true;
         const accountLifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account' },
-            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+            isCurrent: () => current, onRetire: callback => {
+                retirementCallbacks.add(callback);
+                return { dispose() { retirementCallbacks.delete(callback); } };
+            } };
         const page: ManagedServiceNativeLogResultV1 = { kind: 'page', page: {
             sourceRevision: 'native-worker', text: 'visible output', nextCursor: null, truncated: false } };
         let value: ManagedServiceNativeLogResultV1 = page;
@@ -90,6 +116,13 @@ describe('native Machine logs Resource demand', () => {
         await flushHookEffects();
         expect(hook.getCurrent().value).toEqual(page);
         expect(methods).toEqual([RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ]);
+        const shared = await renderHook(() => useMachineServiceLogsResource({
+            reference, accountLifetime, active: true, follow: false,
+        }));
+        expect(shared.getCurrent().value).toBe(hook.getCurrent().value);
+        expect(methods).toEqual([RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ]);
+        await shared.unmount();
+        expect(hook.getCurrent().value).toEqual(page);
         await hook.rerender({ active: true, follow: true });
         await flushHookEffects();
         expect(methods).toContain(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN);
@@ -108,6 +141,38 @@ describe('native Machine logs Resource demand', () => {
         const hiddenMethods = [...methods];
         await hook.rerender({ active: false, follow: true });
         expect(methods).toEqual(hiddenMethods);
+        expect(hook.getCurrent().value).toEqual(value);
         await hook.unmount();
+
+        // Visiting more sources must not turn Account lifetime into a history of stores.
+        value = page;
+        const visitedHook = await renderHook(nextReference => useMachineServiceLogsResource({
+            reference: nextReference, accountLifetime, active: true, follow: false,
+        }), { initialProps: reference });
+        for (let visited = 0; visited < 8; visited++) {
+            const sourceRevision = `native-worker-${visited}`;
+            reference = { ...reference, sourceRevision };
+            value = { kind: 'page', page: { ...page.page, sourceRevision } };
+            await visitedHook.rerender(reference);
+            await act(async () => {
+                await vi.waitFor(() => expect(visitedHook.getCurrent().value, JSON.stringify(visitedHook.getCurrent())).toEqual(value));
+            });
+        }
+        // One callback per retained store: only the current reference can remain.
+        expect(retirementCallbacks.size).toBe(1);
+        await visitedHook.unmount();
+        expect(retirementCallbacks.size).toBe(0);
+        const reopened = await renderHook(() => useMachineServiceLogsResource({
+            reference, accountLifetime, active: true, follow: false,
+        }));
+        await act(async () => { await vi.waitFor(() => expect(reopened.getCurrent().value).toEqual(value)); });
+        await act(async () => {
+            current = false;
+            for (const retire of [...retirementCallbacks]) retire();
+        });
+        expect(reopened.getCurrent().value).toBeUndefined();
+        expect(retirementCallbacks.size).toBe(0);
+        await reopened.unmount();
+        expect(retirementCallbacks.size).toBe(0);
     });
 });

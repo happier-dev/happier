@@ -81,7 +81,11 @@ it('reads selected Domain facts through the same controller Resource while keepi
             if (request.signal?.aborted) abort();
         });
     } });
-    const lifetime = { scope: { serverId, accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const retirementCallbacks = new Set<() => void>();
+    const lifetime = { scope: { serverId, accountId: 'account' }, isCurrent: () => true, onRetire(callback: () => void) {
+        retirementCallbacks.add(callback);
+        return { dispose() { retirementCallbacks.delete(callback); } };
+    } };
     const transport = createDeploymentReadTransport(lifetime);
     const abort = new AbortController();
     let items: readonly DeploymentDomainReadItemV1[] = [item];
@@ -95,6 +99,7 @@ it('reads selected Domain facts through the same controller Resource while keepi
         expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(2);
         expect(homes.requests.some(request => request.path.startsWith('/v1/artifacts'))).toBe(false);
     } finally { abort.abort(); stop(); }
+    expect(retirementCallbacks.size).toBe(0);
 });
 
 it('pushes the same observer current edge proof into the Environment aggregate and withdraws missing or stale proof', async () => {
@@ -153,8 +158,12 @@ it('pushes the same observer current edge proof into the Environment aggregate a
     } });
     let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
     const abort = new AbortController();
+    const retirementCallbacks = new Set<() => void>();
     const stop = environmentHealthObserver({ scope: { serverId, accountId: 'account' },
-        isCurrent: () => true, onRetire: () => ({ dispose() {} }) })(
+        isCurrent: () => true, onRetire: callback => {
+            retirementCallbacks.add(callback);
+            return { dispose() { retirementCallbacks.delete(callback); } };
+        } })(
         { serverId, accountId: 'account' }, detail, value => { feed = value; }, { signal: abort.signal });
     try {
         await vi.waitFor(() => expect(feed).toMatchObject({ aggregate: { members: [{ machineId: 'edge', status: 'up' }] } }));
@@ -173,4 +182,5 @@ it('pushes the same observer current edge proof into the Environment aggregate a
         deliver?.();
         await vi.waitFor(() => expect(feed).toMatchObject({ aggregate: { members: [{ machineId: 'edge', status: 'unknown' }] } }));
     } finally { abort.abort(); stop?.(); }
+    expect(retirementCallbacks.size).toBe(0);
 });
