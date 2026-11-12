@@ -3414,6 +3414,7 @@ export {
 } from './features.js';
 export * from './pets/index.js';
 export * from './appLock/recovery.js';
+export * from './account/connectedClients.js';
 export {
   FEATURE_CATALOG,
   FEATURE_IDS,

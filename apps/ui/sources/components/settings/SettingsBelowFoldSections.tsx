@@ -10,6 +10,9 @@ import { requestReview } from '@/utils/system/requestReview';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { useAllMachines, useSettings } from '@/sync/domains/state/storage';
 import { listConnectedDevices } from '@/sync/domains/settings/connectedDevices';
+import { apiListConnectedClientsLastSeen } from '@/sync/api/account/apiConnectedClients';
+
+const NO_CONNECTED_CLIENT_PRESENCE: Readonly<Record<string, number>> = Object.freeze({});
 import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
@@ -392,6 +395,18 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
     const settings = useSettings();
     const [serverVersion, setServerVersion] = React.useState<string | null>(null);
     const [desktopVersion, setDesktopVersion] = React.useState<string | null>(null);
+    const [connectedClientsLastSeen, setConnectedClientsLastSeen] = React.useState(NO_CONNECTED_CLIENT_PRESENCE);
+    React.useEffect(() => {
+        let active = true;
+        apiListConnectedClientsLastSeen()
+            .then((lastSeen) => {
+                if (active) setConnectedClientsLastSeen(lastSeen);
+            })
+            .catch((error: unknown) => console.error('[settings] Could not load connected-client presence:', error));
+        return () => {
+            active = false;
+        };
+    }, []);
     const [showVersionCopiedToast, setShowVersionCopiedToast] = React.useState(false);
     const versionCopiedToastOpacity = React.useRef(new Animated.Value(0)).current;
     const versionCopiedToastAnimation = React.useRef<Animated.CompositeAnimation | null>(null);
@@ -463,7 +478,7 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
         ...machines.filter((machine) => machine.metadata?.happyCliVersion).map((machine) =>
             `${t('settings.machines')} (${machine.metadata?.displayName || machine.metadata?.host || machine.id}): ${machine.metadata?.happyCliVersion}`),
         `${t('settings.connectedDevicesLast14Days')}:`,
-        ...listConnectedDevices(settings, Date.now()).map((device) =>
+        ...listConnectedDevices(settings, connectedClientsLastSeen, Date.now()).map((device) =>
             `${device.name ?? t('status.unknown')} | ${device.platform} | ${device.appVersion ?? t('status.unknown')} | ${new Date(device.lastSeen).toISOString()}`),
     ].join('\n');
 

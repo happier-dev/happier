@@ -108,7 +108,8 @@ import { buildOutgoingUserTextRecord } from './domains/messages/outgoingUserMess
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
-import { CONNECTED_DEVICE_KEY_PREFIX } from './domains/settings/connectedDevices';
+import { planConnectedDeviceIdentityUpdate } from './domains/settings/connectedDevices';
+import { apiReportConnectedClientSeen } from './api/account/apiConnectedClients';
 import { readCurrentAppRuntimeInfo } from './runtime/readCurrentAppRuntimeInfo';
 import {
     assertUiSessionEncryptionModeAllowed,
@@ -2081,14 +2082,11 @@ class Sync {
             }
         }
         if (generation !== this.serverScopeGeneration || !this.pendingSettingsScope) return;
-        this.applySettings({
-            [`${CONNECTED_DEVICE_KEY_PREFIX}${id}`]: {
-                name,
-                platform,
-                appVersion,
-                lastSeen: Date.now(),
-            },
-        }, { source: 'system' });
+        // Identity is synced content: write it only when it changes. Being seen is liveness and goes
+        // to the relay's presence record, so it never creates a settings version for other clients.
+        const identityUpdate = planConnectedDeviceIdentityUpdate(storage.getState().settings, id, { name, platform, appVersion });
+        if (identityUpdate) this.applySettings(identityUpdate, { source: 'system' });
+        fireAndForget(apiReportConnectedClientSeen(id), { tag: 'Sync.reportConnectedDevice.seen' });
     }
 
     private startConnectedDeviceReporting(): void {

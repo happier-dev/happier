@@ -8,6 +8,7 @@ import { registerAccountUsageRoutes } from "./registerAccountUsageRoutes";
 import { registerAccountEncryptionRoutes } from "./registerAccountEncryptionRoutes";
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 import { registerAccountActivityBadgeSnapshotRoute } from "./registerAccountActivityBadgeSnapshotRoute";
+import { registerAccountConnectedClientRoutes } from "./registerAccountConnectedClientRoutes";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerAccountPetLibraryRoutes } from "@/app/pets/accountPetLibraryRoutes";
 import { registerSessionDraftRoutes } from "@/app/account/sessionDrafts/registerSessionDraftRoutes";
@@ -22,6 +23,7 @@ export function accountRoutes(app: Fastify): void {
     registerAccountEncryptionMigrateRoutes(app);
     registerAccountUsageRoutes(app);
     registerAccountActivityBadgeSnapshotRoute(app);
+    registerAccountConnectedClientRoutes(app);
     registerAccountPetLibraryRoutes(createServerFeatureGatedRouteApp(app, "pets.sync"));
     registerSessionDraftRoutes(createServerFeatureGatedRouteApp(app, "sessions.drafts"));
 }

@@ -84,6 +84,7 @@ model Account {
     SessionAppearance      SessionAppearance[]
     AppLockRecovery        AppLockRecovery[]
     AppLockMailSettings    AppLockMailSettings?
+    ConnectedClientPresence ConnectedClientPresence[]
     SessionOrganizationFolder SessionOrganizationFolder[]
     SessionOrganizationTag SessionOrganizationTag[]
     SessionTagAssignment   SessionTagAssignment[]
@@ -1388,4 +1389,16 @@ model PublicShareAccessLog {
     @@index([publicShareId])
     @@index([userId])
     @@index([accessedAt])
+}
+
+/// When each app client (by its locally generated client id) was last seen. Liveness only: it is
+/// updated without account changes or events and read when a client lists its connected devices.
+model ConnectedClientPresence {
+    accountId  String
+    clientId   String
+    lastSeenAt DateTime
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@id([accountId, clientId])
 }

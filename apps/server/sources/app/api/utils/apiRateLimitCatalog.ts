@@ -43,6 +43,7 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "share.public.messages": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "ip" },
     "share.public.manage": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
     "share.session.create": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "user" },
+    "account.connectedClients": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
     "appLock.recovery.manage": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "user" },
     "appLock.recovery.public": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "ip" },
 } as const satisfies Record<string, ApiRateLimitDefaults>;
