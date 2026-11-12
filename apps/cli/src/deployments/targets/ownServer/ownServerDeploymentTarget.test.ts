@@ -1349,7 +1349,8 @@ describe('own-server target at the Action host boundary', () => {
                     if (scenario === 'public_backup') {
                         expect(captured.restoreCaptures).toEqual([expect.objectContaining({ source: manifest,
                             sourceFormat: 'postgresCustom', target: { service: 'app', adapter: 'postgres-v1', database },
-                            configuration: backupConfiguration, repository: { repository: 's3:https://fixture.invalid/backup' } })]);
+                            configuration: backupConfiguration,
+                            repository: { repository: `s3:https://fixture.invalid/backup/${backupConfiguration.ownership.prefix}` } })]);
                     }
                     if (savedNightly) {
                         const store = createInMemoryWorkflowCoordinatorStore();
