@@ -11,7 +11,6 @@ import { classifyGithubTransportFailure } from '../observations/githubResponseFa
 import { GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1,
   readGithubTriageAlertFamilies } from '../triage/configuration.js';
 import type { GithubTriageInvocationContext } from '../triage/invocation.js';
-import { openGithubTriageClient, resolveGithubTriageInstance } from '../triage/operations.js';
 import { createGithubRepositoryReader } from '../triage/repositories.js';
 import { parseGithubRoutingToken } from '../triage/locator.js';
 import { GITHUB_ACCOUNT_EXECUTION } from '../triage/readActions.js';
@@ -64,6 +63,7 @@ export const GITHUB_PROJECT_READINESS_ACTIONS_V1 = {
           if (sources.kind !== 'read') return unavailable(sources.kind);
           const route = parseGithubRoutingToken(repository.repository);
           if (route === null) return unavailable('github_repository_route_invalid');
+          const { openGithubTriageClient, resolveGithubTriageInstance } = await import('../triage/operations.js');
           let failedSource: string | undefined;
           for (const source of sources.instances) {
             if (source.lifecycle !== 'active') continue;
