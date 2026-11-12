@@ -585,7 +585,8 @@ describe('MCP servers collection and tools', () => {
             }}
         </StoreMcpListing>);
         // The detail's host title: React keeps its committed props object while nothing above it re-renders it.
-        const title = () => screen.tree.root.find(node => typeof node.type === 'string' && node.props.testID === 'mcp.add.detail.title').props;
+        const title = () => screen.tree.root.find(node => typeof node.type === 'string' && node.props.testID === 'mcp.add.detail.header')
+            .findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header')[0]!.props;
         await vi.waitFor(() => {
             const config = configs.at(-1)!;
             const item = config.catalog.items.find(row => !('suggestionId' in row) && row.itemId === selection.itemId)!;

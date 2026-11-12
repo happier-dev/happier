@@ -9,7 +9,7 @@ import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesC
 import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
 
 import { CapabilityAddDetailAction } from '@/components/capabilities/add/CapabilityAddModal';
-import { CapabilityFacts } from '@/components/capabilities/facts/CapabilityFacts';
+import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import {
   WhereItsOnControl,
 } from '@/components/capabilities/where/WhereItsOnControl';
@@ -22,7 +22,6 @@ import { ValueRefRowsEditor } from '@/components/ui/forms/valueRefs/ValueRefRows
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { CapabilityListingSections } from '@/components/capabilities/add/CapabilityListingSections';
-import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -219,67 +218,37 @@ export const McpAddDetail = React.memo(function McpAddDetail(
 
   return (
     <View>
-      <ItemGroup surface="none">
-        <BareSectionContent>
-        <View style={styles.head}>
-          <View style={styles.title}>
-            <HappierBrandMark
-              brand={props.row.brandMark ?? { displayName: props.row.title }}
-              externallyLabelled
-              pixelSize={30}
-            />
-            <Text
-              variant="title"
-              emphasis="semiBold"
-              style={[styles.titleText, { color: theme.colors.text.primary }]}
-              numberOfLines={2}
-              testID={`${props.testID}.detail.title`}
-              // The item's name heads its details (a listing pane moves focus here).
-              accessibilityRole="header"
-            >
-              {props.row.title}
-            </Text>
-          </View>
-          <CapabilityFacts
-            presentation="row"
-            {...(props.sourceTitle ? { source: { kind: 'registry' as const, label: props.sourceTitle } } : {})}
-            extra={[
-              ...(supported
-                ? [
-                    supported.transport === 'local'
-                      ? t('capabilities.mcp.local')
-                      : t('capabilities.mcp.remote'),
-                  ]
-                : []),
-              ...(props.row.version ? [`v${props.row.version}`] : []),
-            ]}
+      {/* The listing's identity is the shared listing header (icon row = mark + name; purpose and facts on the
+          content edge), so the Add body's placement of it (level with the search) applies here as everywhere. */}
+      <CapabilityDetailHeader
+        testID={`${props.testID}.detail.header`}
+        mark={
+          <HappierBrandMark
+            brand={props.row.brandMark ?? { displayName: props.row.title }}
+            externallyLabelled
+            pixelSize={28}
           />
-          {props.row.itemId && props.row.itemId !== props.row.title ? (
-          <View style={styles.verified}>
-            {props.row.publisher?.verification ? (
-              <Icon
-                name="shield-check"
-                size={ICON_SIZE.xs}
-                color={theme.colors.text.secondary}
-              />
-            ) : null}
-            <Text
-              variant="meta"
-              style={[styles.mono, { color: theme.colors.text.secondary }]}
-              numberOfLines={1}
-            >
-              {props.row.itemId}
-            </Text>
-          </View>
-          ) : null}
-          {purpose ? (
-            <Text
-              variant="reading"
-              style={[styles.purpose, { color: theme.colors.text.secondary }]}
-            >
-              {purpose}
-            </Text>
-          ) : null}
+        }
+        title={props.row.title}
+        {...(purpose ? { purpose } : {})}
+        facts={{
+          ...(props.sourceTitle ? { source: { kind: 'registry' as const, label: props.sourceTitle } } : {}),
+          extra: [
+            ...(supported
+              ? [
+                  supported.transport === 'local'
+                    ? t('capabilities.mcp.local')
+                    : t('capabilities.mcp.remote'),
+                ]
+              : []),
+            ...(props.row.version ? [`v${props.row.version}`] : []),
+          ],
+        }}
+        {...(props.row.itemId && props.row.itemId !== props.row.title
+          ? { mono: props.row.itemId, monoVerified: Boolean(props.row.publisher?.verification) }
+          : {})}
+      />
+      <View style={styles.notes}>
           {deprecated ? (
             <Text variant="meta" style={{ color: theme.colors.status.actionRequired }}>
               {t('capabilities.mcpAdd.detail.deprecated')}
@@ -307,11 +276,9 @@ export const McpAddDetail = React.memo(function McpAddDetail(
               {t('capabilities.mcpAdd.detail.unsupported')}
             </Text>
           ) : null}
-          {/* The one action, right under what it adds (lab `m:mcp`); the body supplies it. */}
-          <CapabilityAddDetailAction />
-        </View>
-        </BareSectionContent>
-      </ItemGroup>
+      </View>
+      {/* The one action, right under what it adds (lab `m:mcp`); the body supplies it. */}
+      <CapabilityAddDetailAction />
 
       {props.existing === null && !supported && !model && !read.error ? (
         // The item is being read: its sections hold their place, so the body does not arrive blank and then jump.
@@ -531,12 +498,7 @@ function TextField(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  head: { gap: theme.space.s8 },
-  purpose: { marginTop: theme.space.s4 },
-  title: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12 },
-  titleText: { flexShrink: 1 },
-  verified: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
-  mono: { ...Typography.mono() },
+  notes: { gap: theme.space.s8 },
   partial: {
     flexDirection: 'row',
     alignItems: 'center',

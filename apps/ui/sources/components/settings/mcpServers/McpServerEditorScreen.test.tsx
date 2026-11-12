@@ -1186,7 +1186,7 @@ describe('McpServerEditorScreen', () => {
         release();
       });
       await vi.waitFor(() =>
-        expect(screen.findAllByTestId('mcp.add.detail.title')).toHaveLength(0),
+        expect(screen.findAllByTestId('mcp.add.detail.header')).toHaveLength(0),
       );
       expect(screen.findAllByTestId('store.mcp.primary')).toHaveLength(0);
       expect(rowMutationRequests).toHaveLength(0);
@@ -1214,9 +1214,11 @@ describe('McpServerEditorScreen', () => {
       });
       await vi.waitFor(() =>
         expect(
+          // The listing's name heads the shared listing header.
           screen
-            .findAllByTestId('mcp.add.detail.title')
-            .some((node) => node.props.children === selected.title),
+            .findAllByTestId('mcp.add.detail.header')
+            .some((header) => header.findAll((node) => typeof node.type === 'string'
+              && node.props.accessibilityRole === 'header' && node.props.children === selected.title).length > 0),
         ).toBe(true),
       );
       await vi.waitFor(() =>
@@ -1385,7 +1387,7 @@ describe('McpServerEditorScreen', () => {
     }
     await vi.waitFor(() =>
       expect(
-        screen.findAllByTestId('mcp.add.detail.title').length,
+        screen.findAllByTestId('mcp.add.detail.header').length,
       ).toBeGreaterThan(0),
     );
     expect(
@@ -1529,7 +1531,7 @@ describe('McpServerEditorScreen', () => {
       expect(
         registryRequests.filter((path) => path.includes('/versions/')),
       ).toEqual([]);
-      expect(screen.findAllByTestId('mcp.add.detail.title')).toHaveLength(0);
+      expect(screen.findAllByTestId('mcp.add.detail.header')).toHaveLength(0);
       expect(rowMutationRequests).toHaveLength(0);
     },
   );
@@ -1565,8 +1567,9 @@ describe('McpServerEditorScreen', () => {
     await vi.waitFor(() =>
       expect(
         screen
-          .findAllByTestId('mcp.add.detail.title')
-          .some((node) => node.props.children === selected.server.title),
+          .findAllByTestId('mcp.add.detail.header')
+          .some((header) => header.findAll((node) => typeof node.type === 'string'
+            && node.props.accessibilityRole === 'header' && node.props.children === selected.server.title).length > 0),
       ).toBe(true),
     );
     expect(

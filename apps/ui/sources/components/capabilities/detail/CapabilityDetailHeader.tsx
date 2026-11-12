@@ -26,14 +26,18 @@ export function CapabilityDetailHeader(props: Readonly<{
     menuItems?: readonly PageHeaderMenuAction[];
     /** An identifier under the facts, in mono (a registry id). */
     mono?: string;
+    /** The registry verified the publisher of that identifier: a shield leads it. */
+    monoVerified?: boolean;
     /** Unsaved edits on the page (Save). */
     primaryAction?: PageHeaderPrimaryAction;
     testID: string;
 }>): React.ReactElement {
     const meta = React.useMemo(() => {
         const facts = buildCapabilityHeaderMeta(props.facts);
-        return props.mono ? [...facts, { key: 'mono', text: props.mono, mono: true }] : facts;
-    }, [props.facts, props.mono]);
+        return props.mono
+            ? [...facts, { key: 'mono', text: props.mono, mono: true, ...(props.monoVerified ? { icon: 'shield-check' as const } : {}) }]
+            : facts;
+    }, [props.facts, props.mono, props.monoVerified]);
     const speaks = props.status ? doesHappierCapabilityStatusSpeak(props.status, 'header') : false;
     return (
         <PageHeader
