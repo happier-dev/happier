@@ -194,7 +194,6 @@ export const lightTheme = {
         radio: {
             active: '#007AFF',
             inactive: '#C0C0C0',
-            dot: '#007AFF',
         },
         button: {
             primary: {
@@ -475,7 +474,6 @@ export const darkTheme = {
         radio: {
             active: '#9EB9FF',
             inactive: '#766C67',
-            dot: '#131111',
         },
         button: {
             primary: {
