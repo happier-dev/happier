@@ -11,6 +11,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { StyleSheet } from 'react-native-unistyles';
+import { Typography } from '@/constants/Typography';
 
 type Input = DeploymentTemplateInstantiateInputV1;
 export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace' | 'companions'>>;
@@ -24,6 +26,8 @@ export function DeploymentTemplateChoices(props: Readonly<{
     onChange: (value: DeploymentTemplateChoicesValue) => void;
     testID: string;
     services?: readonly string[];
+    /** The Environment's own variable names: only these can be replaced. */
+    existingVariableNames?: readonly string[];
     includeDomains?: boolean;
 }>) {
     const { template, value, onChange, testID } = props;
@@ -47,7 +51,8 @@ export function DeploymentTemplateChoices(props: Readonly<{
     };
     const variables = template.variables.filter(variable => !variable.valueFrom);
     const exportKeys = [...new Set(Object.values(template.exports ?? {}).flatMap(output => Object.keys(output.env ?? {})))];
-    const replaceKeys = [...new Set([...template.variables.map(variable => variable.key), ...exportKeys])];
+    const existing = new Set(props.existingVariableNames ?? []);
+    const replaceKeys = [...new Set([...template.variables.map(variable => variable.key), ...exportKeys])].filter(key => existing.has(key));
     return <>
         {variables.length ? <ItemGroup title={t('projects.deployments.tabVariables')}>
             {variables.map(variable => {
@@ -96,19 +101,24 @@ export function DeploymentTemplateChoices(props: Readonly<{
                         ...(hostname.trim() ? [{ templateDomainId: domain.key, hostname: hostname.trim() }] : [])] })}
                     autoCapitalize="none" keyboardType="url" />} />)}
         </ItemGroup> : null}
-        {props.services?.length && exportKeys.length ? <ItemGroup title={t('capabilities.store.appPage.choices.connect')}>
+        {props.services?.length && exportKeys.length ? <ItemGroup title={t('capabilities.store.appPage.choices.connect')}
+            description={t('capabilities.store.appPage.choices.connectBody', { names: exportKeys.join(', ') })}>
             <DropdownMenu testID={`${testID}.connectTo`} open={connectionsOpen} onOpenChange={setConnectionsOpen}
-                items={[{ id: '', title: t('common.none') }, ...props.services.map(service => ({ id: service, title: service }))]}
+                items={[{ id: '', title: t('capabilities.store.appPage.choices.connectNone') }, ...props.services.map(service => ({ id: service, title: service }))]}
                 selectedId={value.connectTo?.service ?? ''} search
                 onSelect={service => { setConnectionsOpen(false); onChange({ ...value, connectTo: service ? { service } : undefined }); }}
-                itemTrigger={{ title: t('capabilities.store.appPage.choices.connect'), placeholder: t('common.none') }} />
+                itemTrigger={{ title: t('capabilities.store.appPage.choices.connectApp'), placeholder: t('capabilities.store.appPage.choices.connectNone') }} />
         </ItemGroup> : null}
         {props.services && replaceKeys.length ? <ItemGroup title={t('capabilities.store.appPage.choices.replaceTitle')}
             description={t('capabilities.store.appPage.choices.replaceBody')}>
-            {replaceKeys.map(key => <Item key={key} title={key} showChevron={false}
+            {replaceKeys.map(key => <Item key={key} title={key} titleStyle={styles.key} showChevron={false}
                 rightElement={<Switch testID={`${testID}.replace.${key}`} value={value.replace?.includes(key) ?? false}
                     onValueChange={replace => onChange({ ...value, replace: replace ? [...(value.replace ?? []), key]
                         : (value.replace ?? []).filter(entry => entry !== key) })} />} />)}
         </ItemGroup> : null}
     </>;
 }
+
+const styles = StyleSheet.create(() => ({
+    key: Typography.mono(),
+}));

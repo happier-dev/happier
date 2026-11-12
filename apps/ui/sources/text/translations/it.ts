@@ -18951,7 +18951,7 @@ settingsSession: {
       },
       databaseProviderTitle: "Provider",
       managedData: {
-        title: "Database gestito",
+        title: "Aggiungi un database gestito",
         empty: "Nessun provider di database gestiti installato",
         operation: "Cosa vuoi fare?",
         unknown: "L’esito del provider è incerto",
@@ -18966,6 +18966,7 @@ settingsSession: {
         result: "Dettagli del provider",
         reviewCreate: "Esamina le opzioni di creazione",
         add: "Database gestito",
+        addDescription: "Crea o collega un database su un provider di hosting",
         manage: "Gestisci database",
       },
       restoreStepsTitle: "Passaggi",

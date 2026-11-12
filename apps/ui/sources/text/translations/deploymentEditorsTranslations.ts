@@ -16,6 +16,7 @@ type DeploymentEditorsTranslations = Readonly<{
   pullRequestNumber: string;
   loadPrHead: string;
   deployPrHead: string;
+  prHead: string;
   prNotFound: (params: { number: number }) => string;
   prUnavailable: string;
   survival: string;
@@ -105,6 +106,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Pull request number",
     loadPrHead: "Read latest head",
     deployPrHead: "Deploy this head",
+    prHead: "Latest head",
     prNotFound: ({ number }) => `No pull request #${number} found. Check the number.`,
     prUnavailable: "The exact pull request head is unavailable. Read latest head to try again.",
     survival: "Apps keep running when Happier stops. Restarting after a reboot follows the Compose restart policy.",
@@ -194,6 +196,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Номер pull request",
     loadPrHead: "Прочитать последнюю версию",
     deployPrHead: "Развернуть эту версию",
+    prHead: "Последняя версия",
     prNotFound: ({ number }) => `Pull request #${number} не найден. Проверьте номер.`,
     prUnavailable: "Точная версия pull request недоступна. Нажмите «Прочитать последнюю версию», чтобы повторить.",
     survival: "Приложения работают после остановки Happier. После перезагрузки действует политика restart из Compose.",
@@ -284,6 +287,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Numer pull requesta",
     loadPrHead: "Odczytaj najnowszą wersję",
     deployPrHead: "Wdróż tę wersję",
+    prHead: "Najnowsza wersja",
     prNotFound: ({ number }) => `Nie znaleziono pull requesta #${number}. Sprawdź numer.`,
     prUnavailable: "Dokładna wersja pull requesta jest niedostępna. Użyj „Odczytaj najnowszą wersję”, aby spróbować ponownie.",
     survival: "Aplikacje działają dalej po zatrzymaniu Happier. Po ponownym uruchomieniu obowiązuje polityka restart z Compose.",
@@ -373,6 +377,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Número de pull request",
     loadPrHead: "Leer la última revisión",
     deployPrHead: "Desplegar esta revisión",
+    prHead: "Última revisión",
     prNotFound: ({ number }) => `No se encontró el pull request #${number}. Comprueba el número.`,
     prUnavailable: "La revisión exacta no está disponible. Usa «Leer la última revisión» para reintentar.",
     survival: "Las aplicaciones siguen funcionando cuando Happier se detiene. Tras reiniciar, se aplica la política restart de Compose.",
@@ -463,6 +468,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Numéro de pull request",
     loadPrHead: "Lire la dernière révision",
     deployPrHead: "Déployer cette révision",
+    prHead: "Dernière révision",
     prNotFound: ({ number }) => `Aucune pull request #${number} trouvée. Vérifie le numéro.`,
     prUnavailable: "La révision exacte est indisponible. Utilise « Lire la dernière révision » pour réessayer.",
     survival: "Les applications continuent lorsque Happier s’arrête. Après un redémarrage, la politique restart de Compose s’applique.",
@@ -553,6 +559,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Numero pull request",
     loadPrHead: "Leggi ultima revisione",
     deployPrHead: "Distribuisci questa revisione",
+    prHead: "Ultima revisione",
     prNotFound: ({ number }) => `Nessuna pull request #${number} trovata. Controlla il numero.`,
     prUnavailable: "La revisione esatta non è disponibile. Usa «Leggi ultima revisione» per riprovare.",
     survival: "Le app continuano quando Happier si arresta. Dopo il riavvio si applica la politica restart di Compose.",
@@ -643,6 +650,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Número da pull request",
     loadPrHead: "Ler a revisão mais recente",
     deployPrHead: "Implantar esta revisão",
+    prHead: "Última revisão",
     prNotFound: ({ number }) => `Nenhum pull request #${number} encontrado. Confira o número.`,
     prUnavailable: "A revisão exata está indisponível. Use “Ler a revisão mais recente” para tentar novamente.",
     survival: "Os apps continuam quando o Happier para. Após reiniciar, aplica-se a política restart do Compose.",
@@ -732,6 +740,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Número de pull request",
     loadPrHead: "Llegeix l’última revisió",
     deployPrHead: "Desplega aquesta revisió",
+    prHead: "Última revisió",
     prNotFound: ({ number }) => `No s’ha trobat cap pull request #${number}. Comprova el número.`,
     prUnavailable: "La revisió exacta no està disponible. Fes servir «Llegeix l’última revisió» per tornar-ho a provar.",
     survival: "Les aplicacions continuen quan Happier s’atura. Després de reiniciar s’aplica la política restart de Compose.",
@@ -822,6 +831,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "Pull-Request-Nummer",
     loadPrHead: "Neuesten Stand lesen",
     deployPrHead: "Diesen Stand bereitstellen",
+    prHead: "Neuester Stand",
     prNotFound: ({ number }) => `Kein Pull Request #${number} gefunden. Prüfe die Nummer.`,
     prUnavailable: "Der genaue Pull-Request-Stand ist nicht verfügbar. Wähle „Neuesten Stand lesen“, um es erneut zu versuchen.",
     survival: "Apps laufen weiter, wenn Happier stoppt. Nach einem Neustart gilt die restart-Richtlinie von Compose.",
@@ -911,6 +921,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "拉取请求编号",
     loadPrHead: "读取最新提交",
     deployPrHead: "部署此提交",
+    prHead: "最新提交",
     prNotFound: ({ number }) => `未找到拉取请求 #${number}。请检查编号。`,
     prUnavailable: "无法获取确切的拉取请求提交。请点击“读取最新提交”重试。",
     survival: "Happier 停止后应用仍会运行。重启后遵循 Compose 的 restart 策略。",
@@ -1000,6 +1011,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "提取要求編號",
     loadPrHead: "讀取最新提交",
     deployPrHead: "部署此提交",
+    prHead: "最新提交",
     prNotFound: ({ number }) => `找不到提取要求 #${number}。請檢查編號。`,
     prUnavailable: "無法取得確切的提取要求提交。請點選「讀取最新提交」重試。",
     survival: "Happier 停止後應用程式仍會執行。重新啟動後遵循 Compose 的 restart 原則。",
@@ -1089,6 +1101,7 @@ export const deploymentEditorsTranslations = {
     pullRequestNumber: "プルリクエスト番号",
     loadPrHead: "最新のコミットを読み取る",
     deployPrHead: "このコミットをデプロイ",
+    prHead: "最新のコミット",
     prNotFound: ({ number }) => `プルリクエスト #${number} が見つかりません。番号を確認してください。`,
     prUnavailable: "正確なコミットを取得できません。「最新のコミットを読み取る」で再試行してください。",
     survival: "Happier が停止してもアプリは動作します。再起動後は Compose の restart ポリシーに従います。",

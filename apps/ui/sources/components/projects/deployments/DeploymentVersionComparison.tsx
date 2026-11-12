@@ -13,6 +13,7 @@ import { projectSourceRoute } from '@/components/projects/sources/projectSourceN
 import { machineScmLogList } from '@/sync/ops/scm/machineScm';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
+import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 type Props = Readonly<{
   source: DeploymentSourceIntentV1;
@@ -47,14 +48,14 @@ function StoredDefinitionHistory(props: Readonly<{
     action={different ? <SectionActionButton testID="project-deployments.receipt.definition.compare"
       icon="git-diff" title={t('projects.scripts.definition.compare')} onPress={() => setCompare(value => !value)} /> : undefined}>
     <DefinitionSelectors definition={source} />
-    <CodeBlockView code={source.document} language="yaml" showHeaderRow={false} showCopyButton wrap />
+    <CodeBlockView code={storedComposeDocumentText(source.document)} language="yaml" showHeaderRow={false} showCopyButton wrap />
     {source.publicFiles?.map(file => <ItemGroup key={file.path} title={file.path} surface="none">
       <CodeBlockView code={file.content} showHeaderRow={false} showCopyButton wrap />
     </ItemGroup>)}
     {compare && current ? <ItemGroup title={t('projects.deployments.editors.versionCurrent')}
       description={t('projects.deployments.review.versionStored', { revision: current.contentRevision })} surface="none">
       <DefinitionSelectors definition={current} />
-      <DiffViewer mode="text" oldText={source.document} newText={current.document} filePath="compose.yaml" wrapLines />
+      <DiffViewer mode="text" oldText={storedComposeDocumentText(source.document)} newText={storedComposeDocumentText(current.document)} filePath="compose.yaml" wrapLines />
       {filePaths.filter(path => deployedFiles.get(path) !== currentFiles.get(path)).map(path => <ItemGroup key={path} title={path} surface="none">
         <DiffViewer mode="text" oldText={deployedFiles.get(path) ?? ''} newText={currentFiles.get(path) ?? ''} filePath={path} wrapLines />
       </ItemGroup>)}

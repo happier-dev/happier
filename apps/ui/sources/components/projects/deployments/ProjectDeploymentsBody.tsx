@@ -179,12 +179,14 @@ const ProjectDeploymentsPage = React.memo(
     const sourceRead = useProjectSource(props.lifetime, props.sourceId);
     const sourceAvailable = sourceRead.source !== null;
     const canCreate = newWorkEnabled && sourceAvailable && Boolean(props.actions?.prepareCreate);
-    const preparation = !sourceAvailable && sourceRead.issue ? <SurfaceStateCard
-      testID="project-deployments.sourceUnavailable" size="line" kind="unavailable"
+    // A Source this person cannot read is a refusal, not a load failure: it says so and leads to another Source.
+    const sourceUnavailable = (size: React.ComponentProps<typeof SurfaceStateCard>['size'], code: string | null) => <SurfaceStateCard
+      testID="project-deployments.sourceUnavailable" size={size} kind="unavailable"
       title={t('projects.sources.unavailable')} reason={t('projects.open.sourceUnavailableHint')}
-      diagnosticCode={sourceRead.issue}
-      action={{ label: t('common.open'), onPress: () => router.push(projectSourceRoute(null)) }}
-    /> : newWorkEnabled && sourceAvailable && props.lifetime ? <>
+      diagnosticCode={code}
+      action={{ label: t('projects.open.chooseSource'), onPress: () => router.push(projectSourceRoute(null)) }}
+    />;
+    const preparation = !sourceAvailable && sourceRead.issue ? sourceUnavailable('line', sourceRead.issue) : newWorkEnabled && sourceAvailable && props.lifetime ? <>
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
     </> : null;
@@ -361,6 +363,11 @@ const ProjectDeploymentsPage = React.memo(
     }, [items, phone, props.sourceId, refresh, setSelection]);
 
     if (!selection.defaults && !environmentId && !retained && status === 'unavailable') {
+      const failureCode = collection.snapshot.failure?.code ?? null;
+      // Retrying cannot change a refused read; only a transient failure offers Retry.
+      if ((!sourceAvailable && sourceRead.issue) || failureCode === 'deployment_unavailable') {
+        return <ItemList testID="project-deployments.error">{sourceUnavailable(pageStateSize, sourceRead.issue ?? failureCode)}</ItemList>;
+      }
       return (
         <ItemList testID="project-deployments.error">
           <SurfaceStateCard

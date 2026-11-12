@@ -18823,7 +18823,7 @@ settingsSession: {
       },
       databaseProviderTitle: "Fournisseur",
       managedData: {
-        title: "Base de données gérée",
+        title: "Ajouter une base de données gérée",
         empty: "Aucun fournisseur de base gérée installé",
         operation: "Que souhaitez-vous faire ?",
         unknown: "Le résultat du fournisseur est incertain",
@@ -18838,6 +18838,7 @@ settingsSession: {
         result: "Détails du fournisseur",
         reviewCreate: "Vérifier les options de création",
         add: "Base de données gérée",
+        addDescription: "Créer ou lier une base de données chez un hébergeur",
         manage: "Gérer la base",
       },
       restoreStepsTitle: "Étapes",

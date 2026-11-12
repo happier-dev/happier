@@ -51,7 +51,9 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const target = targets.find(entry => entry.key === targetKey) ?? (linkedKey ? null : targets[0]) ?? null;
   const operations = target?.operations.filter(entry => props.linked || entry.role.startsWith('projects.')) ?? [];
   const [selectedRole, setRole] = React.useState<string | null>(null);
-  const operation = operations.find(entry => entry.role === selectedRole) ?? operations[0] ?? null;
+  // Adding a database starts from creating one; reading the provider's projects is the way to link an existing one.
+  const operation = operations.find(entry => entry.role === selectedRole)
+    ?? (props.linked ? undefined : operations.find(entry => entry.role === 'projects.provision')) ?? operations[0] ?? null;
   const [account, setAccount] = React.useState<QualifiedConnectedAccountRef | null>(null);
   const [values, setValues] = React.useState<Record<string, unknown>>({});
   const [results, setResults] = React.useState<Readonly<Record<string, Result>>>({});

@@ -261,17 +261,20 @@ export function DeploymentStepLogs(
       ) : (
         // The canonical execution checklist (Plan 40): each step's state and duration, and the open step's
         // native log in the row's own details slot. A row without a log ref of its own has nothing to open.
-        <PlanChecklistCard
-          testID="project-deployments.receipt.step"
-          items={checklist.items}
-          phase="execute"
-          selectedIds={NO_IDS}
-          executionById={checklist.execution}
-          expandedIds={open ? [open.id] : NO_IDS}
-          onToggleExpanded={(id) => {
-            if (rows.some((row) => row.id === id && row.log)) setChosen(open?.id === id ? null : id);
-          }}
-        />
+        // The group gives the card the page column's inset, as every other checklist consumer has.
+        <ItemGroup header="none" surface="none">
+          <PlanChecklistCard
+            testID="project-deployments.receipt.step"
+            items={checklist.items}
+            phase="execute"
+            selectedIds={NO_IDS}
+            executionById={checklist.execution}
+            expandedIds={open ? [open.id] : NO_IDS}
+            onToggleExpanded={(id) => {
+              if (rows.some((row) => row.id === id && row.log)) setChosen(open?.id === id ? null : id);
+            }}
+          />
+        </ItemGroup>
       )}
     </View>
   );

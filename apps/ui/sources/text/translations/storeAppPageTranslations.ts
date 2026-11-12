@@ -108,7 +108,7 @@ const en: StoreAppPageTranslation = {
     count === 1
       ? 'One secret, generated and saved for you'
       : `${count} secrets, generated and saved for you`,
-  secretsBody: 'Never shown here; open them in Saved Secrets',
+  secretsBody: 'Kept in Saved Secrets, never shown here',
   firstRunTitle: 'Whoever opens it first creates the admin',
   firstRunBody:
     'Open it right after it starts; its page reminds you until you do',

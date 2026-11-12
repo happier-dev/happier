@@ -18863,7 +18863,7 @@ settingsSession: {
       },
       databaseProviderTitle: "プロバイダー",
       managedData: {
-        title: "マネージドデータベース",
+        title: "マネージドデータベースを追加",
         empty: "マネージドデータベースのプロバイダーがインストールされていません",
         operation: "何をしますか？",
         unknown: "プロバイダーでの結果が不明です",
@@ -18878,6 +18878,7 @@ settingsSession: {
         result: "プロバイダーの詳細",
         reviewCreate: "作成オプションを確認",
         add: "マネージドデータベース",
+        addDescription: "ホスティングプロバイダーでデータベースを作成またはリンク",
         manage: "データベースを管理",
       },
       restoreStepsTitle: "手順",

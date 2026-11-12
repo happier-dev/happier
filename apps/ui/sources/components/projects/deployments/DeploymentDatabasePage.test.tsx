@@ -845,8 +845,11 @@ describe('Environment → Data → Add (P10)', () => {
     storage.getState().activateProfileScope(account.accountLifetime.scope);
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const base = createDeploymentEnvironmentDetailV1();
+    // The Environment already sets the app's connection values; the template's own DB_USER is new to it.
+    const existingBindings = choices ? ['DATABASE_URL', 'DIRECT_URL'].map(name => ({ purpose: 'variable' as const, name,
+      phase: 'runtime' as const, source: { kind: 'value' as const, value: 'postgres://old' } })) : base.content.bindings;
     const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {},
-      content: { ...base.content, definition: repository ? { kind: 'repository' as const, ref: 'main', compose: { path: 'deploy/compose.yaml', profiles: [], services: ['app'] } } : { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+      content: { ...base.content, bindings: existingBindings, definition: repository ? { kind: 'repository' as const, ref: 'main', compose: { path: 'deploy/compose.yaml', profiles: [], services: ['app'] } } : { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
     const link = detail.runtimeTargetLink;
     if (link.targetKind !== 'ownServer') throw new Error('Expected own server');
@@ -979,6 +982,8 @@ describe('Environment → Data → Add (P10)', () => {
         const connect = screen.findAll(node => node.props.testID === `${prefix}.connectTo` && typeof node.props.onSelect === 'function')[0];
         expect(connect).toBeTruthy();
         await act(async () => { connect!.props.onSelect('app'); });
+        // Only a value the Environment already has can be replaced.
+        expect(screen.findAll(node => node.props.testID === `${prefix}.replace.DB_USER`)).toHaveLength(0);
         for (const key of ['DATABASE_URL', 'DIRECT_URL']) {
           const replace = screen.findAll(node => node.props.testID === `${prefix}.replace.${key}` && typeof node.props.onValueChange === 'function')[0];
           expect(replace).toBeTruthy();

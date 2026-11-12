@@ -1309,8 +1309,10 @@ export function DeployOutcomeBanner(
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
           onPress: () => openRecovery(recovery.nextAction.destination,
             failedDeploymentId ? { deploymentId: failedDeploymentId } : undefined) } } : {})}
-      // The typed code is for support; the sentence says what it left.
-      details={failure ? failure.technicalDetails.map(line => `${line.label}: ${line.value}`) : [outcome.code]}
+      // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
+      // stored recovery line would only repeat or contradict it.
+      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && recovery && !canonicalReason))
+        .map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />
   );
 }

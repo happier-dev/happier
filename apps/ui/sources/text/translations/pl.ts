@@ -18774,7 +18774,7 @@ settingsSession: {
       },
       databaseProviderTitle: "Dostawca",
       managedData: {
-        title: "Zarządzana baza danych",
+        title: "Dodaj zarządzaną bazę danych",
         empty: "Nie zainstalowano dostawcy zarządzanej bazy",
         operation: "Co chcesz zrobić?",
         unknown: "Wynik dostawcy jest niepewny",
@@ -18789,6 +18789,7 @@ settingsSession: {
         result: "Szczegóły dostawcy",
         reviewCreate: "Sprawdź opcje tworzenia",
         add: "Zarządzana baza danych",
+        addDescription: "Utwórz lub połącz bazę danych u dostawcy hostingu",
         manage: "Zarządzaj bazą",
       },
       restoreStepsTitle: "Kroki",

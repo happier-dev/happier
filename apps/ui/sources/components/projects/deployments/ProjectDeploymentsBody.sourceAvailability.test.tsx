@@ -85,3 +85,27 @@ describe('Source availability at Environment creation', () => {
     } finally { standardCleanup(); controller.retire(); account.dispose(); storage.setState(previous); }
   });
 });
+
+describe('an unreadable Source', () => {
+  it('says the Source is unavailable and leads to another one, never offering Retry for a refusal', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://source-refusal.test', accountId: 'dana', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const controller = createDeploymentReadControllerV1({ scope: { ...account.accountLifetime.scope, projectSourceId: 'source-app' },
+      transport: createDeploymentReadTransport(account.accountLifetime) });
+    try {
+      // Another person's Source: the Home refuses both reads.
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { status: 404, body: { ok: false, error: 'source_unavailable' } });
+      homes.answer(serverId, 'GET /v1/deployments/environments', { status: 404, body: { ok: false, error: 'deployment_unavailable' } });
+      const screen = await renderScreen(<ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
+        controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="dana" serverId={serverId}
+        actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.error'), node => node !== null);
+      const { t } = await import('@/text');
+      expect(screen.findByTestId('project-deployments.sourceUnavailable')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.loadErrorTitle'));
+      expect(screen.getTextContent()).not.toContain(t('common.retry'));
+      await screen.unmount();
+    } finally { standardCleanup(); controller.retire(); account.dispose(); storage.setState(previous); }
+  });
+});

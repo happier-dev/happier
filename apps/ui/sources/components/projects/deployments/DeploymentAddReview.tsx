@@ -176,7 +176,8 @@ export function DeploymentAddReview(props: Readonly<{
               </View>) : null}
             {read.kind === 'ready' && !props.update ? <>
               <DeploymentTemplateChoices template={read.app} lifetime={props.lifetime} value={choices} onChange={setChoices}
-                services={preflight.connectToServices ?? []} includeDomains testID="project-deployments.add.choices" />
+                services={preflight.connectToServices ?? []} includeDomains testID="project-deployments.add.choices"
+                existingVariableNames={props.detail.content.bindings.flatMap(binding => binding.purpose === 'variable' ? [binding.name] : [])} />
               {choicesChanged || preflight.status === 'failed' ? <RoundButton testID="project-deployments.add.reviewChoices"
                 size="small" display="secondary" title={t('capabilities.store.appPage.review')} disabled={preflight.status === 'checking' || press.running}
                 onPress={() => setReviewedChoices({ ...choices })} /> : null}

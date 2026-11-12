@@ -478,6 +478,31 @@ describe('agent actions on a native subject page', () => {
   });
 });
 
+describe('agent actions before the catalog answers', () => {
+  it('reads as pending until the catalog settles, then as settled without records when it has none to offer', async () => {
+    let answer: (value: unknown) => void = () => {};
+    // The contributed plugin invocation is the realm boundary; the front door and the Account owner stay real.
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+      invokeContributedAction: () => new Promise((resolve) => { answer = resolve as (value: unknown) => void; }),
+    }));
+    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true, execute: createFrontDoorActionExecute(executor) });
+    const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'receipt' } as const;
+    const bound = {
+      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(subject, options),
+      resume: (options: { signal: AbortSignal }) => owner.resume(subject, options),
+      run: (picked: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(subject, picked, options),
+    };
+    const hook = await renderHook(() => useInvestigationAgentActions(bound, { includeDefault: true }));
+    try {
+      await act(async () => {});
+      // A page reserves the control's place while this is pending, rather than drawing a stand-in it then replaces.
+      expect(hook.getCurrent()).toBeUndefined();
+      await act(async () => { answer({ ok: false, errorCode: 'triage_catalog_unavailable', error: 'triage_catalog_unavailable' }); });
+      expect(hook.getCurrent()).toBeNull();
+    } finally { await hook.unmount(); }
+  });
+});
+
 describe('a pressed record its owner cannot start', () => {
   // QA-ACTION-PARITY-1109 r117 recorded shape: the Environment's "Set it up" answered
   // { kind: 'unavailable', reason: 'configuredActionUnavailable' }. The outcome keeps the record pressed so the

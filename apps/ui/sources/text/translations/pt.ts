@@ -19055,7 +19055,7 @@ settingsSession: {
       },
       databaseProviderTitle: "Fornecedor",
       managedData: {
-        title: "Banco de dados gerenciado",
+        title: "Adicionar uma base de dados gerida",
         empty: "Nenhum provedor de banco gerenciado instalado",
         operation: "O que você deseja fazer?",
         unknown: "O resultado do provedor é incerto",
@@ -19070,6 +19070,7 @@ settingsSession: {
         result: "Detalhes do provedor",
         reviewCreate: "Revisar opções de criação",
         add: "Banco de dados gerenciado",
+        addDescription: "Crie ou ligue uma base de dados num fornecedor de alojamento",
         manage: "Gerenciar banco",
       },
       restoreStepsTitle: "Passos",

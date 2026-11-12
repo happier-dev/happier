@@ -240,24 +240,27 @@ export function readInvestigationAgentActions(
 }
 
 /**
- * The page's records, read once per subject so the buttons carry the person's names and launch modes. `null` until
- * the catalog answers (or when it cannot), and the last answer stays while another subject loads.
+ * The page's records, read once per subject so the buttons carry the person's names and launch modes. `undefined`
+ * until the catalog first answers, so a page can hold the control's place instead of drawing a stand-in it then
+ * replaces; `null` once it answered with none (or could not answer). The last answer stays while another subject loads.
  */
 export function useInvestigationAgentActions(
   investigation: BoundHealthNoticeInvestigation | null,
   options: Readonly<{ includeDefault: boolean }>,
-): readonly InvestigationAgentAction[] | null {
-  const [actions, setActions] = React.useState<readonly InvestigationAgentAction[] | null>(null);
+): readonly InvestigationAgentAction[] | null | undefined {
+  const [actions, setActions] = React.useState<readonly InvestigationAgentAction[] | null | undefined>(undefined);
   const includeDefault = options.includeDefault;
   React.useEffect(() => {
     if (!investigation) {
-      setActions(null);
+      setActions(undefined);
       return;
     }
     const own = new AbortController();
     void investigation.readChoices({ signal: own.signal }).then((choices) => {
       if (!own.signal.aborted) setActions(readInvestigationAgentActions(choices, includeDefault));
-    }, () => {});
+    }, () => {
+      if (!own.signal.aborted) setActions((current) => current ?? null);
+    });
     return () => own.abort();
   }, [investigation, includeDefault]);
   return actions;

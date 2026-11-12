@@ -2,10 +2,15 @@ import * as React from 'react';
 import { ScmPullRequestReferenceSchema, type ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 import { type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { GitPullRequestCard } from '@/components/sessions/panes/git/pullRequest/GitPullRequestCard';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { GitPullRequestProviderMark } from '@/components/sessions/panes/git/pullRequest/GitPullRequestProviderMark';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Typography } from '@/constants/Typography';
+import { useOpenResource } from '@/utils/url/openResource';
+import { deploymentRevisionLabel } from './deploymentPresentation';
 import { machineScmPullRequestGet } from '@/sync/ops/scm/machineScm';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
@@ -27,6 +32,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
   onDeploy(source: RepositorySource): Promise<void>;
 }>) {
   const router = useRouter();
+  const { openResource } = useOpenResource({ serverId: props.serverId });
   const [reference, setReference] = React.useState('');
   const [candidate, setCandidate] = React.useState<Readonly<{ pullRequest: ScmPullRequestSummary; source: RepositorySource | null }> | null>(null);
   const [pending, setPending] = React.useState(false);
@@ -75,21 +81,32 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
     }
     finally { if (!abort.signal.aborted) setPending(false); }
   };
+  // Reading the head is an operation beside its field; the pull request it finds is a row of this sheet, not a card in it.
   return <ItemGroup testID="project-deployments.pr" title={t('projects.deployments.editors.pullRequest')}>
     {workspace ? <>
-      <FieldItem label={t('projects.deployments.editors.pullRequestNumber')}>
-        <FieldTextInput testID="project-deployments.pr.number" accessibilityLabel={t('projects.deployments.editors.pullRequestNumber')}
-          value={reference} keyboardType="number-pad" editable={!pending}
-          onChangeText={value => { setReference(value); setCandidate(null); setNotFoundNumber(null); setReadFailure(null); }} />
-      </FieldItem>
-      <Item testID="project-deployments.pr.load" title={t('projects.deployments.editors.loadPrHead')}
-        subtitle={pending ? t('common.loading') : undefined} disabled={pending || !parsedReference.success} onPress={() => { void load(); }} />
-      {pullRequest ? <GitPullRequestCard model={{ number: pullRequest.number ?? null, title: pullRequest.title, url: pullRequest.url,
-        base: pullRequest.baseBranch, state: pullRequest.state, checks: pullRequest.checks?.state ?? null,
-        providerKind: pullRequest.provider.kind, providerName: pullRequest.provider.displayName }} serverId={props.serverId} /> : null}
-      {pullRequest?.headSha ? <Item testID="project-deployments.pr.deploy" title={t('projects.deployments.editors.deployPrHead')}
-        subtitle={pullRequest.headSha} disabled={props.disabled || pending || exactSource === null}
-        onPress={() => { if (exactSource) void props.onDeploy(exactSource); }} /> : null}
+      <Item title={t('projects.deployments.editors.pullRequestNumber')} accessoryLayout="stacked" showChevron={false}
+        rightElement={<View style={styles.read}>
+          <View style={styles.number}>
+            <FieldTextInput testID="project-deployments.pr.number" accessibilityLabel={t('projects.deployments.editors.pullRequestNumber')}
+              value={reference} keyboardType="number-pad" editable={!pending}
+              onChangeText={value => { setReference(value); setCandidate(null); setNotFoundNumber(null); setReadFailure(null); }} />
+          </View>
+          <RoundButton testID="project-deployments.pr.load" size="small" display="secondary" title={t('projects.deployments.editors.loadPrHead')}
+            loading={pending} disabled={pending || !parsedReference.success} onPress={() => { void load(); }} />
+        </View>} />
+      {pullRequest ? <Item testID="project-deployments.pr.summary" title={pullRequest.title}
+        // The provider mark rides the facts line, so the section keeps one title edge before and after the read.
+        subtitleLeading={<GitPullRequestProviderMark kind={pullRequest.provider.kind} size={14} />}
+        subtitle={[pullRequest.number ? t('sessionGitPullRequest.card.number', { number: pullRequest.number }) : null,
+          t(`sessionGitPullRequest.card.state.${pullRequest.state}` as const),
+          pullRequest.baseBranch ? t('sessionGitPullRequest.card.intoBase', { base: pullRequest.baseBranch }) : null].filter(Boolean).join(' · ')}
+        showChevron={false} rightElement={<RoundButton testID="project-deployments.pr.open" size="small" display="secondary"
+          title={t('common.open')} onPress={() => { void openResource({ kind: 'pullRequest', url: pullRequest.url }); }} />} /> : null}
+      {pullRequest?.headSha ? <Item testID="project-deployments.pr.head" title={t('projects.deployments.editors.prHead')}
+        subtitle={deploymentRevisionLabel({ kind: 'repository', sha: pullRequest.headSha })} subtitleStyle={styles.sha} showChevron={false}
+        rightElement={<RoundButton testID="project-deployments.pr.deploy" size="small" display="secondary"
+          title={t('projects.deployments.editors.deployPrHead')} disabled={props.disabled || pending || exactSource === null}
+          onPress={() => { if (exactSource) void props.onDeploy(exactSource); }} />} /> : null}
       {readFailure ? <SurfaceStateCard testID="project-deployments.pr.unavailable" size="line" kind="error" title={readFailure} /> : null}
       {notFoundNumber !== null ? <SurfaceStateCard testID="project-deployments.pr.empty" size="line" kind="empty"
         title={t('projects.deployments.editors.prNotFound', { number: notFoundNumber })} /> : null}
@@ -99,3 +116,9 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
       subtitle={t('projects.deployments.editors.comparisonNeedsCheckout')} onPress={() => router.push(projectSourceRoute(props.projectSourceId) as never)} />}
   </ItemGroup>;
 }
+
+const styles = StyleSheet.create((theme) => ({
+  read: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  number: { flex: 1, minWidth: 0 },
+  sha: Typography.mono(),
+}));

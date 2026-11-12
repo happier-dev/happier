@@ -697,6 +697,8 @@ export function showDeploymentTemplateUpdateSheet(input: DeploymentAddSheetInput
 /** Choose (Store's own catalog list, its row press routed here) → review with preflight → Add. */
 type AddSheetProps = DeploymentAddSheetInput & CustomModalInjectedProps & Readonly<{
   update?: Readonly<{ sourceId: string; itemId: string }>;
+  /** The managed-database way in: one more choice on the chooser step, gone once an app is chosen. */
+  managedEntry?: React.ReactNode;
 }>;
 function showManagedDataSheet(input: DeploymentManagedDataInput): void {
   showDeploymentSheet({ component: DeploymentManagedDataSheet, props: input,
@@ -706,17 +708,16 @@ function showManagedDataSheet(input: DeploymentManagedDataInput): void {
 function DeploymentAddSheet(props: AddSheetProps) {
   const actions = React.useMemo(() => createDeploymentActions(props.lifetime,
     props.detail.environment.projectSourceId), [props.lifetime, props.detail.environment.projectSourceId]);
-  return <>
-    {!props.update ? <ListPresentationProvider value="page" pageInsets="contained">
-      <ItemGroup header="none"><Item testID="project-deployments.add.managed"
-        title={t('projects.deployments.managedData.add')} onPress={() => {
-          props.onClose();
-          showManagedDataSheet({ detail: props.detail, lifetime: props.lifetime, actions, onApproval: props.review.request });
-        }} /></ItemGroup>
-    </ListPresentationProvider> : null}
-    {props.detail.content.definition.kind === 'repository'
-      ? <DeploymentRepositoryAddSheet {...props} /> : <DeploymentAddSheetContent {...props} />}
-  </>;
+  const managedEntry = props.update ? undefined : <ItemGroup header="none" surface="none">
+    <Item testID="project-deployments.add.managed" icon={<Icon name="cloud" size={20} />}
+      title={t('projects.deployments.managedData.add')} subtitle={t('projects.deployments.managedData.addDescription')}
+      onPress={() => {
+        props.onClose();
+        showManagedDataSheet({ detail: props.detail, lifetime: props.lifetime, actions, onApproval: props.review.request });
+      }} />
+  </ItemGroup>;
+  return props.detail.content.definition.kind === 'repository'
+    ? <DeploymentRepositoryAddSheet {...props} managedEntry={managedEntry} /> : <DeploymentAddSheetContent {...props} managedEntry={managedEntry} />;
 }
 
 function DeploymentRepositoryAddSheet(props: AddSheetProps) {
@@ -729,6 +730,7 @@ function DeploymentRepositoryAddSheet(props: AddSheetProps) {
   if (!selection.source || !selection.repository || !selection.workspace || !workspaceKey || !selection.baseCommit
     || !selection.baseBranch || !definition.compose?.path) return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.add.repository" style={deploymentSheetStyles.body}>
+      {props.managedEntry}
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.overviewStatus.catalogRepositoryBody')}</Text>
       <ProjectSourceWorkspaceChoice model={selection} value={workspaceKey} onChange={setWorkspaceKey} testID="project-deployments.add.workspace" />
       {!definition.compose?.path ? <SurfaceStateCard size="line" kind="unavailable"
@@ -769,6 +771,7 @@ function DeploymentAddSheetContent(props: AddSheetProps & Readonly<{
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.add" style={deploymentSheetStyles.body}>
+          {props.managedEntry}
           <SurfaceStateCard testID="project-deployments.add.blocked" size="line" kind="unavailable" title={blocked ?? ''}
             action={{ label: t('projects.deployments.addOpenStore'), onPress: openStore, testID: 'project-deployments.add.openStore' }} />
         </View>
@@ -778,6 +781,7 @@ function DeploymentAddSheetContent(props: AddSheetProps & Readonly<{
   if (!chosen) {
     return (
       <View testID="project-deployments.add.choose" style={deploymentSheetStyles.body}>
+        {props.managedEntry}
         <StoreRegistryItemPicker presented initialFilters={props.catalogFilters} onSelect={select}
           machine={machineScope}
           testID="project-deployments.add.picker" />

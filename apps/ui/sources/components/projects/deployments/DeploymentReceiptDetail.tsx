@@ -282,8 +282,14 @@ export const DeploymentReceiptDetail = React.memo(
       state: deployment.state,
     });
     // The shared agent-action control (DEPLOY-COMPOSE R4) for each of the person's records: its face launches in the
-    // record's own mode, the chevron offers the other. Until the catalog answers, the default Investigate stands in.
-    const investigateControl = (
+    // record's own mode, the chevron offers the other. When the catalog cannot answer, the default Investigate stands in.
+    // Until it first answers, the banner's row keeps its place unseen, so no control arrives and pushes the others aside.
+    const agentActionsPending = investigation.actions === undefined;
+    const investigateControl = agentActionsPending ? (
+      <View style={styles.reservedActions} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <InvestigationAgentActionButtons actions={fallbackInvestigate} pending compact={phone} onLaunch={() => {}} />
+      </View>
+    ) : (
       <InvestigationAgentActionButtons
         actions={investigation.actions ?? fallbackInvestigate}
         pending={investigation.pending}
@@ -448,7 +454,9 @@ export const DeploymentReceiptDetail = React.memo(
                 // What is serving now (the receipt's own facts), then the canonical remedy for its recorded cause.
                 description={[failureConsequence(facts, firstMachine), recovery?.remedy ?? null]
                   .filter(Boolean).join(' ') || undefined}
-                action={rollbackTarget ? {
+                // The row's place is settled from first paint: the buttons beside the agent control appear with it.
+                actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || (recovery && props.onOpenRecoveryDestination) ? 'below' : undefined}
+                action={agentActionsPending ? undefined : rollbackTarget ? {
                   label: backupTarget ? t(migrationPolicy === 'ask' ? 'projects.deployments.chooseRecovery' : 'projects.deployments.restoreBackupAndCode')
                     : migrationRan ? t('projects.deployments.rollbackCodeOnly')
                       : t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(rollbackTarget.revision) }),
@@ -473,7 +481,7 @@ export const DeploymentReceiptDetail = React.memo(
                 // Recovery leads when there is one; finding out why is the way forward beside it.
                 control={investigateControl}
                 // The canonical next action opens where the cause is fixed; it never retries anything.
-                moreActions={recovery && props.onOpenRecoveryDestination ? [{
+                moreActions={!agentActionsPending && recovery && props.onOpenRecoveryDestination ? [{
                   label: recovery.nextAction.label,
                   testID: 'project-deployments.receipt.outcome.failed.recovery',
                   // The build Machine's setup, or this receipt itself for its failed step's logs.
@@ -811,6 +819,7 @@ function restorationLabel(
 const NO_IMAGES: readonly never[] = Object.freeze([]);
 
 const styles = StyleSheet.create((theme) => ({
+  reservedActions: { opacity: 0 },
   mono: Typography.mono(),
   page: { flex: 1, minHeight: 0 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

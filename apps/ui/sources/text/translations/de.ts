@@ -19057,7 +19057,7 @@ settingsSession: {
       },
       databaseProviderTitle: "Anbieter",
       managedData: {
-        title: "Verwaltete Datenbank",
+        title: "Verwaltete Datenbank hinzufügen",
         empty: "Kein Datenbankanbieter ist installiert",
         operation: "Was möchten Sie tun?",
         unknown: "Das Anbieterergebnis ist unklar",
@@ -19072,6 +19072,7 @@ settingsSession: {
         result: "Anbieterdetails",
         reviewCreate: "Erstellungsoptionen prüfen",
         add: "Verwaltete Datenbank",
+        addDescription: "Datenbank bei einem Hosting-Anbieter erstellen oder verknüpfen",
         manage: "Datenbank verwalten",
       },
       restoreStepsTitle: "Schritte",

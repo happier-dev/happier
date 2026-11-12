@@ -18568,7 +18568,7 @@ settingsSession: {
       },
       databaseProviderTitle: "提供方",
       managedData: {
-        title: "托管数据库",
+        title: "添加托管数据库",
         empty: "尚未安装托管数据库提供商",
         operation: "你想做什么？",
         unknown: "提供商的操作结果不确定",
@@ -18583,6 +18583,7 @@ settingsSession: {
         result: "提供商详情",
         reviewCreate: "查看创建选项",
         add: "托管数据库",
+        addDescription: "在托管服务商上创建或关联数据库",
         manage: "管理数据库",
       },
       restoreStepsTitle: "步骤",

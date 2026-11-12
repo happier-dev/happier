@@ -18949,7 +18949,7 @@ settingsSession: {
       },
       databaseProviderTitle: "Proveedor",
       managedData: {
-        title: "Base de datos gestionada",
+        title: "Añadir una base de datos gestionada",
         empty: "No hay un proveedor de bases gestionadas instalado",
         operation: "¿Qué quieres hacer?",
         unknown: "El resultado del proveedor es incierto",
@@ -18964,6 +18964,7 @@ settingsSession: {
         result: "Detalles del proveedor",
         reviewCreate: "Revisar opciones de creación",
         add: "Base de datos gestionada",
+        addDescription: "Crea o vincula una base de datos en un proveedor de alojamiento",
         manage: "Gestionar base de datos",
       },
       restoreStepsTitle: "Pasos",

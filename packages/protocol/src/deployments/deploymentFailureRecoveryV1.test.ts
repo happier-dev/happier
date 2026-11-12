@@ -279,6 +279,29 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
         }
     });
 
+    it('names the missing Compose file of the selected revision instead of the generic Source setup', () => {
+        // The daemon's file boundary refuses with these typed details (nativeComposeSource.ts).
+        const details = { kind: 'deploymentSourceFileUnavailable', path: 'deploy/compose.yaml', reason: 'absent' };
+        const generic = readDeploymentRefusalRecoveryV1('deployment_source_unavailable');
+        const recovery = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', details);
+        expect(recovery?.remedy).toContain('deploy/compose.yaml');
+        expect(recovery?.remedy).not.toBe(generic?.remedy);
+        expect(recovery?.nextAction.destination).toBe('source');
+        expect(recovery?.nextAction.label).not.toBe(generic?.nextAction.label);
+        const unreadable = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', { ...details, reason: 'EACCES' });
+        expect(unreadable?.remedy).toContain('deploy/compose.yaml');
+        expect(unreadable?.remedy).not.toBe(recovery?.remedy);
+    });
+
+    it('never promises a failed step the receipt may not record', () => {
+        const recovery = readDeploymentFailureRecoveryV1('native_failed');
+        expect(recovery.nextAction.destination).toBe('logs');
+        expect(`${recovery.remedy} ${recovery.nextAction.label}`).not.toMatch(/failed step/i);
+        // Receipts saved this owner's earlier wording; it reads as the current remedy, not the stale promise.
+        const saved = { code: 'native_failed', remedy: 'A machine operation failed. Open the deployment logs to find the failed step before trying again.' };
+        expect(readDeploymentFailureRecoveryV1('native_failed', saved).remedy).toBe(recovery.remedy);
+    });
+
     it('has nothing to say for a code it does not know, so the caller keeps its own sentence', () => {
         expect(readDeploymentRefusalRecoveryV1('some_unknown_refusal')).toBeNull();
     });

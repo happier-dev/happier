@@ -22413,7 +22413,7 @@ const enProjects = {
       },
       databaseProviderTitle: "Provider",
       managedData: {
-        title: "Managed database",
+        title: "Add a managed database",
         empty: "No managed database provider is installed",
         operation: "What would you like to do?",
         unknown: "The provider outcome is uncertain",
@@ -22428,6 +22428,7 @@ const enProjects = {
         result: "Provider details",
         reviewCreate: "Review creation options",
         add: "Managed database",
+        addDescription: "Create or link a database on a hosting provider",
         manage: "Manage database",
       },
       restoreStepsTitle: "Steps",

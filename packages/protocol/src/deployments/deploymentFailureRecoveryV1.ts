@@ -128,7 +128,7 @@ const recoveries = {
     plugin_exec_system_tool_unavailable: recovery('A required deployment tool is missing on the machine. Open its setup to install or repair the tool.', 'machines', 'Repair deployment tools'),
     plugin_exec_executable_denied: recovery('The machine refused to run a required deployment tool. Review its execution permissions with the machine owner.', 'machines', 'Review tool access'),
     native_service_control_unconfirmed: recovery('The machine did not confirm the service change. Check the running services before issuing another change.', 'machines', 'Check running services'),
-    native_failed: recovery('A machine operation failed. Open the deployment logs to find the failed step before trying again.', 'logs', 'Inspect failed step'),
+    native_failed: recovery('A machine operation failed. Read the deployment logs for the reported error before trying again.', 'logs', 'Read deployment logs'),
     service_unavailable: recovery('A required service is unavailable on the machine. Check its status and setup before continuing.', 'machines', 'Check required service'),
     service_operation_unavailable: recovery('The machine could not find the service operation. Check its service status before starting another operation.', 'machines', 'Find service operation'),
     operation_unavailable: recovery('The deployment operation is unavailable. Open deployment history to find its recorded result.', 'history', 'Find operation result'),
@@ -196,9 +196,20 @@ const missingFacts = {
 } as const;
 
 const legacyGenericRemedy = 'Inspect the reported deployment phase and current target state. Restore the missing prerequisite or choose a supported target action, then retry the original request after confirming whether the previous change took effect.';
+// This owner's earlier wordings, saved into receipts; they read as the current remedy for their code.
+const supersededRemedies: ReadonlySet<string> = new Set([legacyGenericRemedy,
+    'A machine operation failed. Open the deployment logs to find the failed step before trying again.']);
 const fallback = recovery('Happier could not complete this change. Check deployment history and the running app before trying again.', 'history', 'Review deployment');
 const transactionRollbackRecovery = recovery('The Home could not record this change and rolled it back. Review the deployment and try again.', 'review', 'Review deployment');
 const nativeConflictRecovery = recovery('Happier could not identify one running service generation for this change. Check the services on the serving machine before trying again.', 'machines', 'Check running services');
+// The daemon's file boundary names the Compose file the selected revision lacks; the generic Source setup would send
+// the person to fix a Repository that is fine.
+function sourceFileRecovery(details: Record<string, unknown>) {
+    if (details.kind !== 'deploymentSourceFileUnavailable' || typeof details.path !== 'string') return null;
+    return details.reason === 'absent'
+        ? recovery(`This revision has no ${details.path}. Add it to the branch, or choose a revision that contains it.`, 'source', 'Choose a revision')
+        : recovery(`Happier could not read ${details.path} in this revision. Check the file in the repository, or choose another revision.`, 'source', 'Choose a revision');
+}
 
 function recoveryDetails(details: Record<string, unknown>): Record<string, unknown> {
     // Store keeps completed steps alongside the Domain owner's failure. Its
@@ -223,6 +234,8 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
     if (code === 'deployment_conflict' && (details.step === 'native_execution'
         || failure?.step === 'native_execution'
         || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
+    const sourceFile = code === 'deployment_source_unavailable' ? sourceFileRecovery(failure ?? details) : null;
+    if (sourceFile) return sourceFile;
     const fact = failure?.requiredFact ?? details.requiredFact;
     if (code === 'required_fact_unavailable' && typeof fact === 'string' && Object.hasOwn(missingFacts, fact)) {
         return missingFacts[fact as keyof typeof missingFacts];
@@ -243,7 +256,7 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
     const failure = isRecord(facts.failure) ? facts.failure : undefined;
     const sourceAdmission = isRecord(facts.sourceAdmission) ? facts.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;
-    const authoredRemedy = typeof facts.remedy === 'string' && facts.remedy !== legacyGenericRemedy ? facts.remedy
+    const authoredRemedy = typeof facts.remedy === 'string' && !supersededRemedies.has(facts.remedy) ? facts.remedy
         : typeof failure?.remedy === 'string' ? failure.remedy
             : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy : undefined;
     return projectActionFailureRecoveryV1({ ...details,
@@ -270,7 +283,7 @@ export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unk
     return { requiredFact: projected.requiredFact,
         remedy: authored === 'retry_original_request' ? 'The requester could not be confirmed. Reconnect the original session and submit the request again.'
             : authored === 'run_from_authorized_host' ? 'This source is on a machine you cannot use for this request. Choose an authorized source machine.'
-                : authored === legacyGenericRemedy || authored === fallback.remedy ? selected.remedy : authored,
+                : supersededRemedies.has(authored) || authored === fallback.remedy ? selected.remedy : authored,
         nextAction: selected.nextAction };
 }
 

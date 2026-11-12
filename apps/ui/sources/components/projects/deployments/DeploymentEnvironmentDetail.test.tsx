@@ -1635,11 +1635,34 @@ describe('Project deployments page', () => {
     second.controller.retire();
   });
 
+  it('names the Compose file a refused revision lacks once, without the generic Source setup in its Details', async () => {
+    const detail = environmentDetailForHome();
+    const { controller } = controllerFor({ detail });
+    // The daemon's file boundary refuses with these typed details (nativeComposeSource.ts).
+    const deploy = vi.fn(async () => { throw new HappyError('deployment_source_unavailable', false, { code: 'deployment_source_unavailable',
+      details: { kind: 'deploymentSourceFileUnavailable', path: 'compose.yaml', reason: 'absent' } }); });
+    const { readDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    const generic = readDeploymentFailureRecoveryV1('deployment_source_unavailable').remedy;
+    try {
+      const screen = await renderScreen(
+        <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} />,
+      );
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      const banner = 'project-deployments.outcome.refused.other';
+      await vi.waitFor(() => expect(screen.findByTestId(banner)).not.toBeNull());
+      if (screen.findByTestId(`${banner}.details`)) await screen.pressByTestIdAsync(`${banner}.details`);
+      const text = screen.getTextContent();
+      expect(text).toContain('compose.yaml');
+      expect(text).not.toContain(generic);
+    } finally { controller.retire(); }
+  });
+
   it.each([
     ['nothing deployed yet', false, null],
     ['only an older receipt', true, null],
     ['the refusal naming its failed receipt', true, 'failed-release'],
-  ] as const)('opens "Inspect failed step" on the failed step\'s own receipt, never a dead control (%s)', async (_name, older, failedId) => {
+  ] as const)('opens "Read deployment logs" on the failed step\'s own receipt, never a dead control (%s)', async (_name, older, failedId) => {
     const base = environmentDetailForHome();
     // A platform target with nothing serving: logs exist only on a receipt the refusal names.
     const platform = environmentDetailForHome({
@@ -1678,7 +1701,7 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
-  it('keeps a failed receipt\'s "Inspect failed step" on that receipt, where its failed step\'s logs are', async () => {
+  it('keeps a failed receipt\'s "Read deployment logs" on that receipt, where its failed step\'s logs are', async () => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code: 'native_failed', phase: 'build' as const };
     const failed = createDeploymentReceiptDetailV1({
