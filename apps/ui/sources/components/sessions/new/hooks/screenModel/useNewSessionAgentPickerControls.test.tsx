@@ -19,6 +19,9 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 import { SessionModelSelectionV1Schema} from '@happier-dev/protocol/providers/selection/v1';
 import { type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
+import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 
 function favoriteModel(backendTargetKey: string, modelId: string, extra: Record<string, unknown> = {}) {
     return FavoriteModelSelectionV1Schema.parse({ backendTargetKey, modelId, ...extra });
@@ -28,13 +31,12 @@ const modalMockState = vi.hoisted(() => ({
     alert: vi.fn(),
 }));
 
-/**
- * `@/text` deliberately keeps the canonical testkit translation mock. This file
- * imports the hook eagerly, so `@/text` resolves before the installer body runs
- * and any per-file `text` override here would be silently inert; the shared
- * default is what production actually reads. Its convention serializes a
- * parameterized key as `key(param=value)` — see sources/dev/testkit/runtime/textRuntime.ts.
- */
+// Hoist the shared translation boundary before fixtures can import the runtime text module.
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+
 installNewSessionScreenModelCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -126,6 +128,50 @@ function createPluginBackendEntry(
 }
 
 describe('useNewSessionAgentPickerControls', () => {
+    it.each(['use', 'manage'] as const)('offers composer installs only with Manage access, starting at %s', async (initialRole) => {
+        const previous = storage.getState();
+        const entry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const facts = MachineAgentInventoryItemSchema.parse({
+            agentId: 'claude', title: 'Claude', installed: false, version: null, latestVersion: null,
+            update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'login_terminal' },
+            platform: { supported: true }, install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+        });
+        const agent = projectMachineAgent({ agentId: 'claude', title: 'Claude', facts, checking: false,
+            stale: false, connectedServices: [], job: null, installedCheckedAt: 1 });
+        const publish = (role: 'use' | 'manage' | null) => {
+            const machine = role ? createMachineFixture({ id: 'shared-machine', isShared: true,
+                access: { role, resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'owner', displayName: 'Owner' } } }) : null;
+            storage.setState({
+                machineListByServerId: { 'server-1': machine ? [machine] : [] },
+                machineRecordsByServerId: { 'server-1': machine ? { [machine.id]: machine } : {} },
+            });
+        };
+        publish(initialRole);
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false, projectionCurrent: true, selectedProfileId: null, profileMap: new Map(),
+            resolvedBackendEntries: [entry, createBuiltInBackendEntry('codex', 'Codex', null)], getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => false, selectedBackendEntry: entry,
+            selectedBackendTargetKey: entry.backendTargetKey, setBackendTarget: vi.fn(),
+            modelMode: 'default', setModelMode: vi.fn(), acpSessionModeId: null, setAcpSessionModeId: vi.fn(),
+            sessionConfigOptionOverrides: null, setSessionConfigOptionOverrides: vi.fn(),
+            selectedMachineId: 'shared-machine', capabilityServerId: 'server-1', selectedPath: '/repo',
+            getBackendEntryMachineAgent: () => agent, machineAgentsStatus: 'ready',
+        }));
+        try {
+            const option = () => hook.getCurrent().agentPickerOptions?.find(value => value.id === entry.backendTargetKey);
+            expect(option()).toBeDefined();
+            expect(Boolean(option()?.statusAction)).toBe(initialRole === 'manage');
+            for (const role of ['manage', 'use', null] as const) {
+                await act(async () => publish(role));
+                expect(Boolean(option()?.statusAction)).toBe(role === 'manage');
+            }
+        } finally {
+            await hook.unmount();
+            storage.setState({ machineListByServerId: previous.machineListByServerId,
+                machineRecordsByServerId: previous.machineRecordsByServerId });
+        }
+    });
+
     afterEach(() => {
         vi.clearAllMocks();
     });
@@ -217,7 +263,7 @@ describe('useNewSessionAgentPickerControls', () => {
             subtitle: option.subtitle ?? null,
         }))).toEqual([
             { id: claudeEntry.backendTargetKey, disabled: false, muted: false, deferRenderDetailContent: true, subtitle: null },
-            { id: codexEntry.backendTargetKey, disabled: true, muted: true, deferRenderDetailContent: true, subtitle: 'newSession.aiBackendNotCompatibleWithSelectedProfile' },
+            { id: codexEntry.backendTargetKey, disabled: true, muted: true, deferRenderDetailContent: true, subtitle: t('newSession.aiBackendNotCompatibleWithSelectedProfile') },
         ]);
     });
 
@@ -358,7 +404,7 @@ describe('useNewSessionAgentPickerControls', () => {
             claudeEntry.backendTargetKey,
             codexEntry.backendTargetKey,
         ]);
-        expect(hook.getCurrent().agentPickerOptions?.[0]?.label).toBe('profiles.groups.favorites');
+        expect(hook.getCurrent().agentPickerOptions?.[0]?.label).toBe(t('profiles.groups.favorites'));
         expect(hook.getCurrent().agentPickerOptions?.[0]?.closeOnSelectImmediate).toBe(false);
         expect(hook.getCurrent().agentPickerOptions?.[0]?.deferRenderDetailContent).toBe(true);
         expect(hook.getCurrent().agentPickerOptions?.[0]?.deferredDetailContentCacheKey).toBe('new-session-favorite-models:server-1:machine-1:/repo');

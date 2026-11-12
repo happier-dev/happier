@@ -25,6 +25,8 @@ import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { MachineAgentSetupPane } from '@/components/machines/agents/MachineAgentSetupPane';
 import { useMachineAgentRowActions } from '@/components/machines/agents/useMachineAgentRowActions';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 import {
     FAVORITE_MODELS_AGENT_PICKER_OPTION_ID,
     type FavoriteModelTogglePayload,
@@ -96,6 +98,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     handleAgentPickerSelect: (selectedId: string) => void;
     handleAgentClick: () => void;
 }> {
+    const canManage = useServerScopedMachine(params.capabilityServerId, params.selectedMachineId, canManageMachine);
     // Focus memory seeds the next opening; it never steers the mounted picker.
     const [rememberedAgentPickerView, setRememberedAgentPickerView] = React.useState(
         () => params.initialAgentPickerView ?? null,
@@ -264,7 +267,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             getBackendEntryMachineAgent: params.getBackendEntryMachineAgent,
             selectedMachineName: params.selectedMachineName ?? null,
             machineAgentsStatus: params.machineAgentsStatus,
-            installMachineAgent: (agent: MachineAgent) => runMachineAgentAction(agent, { kind: 'install' }),
+            installMachineAgent: canManage ? (agent: MachineAgent) => runMachineAgentAction(agent, { kind: 'install' }) : undefined,
             renderMachineAgentSetup: (_entry: ResolvedBackendCatalogEntry, agent: MachineAgent) => (
                 <MachineAgentSetupPane
                     agent={agent}
@@ -275,6 +278,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             ),
         } : {}),
     }), [
+        canManage,
         params.getBackendEntryMachineAgent,
         params.selectedMachineName,
         params.machineAgentsStatus,

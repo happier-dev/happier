@@ -55,6 +55,9 @@ import type {
 } from './ManagedInventorySections';
 import { ManagedInventoryCoverage } from './ManagedInventoryCoverage';
 import { showStoreSoftwareRemovalReview } from '../StoreSoftwareReview';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { useMachineListForServerSelection } from '@/sync/store/hooks';
 
 /** A view preview, never a read limit: All opens the rest in place (S50 §4.3). */
 const PREVIEW_ROWS = 4;
@@ -330,6 +333,20 @@ export function RowMark(
   }
 }
 
+/** Both inventory doors offer native removal only for an installation this viewer can manage. */
+function SoftwareRecipeRemovalAction(props: Readonly<{
+  row: Extract<InstalledRow, { kind: 'software'; subject: 'recipe' }>;
+  name: string;
+  testID: string;
+}>) {
+  const machineIds = React.useMemo(() => new Set(props.row.installations.map(installation => installation.machineId)), [props.row.installations]);
+  const selectCanRemove = React.useCallback((machines: readonly Machine[]) =>
+    machines.some(machine => machineIds.has(machine.id) && canManageMachine(machine)), [machineIds]);
+  const canRemove = useMachineListForServerSelection(props.row.scope.serverId, selectCanRemove);
+  return canRemove ? <SectionActionButton testID={props.testID} icon="trash" title={t('common.remove')}
+    onPress={() => showStoreSoftwareRemovalReview({ name: props.name, row: props.row })} /> : null;
+}
+
 function InventorySection(
   props: Readonly<{
     section: Section;
@@ -409,8 +426,7 @@ function InventorySection(
         rowRole={titleOnly ? 'item' : undefined}
         divider={false}
         action={row.kind === 'software' && row.subject === 'recipe' ? (
-          <SectionActionButton testID={`${props.testID}.row.${row.key}.remove`} icon="trash" title={t('common.remove')}
-            onPress={() => showStoreSoftwareRemovalReview({ name: title, row })} />
+          <SoftwareRecipeRemovalAction row={row} name={title} testID={`${props.testID}.row.${row.key}.remove`} />
         ) : undefined}
         onPress={home ? () => props.go(home) : undefined}
       />
