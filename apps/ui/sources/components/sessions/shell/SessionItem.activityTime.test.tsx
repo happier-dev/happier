@@ -112,7 +112,8 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: 'AgentIcon',
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: (flavor: string | null | undefined) => flavor === 'claude' || flavor === 'grok' ? flavor : null,
     getAgentPickerIconScale: (agentId: string) => agentId === 'grok' ? 1.25 : 1,
