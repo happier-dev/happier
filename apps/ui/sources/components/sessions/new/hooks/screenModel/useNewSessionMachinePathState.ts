@@ -545,10 +545,12 @@ export function useNewSessionMachinePathState(params: Readonly<{
                 getPersistedPathForMachine(directoryMachineId) || getBestPathForMachine(directoryMachineId),
             );
         }
-        setExecutionTarget(() => {
-            hasCommittedExactTargetRef.current = target.machineId !== null;
-            return machineTarget(target.machineId, target.selectionOrigin ?? null);
-        });
+        const nextTarget = machineTarget(target.machineId, target.selectionOrigin ?? null);
+        // A folder choice in this same event must pin the newly authored target,
+        // before React renders the queued selection.
+        executionTargetRef.current = nextTarget;
+        hasCommittedExactTargetRef.current = target.machineId !== null;
+        setExecutionTarget(nextTarget);
     }, [
         applyCommittedSelectedPath,
         getBestPathForMachine,
