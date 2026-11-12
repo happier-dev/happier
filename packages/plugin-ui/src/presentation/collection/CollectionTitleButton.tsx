@@ -82,17 +82,20 @@ export const HappierCollectionTitleButton = React.memo(function HappierCollectio
   const hero = heroStep && heroWrappedAtWidth === null;
   const labelWidths = React.useRef({ box: 0, natural: 0 });
   const labelStyle = [styles.triggerLabel, hero ? styles.phoneTriggerLabel : null];
+  // The hero label's one-line width against the width its box gets: wider means it would wrap. It is decided
+  // against the trigger's measured width, so it waits for that measure (layout events arrive in any order): a
+  // step taken at an unmeasured width read as "the title has more room again" at once and returned to the hero.
+  const checkHeroFits = React.useCallback(() => {
+    const { box, natural } = labelWidths.current;
+    if (hero && triggerWidthRef.current > 0 && box > 0 && natural > box + 1) setHeroWrappedAtWidth(triggerWidthRef.current);
+  }, [hero]);
   const handleTriggerLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
     hitArea.onLayout?.(event);
     const width = event.nativeEvent.layout.width;
     triggerWidthRef.current = width;
     setHeroWrappedAtWidth((wrappedAt) => (wrappedAt !== null && width > wrappedAt + 1 ? null : wrappedAt));
-  }, [hitArea]);
-  // The hero label's one-line width against the width its box gets: wider means it would wrap.
-  const checkHeroFits = React.useCallback(() => {
-    const { box, natural } = labelWidths.current;
-    if (hero && box > 0 && natural > box + 1) setHeroWrappedAtWidth(triggerWidthRef.current);
-  }, [hero]);
+    checkHeroFits();
+  }, [checkHeroFits, hitArea]);
   const handleLabelLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
     labelWidths.current.box = event.nativeEvent.layout.width;
     checkHeroFits();

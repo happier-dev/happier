@@ -1698,7 +1698,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         value: title,
                         ref: titleRef,
                         style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                        numberOfLines: titleLines ?? (catalogGeometry ? undefined : columnDescribedRow ? 1 : titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow })) ?? undefined,
+                        numberOfLines: titleLines ?? (catalogGeometry ? undefined : columnDescribedRow ? 1 : titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow, menu: isMenuRow })) ?? undefined,
                         ellipsizeMode: titleEllipsizeMode,
                         highlightQuery: titleHighlightQuery,
                     })

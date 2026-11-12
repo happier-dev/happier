@@ -2,7 +2,7 @@ import { formatWorkflowResultFieldType, formatWorkflowValueReference, workflowRe
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPageRowFieldLayoutContext, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowAuthoredResultReference, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
@@ -230,7 +230,9 @@ export function WorkflowBindingRow(props: Readonly<{
                 ) : null}
             </View>
             <View ref={valueRef} style={workflowEditorStyles.actionFieldValue}>
-                {value}
+                {/* The value track owns its width: a field box in it spans the track, the room this row gives it,
+                    rather than holding a page field's inline minimum past a narrow card's edge. */}
+                <HappierPageRowFieldLayoutContext.Provider value={VALUE_TRACK_FIELD_LAYOUT}>{value}</HappierPageRowFieldLayoutContext.Provider>
                 {/* How a field binds is help for the one changing it: it shows under the value while the
                     step is selected, never as a paragraph in the label column of a resting card. */}
                 {props.note === undefined || !editing ? null
@@ -254,6 +256,8 @@ export function WorkflowBindingRow(props: Readonly<{
         </View>
     );
 }
+
+const VALUE_TRACK_FIELD_LAYOUT = Object.freeze({ maxWidthPx: null, stacked: true });
 
 /** A literal with nothing in it (`""`, spaces): what a pressed "+ Set" leaves before a value is typed. */
 function isBlankWorkflowLiteral(value: JsonValue): boolean {

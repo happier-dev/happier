@@ -27,9 +27,11 @@ export const ITEM_TITLE_MAX_LINES_WITHOUT_SUBTITLE = 2;
  */
 export function resolveItemTitleMaxLines(
     hasSubtitle: boolean,
-    params: Readonly<{ page?: boolean; hasAccessory?: boolean }> = {},
+    params: Readonly<{ page?: boolean; hasAccessory?: boolean; menu?: boolean }> = {},
 ): number | null {
     if (params.page === true) return null;
+    // A menu choice's name wraps rather than cut the word that names it (a phone menu at a large text size).
+    if (params.menu === true) return ITEM_TITLE_MAX_LINES_WITHOUT_SUBTITLE;
     return hasSubtitle || params.hasAccessory === true
         ? ITEM_TITLE_MAX_LINES_WITH_SUBTITLE
         : ITEM_TITLE_MAX_LINES_WITHOUT_SUBTITLE;

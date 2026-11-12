@@ -548,7 +548,8 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
     ? bindings.renderDetailsToggle(toggleProps) : <HappierDisclosureToggle {...toggleProps} /> : null;
   const lineActions = actions.some(Boolean) || detailsToggle ? (
     <View
-      style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_STATE_LINE_METRICS.gapPx }}
+      // A narrow column (a field inside a step card) wraps the recoveries rather than run them past its edge.
+      style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: HAPPIER_STATE_LINE_METRICS.gapPx }}
     >
       {detailsToggle}
       {actions.map((action, index) =>

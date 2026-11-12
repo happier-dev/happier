@@ -514,11 +514,15 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     footAction: {
         ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.secondary,
+        flexShrink: 1,
     },
+    // A quiet foot row ("18 more settings ▾") gives way to a narrow card: its words wrap instead of running past the edge.
     addRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+        flexShrink: 1,
+        minWidth: 0,
     },
     /** The quiet bordered "+ Add" control at the end of a block list (lab `S1`). */
     addTrigger: {
@@ -633,15 +637,18 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         borderColor: 'transparent',
         borderRadius: theme.borderRadius.md,
     },
-    /** The label track: the lab's 120 px column, growing to the label's words before it wraps. */
+    /** The label track: the lab's 120 px column; its words wrap inside it. */
     actionFieldLabelColumn: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'baseline',
         columnGap: theme.space.s4,
-        minWidth: 120,
-        maxWidth: '45%',
-        flexShrink: 0,
+        // The lab's column where the row has it; a card narrower than that gives the label the card's width
+        // and its words wrap there (a phone at a large text size cut "Required" at the card's edge).
+        flexBasis: 120,
+        flexGrow: 0,
+        flexShrink: 1,
+        minWidth: 0,
     },
     actionFieldValue: {
         flexGrow: 1,
@@ -663,6 +670,10 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     actionFieldText: {
         ...Typography.variant('body'),
         color: theme.colors.text.primary,
+        // An authored value takes its row's width and breaks a long token (an id, a marker) inside it, rather
+        // than holding its longest word's width past the card's edge.
+        flexShrink: 1,
+        minWidth: 0,
     },
     /**
      * One binding's controls. They wrap at the pane edge rather than running past it

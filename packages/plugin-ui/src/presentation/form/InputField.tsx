@@ -18,6 +18,7 @@ import { HappierChoiceField } from './ChoiceField.js';
 import { HappierSegmentedChoice } from './SegmentedChoice.js';
 import { HappierInputPickerButton, useHappierInputPicker } from './inputPicker.js';
 import { HappierStatus } from '../status/Status.js';
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 
 /**
  * The presentation slice of the one typed-field vocabulary (`@happier-dev/protocol/inputs`).
@@ -103,7 +104,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
   const pickerOnly = presentation.kind === 'select' && !allowsCustomValue && (props.options ?? []).length === 0 && picker.affordance !== null;
   // Nothing to choose from: the field box stays and reads its value; there is no blank list to open.
   const noChoices = presentation.kind === 'select' && !allowsCustomValue && optionsSettled && props.options?.length === 0 && !pickerOnly;
-  const optionsNotice = props.optionsStatus === 'failed' ? props.optionsNotice
+  const optionsNoticeContent = props.optionsStatus === 'failed' ? props.optionsNotice
     : props.optionsStatus === 'loading' && presentation.kind === 'select' && !allowsCustomValue
       ? <HappierStatus label={localization?.translate('happier.plugin-ui.state.loading', 'Loading') ?? 'Loading'}
           tone="neutral" indicator={false} theme={theme} />
@@ -111,6 +112,10 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
       ? <HappierStatus label={localization?.translate('happier.plugin-ui.select.empty', 'No options available') ?? 'No options available'}
           tone="neutral" indicator={false} theme={theme} />
       : null;
+  // A field's notice (its choices failed to load) stands on the field's own edge, under its box: it adds no
+  // list row's inset or glyph column, so even a narrow field (a binding inside a step card) reads it by words.
+  const optionsNotice = optionsNoticeContent == null || optionsNoticeContent === false ? null
+    : <HappierBodyEdgeContext.Provider value>{optionsNoticeContent}</HappierBodyEdgeContext.Provider>;
   const renderPicker = (render: (open: () => Promise<void>) => ReactNode) => props.renderPicker && picker.affordance
     ? props.renderPicker({ label: picker.affordance.label, disabled: disabled || !optionsSettled, open: picker.open, render })
     : render(picker.open);
