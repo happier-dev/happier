@@ -129,6 +129,7 @@ async function setup(options: Readonly<{
   sharedObservation?: boolean;
   waiveMoveApproval?: boolean;
   offerWorker?: boolean;
+  currentAccount?: boolean;
   serviceRuntime?: ReturnType<typeof createFrontDoorRuntimeActionExecutor>;
   waiveStartApproval?: boolean;
   onStart?: (request: Readonly<{ machineId: string; params: unknown }>) => unknown;
@@ -172,7 +173,7 @@ async function setup(options: Readonly<{
   fixture = await createPlainArtifactHomeFixture(
     'https://service-placement-ui.test',
     {
-      currentAccount: Boolean(moveBoundary),
+      currentAccount: options.currentAccount ?? Boolean(moveBoundary),
       handleRequest: async (path, init) => {
         if (options.initialBindingMachineId && moveBoundary && path === '/v1/machines?includeRevoked=true') {
           return json([moveBoundary.machine, ...['hz-build-1', 'pool-worker'].map(id =>
@@ -226,6 +227,10 @@ async function setup(options: Readonly<{
             availability: { state: 'known', connectedCount: 1, enabledCount: 1 },
           });
         }
+        if (path === '/v1/machines/pools/resolve') {
+          const { poolId } = JSON.parse(String(init?.body)) as { poolId: string };
+          return json({ kind: 'resolved', poolId, machineId: 'pool-worker' });
+        }
         return null;
       },
       serverFeatures: (() => {
@@ -249,7 +254,7 @@ async function setup(options: Readonly<{
     ...(options.serviceRuntime ? { managedMachineCreationEnabled: true } : {}),
     actionsSettingsV1: { v: 1, actions: options.disablePlacementRead ? { 'projects.service.placement.get': { enabled: false } } : {}, approvalWaivedSurfaces: { 'projects.service.placement.set': ['ui'], ...(options.waiveMoveApproval !== false ? { 'projects.service.relocate': ['ui'] } : {}), ...(options.waiveStartApproval ? { 'localServices.launcher.start': ['ui'] } : {}), 'machines.pools.resolve': ['ui'], 'action.operations.cancel': ['ui'] } },
   }), (storage.getState().settingsVersion ?? 0) + 1);
-  const serverId = fixture.home.id;
+  const serverId = resolveServerProfileScopeIdForIdentifier(fixture.home.id);
   const scope = { serverId, accountId: 'artifact-account' };
   const source = {
     id: 'checkout',
@@ -261,13 +266,14 @@ async function setup(options: Readonly<{
   const worker = { ...source, id: 'worker-checkout', machineId: 'hz-build-1', rootPath: '/copy' };
   const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
   storage.getState().activateProjectAccountRowsScope(scope);
-  const baseMachine = createMachineFixture({ id: source.machineId });
+  const baseMachine = createMachineFixture({ id: source.machineId, activeAt: Date.now() });
   const machine = { ...baseMachine, metadata: { ...baseMachine.metadata!, displayName: 'Source workstation' } };
-  const workerMachine = createMachineFixture({ id: worker.machineId });
+  const workerMachine = createMachineFixture({ id: worker.machineId, activeAt: Date.now() });
   const machines = [machine, ...(options.liveFeeds || options.saved ? [{ ...workerMachine,
     metadata: { ...workerMachine.metadata!, displayName: 'Worker workstation' } }] : []),
     ...(options.offerWorker ? [createMachineFixture({ id: 'pool-worker', activeAt: Date.now() })] : [])];
-  storage.setState({ machines: Object.fromEntries(machines.map(value => [value.id, value])), machineListByServerId: { [serverId]: machines } });
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  await publishMachineInventoryForTest(scope, machines);
   storage
     .getState()
     .applyProjectAccountRowsForScope(scope, {
@@ -475,7 +481,7 @@ async function setup(options: Readonly<{
   const screen = await renderScreen(<React.Profiler id="services" onRender={() => options.onCommit?.()}><Host /></React.Profiler>);
   if (options.modelOnly) await vi.waitFor(() => expect(model?.state.kind).toBe('ready'));
   else if (options.waitEnabled !== false) await vi.waitFor(() =>
-    expect(screen.findAllByTestId('placement.runsOn')[0]?.props.disabled, JSON.stringify([fixture?.requests, screen.getTextContent(), remote.mock.calls])).toBe(false),
+    expect(screen.findAllByTestId('placement.runsOn')[0]?.props.disabled, screen.getTextContent()).toBe(false),
   );
   const choose = async (machineId: string) => {
     await act(async () => {
@@ -692,10 +698,12 @@ describe('Service Runs on through the placement and relocation Actions', () => {
           captureFrame = () => {};
         }
         else {
+          const homeIdentity = getServerProfileById(h.serverId)?.serverIdentityId;
+          if (!homeIdentity) throw new Error('expected_home_identity');
           const request = { machineId, targetId: 'declared-server', workspace, declaration };
           const approval: ApprovalRequestV2 = { v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
             createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'localServices.launcher.start', actionArgs: request,
-            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' }, serverId: h.serverId,
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' }, serverId: h.serverId, serverIdentityId: homeIdentity,
               accountId: 'artifact-account', actionId: 'localServices.launcher.start', requestId: 'settling-request', machineId },
             summary: 'Start server', decision: { kind: 'approve', decidedAtMs: 2 }, preview: { serviceStartReview: { request,
               target: { ...workspace, machineId, workspaceId: machineId === 'devbox' ? 'checkout' : 'worker-checkout', rootPath: machineId === 'devbox' ? '/src/happier' : '/copy' },
@@ -1240,12 +1248,13 @@ describe('Service Runs on through the placement and relocation Actions', () => {
   });
   it('opens Move confirmation after choosing an eligible worker through the open Runs on picker', async () => {
     const { screen, writes } = await setup({ running: true, serviceState: 'healthy', sharedObservation: true,
-      offerWorker: true, waiveMoveApproval: false });
+      offerWorker: true, waiveMoveApproval: false, currentAccount: true });
     await screen.pressByTestIdAsync('placement.runsOn');
-    await vi.waitFor(() => expect(screen.tree.findAll(node => typeof node.props.testID === 'string'
-      && node.props.testID.includes('pool-worker')).map(node => node.props.testID)).toContain('placement.picker-option:pool-worker'));
+    await vi.waitFor(() => expect(screen.findByTestId('placement.picker-option:pool-worker')?.props.disabled,
+      screen.getTextContent()).toBe(false));
     await screen.pressByTestIdAsync('placement.picker-option:pool-worker');
-    await vi.waitFor(() => expect(screen.findByTestId('placement.move.confirm')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.findByTestId('placement.move.confirm'),
+      screen.getTextContent()).toBeTruthy());
     expect(writes).toEqual([]);
     await screen.unmount();
   });
@@ -1398,7 +1407,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const { Dimensions } = await import('react-native');
     vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     const { screen } = await setup({ running: true, disablePlacementRead: true, waitEnabled: false, showDivider: true });
-    await vi.waitFor(() => expect(screen.getTextContent()).toContain('localServices.actions.failure.refused'));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('actionConfirmations.turnedOffUnnamedMessage'));
     await screen.unmount();
   });
   it('attaches a front-door accepted Move with its single request identity and consumes native progress and stopped failure', async () => {
