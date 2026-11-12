@@ -16,6 +16,7 @@ import { resolveTerminalSpawnOptions } from '../domains/settings/terminalSetting
 import { readAccountSettingsForScope } from '../domains/state/accountSettingsPersistence';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { storage } from '../domains/state/storage';
+import { refreshMachineAgentsAfterLaunchRefusal } from '@/agents/machineAgents/useMachineAgents';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
@@ -41,7 +42,7 @@ import type {
     CheckpointCodeRollbackRequest,
     CheckpointCodeRollbackResult} from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
 import type {
-    LlmTaskRunnerConfigV1} from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+    LlmTaskRunnerChoiceV1} from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type {
     SessionAttachMetadataIdentityPolicy} from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
 import type {
@@ -550,6 +551,15 @@ async function runResumeSession(
                         };
             }
         }
+        const resumedAgentTarget = params.agentTarget ?? params.backendTarget;
+        if (exactAccountLifetime && resumedAgentTarget && normalizedResult.type === 'error') {
+            await refreshMachineAgentsAfterLaunchRefusal({
+                accountLifetime: exactAccountLifetime, machineId, target: resumedAgentTarget,
+                failureCode: normalizedResult.errorDetail?.kind === 'launch_error'
+                    ? normalizedResult.errorDetail.code : normalizedResult.errorCode,
+                signal: options.signal,
+            });
+        }
         if (shouldPresentAsResuming && canProjectResumePresentation()) {
             if (normalizedResult.type === 'error') {
                 storage.getState().clearSessionResuming(sessionId);
@@ -687,7 +697,7 @@ export type ForkSessionOptions = Readonly<{
     parentSessionId: string;
     forkPoint: SessionForkPoint;
     strategy?: SessionForkStrategy;
-    replaySummaryRunner?: LlmTaskRunnerConfigV1;
+    replaySummaryRunner?: LlmTaskRunnerChoiceV1;
     replayMaxSeedChars?: number;
     /**
      * Stable idempotency key for one user-visible fork attempt. Retries of the

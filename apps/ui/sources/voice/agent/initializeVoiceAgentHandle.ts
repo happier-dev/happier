@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/protocol/providers/selection/v1';
 import { resolveDaemonVoiceAgentModelIds } from '@/voice/agent/resolveDaemonVoiceAgentModels';
 import { ensureVoiceAgentInstallablesBackground } from '@/voice/agent/ensureVoiceAgentInstallablesBackground';
+import { refreshMachineAgentsAfterLaunchRefusal } from '@/agents/machineAgents/useMachineAgents';
 import { resolveVoiceAgentInitialContexts } from '@/voice/agent/resolveVoiceAgentInitialContexts';
 import type {
     VoiceAgentClient,
@@ -71,7 +72,7 @@ import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } 
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { projectVoiceAgentConnectedServices } from '@happier-dev/protocol/voice/settings/localConversation';
 import { readPersistentVoiceTranscriptEpoch } from '@/voice/persistence/voiceTranscriptMemory';
-import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { createRpcCallError, readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
@@ -459,6 +460,14 @@ export async function initializeVoiceAgentHandle({
     let connectedServices: VoiceAgentStartParams['connectedServices'];
     let resolvedAgentId: string | null = null;
     let resolvedBackendTarget: BackendTargetRefV1 | null = null;
+    const refreshRefusedAgent = async (failureCode: string | null | undefined) => {
+        if (!resolvedBackendTarget) return;
+        const machineId = readVoiceSessionOwnerMetadataFromState(storage.getState(), {
+            serverId: accountLifetime.scope.serverId, sessionId: rpcSessionId,
+        })?.machineId;
+        if (machineId) await refreshMachineAgentsAfterLaunchRefusal({ accountLifetime, machineId,
+            target: readBackendTargetRefV2(resolvedBackendTarget), failureCode, signal });
+    };
     let runMetadataSessionId: string | null = null;
     let persistedRuntimePublication: PersistedVoiceConversationRuntimeState['runtimePublication'] | null = null;
     let persistedRunMeta: PersistedVoiceConversationRuntimeState['runMetadata'] = null;
@@ -758,7 +767,12 @@ export async function initializeVoiceAgentHandle({
                 : undefined;
             voicePolicy = retainedPolicy ?? await resolveFreshVoicePolicy();
             assertWelcomeInputsCurrent();
-            return client.start(buildStartParams(overrides));
+            try {
+                return await client.start(buildStartParams(overrides));
+            } catch (error) {
+                await refreshRefusedAgent(readRpcErrorCode(error));
+                throw error;
+            }
         };
 
         const startDaemonForCurrentSession = async () => {
@@ -827,6 +841,7 @@ export async function initializeVoiceAgentHandle({
             // Keep the exact startup failure instead of returning a handle
             // whose first stream would replace it with "Not running".
             if (retainedRunState.runId === started.voiceAgentId && retainedRunState.status === 'failed') {
+                await refreshRefusedAgent(retainedRunState.error?.code);
                 throw Object.assign(createRpcCallError({
                     error: retainedRunState.error?.message ?? 'Execution Run startup failed',
                     errorCode: retainedRunState.error?.code ?? 'execution_run_failed',

@@ -4,7 +4,6 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
-import { getVoiceSessionFailedAttempt } from '@/voice/session/voiceSessionStore';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { projectVoiceExecutionMachineReadiness } from '@/voice/settings/executionMachine';
 import type { ConnectedServiceBindingsV1} from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -258,7 +257,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const observedAgents = machine.machineId && agentLifetime && areAccountSettingsScopesEqual(scope, agentLifetime.scope)
         ? readMachineAgentsForScope(agentLifetime, machine.machineId) : EMPTY_MACHINE_AGENTS;
     const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-        { serverId, machineId: machine.machineId, failedAttempt: getVoiceSessionFailedAttempt(localAdapter.adapterId, scope) });
+        { serverId, machineId: machine.machineId });
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,

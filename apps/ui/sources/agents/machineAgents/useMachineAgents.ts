@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { shallow } from 'zustand/shallow';
 import { buildMachineAgentsDetectRequest, buildMachineAgentInventoryKey, projectAcpCatalogForMachineInventory } from '@happier-dev/protocol/capabilities';
+import { findMachineAgentInventoryItemForTargetV1, type MachineAgentInventoryTargetV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { getAcpCatalogSnapshot, subscribeAcpCatalogSnapshots } from '@/sync/store/settings/acpCatalogSnapshot';
 import { observeAcpCatalog, refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
 
@@ -158,7 +160,7 @@ function observe(input: Readonly<{ lifetime: ServerAccountScopeLifetime; machine
 }
 
 /** Shared inventory/selected-Agent refresh; the credential lifetime, never focused Home, owns transport. */
-export async function refreshMachineAgents(input: Readonly<{ serverId: string; machineId: string; accountLifetime: ServerAccountScopeLifetime; agentId?: string; definitionId?: string; force?: boolean; signal?: AbortSignal; retryWhileObserved?: AbortSignal }>): Promise<void> {
+export async function refreshMachineAgents(input: Readonly<{ serverId: string; machineId: string; accountLifetime: ServerAccountScopeLifetime; agentId?: string; definitionId?: string; target?: MachineAgentInventoryTargetV1; force?: boolean; signal?: AbortSignal; retryWhileObserved?: AbortSignal }>): Promise<void> {
     const lifetime = input.accountLifetime;
     if (input.signal?.aborted || !lifetime.isCurrent() || lifetime.scope.serverId !== input.serverId) return;
     readMachineAgentsForScope(lifetime, input.machineId);
@@ -180,9 +182,12 @@ export async function refreshMachineAgents(input: Readonly<{ serverId: string; m
             ...(entry?.kind === 'error' ? { failureReason: entry.reason } : {}) } });
         return;
     }
-    const requestedAgents = input.agentId ? agents.filter((agent) => agent.agentId === input.agentId) : agents;
-    if (input.agentId && requestedAgents.length === 0 && !input.definitionId) return;
-    const needsDefinitions = !input.agentId || Boolean(input.definitionId);
+    const definitionId = input.definitionId ?? (input.target?.kind === 'agent' ? input.target.definitionId : input.target?.configuredBackendId);
+    const selectedAgent = input.target ? findMachineAgentInventoryItemForTargetV1(agents, input.target) : undefined;
+    const requestedAgents = input.target ? selectedAgent ? [selectedAgent] : []
+        : input.agentId ? agents.filter((agent) => agent.agentId === input.agentId) : agents;
+    if ((input.agentId || input.target) && requestedAgents.length === 0 && !definitionId) return;
+    const needsDefinitions = (!input.agentId && !input.target) || Boolean(definitionId);
     const catalog = needsDefinitions ? getAcpCatalogSnapshot(lifetime.scope) : null;
     // Account definitions and daemon-native executables have independent authorities.
     // Keep the catalog demanded without holding native readiness behind its HTTP read.
@@ -193,7 +198,7 @@ export async function refreshMachineAgents(input: Readonly<{ serverId: string; m
         const current = getAcpCatalogSnapshot(lifetime.scope);
         const inventory = projectAcpCatalogForMachineInventory(current?.catalog, current?.data?.definitions);
         return { ...inventory, ...(inventory.definitions ? { definitions: inventory.definitions.filter(definition =>
-            !input.definitionId || definition.definitionId === input.definitionId) } : {}) };
+            !definitionId || definition.definitionId === definitionId) } : {}) };
     };
     const admittedDefinitions = catalogRefresh ? undefined : readDefinitions();
     const hasAdmittedInventory = requestedAgents.length > 0 || Boolean(admittedDefinitions?.definitions?.length);
@@ -240,7 +245,7 @@ export async function refreshMachineAgents(input: Readonly<{ serverId: string; m
             // Enrich the same admitted cache only for a demanded full inventory. A failed
             // readiness probe retains its own failure/recovery policy, not a second probe here.
             const observed = machineAgentInventoryStore.read(scopeKey(lifetime, input.machineId));
-            if (!input.agentId && observed.status === 'ready') {
+            if (!input.agentId && !input.target && observed.status === 'ready') {
                 const installedKeys = new Set(observed.agents.filter(agent => agent.installed && !agent.stale).map(buildMachineAgentInventoryKey));
                 const updateAgents = requestedAgents.filter(agent => installedKeys.has(buildMachineAgentInventoryKey(agent)));
                 if (updateAgents.length) await refreshCapabilities(buildMachineAgentsDetectRequest({
@@ -251,6 +256,24 @@ export async function refreshMachineAgents(input: Readonly<{ serverId: string; m
     ]);
     if (getMachineContributionRegistryProjectionRevision(scope) !== revision) return;
     observe({ lifetime, machineId: input.machineId, revision, projection: { phase: 'ready', inputs } });
+}
+
+/** A launch refusal invalidates observed credentials, not the person's Agent choice. */
+export async function refreshMachineAgentsAfterLaunchRefusal(input: Readonly<{
+    accountLifetime: ServerAccountScopeLifetime;
+    machineId: string;
+    target: MachineAgentInventoryTargetV1;
+    failureCode: string | null | undefined;
+    signal?: AbortSignal;
+}>): Promise<void> {
+    if (input.failureCode !== SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) return;
+    // Probe native login and the selected Account route together. A signed-out
+    // executable can still be ready through its Connected Account pool.
+    await refreshMachineAgents({ serverId: input.accountLifetime.scope.serverId,
+        machineId: input.machineId, accountLifetime: input.accountLifetime,
+        target: input.target, force: true, signal: input.signal }).catch(() => {
+        // Optional observation must preserve the launch owner's original refusal.
+    });
 }
 
 function useInventoryDriver(target: MachineAgentsTarget) {

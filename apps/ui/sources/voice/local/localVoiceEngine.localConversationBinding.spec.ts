@@ -7,6 +7,8 @@ import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
@@ -726,12 +728,47 @@ describe('local voice engine local conversation binding', () => {
         expect(JSON.stringify(getVoiceConversationRuntimeSnapshot().error)).not.toContain(preparationFailure.message);
     }, 60_000);
 
-    it('keeps a signed-out Agent refusal visible and offers authentication recovery before capture', async () => {
+    it.each(['spawn', 'resume', 'lazy-run'] as const)('refreshes the admitted Agent inventory after a signed-out %s refusal', async ingress => {
         await configureAgentMode();
+        const storage = await getStorage();
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+        const { refreshMachineAgents, readMachineAgentsForScope } = await import('@/agents/machineAgents/useMachineAgents');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Missing admitted Voice Account');
+        const machine = storage.getState().machines['machine-1'];
+        if (!machine) throw new Error('Missing admitted Voice Machine');
+        await publishMachineInventoryForTest(lifetime.scope, [machine]);
+        const projection = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+                agentsById: Object.fromEntries(['claude', 'codex'].map(agentId => [agentId, {
+                    id: agentId, title: agentId, identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId as 'claude' | 'codex'],
+                    capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+                }])),
+            }),
+        }));
+        let signedOut = false;
+        let refuseLaunch = ingress !== 'resume';
         const incumbent = machineRpcWithServerScope.getMockImplementation();
         if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
         machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
-            if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) {
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                const input = request.payload as { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } };
+                return input.sectionRead ? projection.read(input.sectionRead.digest, input.sectionRead.offset, input.sectionRead.includeDigests) : projection.manifest;
+            }
+            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1,
+                results: Object.fromEntries(['claude', 'codex'].map(agentId => [`cli.${agentId}`, { ok: true, checkedAt: Date.now(), data: {
+                    agentId, title: agentId, installed: true, available: true, version: '1', latestVersion: '1',
+                    update: { supported: false, command: null }, platform: { supported: true }, dependencies: [],
+                    install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null },
+                    signIn: { status: signedOut && agentId === 'claude' ? 'signedOut' : 'signedIn', loginSupport: 'login_terminal' },
+                } }])) };
+            if (refuseLaunch && (ingress === 'spawn' && request.method === RPC_METHODS.SESSION_SPAWN_NEW
+                || ingress === 'resume' && (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
+                    || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION))) {
+                signedOut = true;
+                if (ingress === 'resume') return { type: 'error', errorCode: 'agent_signed_out', errorMessage: 'agent_signed_out' };
                 SessionSpawnNewInputV2Schema.parse(request.payload);
                 return SessionSpawnNewResultV1Schema.parse({
                     type: 'error', code: 'agent_signed_out', agentId: 'claude', retryable: false,
@@ -739,19 +776,46 @@ describe('local voice engine local conversation binding', () => {
             }
             return incumbent(request);
         });
-
+        const sessionIncumbent = sessionRpcWithServerScope.getMockImplementation();
+        if (!sessionIncumbent) throw new Error('Missing canonical Session Socket boundary');
+        sessionRpcWithServerScope.mockImplementation(async request => {
+            if (ingress === 'lazy-run' && (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
+                || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)) {
+                signedOut = true;
+                return { ok: false, errorCode: 'agent_signed_out', error: 'agent_signed_out' };
+            }
+            return sessionIncumbent(request);
+        });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: machine.id, serverId: lifetime.scope.serverId });
+        await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId: machine.id, accountLifetime: lifetime, force: true });
+        const readAgent = (agentId: string) => readMachineAgentsForScope(lifetime, machine.id).agents.find(agent => agent.agentId === agentId);
+        expect(readAgent('claude')).toMatchObject({ state: 'ready', stale: false });
         const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
         const lifecycle = createVoiceSessionLifecycleController();
         lifecycle.setConfiguredProviderId('local_conversation');
         try {
-            await expect(lifecycle.toggle(null)).rejects.toMatchObject({ code: 'agent_signed_out' });
-            expect(lifecycle.getSnapshot()).toMatchObject({
+            const target = { serverId: localVoiceHomeId, sessionId: 'session-1' };
+            if (ingress === 'resume') {
+                await lifecycle.toggle(target);
+                await lifecycle.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
+                refuseLaunch = true;
+            }
+            const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+            await expect(ingress === 'lazy-run' ? createVoiceExecutionTransport().ensureRunning(target.sessionId)
+                : lifecycle.toggle(ingress === 'resume' ? target : null)).rejects.toMatchObject(
+                    ingress === 'lazy-run' ? { rpcErrorCode: 'agent_signed_out' } : { code: 'agent_signed_out' });
+            expect(signedOut).toBe(true);
+            expect(readAgent('claude')).toMatchObject({ state: 'needsSignIn', stale: false, signIn: { native: { status: 'signedOut' } } });
+            expect(readAgent('codex')).toMatchObject({ state: 'ready', stale: false });
+            if (ingress !== 'lazy-run') expect(lifecycle.getSnapshot()).toMatchObject({
                 status: 'error', canStop: false,
                 errorCode: 'authentication_required', errorMessage: 'agent_signed_out',
                 errorRecoveryAction: 'connect_agent', errorPresentation: 'error',
             });
             expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
         } finally {
+            sessionRpcWithServerScope.mockImplementation(sessionIncumbent);
+            machineRpcWithServerScope.mockImplementation(incumbent);
             await lifecycle.dispose();
         }
     }, 60_000);

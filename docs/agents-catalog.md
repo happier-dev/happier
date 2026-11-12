@@ -581,10 +581,11 @@ catalog keys through the Protocol target reader before capturing the selection
 tuple. An unresolved presentation target stays unavailable in settings and the
 Session composer; it never becomes a substitute executable Agent.
 
-In 0.3 development, Voice Settings and readiness Actions also consume Start's
-retained sign-in refusal for the same Account, Agent and Machine. They preserve
-the admitted Machine label and exact setup destination without another probe;
-a different selection does not inherit that refusal.
+In 0.3 development, Voice Settings and readiness Actions read the canonical
+Agent inventory rather than overlaying a failed Voice attempt. A typed Agent
+sign-in refusal refreshes that inventory for the admitted Account and Machine,
+recomputing native and Account-pool readiness together. A different selection
+does not inherit the refusal.
 
 In 0.3 development, the Voice picker and public Settings Actions share bundled
 choices from `listSelectableBundledAgentExecutionTargets`. Saving a bundled

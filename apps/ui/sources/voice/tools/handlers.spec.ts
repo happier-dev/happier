@@ -4,7 +4,6 @@ import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/t
 import * as React from 'react';
 import { Conversation, TextConversation } from '@elevenlabs/client';
 import { createElevenLabsVoiceProviderRuntime } from '../../../../../packages/plugins/elevenlabs/src/ui/voice/runtime';
-import { PLUGIN_MANIFEST as ELEVENLABS_PLUGIN_MANIFEST } from '../../../../../packages/plugins/elevenlabs/src/manifest';
 import { createSdkHandleConnection } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import {
   bindVoiceRuntimeAttemptBinding, createVoiceRuntimeAttemptBindingOwner,
@@ -496,7 +495,6 @@ async function createElevenLabsToolHarness() {
   const barrierInput = {
     adapterId, controlSessionId,
     resolveSessionId: () => 's1',
-    effectCalls: ELEVENLABS_PLUGIN_MANIFEST.contributes.voiceProviders[0].capabilities.tools.effectCalls,
     async submitResults(_responseId: string, results: readonly import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeToolResultV1[]) {
       for (const event of runtime.encodeToolResults(results)) await connection.sendControl(event);
     },
@@ -513,7 +511,9 @@ async function createElevenLabsToolHarness() {
       for (const event of runtime.protocol.decodeControl(control)) {
         if (event.type !== 'tool_calls') continue;
         const task = barrier.run({
-          responseId: event.responseId, calls: event.calls, signal: lifetime.signal,
+          // ElevenLabs has no independent response id; its canonical call
+          // already groups this delivery by the real provider tool_call_id.
+          responseId: event.calls[0]!.responseId, calls: event.calls, signal: lifetime.signal,
         }).catch(async (error) => {
           failures.push(error);
           // The production controller terminates the attempt when canonical
@@ -686,12 +686,13 @@ await prepareStandaloneVoicePolicyHarness();
 await loadSyncSingletonForTests();
 
 describe('voice tool handlers', () => {
-  it('routes real ElevenLabs duplicate and concurrent calls through canonical Action custody', async () => {
+  it('routes real ElevenLabs duplicate and concurrent calls through one canonical Action execution', async () => {
     const harness = await createElevenLabsToolHarness();
     const first = harness.deliver('provider-a', 'first');
     const duplicate = harness.deliver('provider-a', 'first');
     const sibling = harness.deliver('provider-b', 'second');
     await Promise.all([first, duplicate, sibling]);
+    expect(harness.failures).toEqual([]);
     expect(pendingEnqueue).toHaveBeenCalledTimes(2);
     expect(harness.directEffect).not.toHaveBeenCalled();
     expect(harness.sent.filter((event) => event.type === 'client_tool_result').map((event) => event.tool_call_id))
@@ -1566,6 +1567,22 @@ describe('voice tool handlers', () => {
     const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
     publishMachineContributionRegistryProjectionInvalidation({ serverId: homeA, machineId: 'm1' }, 'authority');
 
+    // Voice forwards creation through the Home's requester carrier. Keep its
+    // issuer/crypto path real and answer the receiving Machine at the existing
+    // daemon network boundary.
+    const { SessionSpawnNewActionResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+    const creationBoundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: homeUrlA, serverIdentityId: 'srv_voice_tools_a', accountId: 'account-a', machineId: 'm1',
+      tokenEpoch: 0, actionId: 'session.spawn_new',
+      execute: async input => SessionSpawnNewActionResultV1Schema.parse(await daemonRpc({
+        serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW, payload: input,
+      })),
+    });
+    const beforeCreationHttp = account.request.getMockImplementation();
+    if (!beforeCreationHttp) throw new Error('Voice Account HTTP boundary missing');
+    account.request.mockImplementation(async (url, init) =>
+      await creationBoundary.handle(new URL(String(url)), init) ?? beforeCreationHttp(url, init));
+
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ currentServerId: homeA,
       currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
@@ -1617,7 +1634,10 @@ describe('voice tool handlers', () => {
     // receipt cannot navigate to a guessed child or to the source Session.
     spawnSettlement = { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' };
     const pending = JSON.parse(await invokeCreate('voice-spawn-pending'));
-    expect(entry === 'discovered' ? pending.result : pending).toMatchObject({ type: 'pending' });
+    expect(entry === 'discovered' ? pending.result : pending, JSON.stringify({ pending,
+      daemonMethods: daemonRpc.mock.calls.map(([request]) => request.method),
+      homePaths: account.request.mock.calls.map(([url]) => new URL(String(url)).pathname),
+    })).toMatchObject({ type: 'pending' });
     expect(routerNavigate).not.toHaveBeenCalled();
     spawnSettlement = spawnResult;
     const creation = JSON.parse(await invokeCreate('voice-spawn-effect'));
@@ -1699,7 +1719,7 @@ describe('voice tool handlers', () => {
     expect(delivered).toHaveLength(1);
     if (signedOutDefault) {
       const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
-      const { refreshMachineAgents } = await import('@/agents/machineAgents/useMachineAgents');
+      const { refreshMachineAgents, readMachineAgentsForScope } = await import('@/agents/machineAgents/useMachineAgents');
       const scope = await resolveServerCredentialAccountScope(homeA);
       if (scope.kind !== 'bound') throw new Error('Expected Account scope');
       const lifetime = captureServerCredentialAccountScopeLifetime(scope);
@@ -1717,6 +1737,15 @@ describe('voice tool handlers', () => {
             providerErrorMessage: 'Claude is signed out on the selected machine' } } });
       const claudeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
       const startupFailure = spawnSettlement;
+      // An explicit choice remains explicit. Its typed refusal must update the
+      // same admitted Account/Machine inventory read by lists and Settings.
+      await refreshSignInFacts(true);
+      const readAgent = (agentId: string) => readMachineAgentsForScope(lifetime, 'm1').agents.find(agent => agent.agentId === agentId);
+      expect(readAgent('claude')).toMatchObject({ state: 'ready', stale: false });
+      const claudeFacts = inventory.capabilities.results['cli.claude']!.data;
+      inventory.capabilities.results['cli.claude']!.data = { ...claudeFacts,
+        signIn: { ...claudeFacts.signIn, status: 'signedOut' }, isLoggedIn: false,
+        authStatus: { state: 'logged_out', checkedAt: Date.now() } };
       spawnSettlement = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'claude' });
       const explicitFailure = JSON.parse(await invokeCreate('voice-explicit-signed-out', {
         ...spawnInput, agentTarget: claudeTarget, creationKey: 'manual:voice-explicit-signed-out',
@@ -1724,6 +1753,8 @@ describe('voice tool handlers', () => {
       expect(explicitFailure).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
       expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(spawnSettlement);
       expect(explicitFailure).not.toHaveProperty('alternativeAgent');
+      expect(readAgent('claude')).toMatchObject({ state: 'needsSignIn', stale: false, signIn: { native: { status: 'signedOut' } } });
+      expect(readAgent('codex')).toMatchObject({ state: 'ready', stale: false });
       // With no ready Agent, do not attempt creation with the remembered default.
       await refreshSignInFacts(false);
       daemonRpc.mockClear();
@@ -1969,7 +2000,7 @@ describe('voice tool handlers', () => {
       executionMachine: { mode: 'fixed', machineId: 'm2' } } } }));
     const lease = createBundledConversationRuntimeHostLease();
     const barrier = lease.host.createToolBarrier({ adapterId, controlSessionId, resolveSessionId: () => null,
-      effectCalls: 'stable_ids', submitResults: async () => {}, continueResponse: async () => {} });
+      submitResults: async () => {}, continueResponse: async () => {} });
     onTestFinished(() => { barrier.dispose(); lease.revoke(); unbindVoiceRuntimeAttemptBindingIfOwned({ conversationSessionId: 's1', owner }); });
     const list = async (responseId: string, input: Record<string, import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue>) => {
       const batch = await barrier.run({ responseId, calls: [{ v: 1, responseId, callId: responseId, order: 0,
