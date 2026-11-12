@@ -15,7 +15,7 @@ import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMat
 
 export type ArtifactPublicLinkActionIdV1 = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit';
 /** Complete link issued by the keyholding host after approved creation; never an HTTP payload. */
-export type ArtifactPublicLinkIssuedV1 = Readonly<{ lookupId: string; secret: string; shareId: string; url: string }>;
+export type ArtifactPublicLinkIssuedV1 = Readonly<{ lookupId: string; secret: string; shareId: string; url: string; audience: 'anonymous' | 'signed_in' }>;
 export type ArtifactPublicLinkKeyholdingResourceV1 = ArtifactSharingResourceV1 & Readonly<{
   encryptionMode: 'plain' | 'e2ee'; dataKey: Uint8Array | null;
   /** Already opened by the keyholding host; never transported or treated as authority. */
@@ -171,7 +171,7 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
     const url = buildStoredContentPublicShareUrlV1({ ...material, origin: result.viewerOrigin,
       ...(audience === 'signed_in' ? { audience, shareableServerUrl: params.shareableServerUrl } : {}) });
     try {
-      await params.onPublicLinkIssued?.({ ...material, shareId: result.publicShare.id, url });
+      await params.onPublicLinkIssued?.({ ...material, shareId: result.publicShare.id, url, audience });
     } catch {
       // The Home committed; a host custody exception cannot disclose the secret or prove rollback.
       throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });

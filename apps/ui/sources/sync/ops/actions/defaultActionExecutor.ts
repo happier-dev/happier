@@ -225,6 +225,7 @@ import { createUiPendingEditAction } from './pendingEdit';
 import { createUiPendingSendNowAction } from './pendingSendNow';
 import { readRequesterSessionSpawnDisposition, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
 import { createUiArtifactAction } from './artifactActionDeps';
+import { createUiArtifactPublicLinkDelivery } from './artifactPublicLinkDelivery';
 import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
 import { createUiProfileActionExecuteV1 } from './profileActionDeps';
 import { createUiMcpServerActionExecuteV1 } from './mcpServerActionDeps';
@@ -732,6 +733,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   apiTokenAction?: ApiTokenActionTransport;
   /** Private Machine reverse-RPC continuation: admission/approval happened in the daemon. */
   admittedClientActionId?: ActionId;
+  /** Host-owned Voice Run admission; never read from Action input or remote context. */
+  readAdmittedVoiceInvocation?: () => import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
   /** The daemon still awaiting that continuation; its Session caller's Workflow children return there. */
   admittedClientActionParent?: AdmittedClientActionParent;
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
@@ -1254,6 +1257,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const readAccountSettingsSnapshot = () => accountContext
     ? (accountContext.readLiveSettings() ?? accountContext.settings)
     : storage.getState().settings;
+  const onPublicLinkIssued = opts?.onPublicLinkIssued
+    ?? (accountContext ? createUiArtifactPublicLinkDelivery(accountContext) : undefined);
   const deploymentActionDeps = accountContext ? createUiDeploymentActionDeps(accountContext) : null;
   const prepareApiTokenAuthoringHost = async (deployment: AccountApiTokenDeploymentInputV1 | null | undefined,
     grantDeployApproval: 'automatic' | undefined, context: ActionExecutorContext): Promise<ApiTokenDeploymentAuthoringHost> => {
@@ -1921,7 +1926,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     automationConversationAction: async (args) => args.context
       ? await executeMachineOwnedAction({ actionId: args.actionId, input: args.input, context: args.context })
       : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' },
-    ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued: opts?.onPublicLinkIssued,
+    ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued,
       consumeArtifactSignedInLinkSecret: opts?.consumeArtifactSignedInLinkSecret,
       onArtifactSignedInLinkOpened: opts?.onArtifactSignedInLinkOpened }) } : {}),
     ...(accountContext ? (() => {
@@ -1929,7 +1934,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         const { router } = await import('expo-router');
         const { buildBotTemplateEditorRoute } = await import('@/components/sessions/bots/templates/botTemplateEditorDestination');
         router.push(buildBotTemplateEditorRoute(input));
-      }), promptLibraryStore?.organization, () => deps, { onPublicLinkIssued: opts?.onPublicLinkIssued });
+      }), promptLibraryStore?.organization, () => deps, { onPublicLinkIssued });
       return { botTemplateAction, prepareBotTemplateInstantiation: request => botTemplateAction.prepareInstantiation(request),
         prepareBotTemplateUpdate: request => botTemplateAction.prepareUpdate(request),
         prepareBotTemplateRelease: request => botTemplateAction.prepareRelease(request) } satisfies
@@ -4422,7 +4427,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           });
           const state = candidate.readState();
           if (!state.accepted || state.updatedAt === null) return uncommitted();
-          if (observedActive) {
+          const isAmbientBrokeredNextPrompt = args.teamCredentialModel === undefined
+            && requested.deliveryMode === 'brokered' && args.applyTiming === 'next_prompt';
+          if (observedActive && !isAmbientBrokeredNextPrompt) {
             return { ok: false, errorCode: 'restart_required', error: 'restart_required', details: {
               status: 'restart_required', reason: 'team_resource_binding_changed', requestedTeamSelection: requested,
             } };
@@ -5073,7 +5080,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   // caller stamps its own surface and still wins. Without this the surface reaches the catalog
   // gate nullish, which now fails closed (INV-1 / DEC-2).
   const resolveContext = (context: Parameters<typeof executor.execute>[2], input: unknown, actionId?: ActionId): ActionExecutorContext => {
-    const surface = context?.surface ?? 'ui';
+    const voiceInvocation = opts?.readAdmittedVoiceInvocation?.();
+    const surface = opts?.readAdmittedVoiceInvocation ? voiceInvocation?.surface ?? 'voice' : context?.surface ?? 'ui';
     const installedAuth = getCurrentAuth();
     const credential = accountContext?.credentialAuthorityKind ?? installedAuth?.credentialAuthorityKind ?? 'none';
     const localUiInteraction = !accountContext && credential === 'none'
@@ -5082,7 +5090,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       && !context.externalActionCredential && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
       && !context.signal?.aborted && storage.getState().settingsScope === null && isSettingsOwnerCurrent()
       && (actionId === 'links.openExternal' || isBuiltInLocalSettingMutation(actionId, input));
-    const voiceCanApproveRequests = surface === 'voice' && credential === 'account'
+    const voiceCanApproveRequests = !opts?.readAdmittedVoiceInvocation && surface === 'voice' && credential === 'account'
       && (!context?.actionCaller || context.actionCaller.kind === 'host')
       && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization
       && !context?.rpcSessionAuthorization
@@ -5091,10 +5099,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       actionId, voiceCanApproveRequests });
     // Ordinary callers can narrow the installed credential's authority, never
     // promote it. Authenticated daemon continuations retain their admitted stamp.
-    const authority = opts?.admittedClientActionId
+    const authority = opts?.readAdmittedVoiceInvocation
+      ? credential === 'account' ? voiceInvocation?.authority ?? 'account_automation' : credentialAuthority
+      : opts?.admittedClientActionId
       ? context?.authority ?? 'account_automation'
       : credentialAuthority === 'present_user' ? context?.authority ?? credentialAuthority : credentialAuthority;
-    const actionCaller = context?.actionCaller ?? (credential === 'account' && (surface === 'ui' || surface === 'voice' || surface === 'rpc') && !context?.externalActionCredential
+    const actionCaller = voiceInvocation?.caller ?? context?.actionCaller ?? (credential === 'account' && (surface === 'ui' || surface === 'voice' || surface === 'rpc') && !context?.externalActionCredential
       && !context?.externalActionExecutionAuthorization && !context?.rpcSessionAuthorization ? { kind: 'host' as const } : undefined);
     // Ordinary UI callers do not author approval provenance. Retain stronger
     // invocation identities, otherwise bind one attempt at this host before

@@ -13,6 +13,8 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createUiClientActionReverseHandler } from './clientActionReverseDispatch';
+import { createDefaultActionExecutor } from './defaultActionExecutor';
+import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -30,7 +32,10 @@ describe('approved Agent document sharing delivery', () => {
             input: { artifactId: 'document', audience: 'anonymous' },
             context: { surface: 'agent', authority: 'account_automation' } }).success).toBe(true);
     });
-    it.each(['template', 'anonymous', 'signed_in', 'no_client'] as const)('reviews and privately delivers %s exactly once, or refuses without a client', async mode => {
+    it.each([
+        ['template', 'cli'], ['anonymous', 'cli'], ['signed_in', 'cli'], ['no_client', 'cli'],
+        ['template', 'ui'], ['anonymous', 'ui'], ['signed_in', 'ui'],
+    ] as const)('reviews and privately delivers %s via %s exactly once, or refuses without a client', async (mode, reviewer) => {
         const artifactLink = mode !== 'template';
         const draftId = '7e23f798-230a-42f3-931f-e38b20736333';
         const releaseId = '84a6bc9c-0418-44f6-a593-8a751bde13e0';
@@ -39,6 +44,8 @@ describe('approved Agent document sharing delivery', () => {
         const draft = { v: 1 as const, state: 'draft' as const, sourceSessionRef: { serverId: 'home', sessionId: 'bot-session' },
             releaseArtifactId: releaseId, content, candidates: { skills: [], memoryRules: [] } };
         const answerLinkRequest = async (path: string, init?: RequestInit) => {
+                // The App's captured Home transport also reads admission settings.
+                if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
                 if (!['/v1/artifact-signed-in-links', '/v1/public-shares'].includes(path) || init?.method !== 'POST') return null;
                 const raw: unknown = JSON.parse(String(init.body));
                 const signed = path === '/v1/artifact-signed-in-links';
@@ -52,6 +59,7 @@ describe('approved Agent document sharing delivery', () => {
             };
         home = await createPlainArtifactHomeFixture('https://agent-template-share.test', { currentAccount: true,
             handleRequest: answerLinkRequest });
+        await setServerProfileIdentityForUrl('https://agent-template-share.test', 'srv_signed_link');
         home.boundary.replaceStoredRow(createPlainArtifactHttpFixture({ id: draftId, isDecrypted: true, title: 'Garden',
             header: artifactLink ? { kind: 'markdown' } : projectBotTemplateArtifactHeaderV1(draft), body: artifactLink ? '# Garden' : JSON.stringify(draft), access: 'owner', publicAudience: 'none',
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, 'artifact-account'));
@@ -81,7 +89,7 @@ describe('approved Agent document sharing delivery', () => {
             if (path === '/v1/account/profile') return Response.json({ id: 'artifact-account' });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
-            if (path === '/v1/account/settings' || path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
+            if (path === '/v1/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
             const linkResponse = await answerLinkRequest(path, init);
             if (linkResponse) return linkResponse;
             const response = await home!.boundary.handle(`${path}${new URL(url).search}`, init);
@@ -112,8 +120,9 @@ describe('approved Agent document sharing delivery', () => {
         if (!proposed.ok) throw new Error('Missing reviewed proposal');
         const approval = ActionApprovalRequestCreatedResultSchema.parse(proposed.result);
         expect(home.boundary.readPlainBody(releaseId)).toBeNull();
-        const result = await cli.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
-            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
+        const answeringExecutor = reviewer === 'ui' ? createDefaultActionExecutor() : cli;
+        const result = await answeringExecutor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
+            surface: reviewer, authority: 'present_user', actionCaller: { kind: 'host' } });
         if (mode === 'no_client') {
             expect(result).toMatchObject({ ok: true, result: { execution: { ok: false, errorCode: 'unavailable' } } });
             expect(clientResponses).toHaveLength(0);
@@ -121,18 +130,19 @@ describe('approved Agent document sharing delivery', () => {
             return;
         }
         expect(result, JSON.stringify(result, (key, value) => key === 'url' ? '[private]' : value)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: artifactLink ? { status: 'public_link_created' } : { artifactId: releaseId } } } });
-        const replayed = await cli.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
-            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
+        const replayed = await answeringExecutor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
+            surface: reviewer, authority: 'present_user', actionCaller: { kind: 'host' } });
         expect(replayed).toMatchObject({ ok: true });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('#k='));
+        expect(screen.getTextContent().match(/#k=/gu)).toHaveLength(1);
         const issuedUrl = screen.getTextContent().match(/https:\/\/[^\s]+#k=[^\s]+/u)?.[0];
-        expect(issuedUrl).toContain('#k=');
-        expect(JSON.stringify(result)).not.toContain('#k=');
-        expect(JSON.stringify(result)).not.toContain('https://agent-template-share.test');
-        expect(JSON.stringify(proposed)).not.toContain('#k=');
-        expect(clientResponses).toHaveLength(1);
+        expect(Boolean(issuedUrl?.includes('#k='))).toBe(true);
+        expect(JSON.stringify(result).includes('#k=')).toBe(false);
+        expect(JSON.stringify(result).includes('https://agent-template-share.test')).toBe(false);
+        expect(JSON.stringify(proposed).includes('#k=')).toBe(false);
+        expect(clientResponses).toHaveLength(reviewer === 'ui' ? 0 : 1);
         expect(home.requests.filter(request => request.path === (mode === 'anonymous' ? '/v1/public-shares' : '/v1/artifact-signed-in-links'))).toHaveLength(1);
-        expect(JSON.stringify(home.boundary.list())).not.toContain('#k=');
+        expect(JSON.stringify(home.boundary.list()).includes('#k=')).toBe(false);
         expect(screen.findByTestId('document-share-signed-in-link-copy')).toBeTruthy();
         expect(Boolean(screen.findByTestId('document-share-signed-in-link'))).toBe(mode !== 'anonymous');
         } finally { Modal.hideAll(); await screen.unmount(); }

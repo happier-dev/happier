@@ -135,6 +135,7 @@ describe('keyholding Artifact public-link Actions', () => {
     });
     const created = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', audience: 'signed_in' } });
     expect(created).toMatchObject({ publicShare: signedIn, url: expect.not.stringContaining('#') });
+    expect(issued[0]).toMatchObject({ audience: 'signed_in' });
     const issuedUrl = new URL(issued[0]!.url);
     expect(issuedUrl.pathname).toBe(`/ui/share/artifact/${issued[0]!.lookupId}`);
     expect(issuedUrl.searchParams.get('server')).toBe('https://api.home.example.test/prefix');
@@ -248,6 +249,7 @@ describe('keyholding Artifact public-link Actions', () => {
       } });
     const result = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } });
     const link = issued[0]!;
+    expect(link).toMatchObject({ audience: 'anonymous' });
     expect(result).toEqual({ publicShare, url: link.url });
     const observation = getActionSpec('artifact.public_link.create').projectObservationOutput?.(result);
     expect(observation).toMatchObject({ status: 'public_link_created', nextStep: 'artifact_share_sheet', publicShare });
