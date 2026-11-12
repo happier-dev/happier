@@ -928,10 +928,12 @@ describe('reviewed create preparation authority', () => {
                     effectActionId, target: binding.target, installationId: f.machine.installationId!,
                     requestId: binding.requestId, method: 'GET', path, body: undefined, privateKey: f.key.secretKey }),
             } });
-            for (const effect of [binding.actionId, 'deployments.environments.get'] as const) {
-                const metadata = await read(`/v1/deployments/environments/${parent.id}?serverId=${serverId}`, authorization, effect);
-                expect(metadata.statusCode, metadata.body).toBe(200);
-            }
+            // The parent is a declared Environment read; the root's own effect reads only its allocated Environment.
+            const parentPath = `/v1/deployments/environments/${parent.id}?serverId=${serverId}`;
+            const declaredParent = await read(parentPath, authorization, 'deployments.environments.get');
+            expect(declaredParent.statusCode, declaredParent.body).toBe(200);
+            const rootEffectParent = await read(parentPath, authorization, binding.actionId);
+            expect(rootEffectParent.statusCode, rootEffectParent.body).toBe(401);
             for (const ref of [parentContent, candidate]) {
                 const result = await read(`/v1/artifacts/${ref.contentArtifactId}`);
                 expect(result.statusCode, result.body).toBe(200);
@@ -972,7 +974,7 @@ describe('reviewed create preparation authority', () => {
             if (['ProjectSource', 'TeamMembership', 'TeamGroupMember'].includes(request.model ?? '')) permissionReads.push(request.model!);
         } });
         try {
-            expect(await inTx(tx => readDeploymentCreateHttpPurposeInTx(tx, binding, binding.actionId, {
+            expect(await inTx(tx => readDeploymentCreateHttpPurposeInTx(tx, binding, 'deployments.environments.get', {
                 method: 'GET', path: `/v1/deployments/environments/${parent.id}?serverId=${serverId}`,
             }))).not.toBeNull();
             expect(await inTx(tx => readDeploymentCreateHttpPurposeInTx(tx, binding, binding.actionId, {

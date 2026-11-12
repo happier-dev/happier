@@ -137,8 +137,6 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         if (preparation?.operation === 'template' || preparation?.operation === 'create' && preparationEffectRead) {
             seeds.environment.clear();
             if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
-            // A preview Create names its parent template, which mint admitted; it is this root's operand, not a sibling.
-            if (preparation.operation === 'create' && preparation.preview) seeds.environment.add(preparation.preview.templateEnvironmentId);
         }
         if (preparation?.operation === 'prepare') {
             for (const id of seeds.environment) if (id !== preparation.environment?.id) seeds.environment.delete(id);
