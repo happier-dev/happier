@@ -1068,7 +1068,12 @@ describe('mounted managed configurator', () => {
       provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={defaultController} />);
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.images:${catalogReference}`)).not.toBeNull());
-      if (imageKind === 'private-after-catalog') await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
+      if (imageKind === 'private-after-catalog') {
+        await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
+        await screen.pressByTestIdAsync('managed-config.locations:home');
+        // Establish the catalog's actual hardware defaults before testing the representation change.
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      }
       // A catalog tile supplies its id; it cannot choose the declaration's custom-image representation.
       expect(screen.findByTestId('managed-config.field:image.id')).toBeNull();
       const select = async (path: string, value: string) => {
@@ -1105,16 +1110,16 @@ describe('mounted managed configurator', () => {
         expect(LumeOptionsInputV1Schema.parse(input.selectors)).toMatchObject({ storage: 'home',
           image: { kind: 'native-image', reference: nativeReference } });
         expect(screen.tree.findAllByType(ManagedImageTiles)[0]?.props.value).toBe(nativeReference);
-        const disk = screen.tree.findAllByType(HappierInputField).find(node => node.props.field.path === 'diskBytes');
-        expect(disk).toBeDefined();
         if (imageKind !== 'private-after-catalog') {
+          const disk = screen.tree.findAllByType(HappierInputField).find(node => node.props.field.path === 'diskBytes');
+          expect(disk).toBeDefined();
           expect(screen.tree.findAllByType(ManagedMachineConfigurator)[0]?.props.summary.spec).toBe(
             screenText.t('session.actionsDraft.validation.requiredField', { field: disk?.props.field.title }));
           expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
         }
       });
       // Native references have no catalog disk default: supply the displayed disk requirement.
-      await act(async () => screen.changeTextByTestId('managed-config.field:diskBytes', '150'));
+      if (imageKind !== 'private-after-catalog') await act(async () => screen.changeTextByTestId('managed-config.field:diskBytes', '150'));
       await waitForHomeGovernance(() => {
         const request = harness.requestsFor('/v1/actions/machines.provisioners.options').at(-1);
         const input = ProvisionerOptionsInputV1Schema.parse(ExternalActionRequestEnvelopeV1Schema.parse(request?.input).input);

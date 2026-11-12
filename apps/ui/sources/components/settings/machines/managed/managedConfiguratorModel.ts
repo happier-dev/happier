@@ -180,8 +180,10 @@ export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDra
     if (!option) return draft;
     const selection = { ...managedConfiguratorDimensionSelection(draft), [dimension]: id };
     const projection = managedConfiguratorProjection(draft, selection);
-    let next = refreshEnrollmentDefault({ ...draft, dimensionSelection: selection, selected: projection?.kind === 'ready' ? selectedProjection(draft, projection, selection) : null,
-        optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited });
+    // A tile can finish a settled partial review, but a pending options read still owns the form edit.
+    let next = refreshEnrollmentDefault({ ...draft, dimensionSelection: selection,
+        selected: projection?.kind === 'ready' ? selectedProjection(draft, projection, selection) : null,
+        optionsSelectorsEdited: projection?.kind === 'ready' && draft.optionStatus === 'current' ? undefined : draft.optionsSelectorsEdited });
     // Tiles author the same options operands as fields. Forward only operands declared by
     // that Action; fixed launch facts remain solely in Protocol's launch projection.
     let selectors = draft.optionsSelectors ?? {};
@@ -255,14 +257,26 @@ export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraf
     };
     // A fully qualified form already supplied this sole native fact. Keep its
     // visible row selected rather than asking the person to repeat that input.
+    // Forms retain inactive variant fields. Only the operands an assignment supplies decide whether it echoes
+    // the form; Protocol still applies the whole assignment when projecting the executable launch.
+    const supplies = (input: unknown, value: unknown): boolean => {
+        if (value === null || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length === 0) {
+            return pluginJsonValuesEqual(input, value);
+        }
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) return false;
+        return Object.entries(value).every(([key, operand]) => supplies((input as Readonly<Record<string, unknown>>)[key], operand));
+    };
     const supplied = (assignment: Readonly<{ path: string; value: unknown }>) =>
-        pluginJsonValuesEqual(readInputPath(options.base?.launch, assignment.path), assignment.value)
-        || selectors !== undefined && pluginJsonValuesEqual(readInputPath(selectors, assignment.path), assignment.value);
+        supplies(readInputPath(options.base?.launch, assignment.path), assignment.value)
+        || selectors !== undefined && supplies(readInputPath(selectors, assignment.path), assignment.value);
     for (const dimension of dimensions) {
         const entries = options.dimensions[dimension];
         const only = entries.length === 1 ? entries[0] : undefined;
         const editedMissing = draft.optionsSelectorsEdited === true && !entries.some(entry => entry.id === selection[dimension]);
-        if ((selection[dimension] === undefined || editedMissing) && only && options.base && only.assignments.every(supplied)) {
+        // An echoed operand is already chosen even while another required input prevents a launch base.
+        // Empty assignments alone prove no authored choice until that base exists.
+        if ((selection[dimension] === undefined || editedMissing) && only && (options.base || only.assignments.length > 0)
+            && only.assignments.every(supplied)) {
             selection[dimension] = only.id;
         }
     }

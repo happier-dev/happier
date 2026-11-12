@@ -1030,7 +1030,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const primaryFields = formFields.filter(field => !advancedFields.includes(field));
     // An error, or a required field emptied since, is never hidden in a closed disclosure.
     const advancedNeedsYou = advancedFields.some(field => field.path === launchRefusal?.fieldPath
-        || field.required && isBlankInput(readInputPath(fieldInput, field.path)));
+        || field.path === missingLaunchField?.path);
     // Closed, it says what it holds: the short choices (architecture, driver), not paths.
     const advancedSummary = advancedFields.flatMap(field => {
         const value = readInputPath(fieldInput, field.path);
