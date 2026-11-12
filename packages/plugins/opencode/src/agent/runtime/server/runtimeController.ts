@@ -14,13 +14,14 @@ import type { OpenCodeRuntimeTurnOperations } from './operations.js';
 import type { OpenCodeSessionOpenRequest } from './operations.js';
 import {
   buildOpenCodeRuntimeIssue,
+  buildOpenCodeProviderErrorIssue,
   publishOpenCodeTurnCancelled,
   publishOpenCodeRuntimeEvent,
   publishOpenCodeTurnFailed,
   projectOpenCodeRuntimeScope,
 } from './openCodeRuntimeEvents.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
-import { isOpenCodeServerAuthFailure, OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
+import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
 import { OpenCodeSkillIdentityError } from './openCodeV2Wire.js';
 import type { OpenCodeMcpRegistrationResult, OpenCodeSessionMcpProjection } from './mcpRegistration.js';
 import { resolveOpenCodeProjectedMcpToolName } from './mcpRegistration.js';
@@ -110,36 +111,6 @@ class OpenCodePromptTurnRetiredBeforeDispatchError extends Error {
     super('OpenCode prompt turn was cancelled before prompt submission');
     this.name = 'OpenCodePromptTurnRetiredBeforeDispatchError';
   }
-}
-
-function readOpenCodeProviderErrorStatus(error: unknown): number | null {
-  const record = asRecord(error);
-  const data = asRecord(record?.data);
-  const status = record?.status ?? data?.status ?? record?.statusCode ?? data?.statusCode;
-  if (typeof status === 'number' && Number.isFinite(status)) return Math.trunc(status);
-  const normalized = normalizeString(status);
-  if (!normalized) return null;
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function openCodeProviderSessionErrorLooksAuthFailure(params: Readonly<{
-  error: unknown;
-  formattedMessage: string;
-}>): boolean {
-  const status = readOpenCodeProviderErrorStatus(params.error);
-  if (status === 401 || status === 403) return true;
-  const record = asRecord(params.error);
-  const data = asRecord(record?.data);
-  const haystack = [
-    normalizeString(record?.name),
-    normalizeString(data?.name),
-    normalizeString(record?.code),
-    normalizeString(data?.code),
-    readOpenCodeProviderErrorMessage(params.error),
-    params.formattedMessage,
-  ].filter((value): value is string => Boolean(value)).join('\n').toLowerCase();
-  return /\b(401|403|unauthori[sz]ed|forbidden|auth|credential|token refresh failed)\b/u.test(haystack);
 }
 
 function normalizeOpenCodePromptResponseMessages(response: unknown): readonly unknown[] {
@@ -1334,14 +1305,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
     if (!turnId) return false;
     const emittedAtMs = Date.now();
-    const message = formatOpenCodeServerPromptErrorMessage(error);
-    const isAuthFailure = openCodeProviderSessionErrorLooksAuthFailure({ error, formattedMessage: message });
-    const nativeError = asRecord(error);
-    const nativeHttpStatus = typeof nativeError?.type === 'string' ? nativeError.status
-      : nativeError?.name === 'APIError' ? asRecord(nativeError.data)?.statusCode : undefined;
-    const nativeProviderFailure = options.providerId && typeof nativeHttpStatus === 'number'
-      && Number.isInteger(nativeHttpStatus) && nativeHttpStatus >= 100 && nativeHttpStatus <= 599
-      ? { providerId: options.providerId, httpStatus: nativeHttpStatus } : null;
     foregroundToolTracker.reset();
     resetCurrentTurnObservations();
     await publishOpenCodeTurnFailed({
@@ -1349,12 +1312,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       scope: params.scope,
       turnId,
       emittedAtMs,
-      issue: buildOpenCodeRuntimeIssue({
+      issue: buildOpenCodeProviderErrorIssue({
         code: 'opencode_provider_session_error',
-        source: isAuthFailure ? 'auth_error' : 'agent_session_error',
-        message,
+        error,
         occurredAt: emittedAtMs,
-        ...(nativeProviderFailure ? { nativeProviderFailure } : {}),
+        providerId: options.providerId,
       }),
     });
     return true;
@@ -2466,12 +2428,12 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
             scope: params.scope,
             turnId: failedTurnId,
             emittedAtMs,
-            issue: buildOpenCodeRuntimeIssue({
+            issue: buildOpenCodeProviderErrorIssue({
               code: isPromptRejectedBeforeProviderEffect(error)
                 ? 'opencode_prompt_rejected'
                 : 'opencode_prompt_submission_failed',
-              source: isOpenCodeServerAuthFailure(error) ? 'auth_error' : 'agent_session_error',
-              message: formatOpenCodeServerPromptErrorMessage(error),
+              error,
+              phase: 'turn_start',
               occurredAt: emittedAtMs,
             }),
           });

@@ -2032,7 +2032,8 @@ describe('createOpenCodeServerRuntime', () => {
           issue: expect.objectContaining({
             agentId: 'opencode',
             code: 'opencode_prompt_submission_failed',
-            source: 'agent_session_error',
+            source: 'auth_error',
+            failureCause: { phase: 'turn_start', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
             sanitizedPreview: expect.stringContaining('Unauthorized'),
           }),
         }),
@@ -2045,7 +2046,8 @@ describe('createOpenCodeServerRuntime', () => {
         issue: expect.objectContaining({
           agentId: 'opencode',
           code: 'opencode_prompt_submission_failed',
-          source: 'agent_session_error',
+          source: 'auth_error',
+            failureCause: { phase: 'turn_start', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
           sanitizedPreview: expect.stringContaining('Unauthorized'),
         }),
       }),
@@ -4612,7 +4614,33 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
-  it('fails and confirms provider acceptance from an immediate assistant error prompt response', async () => {
+  it.each([
+    {
+      label: 'credential refresh refusal',
+      error: { name: 'ProviderAuthError', data: { message: 'Token refresh failed: 401 Authorization: Bearer sk-live-secret' } },
+      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
+    },
+    {
+      label: 'loaded Muse authentication failure without response evidence',
+      error: { name: 'ProviderAuthError', data: { providerID: 'meta', message: 'Authentication failed' } },
+      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
+    },
+    {
+      label: 'explicit attestation refusal',
+      error: { name: 'APIError', data: { statusCode: 403, message: 'Authentication failed', responseBody: JSON.stringify({ error: { code: 'client_attestation_denied', message: 'Authorization: Bearer sk-live-secret' } }) } },
+      failureCause: { phase: 'turn', code: 'client_attestation_denied', failureReason: 'permission_denied', httpStatus: 403 },
+    },
+    {
+      label: 'forbidden response without attestation evidence',
+      error: { name: 'APIError', data: { statusCode: 403, message: 'Authentication failed', responseBody: JSON.stringify({ error: { code: 'permission_error' } }) } },
+      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required', httpStatus: 403 },
+    },
+    {
+      label: 'invalid credential without attestation evidence',
+      error: { name: 'APIError', data: { statusCode: 401, message: 'Authentication failed', responseBody: JSON.stringify({ error: { code: 'invalid_api_key' } }) } },
+      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required', httpStatus: 401 },
+    },
+  ])('fails and confirms provider acceptance from an immediate assistant error prompt response: $label', async ({ error, failureCause }) => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
     const immediateAssistantError = {
@@ -4621,12 +4649,7 @@ describe('createOpenCodeServerRuntime', () => {
         role: 'assistant',
         sessionID: 'ses-1',
         time: { created: Date.now() },
-        error: {
-          name: 'ProviderAuthError',
-          data: {
-            message: 'Token refresh failed: 401 Authorization: Bearer sk-live-secret',
-          },
-        },
+        error,
       },
       parts: [],
     };
@@ -4639,7 +4662,7 @@ describe('createOpenCodeServerRuntime', () => {
     }));
     const operations = await createStartedRuntime({ ctx, client, harness });
     const runtime = createNativeSessionRuntimeForTest(operations);
-    const nativeEvents: Array<{ kind: string }> = [];
+    const nativeEvents: AgentSessionRuntimeEvent[] = [];
     runtime.watch((event) => nativeEvents.push(event));
 
     await expect(runtime.send({
@@ -4656,13 +4679,14 @@ describe('createOpenCodeServerRuntime', () => {
             agentId: 'opencode',
             code: 'opencode_provider_session_error',
             source: 'auth_error',
-            sanitizedPreview: expect.stringContaining('Token refresh failed: 401'),
+            failureCause,
           }),
         }),
       ]));
     });
 
     expect(nativeEvents.filter((event) => event.kind === 'input-accepted')).toHaveLength(1);
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'turn-failed', diagnostic: expect.objectContaining({ details: expect.objectContaining({ failureCause }) }) }));
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
     expect(JSON.stringify(runtimeEvents)).not.toContain('sk-live-secret');
     expect(transcriptAppends).toHaveLength(0);

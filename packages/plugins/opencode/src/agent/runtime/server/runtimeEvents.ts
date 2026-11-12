@@ -1,3 +1,4 @@
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type OpenCodeRuntimeIssue = Readonly<{
@@ -16,6 +17,7 @@ export type OpenCodeRuntimeIssue = Readonly<{
     limitCategory: string;
   }>;
   nativeProviderFailure?: Readonly<{ providerId: string; httpStatus: number }>;
+  failureCause?: NonNullable<SessionRuntimeIssueV1['failureCause']>;
 }>;
 
 export type OpenCodeRuntimeScope =

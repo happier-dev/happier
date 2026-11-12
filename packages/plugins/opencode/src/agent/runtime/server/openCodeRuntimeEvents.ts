@@ -1,3 +1,6 @@
+import { asRecord, normalizeString } from './openCodeParsing.js';
+import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
+import { isOpenCodeServerAuthFailure } from './openCodeServerClient.js';
 import type {
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -34,6 +37,7 @@ export function buildOpenCodeRuntimeIssue(params: Readonly<{
   occurredAt: number;
   usageLimit?: OpenCodeRuntimeIssue['usageLimit'];
   nativeProviderFailure?: OpenCodeRuntimeIssue['nativeProviderFailure'];
+  failureCause?: OpenCodeRuntimeIssue['failureCause'];
 }>): OpenCodeRuntimeIssue {
   return {
     v: 1,
@@ -44,7 +48,56 @@ export function buildOpenCodeRuntimeIssue(params: Readonly<{
     sanitizedPreview: params.message ?? null,
     ...(params.usageLimit ? { usageLimit: params.usageLimit } : {}),
     ...(params.nativeProviderFailure ? { nativeProviderFailure: params.nativeProviderFailure } : {}),
+    ...(params.failureCause ? { failureCause: params.failureCause } : {}),
   };
+}
+
+/** Normalize native history, event and prompt failures before either runtime scope projects them. */
+export function buildOpenCodeProviderErrorIssue(params: Readonly<{
+  code: string;
+  error: unknown;
+  occurredAt: number;
+  phase?: NonNullable<OpenCodeRuntimeIssue['failureCause']>['phase'];
+  providerId?: string | null;
+}>): OpenCodeRuntimeIssue {
+  const record = asRecord(params.error);
+  const data = asRecord(record?.data);
+  const rawStatus = record?.status ?? data?.status ?? record?.statusCode ?? data?.statusCode;
+  const status = typeof rawStatus === 'number' ? rawStatus : Number.parseInt(normalizeString(rawStatus), 10);
+  const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+  let body: unknown = data?.responseBody ?? record?.responseBodyPreview ?? record?.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = null; }
+  }
+  const response = asRecord(body);
+  const responseError = asRecord(response?.error);
+  const attestationDenied = [record?.code, record?.type, data?.code, response?.code,
+    responseError?.code, responseError?.type].some(code => code === 'client_attestation_denied');
+  const message = formatOpenCodeServerPromptErrorMessage(params.error);
+  const authEvidence = [record?.name, data?.name, record?.code, data?.code, data?.message, message]
+    .map(normalizeString).join('\n');
+  const authFailure = attestationDenied || isOpenCodeServerAuthFailure(params.error)
+    || httpStatus === 401 || httpStatus === 403 || record?.name === 'ProviderAuthError'
+    || /\b(401|403|unauthori[sz]ed|forbidden|auth|authentication|credential|token refresh failed)\b/iu.test(authEvidence);
+  // Provider attribution retains the native wire evidence contract; generic host HTTP errors are separate.
+  const nativeHttpStatus = typeof record?.type === 'string' ? record.status
+    : record?.name === 'APIError' ? data?.statusCode : undefined;
+  const nativeProviderFailure = params.providerId && typeof nativeHttpStatus === 'number'
+    && Number.isInteger(nativeHttpStatus) && nativeHttpStatus >= 100 && nativeHttpStatus <= 599
+    ? { providerId: params.providerId, httpStatus: nativeHttpStatus } : null;
+  return buildOpenCodeRuntimeIssue({
+    code: params.code,
+    source: authFailure ? 'auth_error' : 'agent_session_error',
+    message,
+    occurredAt: params.occurredAt,
+    ...(nativeProviderFailure ? { nativeProviderFailure } : {}),
+    ...(authFailure ? { failureCause: {
+      phase: params.phase ?? 'turn',
+      code: attestationDenied ? 'client_attestation_denied' : 'opencode_authentication_failed',
+      failureReason: attestationDenied ? 'permission_denied' : 'authentication_required',
+      ...(httpStatus === null ? {} : { httpStatus }),
+    } } : {}),
+  });
 }
 
 /** Both native scopes preserve the same normalized provider evidence. */
@@ -59,6 +112,7 @@ export function projectOpenCodeRuntimeIssueDiagnostic(issue: OpenCodeRuntimeIssu
       agentId: issue.agentId,
       ...(issue.usageLimit ? { usageLimit: issue.usageLimit } : {}),
       ...(issue.nativeProviderFailure ? { nativeProviderFailure: issue.nativeProviderFailure } : {}),
+      ...(issue.failureCause ? { failureCause: issue.failureCause } : {}),
     },
   };
 }
