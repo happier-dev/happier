@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { createServer } from 'node:http';
 import { convertBackendTargetRefV2ToV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
@@ -22,6 +23,70 @@ import { ExecutionRunHostBridge } from '../ExecutionRunHostBridge';
 import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
 describe('execution-run pinned Provider preparation', () => {
+    it('keeps a finite managed-purpose Run acquisition owned through disposal', async () => {
+        let enterMaterialization!: () => void;
+        const enteredMaterialization = new Promise<'materializing'>(resolve => { enterMaterialization = () => resolve('materializing'); });
+        let releaseMaterialization!: () => void;
+        const materializationReleased = new Promise<void>(resolve => { releaseMaterialization = resolve; });
+        const adapterBoundary = createServer(async (_request, response) => {
+            enterMaterialization();
+            await materializationReleased;
+            response.end('ready');
+        });
+        await new Promise<void>(resolve => adapterBoundary.listen(0, '127.0.0.1', resolve));
+        const address = adapterBoundary.address();
+        if (!address || typeof address === 'string') throw new Error('Expected adapter boundary address');
+        const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, controller: pluginReloadController,
+            materializationUrl: 'http://127.0.0.1:' + address.port,
+            connectedAccountModels: [{ id: 'example', name: 'Example' }],
+            connectedAccounts: [{ purpose: 'inference', service: { pluginId: 'acme.shared-registry', localId: 'accounts' },
+                materializationKinds: ['httpHeaders'], managedProviderEndpoint: {
+                    provider: { pluginId: 'acme.shared-registry', localId: 'gateway' }, purpose: 'upstream', modelIdPrefix: 'native/' } }],
+        });
+        const resources = createProviderLaunchResourceScope();
+        let runtime: ReturnType<typeof createExecutionRunRuntime> | undefined;
+        let provisioning: Promise<unknown> | undefined;
+        let disposal: Promise<void> | undefined;
+        try {
+            const backendTarget = { kind: 'backend' as const, backendId: fixture.agentId };
+            const descriptor = await resolveRunnerAgentSessionDescriptorForLease({ target: backendTarget, lease: fixture.lease });
+            const binding = fixture.lease.registry.agentRuntimesByAgentId.get(fixture.agentId)?.sessionRunnerFactoryBinding;
+            if (!descriptor || !binding) throw new Error('Expected admitted executable Agent source');
+            const providerLaunch = createRunnerExecutionRunProviderLaunchServices({ agent: { descriptor, binding }, backendTarget,
+                runtimeRegistryLease: fixture.lease, retainCleanup: resources.register,
+                resolvePreparation: async () => ({ machineId: fixture.machineId, happyHomeDir: fixture.happyHomeDir,
+                    featureEnabled: true, accountSettingsSnapshot: fixture.snapshot,
+                    resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection,
+                    isCurrent: () => true }),
+            });
+            runtime = createExecutionRunRuntime({ cwd: fixture.happyHomeDir, happyHomeDir: fixture.happyHomeDir,
+                scope: 'detached', runId: 'managed-purpose-finite-run', backendId: fixture.agentId, backendTarget,
+                modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' },
+                modelId: 'native/example', permissionMode: 'default', start: { intent: 'agent' },
+                machineId: fixture.machineId, engineRegistry: await resolveCliEngineRegistry({ runtimeRegistry: fixture.lease.registry }),
+                connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
+                resolveProvidersFeatureEnabled: () => true, resolveAccountSettingsSnapshot: async () => fixture.snapshot, providerLaunch,
+            });
+            provisioning = runtime.provisionRuntime({ initialPrompt: 'Use the selected managed source.' });
+            const phase = await Promise.race([enteredMaterialization, provisioning.then(() => 'native_bypass' as const)]);
+            expect(phase).toBe('materializing');
+            let disposed = false;
+            disposal = runtime.dispose().then(() => { disposed = true; });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(disposed, 'Disposal must retain the in-flight managed acquisition until it can retire').toBe(false);
+            releaseMaterialization();
+            await provisioning.catch(() => undefined);
+            await disposal;
+            expect(disposed).toBe(true);
+        } finally {
+            releaseMaterialization();
+            await provisioning?.catch(() => undefined);
+            await (disposal ?? runtime?.dispose());
+            await resources.retire();
+            await fixture.cleanup();
+            await new Promise<void>((resolve, reject) => adapterBoundary.close(error => error ? reject(error) : resolve()));
+        }
+    });
     it.each(['runtime', 'bridge'] as const)('keeps the admitted launch overlay across an unrelated publication in the %s continuation', async entry => {
         const fixture = await createManagedRunLaunchFixture();
         const credentials = { token: 'run-account', encryption: null } as const;

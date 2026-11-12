@@ -3,6 +3,7 @@ import type { ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } fr
 import { traceRunPreparationPhase } from '@/providers/diagnostics';
 import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
+import { hasConnectedExecutionRunBinding } from './connectedServicesEnv';
 
 import { executionRunContributionSnapshotUnavailable } from '../contributionSnapshotLease';
 import type { ExecutionRunRetainedInteractionScope } from '../retainedInteractionEligibility';
@@ -46,12 +47,10 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
         resolveAccountSettingsSnapshot, ...preparation } = input;
     const trace = <T>(phase: Parameters<typeof traceRunPreparationPhase>[1], work: () => T | Promise<T>) =>
         traceRunPreparationPhase(input.runId, phase, input.signal, work);
-    const featureEnabled = !input.selection || input.selection.providerConnectionId === null
-        || await trace('provider_features', () => resolveProvidersFeatureEnabled?.()) === true;
     const accountSettingsSnapshot = await trace('account_snapshot', () => resolveAccountSettingsSnapshot?.()) ?? null;
     const selection = input.selection;
     const nativeTeam = input.teamCredentialModel?.deliveryMode === 'vendor-native' ? input.teamCredentialModel : undefined;
-    if (providerLaunch && (selection?.providerConnectionId || nativeTeam)) {
+    if (providerLaunch && (selection?.providerConnectionId || nativeTeam || selection && (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
         const expectedAccountSettingsScopeKey = accountSettingsSnapshot?.scopeKey;
         if (!expectedAccountSettingsScopeKey) {
             if (nativeTeam) throw new SessionTeamCredentialLaunchUnavailableError();
@@ -72,7 +71,7 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
         return prepared;
     }
     return await trace('provider_launch', () => prepareExecutionRunProviderLaunch({
-        ...preparation, featureEnabled, accountSettingsSnapshot,
+        ...preparation, featureEnabled: async () => await trace('provider_features', () => resolveProvidersFeatureEnabled?.()) === true, accountSettingsSnapshot,
         savedSecretOperationContext: resolveAccountSettingsSnapshot?.readOperationContext?.() ?? undefined,
     }));
 }

@@ -1,7 +1,7 @@
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { AgentProviderBindingLaunchMaterializationV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, PluginExecutionScopeV1, ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
-import { prepareProviderLaunch } from './prepareLaunch';
+import { prepareProviderLaunch, type PrepareProviderLaunchInput } from './prepareLaunch';
 import {
   createProviderLaunchResourceScope,
   type ProviderLaunchCleanup,
@@ -12,6 +12,10 @@ import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
 import { logProviderUnexpectedFailure, traceRunPreparationPhase } from '@/providers/diagnostics';
 import { ProviderOperationAbandonedError } from '../operationLifetime';
+import { createProviderRedactionLease } from '../spawn/redaction';
+import type { ManagedPurposeLaunchContext } from './managedPurposeLaunch';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ProviderBoundModelRef, SessionEnvOverlayV1 } from '@happier-dev/protocol';
 
 type ProviderLaunchPrerequisiteContext = Readonly<{
   agentTargetKey: string;
@@ -49,6 +53,25 @@ export type DirectManagedProviderEndpointPreparer = (input: Readonly<{
   cleanup: ProviderLaunchCleanup;
 }>>;
 
+function projectLaunchEnvironment(overlay: SessionEnvOverlayV1) {
+    const environment: Record<string, string> = Object.create(null);
+    const unsetEnvKeysByIdentity = new Map<string, string>();
+    for (const entry of overlay) {
+      if (isSessionControlEnvKey(entry.name)) continue;
+      const identity = entry.name.toLowerCase();
+      for (const existingName of Object.keys(environment)) {
+        if (existingName.toLowerCase() === identity) delete environment[existingName];
+      }
+      if (entry.value === null) unsetEnvKeysByIdentity.set(identity, entry.name);
+      else {
+        unsetEnvKeysByIdentity.delete(identity);
+        environment[entry.name] = entry.value;
+      }
+    }
+
+    return { environment: Object.freeze(environment), unsetEnvKeys: Object.freeze([...unsetEnvKeysByIdentity.values()]) };
+}
+
 export type DirectProviderLaunchResult =
   | Readonly<{
       ok: true;
@@ -75,6 +98,21 @@ export type DirectProviderLaunchResult =
       transferLaunchMaterializationCleanupOwnership: () => void;
       cleanupOnExit: ProviderLaunchCleanup | null;
     }>
+  | Readonly<{
+      ok: true;
+      kind: 'managedPurpose';
+      agentTargetKey: string;
+      selection: ProviderBoundModelRef;
+      connectedServices: ConnectedServiceBindingsV2;
+      environment: Readonly<Record<string, string>>;
+      unsetEnvKeys: readonly string[];
+      providerBinding: AgentSessionProviderBinding;
+      launchMaterialization: AgentProviderBindingLaunchMaterializationV1;
+      sanitizeDiagnosticText: (value: string) => string;
+      additionalRedactionValues: readonly string[];
+      revalidateBeforeCommit(signal?: AbortSignal): Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>>;
+      cleanupOnExit: ProviderLaunchCleanup | null;
+    }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
 
 /**
@@ -96,7 +134,8 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     confirmation: SessionProviderBindingSecurityChangeConfirmationV1,
   ) => Promise<boolean>;
   connectedServices: ConnectedServiceBindingsV2 | null;
-  featureEnabled: boolean;
+  featureEnabled: PrepareProviderLaunchInput['featureEnabled'];
+  managedPurposeContext?: ManagedPurposeLaunchContext;
 }>, dependencies: Readonly<{
   resolvePrerequisites: (
     context: ProviderLaunchPrerequisiteContext,
@@ -167,6 +206,24 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       };
     }
 
+    if (prepared.kind === 'managedPurpose') {
+      if (executionScope.kind !== 'session' && executionScope.kind !== 'execution_run') {
+        await cleanupAfterRefusal(() => scope.release());
+        return { ok: false, error: createProviderErrorV1('provider_agent_runtime_unsupported') };
+      }
+      const materialized = await prepared.materialize(executionScope);
+      if (!materialized.ok) { await cleanupAfterRefusal(() => scope.release()); return materialized; }
+      scope.register(materialized.cleanup);
+      const redaction = createProviderRedactionLease({ values: materialized.additionalRedactionValues });
+      scope.register(redaction.close);
+      scope.setSanitizer(redaction.redact);
+      return { ok: true, kind: 'managedPurpose', agentTargetKey: prepared.agentTargetKey,
+        selection: prepared.selection, connectedServices: materialized.connectedServices,
+        ...projectLaunchEnvironment(materialized.environmentOverlay), providerBinding: materialized.providerBinding,
+        launchMaterialization: materialized.providerBinding.materialization,
+        sanitizeDiagnosticText: redaction.redact, additionalRedactionValues: redaction.values(),
+        revalidateBeforeCommit: materialized.revalidateBeforeCommit, cleanupOnExit: scope.transfer() };
+    }
     const attempt = prepared.attempt;
     let revalidateManagedEndpoint: Awaited<ReturnType<DirectManagedProviderEndpointPreparer>>['revalidateBeforeCommit'] | null = null;
     let materialized;
@@ -203,20 +260,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     }
     scope.register(attempt.takeCleanupOnExit());
 
-    const environment: Record<string, string> = Object.create(null);
-    const unsetEnvKeysByIdentity = new Map<string, string>();
-    for (const entry of materialized.materialization.providerEnvironmentOverlay) {
-      if (isSessionControlEnvKey(entry.name)) continue;
-      const identity = entry.name.toLowerCase();
-      for (const existingName of Object.keys(environment)) {
-        if (existingName.toLowerCase() === identity) delete environment[existingName];
-      }
-      if (entry.value === null) unsetEnvKeysByIdentity.set(identity, entry.name);
-      else {
-        unsetEnvKeysByIdentity.delete(identity);
-        environment[entry.name] = entry.value;
-      }
-    }
+    const { environment, unsetEnvKeys } = projectLaunchEnvironment(materialized.materialization.providerEnvironmentOverlay);
 
     const cleanupOnExit = scope.transfer();
     let launchMaterializationCleanupTransferred = false;
@@ -256,7 +300,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       connectedServices: prepared.connectedServices,
       suppressedConnectedServiceIds: prepared.suppressedConnectedServiceIds,
       environment: Object.freeze(environment),
-      unsetEnvKeys: Object.freeze([...unsetEnvKeysByIdentity.values()]),
+      unsetEnvKeys,
       launchMaterialization: materialized.materialization.launchMaterialization,
       bindingMetadata: attempt.authorization.sessionBindingMetadata,
       sanitizeDiagnosticText,

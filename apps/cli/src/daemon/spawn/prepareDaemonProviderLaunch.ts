@@ -1,3 +1,4 @@
+import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { join } from 'node:path';
 
 import type {
@@ -18,6 +19,7 @@ import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerB
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
+import type { PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import type { ProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -44,6 +46,7 @@ type PreparedDaemonProviderLaunch = Readonly<{
     ok: true;
     options: SpawnSessionOptions;
     attempt: ProviderSpawnAuthorizationAttempt | null;
+    managedPurpose?: PreparedManagedPurposeLaunch;
     agentTargetKey: string | null;
     providerSessionId: string | null;
 }>;
@@ -70,6 +73,8 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
     launchResourceScope: ProviderLaunchResourceScope;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     processEnv: NodeJS.ProcessEnv;
     launchProfileArtifacts?: ReadonlyMap<string, ArtifactSharingResourceV1>;
     accountSettingsSnapshot?: ActiveAccountSettingsSnapshot;
@@ -161,9 +166,16 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
             const parsed = ConnectedServiceBindingsV2IngressSchema.safeParse(input.options.connectedServices);
             return parsed.success ? parsed.data : null;
         })(),
-        featureEnabled: input.modelSelection?.ref.providerConnectionId != null
-            ? await input.resolveProvidersFeatureEnabled?.() === true
-            : false,
+        featureEnabled: input.resolveProvidersFeatureEnabled ?? (() => false),
+        managedPurposeContext: { lease: appliedPluginRuntimeLease,
+            readProviderSettings: () => {
+                const snapshot = input.readAccountSettingsSnapshot ? input.readAccountSettingsSnapshot()
+                    : input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot();
+                return snapshot ? readProviderSettingsForCli(snapshot).settings : null;
+            },
+            happyHomeDir: input.providerRuntimeHomeDir ?? configuration.happyHomeDir, signal: input.signal,
+            resolveManagedPurposeBindingIntentSelection: input.resolveManagedPurposeBindingIntentSelection,
+            accountAuthority: input.managedProviderAccountAuthority },
         resolvePrerequisites: async (providerBindingContext) => {
             const providerPrerequisites = await resolveSpawnChildEnvironment({
                 agentIsolation: input.agentIsolation,
@@ -249,6 +261,10 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
         };
     }
 
+    if (prepared.kind === 'managedPurpose') {
+        return { ok: true, options: optionsWithProviderIsolation, attempt: null, managedPurpose: prepared,
+            agentTargetKey: prepared.agentTargetKey, providerSessionId };
+    }
     input.launchResourceScope.register({
         onFailure: prepared.attempt.cleanupOnFailure,
         onExit: () => {},

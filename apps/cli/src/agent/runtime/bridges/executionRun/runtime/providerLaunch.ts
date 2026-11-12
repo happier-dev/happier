@@ -1,3 +1,4 @@
+import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { join } from 'node:path';
 
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -20,6 +21,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createExecutionRunCodedError } from '../errors';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
+import { hasConnectedExecutionRunBinding } from './connectedServicesEnv';
 
 type Cleanup = (() => void | Promise<void>) | null;
 
@@ -32,12 +34,14 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
     agentId: string;
     runId: string;
     connectedServices?: ConnectedServiceBindingsV2 | null;
-    featureEnabled: boolean;
+    featureEnabled: PrepareProviderLaunchInput['featureEnabled'];
     happyHomeDir: string;
     accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
     readAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     /** Borrowed from this Run's pinned daemon snapshot; its owner releases it. */
     runtimeRegistryLease?: PluginRuntimeRegistryLease;
@@ -63,19 +67,13 @@ export type ExecutionRunProviderLaunchServices = Readonly<{
 
 /** Admits a child choice and explicit config without materializing credentials or launching a runtime. */
 export async function admitExecutionRunInheritedProviderSelection(input: ExecutionRunProviderSelectionInput): Promise<void> {
-    if (input.selection.providerConnectionId === null) return;
+    if (input.selection.providerConnectionId === null && !(input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices))) return;
     validateExecutionRunProviderSelectionInput(input);
     const lease = input.runtimeRegistryLease ?? await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir });
     try {
         const prepared = await prepareProviderLaunch<never>(createExecutionRunProviderPreparation(input, lease));
         if (!prepared.ok) throw inheritedProviderRefusal(prepared.error);
-        if (prepared.kind !== 'provider') {
-            throw inheritedProviderRefusal(createProviderErrorV1('provider_incompatible_with_agent', {
-                connectionId: input.selection.providerConnectionId,
-                ...(input.machineId ? { machineId: input.machineId } : {}),
-            }));
-        }
-        await prepared.attempt.cleanupOnFailure();
+        if (prepared.kind === 'provider') await prepared.attempt.cleanupOnFailure();
     } finally {
         if (!input.runtimeRegistryLease) await lease.release();
     }
@@ -132,20 +130,20 @@ function inheritedProviderRefusal(error: ProviderErrorV1): Error {
 
 function validateExecutionRunProviderSelectionInput(input: ExecutionRunProviderSelectionInput): void {
     const context = {
-        connectionId: input.selection.providerConnectionId ?? undefined,
+        connectionId: input.selection?.providerConnectionId ?? undefined,
         ...(input.machineId ? { machineId: input.machineId } : {}),
     };
     if (!input.runId.trim()) throw refusal(createProviderErrorV1('provider_agent_runtime_unsupported', context));
-    if (!input.accountSettingsSnapshot) throw refusal(createProviderErrorV1('provider_connection_not_found', context));
+    if (input.selection.providerConnectionId !== null && !input.accountSettingsSnapshot) throw refusal(createProviderErrorV1('provider_connection_not_found', context));
 }
 
 function createExecutionRunProviderPreparation(
-    input: ExecutionRunProviderSelectionInput,
+    input: Omit<ExecutionRunProviderSelectionInput, 'selection'> & Readonly<{ selection?: ProviderBoundModelRef }>,
     lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>>,
 ): PrepareProviderLaunchInput {
     const operationContext = input.savedSecretOperationContext;
     return {
-        selection: { v: 1, ref: input.selection, updatedAt: Date.now() },
+        ...(input.selection ? { selection: { v: 1 as const, ref: input.selection, updatedAt: Date.now() } } : {}),
         backendTarget: input.backendTarget,
         machineId: input.machineId,
         agentId: input.agentId,
@@ -153,12 +151,20 @@ function createExecutionRunProviderPreparation(
         confirmation: null,
         connectedServices: input.connectedServices ?? null,
         featureEnabled: input.featureEnabled,
+        managedPurposeContext: { lease, happyHomeDir: input.happyHomeDir, signal: input.signal,
+            readProviderSettings: () => {
+                const snapshot = input.readAccountSettingsSnapshot ? input.readAccountSettingsSnapshot()
+                    : operationContext ? operationContext.readSnapshot() : input.accountSettingsSnapshot;
+                return snapshot ? readProviderSettingsForCli(snapshot).settings : null;
+            },
+            resolveManagedPurposeBindingIntentSelection: input.resolveManagedPurposeBindingIntentSelection,
+            accountAuthority: input.managedProviderAccountAuthority },
         resolvePrerequisites: async () => {
             const requirements = readLeasedAgentProviderRequirements({ lease, agentId: input.agentId });
             return requirements
                 ? { ok: true as const }
                 : { ok: false as const, error: createProviderErrorV1('provider_incompatible_with_agent', {
-                    connectionId: input.selection.providerConnectionId ?? undefined,
+                    connectionId: input.selection?.providerConnectionId ?? undefined,
                     ...(input.machineId ? { machineId: input.machineId } : {}),
                 }) };
         },
@@ -206,13 +212,15 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     agentId: string;
     runId: string;
     connectedServices?: ConnectedServiceBindingsV2 | null;
-    featureEnabled: boolean;
+    featureEnabled: PrepareProviderLaunchInput['featureEnabled'];
     happyHomeDir: string;
     accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
     readAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     prepareTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
@@ -259,11 +267,11 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     if (input.teamCredentialModel) {
         throw new SessionTeamCredentialLaunchUnavailableError();
     }
-    if (!input.selection || input.selection.providerConnectionId === null) {
+    if ((!input.selection || input.selection.providerConnectionId === null) && !(input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices))) {
         return nativeLaunch;
     }
-    const providerInput = { ...input, selection: input.selection };
-    validateExecutionRunProviderSelectionInput(providerInput);
+    const providerInput = input;
+    if (input.selection) validateExecutionRunProviderSelectionInput({ ...input, selection: input.selection });
 
     const lease = input.runtimeRegistryLease ?? await acquireAuthoritativePluginRuntimeRegistryLease({
         happyHomeDir: input.happyHomeDir,
@@ -287,12 +295,17 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     if (!direct.ok) {
         throw refusal(direct.error);
     }
-    if (direct.kind !== 'provider') {
+    if (direct.kind === 'native') return nativeLaunch;
+    if (direct.kind === 'managedPurpose') return Object.freeze({
+        environment: direct.environment, unsetEnvKeys: direct.unsetEnvKeys,
+        connectedServices: direct.connectedServices, providerBinding: direct.providerBinding,
+        sanitizeDiagnosticText: direct.sanitizeDiagnosticText, additionalRedactionValues: direct.additionalRedactionValues,
+        revalidateBeforeCommit: direct.revalidateBeforeCommit, cleanupOnExit: direct.cleanupOnExit,
+    });
+    const selection = input.selection;
+    if (!selection || selection.providerConnectionId === null) {
         await direct.cleanupOnExit?.();
-        throw refusal(createProviderErrorV1('provider_incompatible_with_agent', {
-            connectionId: input.selection.providerConnectionId,
-            ...(input.machineId ? { machineId: input.machineId } : {}),
-        }));
+        throw refusal(createProviderErrorV1('provider_incompatible_with_agent'));
     }
 
     let projectedProviderBinding: AgentSessionProviderBinding;
@@ -304,17 +317,17 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     } catch {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_materialization_failed', {
-            connectionId: input.selection.providerConnectionId,
+            connectionId: selection.providerConnectionId,
             ...(input.machineId ? { machineId: input.machineId } : {}),
         }));
     }
     if (
-        projectedProviderBinding.connectionId !== input.selection.providerConnectionId
-        || projectedProviderBinding.model.id !== input.selection.modelId
+        projectedProviderBinding.connectionId !== selection.providerConnectionId
+        || projectedProviderBinding.model.id !== selection.modelId
     ) {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_authorization_changed', {
-            connectionId: input.selection.providerConnectionId,
+            connectionId: selection.providerConnectionId,
             ...(input.machineId ? { machineId: input.machineId } : {}),
         }));
     }

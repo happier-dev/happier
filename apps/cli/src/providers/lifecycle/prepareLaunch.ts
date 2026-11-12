@@ -59,7 +59,7 @@ export type PrepareProviderLaunchInput<PrerequisiteFailure extends Readonly<{ ok
     confirmation: SessionProviderBindingSecurityChangeConfirmationV1,
   ) => Promise<boolean>;
   connectedServices: ConnectedServiceBindingsV2 | null;
-  featureEnabled: boolean;
+  featureEnabled: boolean | (() => boolean | Promise<boolean>);
   managedPurposeContext?: ManagedPurposeLaunchContext;
   resolvePrerequisites: (
     context: ProviderLaunchPrerequisiteContext,
@@ -91,10 +91,43 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
       return { ok: false, error: createProviderErrorV1('permission_mode_not_granted') };
     }
   }
+  const resolveSelectionTarget = () => {
+    if (!selection) return null;
+    // Qualified Agent targets already carry their canonical contribution
+    // identity. The legacy routing reader can resolve only bundled Agents.
+    const targetKey = BackendTargetKeyV2Schema.safeParse(input.backendTarget);
+    const canonicalTarget = PersistedBackendTargetRefV2Schema.safeParse(
+      targetKey.success ? parseBackendTargetKeyV2(targetKey.data) : input.backendTarget,
+    );
+    const agentTargetKey = canonicalTarget.success && canonicalTarget.data.kind === 'agent'
+      ? buildBackendTargetKeyV2(canonicalTarget.data)
+      : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
+    const normalizedSelectionTargetKey = BackendTargetKeyV2InputSchema.safeParse(
+      selection.ref.agentTargetKey,
+    );
+    if (
+      !normalizedSelectionTargetKey.success
+      || normalizedSelectionTargetKey.data !== agentTargetKey
+    ) {
+      return null;
+    }
+    const canonicalSelection =
+      normalizedSelectionTargetKey.data === selection.ref.agentTargetKey
+        ? selection
+        : {
+            ...selection,
+            ref: {
+              ...selection.ref,
+              agentTargetKey: normalizedSelectionTargetKey.data,
+            },
+          };
+
+    return { agentTargetKey, selection: canonicalSelection };
+  };
   if ((!selection || selection.ref.providerConnectionId === null) && input.agentId && input.managedPurposeContext) {
     const managed = await prepareManagedPurposeLaunch({ ...input.managedPurposeContext,
       agentId: input.agentId, machineId: input.machineId, selection, connectedServices: input.connectedServices,
-      featureEnabled: input.featureEnabled });
+      featureEnabled: input.featureEnabled, resolveSelectionTarget });
     if (managed) return managed;
   }
   if (!selection) {
@@ -116,41 +149,18 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
     connectionId,
     ...(input.machineId ? { machineId: input.machineId } : {}),
   };
-  if (!input.featureEnabled) {
+  if ((typeof input.featureEnabled === 'function' ? await input.featureEnabled() : input.featureEnabled) !== true) {
     return { ok: false, error: createProviderErrorV1('provider_feature_disabled', errorContext) };
   }
   if (!input.machineId || !input.agentId) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
   }
 
-  // Qualified Agent targets already carry their canonical contribution
-  // identity. The legacy routing reader can resolve only bundled Agents.
-  const targetKey = BackendTargetKeyV2Schema.safeParse(input.backendTarget);
-  const canonicalTarget = PersistedBackendTargetRefV2Schema.safeParse(
-    targetKey.success ? parseBackendTargetKeyV2(targetKey.data) : input.backendTarget,
-  );
-  const agentTargetKey = canonicalTarget.success && canonicalTarget.data.kind === 'agent'
-    ? buildBackendTargetKeyV2(canonicalTarget.data)
-    : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
-  const normalizedSelectionTargetKey = BackendTargetKeyV2InputSchema.safeParse(
-    selection.ref.agentTargetKey,
-  );
-  if (
-    !normalizedSelectionTargetKey.success
-    || normalizedSelectionTargetKey.data !== agentTargetKey
-  ) {
+  const selectedTarget = resolveSelectionTarget();
+  if (!selectedTarget) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
   }
-  const canonicalSelection =
-    normalizedSelectionTargetKey.data === selection.ref.agentTargetKey
-      ? selection
-      : {
-          ...selection,
-          ref: {
-            ...selection.ref,
-            agentTargetKey: normalizedSelectionTargetKey.data,
-          },
-        };
+  const { agentTargetKey, selection: canonicalSelection } = selectedTarget;
 
   const connectedServices = input.connectedServices === null
     ? null

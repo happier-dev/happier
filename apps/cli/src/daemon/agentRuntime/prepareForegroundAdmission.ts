@@ -1,3 +1,4 @@
+import { readProviderSettingsForCli } from '@/providers/settings/read';
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
 import { join } from 'node:path';
@@ -185,6 +186,8 @@ export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
   connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
   subscribeAccountSettingsSnapshot?: RequesterSessionRuntimeContext['subscribeAccountSettingsSnapshot'];
   resolveManagedPurposeBindingIntent?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntent'];
+  resolveManagedPurposeBindingIntentSelection?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntentSelection'];
+  managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   isSessionAccountCurrent?: (canonicalSessionId?: string) => Promise<boolean>;
   refreshSavedSecretCatalogForOperation?: typeof refreshSavedSecretCatalogForOperation;
   activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
@@ -392,13 +395,10 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
   >>;
 }>): Promise<Awaited<ReturnType<typeof prepareDirectProviderLaunch>> | null> {
   const { request, lease, dependencies } = input;
+  if ((!request.selection || request.selection.ref.providerConnectionId === null)
+    && !request.previousBinding && !request.connectedServices) return null;
   const requester = dependencies.requesterSessionBootstrap;
-  // Only an explicitly native request without a prior Provider binding may
-  // bypass the canonical launch owner. An orphaned binding must reach
-  // `prepareProviderLaunch`, which owns the typed continuity refusal before
-  // any foreground bootstrap side effect is created.
-  if (!request.selection && !request.previousBinding) return null;
-  const featureEnabled = (
+  const featureEnabled = async () => (
     await resolveCliFeatureDecisionForServer({
       featureId: 'providers',
       env: process.env,
@@ -416,6 +416,14 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
     confirmation: null,
     connectedServices: request.connectedServices ?? null,
     featureEnabled,
+    managedPurposeContext: { lease, signal: dependencies.signal,
+      readProviderSettings: () => {
+        const snapshot = readForegroundAccountSnapshot(dependencies);
+        return snapshot ? readProviderSettingsForCli(snapshot).settings : null;
+      },
+      happyHomeDir: requester ? dependencies.connectedServicesMaterializationBaseDir! : configuration.happyHomeDir,
+      resolveManagedPurposeBindingIntentSelection: dependencies.resolveManagedPurposeBindingIntentSelection,
+      accountAuthority: dependencies.managedProviderAccountAuthority },
   }, {
     resolvePrerequisites: async (providerBindingContext) => {
       const result = await resolveSpawnChildEnvironment({
@@ -718,12 +726,12 @@ export async function prepareForegroundAgentRuntimeAdmission(
       return refusal(providerLaunch.error);
     }
     const activeProviderLaunch =
-      providerLaunch?.ok && providerLaunch.kind === 'provider'
+      providerLaunch?.ok && providerLaunch.kind !== 'native'
         ? providerLaunch
         : null;
     if (activeProviderLaunch) {
       providerCleanup = activeProviderLaunch.cleanupOnExit;
-      transferProviderLaunchMaterializationCleanupOwnership =
+      if (activeProviderLaunch.kind === 'provider') transferProviderLaunchMaterializationCleanupOwnership =
         activeProviderLaunch.transferLaunchMaterializationCleanupOwnership;
     }
     const selectedAgent = lease.registry.contributes.agentDefinitionsById.get(request.agentId);
@@ -820,10 +828,12 @@ export async function prepareForegroundAgentRuntimeAdmission(
         ? Object.freeze({
             ...activeProviderLaunch.environment,
             [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
-              serializeProviderBindingLaunchHandoffForEnv(
-                activeProviderLaunch.launchMaterialization,
-                activeProviderLaunch.bindingMetadata,
-              ),
+              activeProviderLaunch.kind === 'managedPurpose'
+                ? serializeProviderBindingLaunchHandoffForEnv({ v: 1,
+                    materialization: activeProviderLaunch.launchMaterialization,
+                    providerBinding: activeProviderLaunch.providerBinding, selection: activeProviderLaunch.selection })
+                : serializeProviderBindingLaunchHandoffForEnv(
+                    activeProviderLaunch.launchMaterialization, activeProviderLaunch.bindingMetadata),
           })
         : Object.freeze({});
     const providerUnsetEnvironmentVariableNames =

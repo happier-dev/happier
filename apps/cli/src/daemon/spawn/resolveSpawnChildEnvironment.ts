@@ -174,7 +174,7 @@ type LateProviderBindingMaterialization =
 type ProviderBindingPrerequisiteContext = Readonly<{
   v: 1;
   agentTargetKey: string;
-  connectionId: string;
+  connectionId?: string;
   modelId: string;
 }>;
 

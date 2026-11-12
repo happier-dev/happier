@@ -7,6 +7,7 @@ import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { configuration } from '@/configuration';
 import { buildToolIdleTimeoutEnvironmentOverlay, type MachineResourcesPolicyReader } from '@/processes/toolIdleTimeouts';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
+import type { PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
 import type {
     ProviderSpawnAuthorizationAttempt,
 } from '@/providers/spawn/authorize';
@@ -57,6 +58,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     connectedServiceAuth: ConnectedServiceAuth;
     connectedServiceMaterializationIdentity: ConnectedServiceMaterializationIdentityV1 | null;
     providerBindingAttempt: ProviderSpawnAuthorizationAttempt | null;
+    managedPurpose?: PreparedManagedPurposeLaunch;
     providerAgentTargetKey: string | null;
     providerDiagnosticRedactionLease: ProviderRedactionLease;
     launchResourceScope: ProviderLaunchResourceScope;
@@ -112,7 +114,25 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         connectedServiceAuth: input.connectedServiceAuth,
         ...(input.options.requesterSessionBootstrap
             ? { allowNativeAccountCredentials: input.options.requesterSessionBootstrap.allowNativeAccountCredentials === true } : {}),
-        ...(providerBindingLaunchInput
+        ...(input.managedPurpose
+            ? {
+                providerBindingContext: { v: 1 as const, agentTargetKey: input.managedPurpose.agentTargetKey,
+                    modelId: input.managedPurpose.model.id },
+                materializeProviderBindingAfterHooks: async () => {
+                    const sessionId = input.options.existingSessionId;
+                    if (!sessionId) throw new Error('Managed purpose launch requires a committed Session');
+                    const materialized = await input.managedPurpose!.materialize({ kind: 'session', sessionId });
+                    if (!materialized.ok) return { ok: false as const,
+                        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage: materialized.error.code, providerError: materialized.error };
+                    input.launchResourceScope.register(materialized.cleanup);
+                    input.providerDiagnosticRedactionLease.add(materialized.additionalRedactionValues);
+                    return { ok: true as const, providerEnvironmentOverlay: materialized.environmentOverlay,
+                        providerBindingLaunchHandoff: { v: 1 as const, materialization: materialized.providerBinding.materialization,
+                            providerBinding: materialized.providerBinding, selection: input.managedPurpose!.selection } };
+                },
+            }
+            : providerBindingLaunchInput
             ? {
                 providerBindingContext: {
                     v: 1 as const,

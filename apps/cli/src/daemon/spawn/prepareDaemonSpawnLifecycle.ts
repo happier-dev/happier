@@ -121,8 +121,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
             ? {
                 [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
                     serializeProviderBindingLaunchHandoffForEnv(
-                        input.providerBindingLaunchHandoff.materialization,
-                        input.providerBindingLaunchHandoff.sessionBindingMetadata,
+                        input.providerBindingLaunchHandoff,
                     ),
             }
             : {}),

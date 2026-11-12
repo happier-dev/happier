@@ -11,6 +11,7 @@ import { projectManagedProviderBrokerApplication } from '@/providers/broker/appl
 import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import { providerBrokerLocalCredentialRequirement } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { hasProviderExperimentalConfirmation } from '@/providers/catalog/compatibility';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
@@ -195,12 +196,14 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
   const source = await readConnectedAccountModelCatalog(input);
   return { ...source, groups: source.groups.flatMap(group => {
     if (input.support && !input.support.acceptsProtocols.includes(group.application.protocol)) return [];
+    const brokerCredential = input.support ? providerBrokerLocalCredentialRequirement(group.application.protocol, input.support) : undefined;
+    if (input.support && !brokerCredential) return [];
     const rows = group.rows.flatMap(row => {
       const facts = row.sourceFacts;
       const compatibility = input.support && input.adapterVersion && facts
         ? resolveProviderBindingCompatibilityFromSourceFactsV1({ agentTargetKey: input.request.agentTargetKey,
           agent: input.support, adapterVersion: input.adapterVersion, endpoints: [facts.endpoint],
-          credential: facts.credential, compatibilityOverrides: facts.compatibilityOverrides, model: row.descriptor })
+          credential: brokerCredential ?? facts.credential, compatibilityOverrides: facts.compatibilityOverrides, model: row.descriptor })
         : row.compatibility;
       return [{ ...row, descriptor: input.support ? projectProviderModelReasoningForAgent(row.descriptor, input.support) : row.descriptor,
         application: { ...row.application, agentTargetKey: input.request.agentTargetKey },

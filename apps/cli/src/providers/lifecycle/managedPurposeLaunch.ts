@@ -17,7 +17,7 @@ import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/manage
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { acquireBrokerSourceOperation } from '@/providers/broker/brokerSourceOperationAcquisition';
 import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
-import { teamCredentialBrokerLocalCredentialTransport } from '@/providers/broker/providerBrokerPrivateProtocol';
+import { providerBrokerLocalCredentialRequirement } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol';
@@ -58,9 +58,10 @@ export type PreparedManagedPurposeLaunch = Readonly<{
  * managed broker custody owners. It never creates a Provider connection. */
 export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchContext & Readonly<{
   agentId: string;
-  featureEnabled: boolean;
+  featureEnabled: import('./prepareLaunch').PrepareProviderLaunchInput['featureEnabled'];
   machineId?: string;
   selection?: SessionModelSelectionV1;
+  resolveSelectionTarget(): Readonly<{ agentTargetKey: string; selection: SessionModelSelectionV1 }> | null;
   connectedServices: ConnectedServiceBindingsV2 | null;
 }>): Promise<PreparedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }> | null> {
   const declarations = resolveAgentSpawnPurposeDeclarations({ agentId: input.agentId, contributions: input.lease.registry.contributes });
@@ -78,11 +79,13 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   if (candidates.length === 0) return null;
   const refuse = (code: Parameters<typeof createProviderErrorV1>[0]) => ({ ok: false as const,
     error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}) });
-  if (!input.featureEnabled) return refuse('provider_feature_disabled');
+  if ((typeof input.featureEnabled === 'function' ? await input.featureEnabled() : input.featureEnabled) !== true) return refuse('provider_feature_disabled');
   if (!input.selection) return refuse('provider_model_not_found');
+  const selectedTarget = input.resolveSelectionTarget();
+  if (!selectedTarget) return refuse('provider_incompatible_with_agent');
+  const { agentTargetKey, selection: canonicalSelection } = selectedTarget;
   if (!input.machineId || !input.resolveManagedPurposeBindingIntentSelection) return refuse('provider_endpoint_unavailable');
   const machineId = input.machineId;
-  const agentTargetKey = input.selection.ref.agentTargetKey;
   const signal = input.signal ?? new AbortController().signal;
   const registry = resolveProviderContributionRegistryView(input.lease.registry.contributes, undefined);
   await activateAgentRuntimeContributionOnDemand(input.lease.registry, input.agentId);
@@ -98,15 +101,17 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       request: { machineId: input.machineId, agentTargetKey: agentTargetKey,
         connectedAccountTarget: candidate.binding.target, mode: 'management', includeDirectMaterialization: true },
       resolveSelection: input.resolveManagedPurposeBindingIntentSelection, signal });
-    const modelId = route.modelIdPrefix ? input.selection.ref.modelId.slice(route.modelIdPrefix.length) : input.selection.ref.modelId;
+    const modelId = route.modelIdPrefix ? canonicalSelection.ref.modelId.slice(route.modelIdPrefix.length) : canonicalSelection.ref.modelId;
     for (const group of catalog.groups) {
       if (!adapter.support.acceptsProtocols.includes(group.application.protocol)) continue;
       const row = group.rows.find(row => row.descriptor.id === modelId || row.descriptor.aliases?.includes(modelId));
       if (!row?.sourceFacts) continue;
-      const transport = teamCredentialBrokerLocalCredentialTransport(group.application.protocol, adapter.support);
+      const credential = providerBrokerLocalCredentialRequirement(group.application.protocol, adapter.support);
+      if (!credential) continue;
+      const transport = credential.transports[0];
       const compatibility = resolveProviderBindingCompatibilityFromSourceFactsV1({
         agentTargetKey: agentTargetKey, agent: adapter.support, adapterVersion: adapter.adapter.adapterVersion,
-        endpoints: [row.sourceFacts.endpoint], credential: { kind: 'apiKey', required: true, slotId: 'apiKey', transports: [transport] },
+        endpoints: [row.sourceFacts.endpoint], credential,
         compatibilityOverrides: row.sourceFacts.compatibilityOverrides, model: row.descriptor });
       if (compatibility.result.status === 'incompatible') continue;
       const confirmed = resolveProviderCompatibilityConfirmation({ compatibility,
@@ -123,7 +128,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   // order resolves equivalent accepted protocols, as it does for catalog routing.
   const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;
   const connectedServices = input.connectedServices;
-  const selectedModelRef = input.selection.ref;
+  const selectedModelRef = canonicalSelection.ref;
   return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
     model: row.descriptor, connectedServices,
     materialize: async scope => {
