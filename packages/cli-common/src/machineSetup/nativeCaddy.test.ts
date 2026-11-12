@@ -223,7 +223,7 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
             return ok();
         }
         if (args[0] === 'container' && args[1] === 'start') {
-            if (container!.State.Error?.includes('could not find a network matching network mode ')) {
+            if (container!.State.Error) {
                 return { code: 1, stdout: '', stderr: container!.State.Error };
             }
             exitCode = undefined;
@@ -728,7 +728,11 @@ it('consumes the setup owner result and preserves the owned running container an
     expect(readCaddyContainerFirewallExposures(f.input)).toEqual([f.input.privateBinding!.exposure]);
 });
 
-it.each([false, true])('reconciles an owned Caddy whose primary network was deleted, preserving durable state and attachments (public=%s)', async publicIngress => {
+it.each([false, true].flatMap(publicIngress => [
+    // Docker variants from REPLAY-130; opaque network names replaced, not verbatim live strings.
+    'failed to set up container networking: could not find a network matching network mode deleted-app_default: network deleted-app_default not found',
+    'failed to set up container networking: network happier-c174-derived_default not found',
+].map(error => ({ publicIngress, error }))))('reconciles an owned Caddy whose primary network was deleted, preserving durable state and attachments (public=$publicIngress, error=$error)', async ({ publicIngress, error }) => {
     const f = await fixture(false); await f.setup();
     const input = { ...f.input, ...(publicIngress ? { publicBindings: [{ requirementId: 'https', exposure: 'public' as const,
         hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443, protocol: 'tcp' as const }] } : {}) };
@@ -739,7 +743,7 @@ it.each([false, true])('reconciles an owned Caddy whose primary network was dele
     retained.NetworkSettings.Networks['deleted-app_default'] = { NetworkID: 'deleted-network-id' };
     retained.NetworkSettings.Networks['incumbent-draining'] = {};
     retained.State = { Running: false, Status: 'created', ExitCode: 128,
-        Error: 'failed to set up container networking: could not find a network matching network mode deleted-app_default: network deleted-app_default not found' };
+        Error: error };
     const autosave = join(input.stateDirectory, 'config', 'caddy', 'autosave.json');
     const saved = '{"retainedDomain":"other-app.example"}';
     await writeFile(autosave, saved);
@@ -766,6 +770,18 @@ it.each([false, true])('reconciles an owned Caddy whose primary network was dele
     const before = f.commands.length;
     expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
     expect(f.commands.slice(before).every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
+});
+
+it('preserves an owned stopped Caddy on an unrelated exit-128 not-found error and returns a typed failure', async () => {
+    const f = await fixture(false); await f.setup();
+    expect(await ensureNativeCaddyContainer(f.input, f.options())).toMatchObject({ status: 'ready' });
+    await f.closeAdmin();
+    const retained = f.readContainer();
+    retained.State = { Running: false, Status: 'created', ExitCode: 128,
+        Error: 'failed to mount volume: volume missing-volume not found' };
+    expect(await ensureNativeCaddyContainer(f.input, f.options())).toMatchObject({ status: 'unavailable', reason: 'native_effect_failed',
+        details: { failure: { stepId: 'caddy-container-start' }, remedy: expect.any(String) } });
+    expect(f.readContainer()).toBe(retained);
 });
 
 it('keeps no-network origins container-only and refuses a foreign or incompatible owned container without replacing it', async () => {
