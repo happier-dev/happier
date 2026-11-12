@@ -310,7 +310,7 @@ async function renderDatabase(
       executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
         workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
         inlineDefinition: createNightlyBackupsWorkflowV1(),
-        inputs: { backupEnvironment: { environmentId: detail.environment.id, serverId },
+        inputs: { backupEnvironment: { environmentId: detail.environment.id, serverId: account.accountLifetime.scope.serverId },
           backupPolicy: deploymentBackupPolicyV1(backup), verificationLevel: 'manifestReadBack' },
       } } },
     }], nextCursor: null });
@@ -487,6 +487,10 @@ async function renderDatabase(
     environmentId,
     serverIdentityId,
     machineId,
+    readScheduleSets: async () => {
+      const { createDeploymentActions } = await import('./deploymentActions');
+      return createDeploymentActions(account.accountLifetime).backupScheduleSets({ environmentId });
+    },
     navigate,
     back,
     dispose: async () => {
@@ -1203,6 +1207,9 @@ describe('Environment → Data → Database page (P9)', () => {
   it('settles backup facts after Back up now from a real missed-schedule notice', async () => {
     const view = await renderDatabase({ answers: { missedSchedule: true } });
     try {
+      expect(await view.readScheduleSets()).toEqual([expect.objectContaining({
+        automationId: 'nightly-backups', missedSchedules: [expect.objectContaining({ triggerId: 'nightly-schedule' })],
+      })]);
       expect(await view.settle(`${page}.missed.action`)).not.toBeNull();
       await view.screen.pressByTestIdAsync(`${page}.missed.action`);
       expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
