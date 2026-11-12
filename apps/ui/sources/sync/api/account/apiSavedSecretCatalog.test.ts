@@ -5,7 +5,8 @@ import type { ServerFetch } from '@/sync/http/client';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture, createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -30,6 +31,7 @@ import { getSavedSecretCatalogSnapshot, resetSavedSecretCatalogSnapshotsForTests
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { SharedSavedSecretPromoteInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { AccountSettingsV2HistoryMutationRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { readRetainedAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, buildProfilePhysicalKey } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
@@ -356,10 +358,20 @@ describe('SavedSecret catalog captured request boundary', () => {
         let sourceVersion = 4;
         const writes: string[] = [];
         const reads = new Map<string, number>();
+        const socketUpdates = new Set<(update: unknown) => void>();
         const resourceMutationPaths = new Set<string>(Object.values(SHARED_SAVED_SECRET_ACTION_PATHS_V1));
         connection = await restoreServerAccountForTest({
             serverUrl: 'https://saved-secret-demand.test', serverIdentityId: homeId, accountId,
             credentials: { token: createAccountTokenForTests(accountId, { currentAccount: true }) },
+            configureSocket: socket => {
+                socketUpdates.add(update => {
+                    // Socket.IO delivers incoming events to both catch-all and
+                    // named listeners; ApiSocket owns its wire dispatch onAny.
+                    for (const listener of socket.listenersAny()) listener('update', update);
+                    for (const listener of socket.listeners('update')) listener(update);
+                });
+                configureConnectedServerSocketBoundary(socket);
+            },
             request: async (rawUrl, init) => {
                 const path = new URL(String(rawUrl)).pathname;
                 reads.set(path, (reads.get(path) ?? 0) + 1);
@@ -399,7 +411,9 @@ describe('SavedSecret catalog captured request boundary', () => {
                 secret: { id: ref, encryptedValue: { _isSecretValue: true, value: 'current-private' } } });
             expect(writes).toEqual([]);
             expect((reads.get('/v1/account/saved-secrets/resources/materials') ?? 0) - materialReadBaseline).toBe(1);
-            expect((reads.get('/v2/account/settings') ?? 0) - sourceReadBaseline).toBe(1);
+            // Passive discovery reuses the settled Sync document; mutation
+            // admission still reads the Settings authority.
+            expect((reads.get('/v2/account/settings') ?? 0) - sourceReadBaseline).toBe(0);
             const before = getSavedSecretCatalogSnapshot(scope);
             const machineChanges = planSyncActionsFromChanges([{ cursor: 1, kind: 'machine', entityId: 'machine-a', changedAt: 1 }]);
             for (let index = 0; index < 20; index += 1) publishHomeAccountChange(scope.serverId, ['machine-a'], {
@@ -443,20 +457,31 @@ describe('SavedSecret catalog captured request boundary', () => {
                 expect(getSavedSecretCatalogSnapshot(scope)?.data?.[0]).toMatchObject({ name: 'Current 2', revision: 2 });
             });
             // No known legacy candidates means no history mutation admission.
-            // Resource and source reads retain their captured authority and mode proof.
+            // The resource wake reuses the settled Settings source and mode proof.
             expect(readCounts()[0]! - beforeResourceReads[0]!).toBe(0);
             const directChangeReads = readCounts().map((count, index) => count - beforeResourceReads[index]!);
             expect(directChangeReads[2]).toBe(1);
-            expect(directChangeReads[3]).toBe(1);
+            expect(directChangeReads[3]).toBe(0);
             const beforeSourceReads = readCounts();
             raw = { secrets: [] };
             sourceVersion += 1;
+            // A live Account observation receives the new document through the
+            // socket owner before its catalog wake; changing only HTTP fixture
+            // bytes would leave Sync's admitted document at the previous head.
+            const sourceUpdate = UpdateContainerSchema.parse({ id: `source-${sourceVersion}`, seq: sourceVersion, createdAt: sourceVersion,
+                body: { t: 'update-account', id: accountId,
+                    settingsV2: { content: { t: 'plain', v: raw }, version: sourceVersion },
+                    encryptionCurrentness: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: sourceVersion }) } });
+            expect(socketUpdates.size).toBeGreaterThan(0);
+            for (const deliver of socketUpdates) deliver(sourceUpdate);
+            await vi.waitFor(() => expect(readRetainedAccountSettingsRawSnapshot(scope))
+                .toMatchObject({ version: sourceVersion, raw }));
             publishHomeAccountChange(scope.serverId, ['self'], { changeKinds: ['account'], accountSettingsAffects: true });
             await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', stale: false,
                 legacyImport: { status: 'complete' } }));
             expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'ready' });
             expect(readCounts()[2]! - beforeSourceReads[2]!).toBe(1);
-            expect(readCounts()[3]! - beforeSourceReads[3]!).toBe(1);
+            expect(readCounts()[3]! - beforeSourceReads[3]!).toBe(0);
             // The focused change applier also awaits materialization before it
             // checkpoints. Its Home publication is not a second read demand.
             const focusedReads = readCounts();
@@ -485,7 +510,7 @@ describe('SavedSecret catalog captured request boundary', () => {
                 expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', stale: false,
                     legacyImport: { status: 'complete' } });
                 expect(readCounts()[1]! - focusedReads[1]!).toBe(2);
-                expect(readCounts()[3]! - focusedReads[3]!).toBe(1);
+                expect(readCounts()[3]! - focusedReads[3]!).toBe(0);
             });
             expect(readCounts()[0]! - focusedReads[0]!).toBe(0);
             expect(readCounts()[2]! - focusedReads[2]!).toBe(1);
