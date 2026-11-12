@@ -210,6 +210,34 @@ describe('Usage compact work-facts evidence', () => {
         }); } finally { stop(); }
     });
 
+    it('returns native turn provenance beside saved Work facts for Run length without dropping startup failures', async () => {
+        const owner = await account();
+        const subject = await session(owner.id);
+        await record(owner.id, subject.id, { t: 'encrypted', c: 'saved-work' });
+        await db.sessionTurn.createMany({ data: [
+            { sessionId: subject.id, turnId: 'session-turn:startup', agentId: 'codex', status: 'failed', startedAt: 100, terminalAt: 100, updatedAt: 100 },
+            { sessionId: subject.id, turnId: 'native', agentId: 'codex', agentTurnId: 'native', status: 'failed', startedAt: 100, terminalAt: 300, updatedAt: 300 },
+        ] });
+        let turnReads = 0;
+        const stop = observeSqliteRequests({ before(request) {
+            if (request.model === 'SessionTurn' && request.action.startsWith('find')) turnReads++;
+        } });
+        try { await withAuthenticatedTestApp(registerAccountUsageRoutes, async app => {
+            const response = await app.inject({ method: 'POST', url: '/v2/usage/session-evidence',
+                headers: { 'x-test-user-id': owner.id, ...currentAccountStoredContentCompatibilityHeaders },
+                payload: { nowMs: 400, readWorkFacts: true, requests: [{ sessionIds: [subject.id],
+                    query: normalizeUsageQuery({ period: { startMs: 0, endMs: 400 }, includeSessionEvidence: true }) }] } });
+            expect(response.statusCode).toBe(200);
+            const row = response.json().results[0];
+            expect(row.turns).toMatchObject({ status: 200, body: { turns: [
+                { turnId: 'session-turn:startup', status: 'failed', startedAt: 100, terminalAt: 100 },
+                { turnId: 'native', status: 'failed', agentTurnId: 'native', startedAt: 100, terminalAt: 300 },
+            ] } });
+            expect(turnReads, 'Reuse the existing batched turn reader once').toBe(1);
+            expect(await db.sessionTurn.count({ where: { sessionId: subject.id, status: 'failed' } })).toBe(2);
+        }); } finally { stop(); }
+    });
+
     it('uses actor scope for shared Sessions and fails closed for forbidden, malformed or wrong-mode records', async () => {
         const [owner, actor, stranger] = await Promise.all([account(), account(), account()]);
         const [shared, missing, malformed, mismatch, denied] = await Promise.all(Array.from({ length: 5 }, () => session(owner.id)));

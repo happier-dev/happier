@@ -9,6 +9,8 @@ import { UsagePromptCompositionSchema } from './coach/usagePromptComposition.js'
 import { TranscriptRawAgentEventV1Schema } from '../sessions/messages/transcriptRawRecordV1.js';
 import * as workEvidence from './usageWorkEvidence.js';
 import { SessionSystemRecordPayloadSchema } from '../sessions/system/records/sessionSystemRecordPayloads.js';
+import { SessionTurnsProjectionV1Schema } from '../sessions/turns/sessionTurnV1.js';
+import { resolveUsageHowYouWork } from './resolveUsageHowYouWork.js';
 
 const turns = { v: 1 as const, sessionId: 'parent', updatedAt: 900, turns: [
     { turnId: 'old', agentId: 'claude', status: 'completed' as const, startedAt: 100, terminalAt: 500, updatedAt: 500 },
@@ -405,6 +407,31 @@ describe('Usage shared work evidence', () => {
             { workId: '["parent","old"]', agentId: 'claude', startMs: 100, endMs: 500, status: 'completed' },
             { workId: '["parent","new"]', agentId: 'codex', startMs: 600, endMs: null, status: 'in_progress' },
         ] });
+    });
+    it.each([false, true])('excludes startup-failed carriers from Run length while retaining failure evidence (saved=%s)', saved => {
+        const sessionTurns = SessionTurnsProjectionV1Schema.parse({ v: 1, sessionId: 'parent', updatedAt: 900, turns: [
+            ...[1, 2, 3, 4].map(index => ({ turnId: `session-turn:startup-${index}`, agentId: 'codex',
+                status: 'failed', startedAt: 100, terminalAt: 100, updatedAt: 100 })),
+            { turnId: 'completed', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 400 },
+            { turnId: 'native-failed', agentId: 'codex', agentTurnId: 'native-failed', status: 'failed', startedAt: 100, terminalAt: 200, updatedAt: 200 },
+            { turnId: 'native-zero', agentId: 'codex', agentTurnId: 'native-zero', status: 'failed', startedAt: 100, terminalAt: 100, updatedAt: 100 },
+        ] });
+        const input = { ...session, sessionTurns, seq: 3, active: false };
+        // Existing encrypted Work facts predate the startup-failure classification.
+        const legacy = workEvidence.createUsageSessionWorkFactsV1(input, {
+            ...projectSessionUsageWorkEvidence(input), closedTurns: sessionTurns.turns.map(turn => ({
+                workId: JSON.stringify([input.id, turn.turnId]), agentId: turn.agentId ?? null,
+                status: turn.status, startMs: turn.startedAt, endMs: turn.terminalAt ?? null,
+            })),
+        });
+        const detail = projectSessionUsageWorkEvidence({ ...input, ...(saved ? { usageWorkFactsV1: legacy } : {}) });
+        const result = resolveUsageHowYouWork({ period: { startMs: 0, endMs: 1_000 }, timeZoneOffsetMinutes: 0, detail });
+        expect(result.runLengths).toMatchObject({ sampleCount: 3, byAgent: [
+            { agentId: 'codex', medianMs: 100, durationsMs: [0, 100, 300] },
+        ] });
+        expect(detail.facts?.filter(fact => fact.kind === 'busy')).toHaveLength(7);
+        expect(input.sessionTurns.turns.filter(turn => turn.status === 'failed')).toHaveLength(6);
+        expect(input.sessionTurns.turns).toEqual(sessionTurns.turns);
     });
     it('projects witnessed run/native identities once and never stores labels, instructions or current Agent guesses', () => {
         const input = { runId: 'run-one', sidechainId: 'side-one', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },

@@ -637,15 +637,22 @@ export function projectSessionUsageWorkEvidence(
     coverage: Readonly<{ messagesComplete?: boolean; messageEvidence?: UsageSessionMessageEvidence;
         messageProjections?: readonly UsageSessionMessageProjection[] }> = {},
 ): UsageHowYouWorkDetailInput {
+    const turns = session.sessionTurns?.sessionId === session.id ? session.sessionTurns.turns : [];
+    const workId = (turnId: string | null) => JSON.stringify([session.id, turnId]);
+    // failTurn can publish a failed host carrier without ever starting a native run.
+    // Keep its lifecycle facts, but it contributes no Run length observation.
+    const closedTurns = turns.filter(turn => turn.status !== 'failed' || turn.agentTurnId !== undefined)
+        .map(turn => ({ workId: workId(turn.turnId), agentId: turn.agentId ?? null,
+            startMs: turn.startedAt, endMs: timestamp(turn.terminalAt), status: turn.status }));
     if (messages === undefined && coverage.messageProjections === undefined && coverage.messageEvidence === undefined) {
         const saved = readCurrentUsageSessionWorkFactsV1(session);
-        if (saved) return saved.evidence;
+        // Older saved facts lack native turn provenance; use the current turn reader
+        // for this population while retaining the other derived private evidence.
+        if (saved) return session.sessionTurns?.sessionId === session.id ? { ...saved.evidence, closedTurns } : saved.evidence;
     }
     const facts: NonNullable<UsageHowYouWorkDetailInput['facts']>[number][] = [];
     const permissions: NonNullable<UsageHowYouWorkDetailInput['permissions']>[number][] = [];
-    const turns = session.sessionTurns?.sessionId === session.id ? session.sessionTurns.turns : [];
     const machineId = session.metadata?.machineId ?? null;
-    const workId = (turnId: string | null) => JSON.stringify([session.id, turnId]);
     for (const turn of turns) {
         facts.push({ workId: workId(turn.turnId), evidenceId: turn.turnId, agentId: turn.agentId ?? null,
             machineId, kind: 'busy', startMs: turn.startedAt, endMs: timestamp(turn.terminalAt) });
@@ -731,8 +738,7 @@ export function projectSessionUsageWorkEvidence(
     const collaboration = projectSessionUsageCollaboration({ session, tools: collaborationTools, observedSidechainIds, retained: retained?.collaboration });
     return { status: hasFacts || hasPermissions || hasMessages || collaboration.length > 0 ? 'partial' : 'unknown',
         ...(hasFacts ? { facts } : {}), ...(hasPermissions ? { permissions } : {}),
-        ...(hasFacts ? { closedTurns: turns.map(turn => ({ workId: workId(turn.turnId), agentId: turn.agentId ?? null,
-            startMs: turn.startedAt, endMs: timestamp(turn.terminalAt), status: turn.status })) } : {}),
+        ...(hasFacts ? { closedTurns } : {}),
         ...(hasMessages || collaboration.length > 0 ? { collaboration } : {}),
         ...(hasAcceptedInputs ? { acceptedInputs } : {}),
         ...(hasMessages ? { phaseEvents: [...phaseEvents.values()] } : {}),

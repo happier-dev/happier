@@ -79,12 +79,14 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
                 sessionIds: ids, addresses: factKinds.map(getUsageSessionFactRecordAddress) });
             if (reply.raw.destroyed) { reply.hijack(); return; }
             const evidenceIds = new Set(selected.flatMap(row => row.query.includeSessionEvidence ? row.sessionIds : []));
+            const workEvidenceIds = new Set(selected.flatMap(row => row.query.includeWorkEvidence ? row.sessionIds : []));
             const turns = await readSessionTurnsBatch({ userId: request.userId, authentication,
                 sessionIds: ids.filter(id => {
                     const record = records.get(id);
-                    // Saved facts contain their derived intervals. The client owns encrypted
-                    // fact currentness and requests the existing summary projection if needed.
-                    return record?.ok && record.records.some(row => row.address.localId === workAddress.localId && !row.record)
+                    // Saved Work intervals omit native turn provenance. The Run length
+                    // owner needs it to exclude failed carriers that never started.
+                    return record?.ok && record.records.some(row => row.address.localId === workAddress.localId
+                        && (!row.record || workEvidenceIds.has(id)))
                         && evidenceIds.has(id);
                 }) });
             const results: UsageSessionEvidenceResponse['results'] = ids.map(sessionId => {
