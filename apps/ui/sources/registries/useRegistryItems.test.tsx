@@ -89,6 +89,33 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
+    it('keeps starter selection resolving until plugin sources answer', async () => {
+        await setupHome('plugin-sources-pending');
+        let shell: ShellValue = { pluginUiProjection: null, pluginBrowserProjection: null,
+            phase: 'establishing', interactionEnabled: false, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'starter' }), { wrapper });
+        await waitForHomeGovernance(() => expect(getPromptLibraryCatalogValue(storage.getState().settingsScope!, 'registry-sources').status).toBe('ready'));
+        await flushHookEffects();
+        expect(hook.getCurrent().loading).toBe(true);
+        expect(hook.getCurrent().hasValue).toBe(false);
+        shell = { ...shell, phase: 'current', interactionEnabled: true, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION };
+        await hook.rerender();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().hasValue).toBe(true);
+        expect(hook.getCurrent().items).toEqual([]);
+        const held = hook.getCurrent().items;
+        shell = { ...shell, phase: 'establishing', pluginUiProjection: null };
+        await hook.rerender();
+        expect(hook.getCurrent().loading).toBe(true);
+        expect(hook.getCurrent().hasValue).toBe(true);
+        expect(hook.getCurrent().items).toBe(held);
+        shell = { ...shell, phase: 'current', pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION };
+        await hook.rerender();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items).toBe(held);
+    });
     it('never reads as settled before a demanded read has answered', async () => {
         const { sourceId } = await setupHome('not-started');
         // A held page reads the render where demand turns on: settled-looking there is a false empty state.

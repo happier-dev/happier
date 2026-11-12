@@ -15,7 +15,7 @@ import { RegistryActionFailure } from './registryActionFailure';
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
 export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId: K, input: unknown,
     parse: (value: ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous: T | null) => T, revision?: unknown, enabled = true,
-    recovery?: Readonly<{ sourceIds?: readonly string[]; installMachineId?: string | null; scope?: ServerAccountScope;
+    recovery?: Readonly<{ resolving?: boolean; sourceIds?: readonly string[]; installMachineId?: string | null; scope?: ServerAccountScope;
         failures?: (value: T | null) => readonly Readonly<{ sourceId: string; status: RegistrySourceStatusV1 }>[] }>): {
     scopeKey: string;
     inputKey: string;
@@ -56,7 +56,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     const load = React.useCallback(async (force: boolean) => {
         pending.current?.abort();
         const request = ++generation.current;
-        if (!demand.current || !execution.ready) return;
+        if (!demand.current || !execution.ready || recovery?.resolving) return;
         const controller = new AbortController();
         pending.current = controller;
         const previous = latest.current;
@@ -103,7 +103,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
                     status: error instanceof RegistryActionFailure ? error.status : null };
             });
         } finally { if (pending.current === controller) pending.current = null; }
-    }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision, externalActionTarget]);
+    }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision, externalActionTarget, recovery?.resolving]);
     const refresh = React.useCallback(() => load(true), [load]);
     // The per-source host retries needs_machine pages on a normal read. Only
     // the person's Retry bypasses healthy source memos.
@@ -125,6 +125,6 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     return { ...current, value: execution.ready ? current.value : null, error: execution.ready ? current.error : null,
         status: execution.ready ? current.status : null,
         // A demanded read that has not answered is still loading: the render between demand and its effect never settles empty.
-        loading: enabled && (current.loading || !execution.ready || !answered || stale && current.error === null),
+        loading: enabled && (recovery?.resolving || current.loading || !execution.ready || !answered || stale && current.error === null),
         stale, refresh, execution, scope, externalActionTarget };
 }

@@ -84,7 +84,7 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
             return first;
         }
         return refreshed;
-    }, revision, enabled, { scope, sourceIds: input.sourceIds, failures: value => pagesFor(value) ?? EMPTY_PAGES });
+    }, revision, enabled, { scope, resolving: selection.resolving, sourceIds: input.sourceIds, failures: value => pagesFor(value) ?? EMPTY_PAGES });
     const pages = pagesFor(read.value) ?? EMPTY_PAGES;
     // Loading/error publications do not change catalog content. Keep this
     // producer's array stable while the same admitted pages remain displayed.

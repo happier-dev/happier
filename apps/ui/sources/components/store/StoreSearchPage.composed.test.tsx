@@ -6,7 +6,8 @@ import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/
 // Native layout boundary: react-test-renderer has no host layout, so the page measures its content at the top; the page
 // scroll view reports a 900px viewport (see `renderWindowedScreen`), and the windowed Directory then mounts what that
 // viewport reaches, as a user sees it.
-vi.mock('@/components/ui/popover/measure', () => ({
+vi.mock('@/components/ui/popover/measure', async original => ({
+    ...await original<typeof import('@/components/ui/popover/measure')>(),
     measureInWindow: async () => ({ x: 0, y: 0, width: 800, height: 600 }),
 }));
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
@@ -25,6 +26,8 @@ const { StoreDirectory: StoreQueryDirectory } = await import('./StoreSearch');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
 it.each(['populated', 'empty', 'failed', 'partial'] as const)('holds the initial Apps layout until curation settles %s', async outcome => {
+    const { withPopoverWebGlobals } = await import('@/dev/testkit/harness/popoverHarness');
+    onTestFinished(withPopoverWebGlobals());
     const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
     const { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
     const serverUrl = `https://store-apps-layout-${outcome}.test`;
@@ -128,6 +131,17 @@ it.each(['populated', 'empty', 'failed', 'partial'] as const)('holds the initial
     await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toHaveLength(2));
     const directory = screen.findAllByType(Directory)[0]!;
     expect(directory.props.rows).toHaveLength(2);
+    if (outcome === 'populated') {
+        const heldRows = directory.props.rows;
+        for (const id of ['store.kind.app.pasteCompose', 'store.kind.app.runImage']) {
+            const menu = () => screen.findAllByTestId(id + '.menu').find(node => typeof node.props.onOpenChange === 'function')!;
+            await act(async () => { menu().props.onOpenChange(true); });
+            await flushHookEffects();
+            expect(screen.findAllByTestId('store.kind.app.loading')).toHaveLength(0);
+            expect(screen.findAllByType(Directory)[0]?.props.rows).toBe(heldRows);
+            await act(async () => { menu().props.onOpenChange(false); });
+        }
+    }
     if (outcome === 'partial') expect(directory.props.list.sourceFailures.map((failure: { sourceId: string }) => failure.sourceId))
         .toEqual(failedSourceIds);
     expect(directory.props.groups.map((group: { key: string }) => group.key)).toEqual(outcome !== 'empty'
