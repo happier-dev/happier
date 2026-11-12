@@ -658,7 +658,7 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
       const runActionDeps = createExecutionRunRpcActionDeps({ manager: composition.manager,
         context: { sessionId, cwd: home, resolveAccountSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
           getServerFeaturesSnapshot: () => serverFeatures },
-        policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
       const executor = createActionExecutor({ ...runActionDeps,
         isActionApprovalRequired: () => false,

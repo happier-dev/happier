@@ -260,7 +260,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
                 await vi.waitFor(() => expect(fixture.manager.getPublic('run-1')?.inputTurns?.last).toMatchObject({ state: 'failed' }));
                 const rpc = createExecutionRunRpcActionDeps({ manager: fixture.manager,
                     context: { sessionId: 'session-1', cwd: '/repo' }, isExecutionRunsEnabled: () => true,
-                    policy: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+                    policy: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
                         maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
                 const read = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!('session-1', { runId: 'run-1', includeStructured: true }));
                 expect(read.run).toMatchObject({ status: 'running', turnInFlight: false, inputTurns: { last: {
@@ -811,7 +811,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
                 enqueueMarkerWrite: async () => undefined, terminalMarkerWritePromises: new Map(),
             });
             const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: '/repo' },
-                isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+                isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
                     reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
             const snapshot = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!('session-1', { runId: 'run-1', includeStructured: true }));
             expect(snapshot.latestToolResult).toMatchObject({ findings: [], reviewedFingerprint: 'actual-review-basis' });
@@ -856,7 +856,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             metadata: { source: comparison.source, sourceKey: comparison.id },
         } });
         const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: '/repo' },
-            isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+            isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
                 reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
         const observed = rpc.executionRunGet!('session-1', { runId: 'run-1', includeStructured: true,
             waitForOutput: { kind: 'review_walkthrough', comparisonId: comparison.id } });
@@ -884,7 +884,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             intentInput: { source: comparison.source, comparison, outputs: ['walkthrough'], sourceKey: comparison.id,
                 metadata: { source: comparison.source, sourceKey: comparison.id } } });
         const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: '/repo' },
-            isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+            isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
                 reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
         try {
             await acceptInput('execution-run-initial:run-1', 'settled-turn');

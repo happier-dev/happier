@@ -108,6 +108,21 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => {
   const launch = async ({ method, request }: {
     method: string; request: { sessionId?: string; spawnNonce?: string };
   }) => {
+    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+      || method === RPC_METHODS.CAPABILITIES_DETECT) {
+      const { readCurrentContributionRegistry } = await import('@/agent/catalog/snapshot');
+      const agentIds = [...readCurrentContributionRegistry().agentDefinitionsById.keys()];
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+        return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {},
+          agentsById: Object.fromEntries(agentIds.map(id => [id, { id, title: id,
+            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }])) } };
+      }
+      return { protocolVersion: 1, results: Object.fromEntries(agentIds.map(id => [`cli.${id}`, {
+        ok: true, checkedAt: 1, data: { installed: true, version: null, latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+          platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
+      }])) };
+    }
     if (method === RPC_METHODS.SPAWN_HAPPY_SESSION && !request.sessionId && freshSessionBoundary) {
       const response = await freshSessionBoundary(request);
       if (response && typeof response === 'object' && 'sessionId' in response && typeof response.sessionId === 'string') {
@@ -168,6 +183,7 @@ import { bindAutomationWorkflowInputs, isWorkflowJsonObject } from './input';
 import { createProductionWorkflowRunCoordinator } from './production';
 import { createWorkflowSessionStepExecutor, type WorkflowSessionStartup } from './sessionStepExecutor';
 import { runObservedWorkflowSessionStartup } from './workflowSessionStartup';
+import { createAdmittedWorkflowSessionHost } from './workflowSessionStartup.testkit';
 import { observeWorkflowInvocationRecoveryEvidence } from './invocationRecoveryObserver';
 import { readExecutionRunWorkflowObservationSink, type ExecutionRunWorkflowObservationSink } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -457,6 +473,14 @@ function workflowDaemonProcess(input: Readonly<{
   readinessCurrentness = input.encryption?.witness ?? currentness;
   const unusedRunActions = { execute: vi.fn(async () => ({ ok: false as const, errorCode: 'unused' })) };
   const actionContext = () => ({ surface: 'agent' as const, authority: 'account_automation' as const });
+  const credentials = input.credentials ?? { token: 'token', encryption: null };
+  const machineAdmissionTransport = input.machineAdmissionTransport
+    ?? (async () => ({ status: 'accepted' as const, localId: 'local-1' }));
+  const sessionHost = createAdmittedWorkflowSessionHost({ credentials, serverId: 'server-1', machineId,
+    workDepth: 0, originRunId: 'composed-workflow', machineAdmissionTransport,
+    ...(input.action ? { action: input.action } : {}),
+    ...(input.sessionStartup ? { sessionStartup: input.sessionStartup } : {}),
+  });
   return createProductionWorkflowRunCoordinator({
     resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
     token: 'token',
@@ -484,16 +508,11 @@ function workflowDaemonProcess(input: Readonly<{
         }),
     }),
     execution: {
-      credentials: input.credentials ?? { token: 'token', encryption: null },
-      serverId: 'server-1',
-      ...(input.sessionStartup ? { sessionStartup: input.sessionStartup } : {}),
-
-      machineAdmissionTransport: input.machineAdmissionTransport ?? vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-1' })) as never,
+      credentials, serverId: 'server-1', ...sessionHost, machineAdmissionTransport,
       resolveExistingSessionConversation: input.readActualConversation
         ? async params => await resolveWorkflowSessionConversation({ ...params, credentials: input.credentials ?? { token: 'token', encryption: null } })
         : async () => ({ sessionId: input.conversationSessionId ?? sessionId, machineId, directory: input.directory, agentTarget }),
       ...(input.sessionInput ? { sessionInput: input.sessionInput as never } : {}),
-      ...(input.action ? { action: input.action } : {}),
       detachedRun: input.detachedRun ?? { actionExecutor: unusedRunActions as never, buildActionContext: actionContext as never },
     },
     // The daemon-applied plugin process is a real boundary. Exercise its real
@@ -1685,7 +1704,7 @@ it('settles a detached Workflow danger refusal even when its native Agent swallo
   const manager = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: directory, sendAcp: async () => {},
     machineId, happyHomeDir: directory, resolveExecutionRunProfileCatalog: () => ({ engineRegistry, profileCatalog }) });
   const executor = createExecutionRunRpcActionExecutor({ manager, context: { sessionId: null, cwd: directory },
-    policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+    policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
       reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
   const abort = new AbortController();
   const pending = workflowDaemonProcess({ directory, storage: kit, detachedRun: { actionExecutor: executor,
@@ -1829,7 +1848,7 @@ it.each(['before-native-admission', 'active'] as const)('persists a delayed nati
     return waiting;
   });
   const executor = createExecutionRunRpcActionExecutor({ manager, context: { sessionId: null, cwd: directory },
-    policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+    policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
       reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
   let latestContext: Parameters<typeof executor.execute>[2];
   const detachedRun: NonNullable<Parameters<typeof workflowDaemonProcess>[0]['detachedRun']> = {

@@ -9,7 +9,6 @@ export {
 } from './intentPolicyRegistry';
 
 export type ExecutionRunPolicy = Readonly<{
-  maxConcurrentRuns: number | null;
   boundedTimeoutMs: number | null;
   reviewBoundedTimeoutMs: number | null;
   maxTurns: number | null;
@@ -17,28 +16,23 @@ export type ExecutionRunPolicy = Readonly<{
 }>;
 
 export function resolveExecutionRunPolicy(params: Readonly<{
-  defaults: Readonly<{
-    maxConcurrentRuns: number | null;
+  defaults?: Readonly<{
     boundedTimeoutMs: number | null;
     reviewBoundedTimeoutMs: number | null;
     maxTurns: number | null;
   }>;
   override?: Readonly<{
-    maxConcurrentRuns?: number | null;
     boundedTimeoutMs?: number | null;
     reviewBoundedTimeoutMs?: number | null;
     maxTurns?: number | null;
   }>;
-}>): ExecutionRunPolicy {
-  const d = params.defaults;
+}> = {}): ExecutionRunPolicy {
+  const d = params.defaults ?? {
+    boundedTimeoutMs: null,
+    reviewBoundedTimeoutMs: null,
+    maxTurns: null,
+  };
   const o = params.override ?? {};
-
-  const maxConcurrentRuns =
-    o.maxConcurrentRuns === null
-      ? null
-      : typeof o.maxConcurrentRuns === 'number' && Number.isFinite(o.maxConcurrentRuns) && o.maxConcurrentRuns >= 1
-      ? Math.floor(o.maxConcurrentRuns)
-      : d.maxConcurrentRuns;
   const boundedTimeoutMs =
     o.boundedTimeoutMs === null
       ? null
@@ -59,7 +53,6 @@ export function resolveExecutionRunPolicy(params: Readonly<{
       : d.maxTurns;
 
   return {
-    maxConcurrentRuns,
     boundedTimeoutMs,
     reviewBoundedTimeoutMs,
     maxTurns,

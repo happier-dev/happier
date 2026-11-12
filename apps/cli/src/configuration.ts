@@ -113,8 +113,6 @@ class Configuration {
   public readonly sessionAttachFileMaxAgeMs: number
   // Session control HTTP timeouts (v2 sessions endpoints; archive/unarchive, list, etc).
   public readonly sessionControlHttpTimeoutMs: number
-  // Vendor CLI `--help` invocation timeout (defense-in-depth against hung vendor CLIs).
-  public readonly vendorCliHelpTimeoutMs: number
   // Spawn/restart coordination: when resuming an existing session while a stop is in-flight, wait
   // briefly for the runner to exit so we don't strand the session stopped due to idempotency.
   public readonly daemonSpawnExistingSessionWaitForExitMs: number
@@ -155,7 +153,6 @@ class Configuration {
   public readonly sessionKeepAliveThinkingMs: number
 
   public readonly pendingQueueStateReconcileThrottleMs: number
-  public readonly promptLoopUserMessageSeqWaitTimeoutMs: number
 
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
@@ -173,75 +170,20 @@ class Configuration {
   public readonly transcriptRecoveryDelayMs: number
   public readonly transcriptRecoveryMaxWaitMs: number
   public readonly transcriptRecoveryMaxConcurrent: number
-  public readonly transcriptRecoveryErrorLogThrottleMs: number
 
   // Startup transcript catch-up (avoids missing early prompts; prevents replaying entire history into the agent queue).
   public readonly startupTranscriptCatchUpSeqRewind: number
-
-  // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
-  public readonly claudeTaskOutputMaxPendingPerAgent: number
-  public readonly claudeTaskOutputMaxSeenUuidsPerSidechain: number
-  public readonly claudeTaskOutputMaxToolUseEntries: number
-  public readonly claudeTaskOutputMaxAgentMappings: number
-
-  // Claude subagent local JSONL follower (used in remote mode when Task returns output_file).
-  public readonly claudeSubagentJsonlPollIntervalMs: number
-
-  // Claude permission handler metadata watcher (prevents tight loops when metadata updates are unavailable).
-  public readonly claudeMetadataWatcherIdleBackoffMs: number
-
-  // Claude local transcript scanner (UI-facing missing-transcript warning delay).
-  public readonly claudeTranscriptMissingWarningMs: number
-
-	  // Claude JSONL transcript repair (missing tool_result injection for interrupted tool calls).
-	  public readonly claudeTranscriptRepairWaitForToolUseIdsTimeoutMs: number
-	  public readonly claudeTranscriptRepairWaitForToolUseIdsPollIntervalMs: number
-	
-	  // Claude remote launcher: grace window between requesting a turn interrupt and force-aborting
-	  // the underlying Claude Code subprocess during teardown (switch/exit).
-  public readonly claudeRemoteInterruptThenTeardownGraceMs: number
-  public readonly claudeLocalAbortEscalateAfterMs: number
-  public readonly claudeLocalAbortKillAfterMs: number
-
-	  // Claude Task tool policy (remote mode).
-	  public readonly claudeTaskAllowRunInBackground: boolean
-  /**
-   * When a user aborts a Claude session, the vendor SDK may surface a cancellation as a process-level
-   * unhandledRejection (known "Operation aborted" error). Within this short window after a user abort,
-   * the CLI treats that specific error as non-fatal so the session runner does not crash and respawn.
-   */
-  public readonly claudeAbortUnhandledRejectionIgnoreWindowMs: number
-  /**
-   * When a user approves ExitPlanMode, the UI/metadata update that clears plan mode may arrive slightly
-   * after Claude resumes tool execution. This latch window ensures same-turn tool calls are not denied
-   * as "still in plan mode" while the metadata update propagates.
-   */
-  public readonly claudeExitPlanModeLatchMs: number
-  /** Max number of per-message localIds remembered for ExitPlanMode latch. */
-  public readonly claudeExitPlanModeLatchMaxEntries: number
 
   // Permission-request push notifications (best-effort; bounded retries).
   public readonly permissionRequestPushRetryDelaysMs: readonly number[]
   public readonly permissionRequestPushRetryMaxMs: number
   public readonly permissionRequestPushDedupeMaxEntries: number
   public readonly readyNotificationAssistantTextMaxChars: number
-
-  // Execution runs and one-shot tasks (session-process budgets).
-  public readonly executionRunsMaxConcurrentPerSession: number | null
-  public readonly oneShotTasksMaxConcurrentPerSession: number | null
-  public readonly executionRunsBoundedTimeoutMs: number | null
-  public readonly executionRunsReviewBoundedTimeoutMs: number | null
   public readonly voiceAgentResponseTimeoutMs: number | null
-  public readonly executionRunsMaxTurns: number | null
-  public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
-  public readonly executionBudgetMaxConcurrentByClass: Readonly<Record<string, number>>
 
   // Memory search (daemon-local indexing) limits.
   public readonly memoryMaxTranscriptWindowMessages: number
   public readonly memoryEmbeddingsRemoteRequestTimeoutMs: number
-
-  // Replay-fork synopsis lookup (memory artifacts may be older than the most recent replay page).
-  public readonly replaySynopsisScanMaxPages: number
   public readonly replaySynopsisScanPageSize: number
   // Replay seed prompt budget (prevents oversized provider prompts).
   public readonly replaySeedMaxChars: number
@@ -340,15 +282,6 @@ class Configuration {
       min: 1000, default: 60_000,
     });
 
-    const vendorHelpTimeoutRaw = String(process.env.HAPPIER_VENDOR_CLI_HELP_TIMEOUT_MS ?? '').trim();
-    const vendorHelpTimeoutMs = Number.parseInt(vendorHelpTimeoutRaw, 10);
-    // Default: 5s. Set to 0 to disable timeouts.
-    this.vendorCliHelpTimeoutMs =
-      vendorHelpTimeoutRaw === '0'
-        ? 0
-        : Number.isFinite(vendorHelpTimeoutMs) && vendorHelpTimeoutMs >= 250
-          ? Math.min(vendorHelpTimeoutMs, 60_000)
-          : 5_000;
 
     // Default: 5s. Set to 0 to disable waiting.
     this.daemonSpawnExistingSessionWaitForExitMs = resolveIntEnvWithBounds(
@@ -491,11 +424,6 @@ class Configuration {
       { min: 1_000, max: 60_000, default: 15_000 },
     );
 
-    this.promptLoopUserMessageSeqWaitTimeoutMs = resolveIntEnvWithBounds(
-      'HAPPIER_PROMPT_LOOP_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS',
-      { min: 0, max: 10_000, default: 1_000 },
-    );
-
     const mcpKeepAliveRaw = String(process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS ?? '').trim();
     const mcpKeepAliveMs = Number.parseInt(mcpKeepAliveRaw, 10);
     // Default: 15s. Must be < client idle timeouts (~5 minutes observed in Claude Code logs).
@@ -594,156 +522,14 @@ class Configuration {
       min: 1, default: 3,
     });
 
-    this.transcriptRecoveryErrorLogThrottleMs = resolveIntEnvWithBounds(
-      'HAPPIER_TRANSCRIPT_RECOVERY_ERROR_LOG_THROTTLE_MS',
-      { min: 0, default: 5_000 },
-    );
-
     this.startupTranscriptCatchUpSeqRewind = resolveIntEnvWithBounds(
       'HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_SEQ_REWIND',
       { min: 0, default: 1, max: 1000 },
     );
-
-    this.claudeTaskOutputMaxPendingPerAgent = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT', { min: 0, default: 2000 },
-    );
-    this.claudeTaskOutputMaxSeenUuidsPerSidechain = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN', { min: 0, default: 5000 },
-    );
-    this.claudeTaskOutputMaxToolUseEntries = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_TOOLUSE_ENTRIES', { min: 0, default: 5000 },
-    );
-    this.claudeTaskOutputMaxAgentMappings = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_AGENT_MAPPINGS', { min: 0, default: 2000 },
-    );
-
-    // Default: 250ms. Most imports will be watcher-driven; this is a safety net if fs watch misses events.
-    this.claudeSubagentJsonlPollIntervalMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_SUBAGENT_JSONL_POLL_INTERVAL_MS', { min: 25, default: 250 },
-    );
-
-    // Default: 250ms. Prevents tight loops when waitForMetadataUpdate returns false (e.g. detached session client).
-    this.claudeMetadataWatcherIdleBackoffMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_METADATA_WATCHER_IDLE_BACKOFF_MS',
-      { min: 25, max: 60_000, default: 250 },
-    );
-
-    // Default: 15s. Set to 0 to disable.
-    this.claudeTranscriptMissingWarningMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TRANSCRIPT_MISSING_WARNING_MS',
-      { min: 0, max: 2 * 60_000, default: 15_000 },
-    );
-
-    // Default: 250ms. Best-effort grace window for the transcript to settle and for tool_use/tool_result
-    // blocks to flush to disk before we attempt to patch missing tool_result entries after an interrupt.
-    this.claudeTranscriptRepairWaitForToolUseIdsTimeoutMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_TIMEOUT_MS',
-      { min: 0, max: 60_000, default: 250 },
-    );
-    this.claudeTranscriptRepairWaitForToolUseIdsPollIntervalMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_POLL_INTERVAL_MS',
-      { min: 10, max: 5_000, default: 25 },
-    );
-
-    // Default: 5000ms. On switch/exit we prefer to request a turn interrupt first, then allow a brief
-    // window for Claude to cleanly settle before we force-abort the subprocess.
-    this.claudeRemoteInterruptThenTeardownGraceMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS',
-      { min: 0, max: 30_000, default: 5_000 },
-    );
-
-    // Default: 3000ms. On local mode switching we send SIGINT first, then give Claude Code some time
-    // to close cleanly before escalating signals.
-    this.claudeLocalAbortEscalateAfterMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_LOCAL_ABORT_ESCALATE_AFTER_MS',
-      { min: 0, max: 60_000, default: 3_000 },
-    );
-    // Default: 15000ms. Hard kill is a last resort; allow generous time for shutdown.
-    this.claudeLocalAbortKillAfterMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_LOCAL_ABORT_KILL_AFTER_MS',
-      { min: 0, max: 5 * 60_000, default: 15_000 },
-    );
-
-    const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '')
-      .trim()
-      .toLowerCase();
-    this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
-
-    // Default: 10s. Set to 0 to disable suppression.
-    this.claudeAbortUnhandledRejectionIgnoreWindowMs = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS',
-      { min: 0, max: 60_000, default: 10_000 },
-    );
-
-    // Default: 15s. Needs to be long enough to cover same-turn tool calls while metadata update propagates.
-    this.claudeExitPlanModeLatchMs = resolveIntEnvWithBounds('HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MS', {
-      min: 0, max: 5 * 60_000, default: 15_000,
-    });
-    this.claudeExitPlanModeLatchMaxEntries = resolveIntEnvWithBounds(
-      'HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MAX_ENTRIES',
-      { min: 1, max: 2_000, default: 100 },
-    );
-
-    const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
-    const boundedTimeoutRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS ?? ''), 10);
-    const reviewBoundedTimeoutRaw = Number.parseInt(
-      String(process.env.HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS ?? ''),
-      10,
-    );
-    const maxTurnsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS ?? ''), 10);
-    const budgetTotalRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION ?? ''), 10);
-    const budgetByClassRaw = String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON ?? '').trim();
-
-    // Intentionally unlimited by default: execution runs are first-class sub-sessions and should not
-    // inherit an arbitrary product cap unless an operator explicitly configures one.
-    this.executionRunsMaxConcurrentPerSession =
-      Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : null;
-    const maxConcurrentOneShotTasksRaw = Number.parseInt(
-      String(process.env.HAPPIER_ONE_SHOT_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''),
-      10,
-    );
-    // Intentionally unlimited by default: one-shot tasks can be long-lived,
-    // and concurrency limits should only be applied when an operator explicitly configures them.
-    this.oneShotTasksMaxConcurrentPerSession =
-      Number.isFinite(maxConcurrentOneShotTasksRaw) && maxConcurrentOneShotTasksRaw >= 1
-        ? maxConcurrentOneShotTasksRaw
-        : null;
-    // Intentionally no wall-clock timeout by default: users should stop long-running plan/delegate/review
-    // runs explicitly, while operators can still opt into caps via env overrides.
-    this.executionRunsBoundedTimeoutMs =
-      Number.isFinite(boundedTimeoutRaw) && boundedTimeoutRaw >= 1_000 ? boundedTimeoutRaw : null;
-    this.executionRunsReviewBoundedTimeoutMs =
-      Number.isFinite(reviewBoundedTimeoutRaw) && reviewBoundedTimeoutRaw >= 1_000 ? reviewBoundedTimeoutRaw : null;
     this.voiceAgentResponseTimeoutMs = resolveIntEnvWithBounds('HAPPIER_VOICE_AGENT_RESPONSE_TIMEOUT_MS', {
       min: 1_000,
       default: 0,
     }) || null;
-    // Intentionally unlimited by default: long-lived execution runs should not stop unexpectedly.
-    this.executionRunsMaxTurns = Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? Math.trunc(maxTurnsRaw) : null;
-
-    this.executionBudgetMaxConcurrentTotalPerSession =
-      Number.isFinite(budgetTotalRaw) && budgetTotalRaw >= 1 ? budgetTotalRaw : null;
-
-    const parsedBudgetByClass: Record<string, number> = {};
-    if (budgetByClassRaw) {
-      try {
-        const parsed = JSON.parse(budgetByClassRaw);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-            const cls = String(key ?? '').trim();
-            if (!cls) continue;
-            const num = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
-            if (!Number.isFinite(num)) continue;
-            const int = Math.floor(num);
-            if (int < 1) continue;
-            parsedBudgetByClass[cls] = int;
-          }
-        }
-      } catch {
-        // ignore invalid json
-      }
-    }
-    this.executionBudgetMaxConcurrentByClass = Object.freeze(parsedBudgetByClass);
 
     // Default: 250 messages. Hard bounds protect daemon from excessive replay windows.
     // Min 50 ensures meaningful windows; max 500 matches server enforcement.
@@ -755,12 +541,6 @@ class Configuration {
       'HAPPIER_MEMORY_EMBEDDINGS_REMOTE_REQUEST_TIMEOUT_MS',
       { min: 1_000, default: 15_000 },
     );
-
-    // Default: 6 pages (enough to find the latest memory synopsis without scanning arbitrarily far back).
-    // Min 0 disables the scan; max 25 is a hard safety cap.
-    this.replaySynopsisScanMaxPages = resolveIntEnvWithBounds('HAPPIER_REPLAY_SYNOPSIS_SCAN_MAX_PAGES', {
-      min: 0, max: 25, default: 6,
-    });
     // Default: 500 (server max). Min 1; max 500 to match server enforcement.
     this.replaySynopsisScanPageSize = resolveIntEnvWithBounds('HAPPIER_REPLAY_SYNOPSIS_SCAN_PAGE_SIZE', {
       min: 1, max: 500, default: 500,

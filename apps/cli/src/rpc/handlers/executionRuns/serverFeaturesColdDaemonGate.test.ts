@@ -115,7 +115,6 @@ function createGatedPreviewExecutor(params: {
     },
     policy: resolveExecutionRunPolicy({
       defaults: {
-        maxConcurrentRuns: null,
         boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null,
         maxTurns: null,

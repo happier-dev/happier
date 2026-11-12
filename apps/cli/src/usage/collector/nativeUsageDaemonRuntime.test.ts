@@ -44,7 +44,7 @@ describe('native usage daemon lifetime', () => {
                 installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://native-claude.test', token,
                 storage: await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') }), observation,
                 readCredentials: async () => ({ token, encryption: null }),
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }) });
+                budgetRegistry: new ExecutionBudgetRegistry() });
             const sources = await runtime.owner.service.discover();
             const initial = sources.find(source => source.agent.pluginId === 'happier.agent.claude');
             if (!initial) throw new Error('Claude default must be discoverable');
@@ -112,7 +112,7 @@ describe('native usage daemon lifetime', () => {
             encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(8) } }));
         const runtime = createNativeUsageDaemonRuntime({ authority, installationId: 'installation', activeServerDir: directory,
             serverHttpBaseUrl: 'https://native-project.test', token, storage, observation, readCredentials,
-            budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }) });
+            budgetRegistry: new ExecutionBudgetRegistry() });
         try {
             await runtime.flushPending();
             expect(readCredentials).toHaveBeenCalledOnce();
@@ -189,7 +189,7 @@ describe('native usage daemon lifetime', () => {
                 authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
                 installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://native-reload.test',
                 token, storage, observation, readCredentials, invalidateSources: () => { settledWakes += 1; },
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
             });
             const sources = await runtime.owner.service.discover();
             expect(readCredentials).toHaveBeenCalledOnce();
@@ -278,7 +278,7 @@ describe('native usage daemon lifetime', () => {
                 authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
                 installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://server.test',
                 token, storage, observation, readCredentials,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
             });
             runtime = create();
             const sources = await runtime.owner.service.discover();
@@ -318,7 +318,7 @@ describe('native usage daemon lifetime', () => {
                 authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
                 installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://server.test',
                 token: 'token', storage, observation,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 // Missing private material does not admit an unrequested native inventory.
                 readCredentials: async () => null,
             });
@@ -358,7 +358,7 @@ describe('native usage daemon lifetime', () => {
             const runtime = createNativeUsageDaemonRuntime({
                 authority, installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://server.test',
                 token, storage, observation,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 readCredentials,
                 invalidateSources: () => { settledSources.push(runtime.owner.service.get(sourceId)); },
             });

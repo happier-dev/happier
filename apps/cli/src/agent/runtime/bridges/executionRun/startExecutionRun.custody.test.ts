@@ -66,7 +66,7 @@ describe('execution run start transcript custody', () => {
         await admissionReply.promise;
       }
     });
-    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+    const budgetRegistry = new ExecutionBudgetRegistry();
     const inventory = createManagedActivityInventory({ producers: [budgetRegistry.getLiveWorkProducer()] });
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
@@ -598,10 +598,7 @@ describe('execution run start transcript custody', () => {
   it('settles a materialized run and releases capacity when its initial durable publication rejects', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 1,
-      maxConcurrentOneShotTasks: 1,
-    });
+    const budgetRegistry = new ExecutionBudgetRegistry();
     // Agent execution and durable transcript I/O are the external boundaries.
     const createRuntime = vi.fn(() => createTestExecutionRunHostRuntime());
     const sendAcp = vi.fn(async (): Promise<void> => { throw new Error('execution_run_transcript_custody_unavailable'); });

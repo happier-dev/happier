@@ -29,7 +29,8 @@ import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSe
 import type { McpRequestAuthPort } from '@/mcp/runtime/mcpRequestAuth';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment, SESSION_MCP_CONTEXT_FILE_ENV } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { SESSION_MCP_CONTEXT_FILE_ENV } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
 // The source harness transforms this lazily imported server graph on its first
 // use. Load its definitions with the fixture; every server still starts through
 // the real Run binding below, inside the test's unchanged lifecycle deadline.
@@ -130,6 +131,9 @@ describe('Voice Run MCP provisioning occurrence', () => {
     };
     const openSession = async (request: AgentSessionOpenRequest, context: AgentSessionRuntimeContext): Promise<AgentSessionRuntime> => {
       opened.push(request);
+      // Check the launch policy at the native SDK boundary; each Agent adapter
+      // owns how that policy removes its vendor's built-in tools.
+      expect(request.configuration).toMatchObject({ allowedTools: [], unlistedTools: 'deny' });
       if (process.platform !== 'win32') {
         const environment = request.launchEnvironment?.values ?? {};
         expect(environment[SESSION_MCP_CONTEXT_FILE_ENV]).toEqual(expect.any(String));
@@ -180,19 +184,14 @@ describe('Voice Run MCP provisioning occurrence', () => {
           expect(catalog.tools.map(tool => tool.name)).not.toContain('approval_request_decide');
         } finally { await client.close(); }
       }
-      const selected = request.mcpServers?.['voice-oauth'];
-      if (delivery === 'shell_bridge') expect(selected).toBeUndefined();
-      else {
-        expect(selected).toBeDefined();
-        if (!selected) throw new Error('Expected request-auth bridge');
-        const configPath = selected.env?.HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE;
-        if (!configPath) throw new Error('Missing materialized OAuth configuration');
-        expect(JSON.parse(await readFile(configPath, 'utf8')).auth).toMatchObject({ resource });
-      }
+      // Voice orchestrates through its structured action function, rather than
+      // inheriting the Account's external tool catalog into the carrier.
+      expect(request.mcpServers?.['voice-oauth']).toBeUndefined();
       if (holdProvider) { entered.resolve(); await release.promise; }
       let sequence = 0;
       const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
-      return { watch(listener) {
+      expect(request.functionTools?.map(tool => tool.name)).toEqual(['happier_voice_action']);
+      return { functionToolsDelivered: true, watch(listener) {
         listeners.add(listener);
         listener({ kind: 'provider-session-id', sessionId: request.sessionId, providerSessionId: 'voice-native-thread', sequence: ++sequence, emittedAtMs: sequence });
         return { dispose() { listeners.delete(listener); } };
@@ -338,7 +337,8 @@ describe('Voice Run MCP provisioning occurrence', () => {
       expect(prompts[0]).toContain('approval_request_list with status open');
       // Inspect the instructions actually delivered to the retained native
       // Agent, so a correct shared helper omitted by composition cannot pass.
-      expect(prompts[0]).toContain('even when no corresponding native tool is listed');
+      expect(prompts[0]).toContain('Trigger Actions with the native happier_voice_action function');
+      expect(prompts[0]).not.toContain('<voice_actions>');
       expect(prompts[0]).toContain("The person's explicit spoken request is the confirmation");
       expect(prompts[0]).toContain('do not ask for confirmation again');
       expect(prompts[0]).toContain('When Voice agent can approve requests is off');
@@ -353,7 +353,7 @@ describe('Voice Run MCP provisioning occurrence', () => {
         expect(prompts.at(-1)).toContain('VOICE_RECEIPT_PERSONA');
         expect.soft(welcomed).toHaveProperty('result.preparedInstructionsFor', receipt);
         const deps = createExecutionRunRpcActionDeps({ manager: bridge, context: { sessionId: parent.sessionId, cwd: home },
-          policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+          policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
             reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
         const stream = ExecutionRunTurnStreamStartResponseSchema.parse(await deps.executionRunStreamStart!(parent.sessionId,
           { runId: started.runId, message: 'hello' }, { authority: 'present_user' }));

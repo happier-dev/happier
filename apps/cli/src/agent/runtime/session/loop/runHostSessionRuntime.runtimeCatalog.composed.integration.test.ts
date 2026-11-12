@@ -2702,9 +2702,7 @@ describe('runHostSessionRuntime', () => {
           permissionHandler, readAppliedChildSelection: controls.readAppliedChildSelection } });
       const actionExecutor = createExecutionRunRpcActionExecutor({ manager: actionManager,
         context: { sessionId: harness.session.sessionId, cwd: harness.opts.directory, resolveAccountSettings: () => accountSettings },
-        policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
-          boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
-          reviewBoundedTimeoutMs: configuration.executionRunsReviewBoundedTimeoutMs, maxTurns: configuration.executionRunsMaxTurns } }),
+        policy: resolveExecutionRunPolicy(),
         isExecutionRunsEnabled: () => true,
         actionsSettingsProvider: createScopedRuntimeActionSettingsProvider(normalizeActionsSettingsV1({})) });
       try {
@@ -3631,7 +3629,7 @@ describe('runHostSessionRuntime', () => {
       platforms: ['web'],
       capabilities: {
         turn: { cancelResponse: false, bargeIn: false },
-        tools: { effectCalls: 'none' },
+
       },
       execution: {
         kind: 'experimental_agent_session_realtime',

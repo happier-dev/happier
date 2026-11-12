@@ -1105,7 +1105,7 @@ describe('startExecutionRun', () => {
     const createRuntime = vi.fn(() => createProvisioningRuntime());
     const onPublicStateUpdated = vi.fn();
     const finishRun = vi.fn(async () => {});
-    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+    const budgetRegistry = new ExecutionBudgetRegistry();
     let preparing!: () => void;
     let releasePreparation!: () => void;
     const enteredPreparation = new Promise<void>(resolve => { preparing = resolve; });
@@ -1685,11 +1685,8 @@ describe('startExecutionRun', () => {
     }
   });
 
-  it('charges scm_commit_message execution runs to the shared one-shot budget', async () => {
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: null,
-      maxConcurrentOneShotTasks: 1,
-    });
+  it('tracks concurrent scm_commit_message execution runs as one-shot custody', async () => {
+    const budgetRegistry = new ExecutionBudgetRegistry();
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
     const voiceAgentManager = new VoiceAgentManager({
@@ -1732,9 +1729,8 @@ describe('startExecutionRun', () => {
         oneShotTasks: 1,
       });
 
-      await expect(startExecutionRun(startArgs)).rejects.toMatchObject({
-        code: 'execution_run_budget_exceeded',
-      });
+      expect((await startExecutionRun(startArgs)).runId).toMatch(/^run_/);
+      expect(budgetRegistry.getInFlightSnapshot()).toEqual({ executionRuns: 0, oneShotTasks: 2 });
     } finally {
       for (const runId of runs.keys()) {
         budgetRegistry.releaseExecutionRun(runId);
@@ -1744,10 +1740,7 @@ describe('startExecutionRun', () => {
   });
 
   it('releases the acquired execution budget when runtime creation fails before controller registration', async () => {
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 1,
-      maxConcurrentOneShotTasks: null,
-    });
+    const budgetRegistry = new ExecutionBudgetRegistry();
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
     const voiceAgentManager = new VoiceAgentManager({
@@ -1802,10 +1795,7 @@ describe('startExecutionRun', () => {
   });
 
   it('returns the accepted handle, then releases capacity when asynchronous resume support inspection fails', async () => {
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 1,
-      maxConcurrentOneShotTasks: null,
-    });
+    const budgetRegistry = new ExecutionBudgetRegistry();
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
     const finishRun = vi.fn(async (runId: string, next) => {

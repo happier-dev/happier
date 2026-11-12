@@ -64,7 +64,7 @@ describe('ExecutionRunHostBridge new Run demand', () => {
             voice: { enabled: true, agent: { enabled: true } },
           } }) }) },
         isExecutionRunsEnabled: () => true,
-        policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null } }),
       });
       // Distinct persisted records expose inventory work; no guessed account

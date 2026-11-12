@@ -113,10 +113,6 @@ vi.mock('@/configuration', () => ({
     isDaemonProcess: false,
     replaySeedMaxChars: 50_000,
     replaySeedCandidateLimit: 500,
-    executionRunsMaxConcurrentPerSession: null,
-    oneShotTasksMaxConcurrentPerSession: null,
-    executionBudgetMaxConcurrentTotalPerSession: null,
-    executionBudgetMaxConcurrentByClass: {},
   },
 }));
 
@@ -1887,9 +1883,7 @@ describe('registerMachineRpcHandlers', () => {
     await registration.dispose();
   });
 
-  it('bounds two detached review.start panels through the daemon-owned review execution budget before effects', async () => {
-    const previousBudget = configuration.executionBudgetMaxConcurrentByClass;
-    Object.defineProperty(configuration, 'executionBudgetMaxConcurrentByClass', { value: { review: 1 }, configurable: true });
+  it('admits concurrent detached review.start panels through daemon-owned custody', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-daemon-review-budget-'));
     runGit(directory, ['init', '--initial-branch=main']);
     // Publish a real empty plugin graph. The canonical SCM owner still supplies
@@ -1929,14 +1923,13 @@ describe('registerMachineRpcHandlers', () => {
       expect(first, JSON.stringify(first)).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
       await vi.waitFor(() => expect(createExecutionRunBridgeRuntimeMock).toHaveBeenCalledTimes(1));
       const second = await executor.execute('review.start', input, context);
-      expect(second).toMatchObject({ ok: true, result: { results: [{ ok: false, errorCode: 'execution_run_budget_exceeded' }] } });
-      expect(createExecutionRunBridgeRuntimeMock).toHaveBeenCalledTimes(1);
+      expect(second).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
+      await vi.waitFor(() => expect(createExecutionRunBridgeRuntimeMock).toHaveBeenCalledTimes(2));
     } finally {
       releaseReview();
       await registration.dispose();
       await runtimeLease.release();
       await rm(directory, { recursive: true, force: true });
-      Object.defineProperty(configuration, 'executionBudgetMaxConcurrentByClass', { value: previousBudget, configurable: true });
     }
   });
 

@@ -572,14 +572,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         return classifyFailure({ ok: false, errorCode: code, error: code,
           ...(rawDetails !== undefined ? { details: rawDetails } : {}) }, runCreation);
       }
-      if (code === 'execution_run_budget_exceeded') {
-        return classifyFailure({
-          ok: false,
-          error: 'Execution run budget exceeded',
-          errorCode: 'execution_run_budget_exceeded',
-          ...(rawDetails !== undefined ? { details: rawDetails } : {}),
-        }, runCreation);
-      }
+
       if (code === 'execution_run_not_allowed') {
         return classifyFailure({
           ok: false,

@@ -60,7 +60,7 @@ describe('native source metadata discovery', () => {
             await writeFile(join(directory, 'projects', 'project', 'two.jsonl'), 'PRIVATE_INVALID_NATIVE_CONTENT');
             const unavailable = async () => { throw new Error('Unconsented accounting access'); };
             const collector = createNativeUsageCollector({ authority, storage, store,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 discoverSources: () => discoverNativeUsageSourceMetadata({ agents, account: { connectedServicesV2: [] },
                     activeServerId: 'home', activeServerDir: directory, signal: new AbortController().signal,
                     resolveBoundary: async () => ({ catalogEntry: null, externalSessions: bounded, occurrenceId: 'current', retirementSignal: retirement.signal, isCurrent: () => true }) }),
@@ -147,7 +147,7 @@ describe('native source metadata discovery', () => {
             const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
             const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
             collector = createNativeUsageCollector({ authority, storage, store, discoverSources,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 resolveRoot: async () => { throw new Error('No root edit requested'); },
                 readAccounting: async (source, signal) => bounded.readAccounting({ source: source.source, cursor: source.cursor, signal }),
                 // OS observer boundary: re-discovery below supplies the real invalidation.
@@ -199,7 +199,7 @@ describe('native source metadata discovery', () => {
             const attempted: unknown[] = [];
             const published: unknown[] = [];
             collector = createNativeUsageCollector({ authority, storage, store, discoverSources,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 resolveRoot: async () => { throw new Error('No root edit requested'); },
                 readAccounting: (source, signal) => readNativeUsageAccountingAtAdmission({ agents, agentId: 'pi',
                     source: source.source, admittedSourceKey: source.sourceKey, cursor: source.cursor,

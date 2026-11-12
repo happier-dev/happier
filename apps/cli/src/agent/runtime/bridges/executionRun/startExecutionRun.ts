@@ -690,14 +690,10 @@ async function startAdmittedExecutionRun(
     const existing = args.runs.get(requestBoundRunId);
     if (existing) return projectExistingExecutionRunStartResult(existing);
   }
-  const acquiredBudget = args.params.intent === 'scm_commit_message'
-    ? args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message', args.params.requesterWorkAttributionV1) ?? true
-    : args.budgetRegistry?.tryAcquireExecutionRun(runId, args.params.intent, args.params.requesterWorkAttributionV1) ?? true;
-  if (!acquiredBudget) {
-    const err = markExecutionRunStartFailure(Object.assign(new Error('Execution run budget exceeded'), {
-      code: 'execution_run_budget_exceeded',
-    }), 'noRunCreated');
-    throw err;
+  if (args.params.intent === 'scm_commit_message') {
+    args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message', args.params.requesterWorkAttributionV1);
+  } else {
+    args.budgetRegistry?.tryAcquireExecutionRun(runId, args.params.intent, args.params.requesterWorkAttributionV1);
   }
 
   const pendingBackend: { runtime: ExecutionRunHostRuntime | null } = { runtime: null };

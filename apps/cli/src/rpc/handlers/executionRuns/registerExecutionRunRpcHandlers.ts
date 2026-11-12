@@ -139,7 +139,6 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   }>;
   getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
   policy?: Readonly<{
-    maxConcurrentRuns?: number | null;
     boundedTimeoutMs?: number | null;
     reviewBoundedTimeoutMs?: number | null;
     maxTurns?: number | null;
@@ -184,15 +183,6 @@ export function registerExecutionRunRpcHandlers(
 ): ExecutionRunRpcHandlerRegistration {
   const disposeAgentStartSelection = registerSessionAgentStartSelectionRpc(rpc, ctx.sessionId, ctx.sessionInteractionHost);
   const policy = resolveExecutionRunPolicy({
-    defaults: {
-      // Centralized configuration is the only source of truth for execution-run defaults.
-      // Keep the fallback here wired to configuration so uncapped/no-timeout defaults cannot
-      // silently drift from the policy that sessionClient passes in normal production wiring.
-      maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
-      boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
-      reviewBoundedTimeoutMs: configuration.executionRunsReviewBoundedTimeoutMs,
-      maxTurns: configuration.executionRunsMaxTurns,
-    },
     override: ctx.policy,
   });
 
@@ -266,7 +256,7 @@ export function registerExecutionRunRpcHandlers(
     }
     : undefined;
 
-  const budgetRegistry = ctx.budgetRegistry ?? createExecutionBudgetRegistry(policy.maxConcurrentRuns);
+  const budgetRegistry = ctx.budgetRegistry ?? createExecutionBudgetRegistry();
   const host = new ExecutionRunHostBridge({
     resolveVoicePromptPreparation: async ({ sessionId, signal, workingDirectory }) => {
       const credentials = await ctx.readPromptCredentials?.();

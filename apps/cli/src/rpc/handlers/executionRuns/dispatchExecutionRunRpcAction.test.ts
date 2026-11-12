@@ -219,7 +219,6 @@ function createAgentExecutionRunStartExecutor(start: ExecutionRunHostBridgeContr
     context: { sessionId: 'sess_1', cwd: '/workspace' },
     policy: resolveExecutionRunPolicy({
       defaults: {
-        maxConcurrentRuns: null,
         boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null,
         maxTurns: null,
@@ -238,7 +237,6 @@ describe('execution-run RPC Action settings provider', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -291,7 +289,6 @@ describe('execution-run RPC Action settings provider', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -334,7 +331,6 @@ describe('execution-run RPC Action settings provider', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -372,8 +368,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: createUnusedExecutionRunBridge(),
       context: { sessionId: 'sess_1', cwd: '/workspace', getBrowserUiAutomation: () => owner,
         getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED },
-      policy: resolveExecutionRunPolicy({ defaults: {
-        maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
       } }),
       isExecutionRunsEnabled: () => true,
     });
@@ -395,8 +390,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: { ...createUnusedExecutionRunBridge(), start },
       context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
-        defaults: {
-          maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
           maxTurns: null
         },
       }),
@@ -428,7 +422,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
           parentProvider: 'codex', streamedTranscriptSession: null, writeActivityMarker: async () => {},
         }),
       }), context: { sessionId: null, cwd: '/workspace' },
-      policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true,
     });
     const result = await deps.detachedExecutionRunSend?.(null, { runId: run.runId, message: 'Refuse lost authority' },
@@ -485,7 +479,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -541,7 +534,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: contextWithScopedList,
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -583,7 +575,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: contextWithUnsafeAccountList,
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -709,7 +700,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         caller: { kind: 'originless', runId: actionCaller.runId, runDepth: 0, runOriginSessionId: 'sess_1' } },
       actionRequestId: 'workflow-input-v2:stable:execution-run-start',
     });
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ launchOrigin }));
     expect(result).toMatchObject({
       ok: true,
       result: {
@@ -724,6 +714,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       initialInput: { kind: 'deferred_session_pending' },
       actionRequestId: 'workflow-input-v2:stable:execution-run-start',
     }));
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ launchOrigin }));
   });
 
   it('rejects deferred Session Pending input in the detached Run host', async () => {
@@ -737,7 +728,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -899,7 +889,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -968,7 +957,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1005,7 +993,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1045,7 +1032,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1128,7 +1114,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: { ...createUnusedExecutionRunBridge(), start },
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
-        defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
       }),
       isExecutionRunsEnabled: () => true,
     });
@@ -1170,7 +1156,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1226,7 +1211,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: { ...createUnusedExecutionRunBridge(), start },
       context: { sessionId: 'sess_1', cwd: '/workspace', grantAttachedRunTeamVisibility },
       policy: resolveExecutionRunPolicy({
-        defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
       }),
       isExecutionRunsEnabled: () => true,
     });
@@ -1258,7 +1243,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: { ...createUnusedExecutionRunBridge(), start },
       context: { sessionId: 'sess_1', cwd: '/workspace', grantAttachedRunTeamVisibility },
       policy: resolveExecutionRunPolicy({
-        defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
       }),
       isExecutionRunsEnabled: () => true,
     });
@@ -1297,7 +1282,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: { ...createUnusedExecutionRunBridge(), start },
       context: { sessionId: null, cwd: '/workspace', grantAttachedRunTeamVisibility },
       policy: resolveExecutionRunPolicy({
-        defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
       }),
       isExecutionRunsEnabled: () => true,
     });
@@ -1472,7 +1457,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: null, cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1559,7 +1543,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         context: { sessionId: null, cwd: '/workspace' },
         policy: resolveExecutionRunPolicy({
           defaults: {
-            maxConcurrentRuns: null,
             boundedTimeoutMs: null,
             reviewBoundedTimeoutMs: null,
             maxTurns: null,
@@ -1631,7 +1614,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         },
         policy: resolveExecutionRunPolicy({
           defaults: {
-            maxConcurrentRuns: null,
             boundedTimeoutMs: null,
             reviewBoundedTimeoutMs: null,
             maxTurns: null,
@@ -1675,7 +1657,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         context: { sessionId: 'sess_1', cwd: '/workspace', serverUrl: 'https://must-not-be-read.example' },
         policy: resolveExecutionRunPolicy({
           defaults: {
-            maxConcurrentRuns: null,
             boundedTimeoutMs: null,
             reviewBoundedTimeoutMs: null,
             maxTurns: null,
@@ -1728,7 +1709,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         },
         policy: resolveExecutionRunPolicy({
           defaults: {
-            maxConcurrentRuns: null,
             boundedTimeoutMs: null,
             reviewBoundedTimeoutMs: null,
             maxTurns: null,
@@ -1787,7 +1767,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         },
         policy: resolveExecutionRunPolicy({
           defaults: {
-            maxConcurrentRuns: null,
             boundedTimeoutMs: null,
             reviewBoundedTimeoutMs: null,
             maxTurns: null,
@@ -1844,7 +1823,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1891,7 +1869,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1937,7 +1914,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -1964,7 +1940,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -2020,7 +1995,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -2082,7 +2056,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -2120,7 +2093,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager: { ...original, get: id => id === run.runId ? { ...run, approvalProfileId } : null },
       context: { sessionId: 'sess_1', cwd: '/workspace', browserDiagnostics: diagnostics,
         getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED },
-      policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }),
       isExecutionRunsEnabled: () => true,
       actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false }),
@@ -2176,7 +2149,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -2241,7 +2213,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -2304,7 +2275,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -2370,8 +2340,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       manager,
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
-        defaults: {
-          maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
           maxTurns: null
         },
       }),
@@ -2404,7 +2373,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
       context: { sessionId: 'sess_1', cwd: '/workspace' },
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,

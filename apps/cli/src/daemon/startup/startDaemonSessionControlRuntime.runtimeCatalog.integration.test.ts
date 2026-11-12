@@ -978,10 +978,6 @@ vi.mock('@/configuration', async (importOriginal) => {
     return {
         configuration: {
             organizationPolicy: actual.configuration.organizationPolicy,
-            executionRunsMaxConcurrentPerSession: actual.configuration.executionRunsMaxConcurrentPerSession,
-            oneShotTasksMaxConcurrentPerSession: actual.configuration.oneShotTasksMaxConcurrentPerSession,
-            executionBudgetMaxConcurrentTotalPerSession: actual.configuration.executionBudgetMaxConcurrentTotalPerSession,
-            executionBudgetMaxConcurrentByClass: actual.configuration.executionBudgetMaxConcurrentByClass,
             daemonSpawnExistingSessionWaitForExitMs: 0,
             daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
             daemonStopSessionWaitForExitMs: 0,

@@ -258,7 +258,7 @@ describe('canonical review Run comments', () => {
     host.runs.set(initial.runId, initial);
     host.controllers.set(initial.runId, controller);
     const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: root }, isExecutionRunsEnabled: () => true,
-      policy: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+      policy: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
         allowIoModes: new Set(['streaming', 'request_response']) } });
     await scmDiffSummaryResultStore.beginInput({ ...scope, inputId: 'stale-input', expectedRevision: saved.revision });
     const edited = await scmDiffSummaryResultStore.edit({ ...scope, expectedRevision: saved.revision,

@@ -171,7 +171,7 @@ describe('native accounting Account Project resolution', () => {
             const deps = { authority, storage, store,
                 resolveProject: createNativeUsageProjectResolver({ authority, storage, serverHttpBaseUrl: 'https://home.test',
                     readCredentials: async () => ({ token, encryption: null }) }),
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 discoverSources: async () => [{ agent: { pluginId: 'happier.agent.pi', localId: 'pi' },
                     source: { kind: 'piAgentDir', agentDir }, sourceKey: agentDir, root: agentDir, supported: true }],
                 resolveRoot: async () => { throw new Error('No root edit requested'); },

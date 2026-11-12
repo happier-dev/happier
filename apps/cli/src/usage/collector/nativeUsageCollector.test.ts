@@ -27,7 +27,7 @@ describe('consented native accounting collector', () => {
         const watches: { signal: AbortSignal; disposed: boolean }[] = [];
         let reads = 0;
         const collector = createNativeUsageCollector({ authority, storage, store,
-            budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+            budgetRegistry: new ExecutionBudgetRegistry(),
             discoverSources: async () => [{ agent: { pluginId: 'fixture.agent', localId: 'agent' },
                 source: { kind: 'fixture' }, sourceKey: 'root', root: directory, supported: true }],
             resolveRoot: async () => { throw new Error('No root edit'); },
@@ -78,7 +78,7 @@ describe('consented native accounting collector', () => {
             const published: unknown[] = [];
             let failTransport = true;
             collector = createNativeUsageCollector({ store, storage, authority,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 discoverSources: async () => [{ agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
                     source: { kind: 'claudeConfig', configDir: directory }, sourceKey: directory, root: directory, supported: true }],
                 resolveRoot: async () => { throw new Error('Not used'); },
@@ -189,7 +189,7 @@ describe('consented native accounting collector', () => {
                 observerInput = input;
                 return { dispose() {} };
             } });
-            const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+            const budgetRegistry = new ExecutionBudgetRegistry();
             const releaseOtherWork = budgetRegistry.retainFiniteTask(new Promise<void>(() => {}));
             const settledViews: Promise<unknown>[] = [];
             const collector = createNativeUsageCollector({ store, storage, authority,
@@ -333,7 +333,7 @@ describe('consented native accounting collector', () => {
                 await store.save(state);
             } }, authority, storage, publisher,
                 onSourceSettled: () => { wakes++; },
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 discoverSources: async () => [{ agent: { pluginId: 'happier.agent.pi', localId: 'pi' }, source: { kind: 'piAgentDir', agentDir }, sourceKey: agentDir, root: agentDir, supported: true, rootKind, discoveredFileCount,
                     ...(accountingSources ? { accountingSources: [...accountingSources] } : {}) },
                     ...(additionalSource ? [{ agent: { pluginId: 'happier.agent.pi', localId: 'pi' },
@@ -453,7 +453,7 @@ describe('consented native accounting collector', () => {
             let deletes = 0;
             const published: unknown[] = [];
             const collector = createNativeUsageCollector({ store, storage, authority,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 discoverSources: async () => [], resolveRoot: async (source, root) => {
                     const resolved = await contribution.resolveSource({ source: { ...source.source, agentDir: root ?? directory },
                         ...createExternalSessionsInvocationFixture(new AbortController().signal) });

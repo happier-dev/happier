@@ -69,7 +69,7 @@ describe('detached Run starting Account isolation', () => {
 
   function executor() {
     return createExecutionRunRpcActionExecutor({ manager, context: { sessionId: null, cwd: directory },
-      policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null,
+      policy: resolveExecutionRunPolicy({ defaults: {
         boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
   }
 

@@ -300,7 +300,7 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
       expect(await readRun(fixture, started.runId)).toMatchObject({ status: 'succeeded', lifecycle: { v: 1, state: 'recoverable_with_input' } });
       const actions = createExecutionRunRpcActionExecutor({ manager: fixture.bridge!,
         context: { cwd: fixture.directory, sessionId: fixture.session.sessionId }, isExecutionRunsEnabled: () => true,
-        policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null } }),
       });
       for (const actionId of ['execution.run.ensure', 'execution.run.ensure_or_start'] as const) {

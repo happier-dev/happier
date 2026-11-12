@@ -459,7 +459,6 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       context: sessionSocketStubState.executionRunHandlerContext,
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,
@@ -557,8 +556,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         listPublicForRequest: vi.fn(() => []),
       } as never,
       context: { ...sessionSocketStubState.executionRunHandlerContext, sessionId: null },
-      policy: resolveExecutionRunPolicy({ defaults: {
-        maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
         maxTurns: null,
       } }),
       isExecutionRunsEnabled: () => true,
@@ -644,8 +642,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         listPublicForRequest: vi.fn(() => []),
       } as never,
       context: sessionSocketStubState.executionRunHandlerContext,
-      policy: resolveExecutionRunPolicy({ defaults: {
-        maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
         maxTurns: null,
       } }),
       isExecutionRunsEnabled: () => true,
@@ -806,8 +803,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         listPublicForRequest: vi.fn(() => []),
       } as never,
       context: sessionSocketStubState.executionRunHandlerContext,
-      policy: resolveExecutionRunPolicy({ defaults: {
-        maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
         maxTurns: null,
       } }),
       isExecutionRunsEnabled: () => true,

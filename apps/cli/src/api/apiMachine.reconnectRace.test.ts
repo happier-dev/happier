@@ -22,7 +22,6 @@ vi.mock('@/configuration', () => ({ configuration: {
     socketForceWebsocketOnly: false, socketIoTransports: ['polling', 'websocket'],
     activeServerDir: '/private/tmp/happier-api-machine-reconnect-race/server',
     happyHomeDir: '/private/tmp/happier-api-machine-reconnect-race',
-    executionRunsMaxConcurrentPerSession: null, oneShotTasksMaxConcurrentPerSession: null,
 } }));
 vi.mock('@/utils/proxy/socketIoProxy', () => ({ getSocketIoProxyOptions: () => ({}) }));
 vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({ createLoopbackReadinessProbe: () => probeReadiness }));

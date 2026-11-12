@@ -17,6 +17,7 @@ import {
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { logger } from '@/ui/logger';
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
+import { createMachineRoleActivationRuntime } from '@/daemon/roles/machineRoleActivation';
 import { resolveSessionClientDurableMutationJournalPaths } from './session/client/transport/mutations/sessionClientDurableMutationPersistence';
 import { ApiMachineClient } from './apiMachine';
 import type { Machine } from './types';
@@ -41,11 +42,6 @@ const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.h
     organizationPolicy: { status: 'absent' },
     happyHomeDir: process.env.RUNNER_TEMP ?? process.env.TMPDIR ?? process.env.TEMP ?? '.',
     socketIoTransports: ['polling', 'websocket'] as string[],
-    // Canonical configuration defaults: no execution cap without an operator override.
-    executionRunsMaxConcurrentPerSession: null,
-    oneShotTasksMaxConcurrentPerSession: null,
-    executionBudgetMaxConcurrentTotalPerSession: null,
-    executionBudgetMaxConcurrentByClass: Object.freeze({}),
   },
   mockAxiosIsAxiosError: vi.fn((error: unknown) => (
     typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
@@ -1208,7 +1204,7 @@ describe('ApiMachineClient transports', () => {
     });
   });
 
-  it('serves voice inference status through the registered machine RPC', async () => {
+  it('serves voice inference status through the voice role registered on the machine RPC', async () => {
     const mod = await import('./apiMachine');
 
     const machine: Machine = {
@@ -1290,13 +1286,23 @@ describe('ApiMachineClient transports', () => {
     vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
     const features = FeaturesResponseSchema.parse({ features: { voice: { enabled: true } } });
     const client = new mod.ApiMachineClient('fake-token', machine);
+    let roleActivations: ReturnType<typeof createMachineRoleActivationRuntime> | null = null;
     try {
       client.setRPCHandlers({
         spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
         stopSession: async () => true,
         requestShutdown: () => {},
-        voiceInference,
       }, { getServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
+      roleActivations = createMachineRoleActivationRuntime({
+        rpcHandlerManager: client.getMachineRoleRpcHandlerManager(),
+        roles: { activeRoles: () => new Set(['voice']), subscribe: () => () => {} },
+        context: { machineId: machine.id, accountId: null,
+          startMemoryWorkerForMachine: async () => null,
+          startVoiceInferenceWorkerForMachine: async () => voiceInference,
+          memorySessionEvents: { onSessionDeletedChange: () => () => {}, onSessionAccessRevoked: () => () => {},
+            onSessionAccessReset: () => () => {}, onSessionArchivedStateChange: () => () => {} } },
+      });
+      await roleActivations.start();
 
       await expect(client.invokeLocalMachineAction(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, {})).resolves.toEqual({
         ok: true,
@@ -1305,6 +1311,7 @@ describe('ApiMachineClient transports', () => {
         models: [],
       });
     } finally {
+      await roleActivations?.stop();
       await client.shutdown();
       await rm(runtimeHome, { recursive: true, force: true });
     }

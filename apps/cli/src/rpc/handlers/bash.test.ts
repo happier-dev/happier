@@ -142,7 +142,7 @@ describe('registerBashHandler', () => {
     it.each(['argv', 'shell'] as const)('refuses fresh %s work before native execution while the canonical daemon drain is closed', async mode => {
         const { handlers, registrar } = createRegistrar();
         const admissionDrain = createDaemonAdmissionDrain();
-        const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+        const executionBudgetRegistry = new ExecutionBudgetRegistry();
         registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry, admissionDrain });
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-admission-'));
         const context = ownerContext();
@@ -236,7 +236,7 @@ describe('registerBashHandler', () => {
 
     it.each(['argv', 'shell'] as const)('cancels running %s work through the RPC signal and retains partial output', async (mode) => {
         const { handlers, registrar } = createRegistrar();
-        const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+        const executionBudgetRegistry = new ExecutionBudgetRegistry();
         registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry });
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-cancel-'));
         const marker = join(directory, 'started');
@@ -263,7 +263,7 @@ describe('registerBashHandler', () => {
 
     it.skipIf(process.platform === 'win32')('retains command custody after abort signalling until the real process exits', async () => {
         const { handlers, registrar } = createRegistrar();
-        const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+        const executionBudgetRegistry = new ExecutionBudgetRegistry();
         registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry });
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-custody-'));
         const ready = join(directory, 'ready');

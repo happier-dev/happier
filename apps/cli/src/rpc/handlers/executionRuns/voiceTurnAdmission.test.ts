@@ -63,8 +63,7 @@ describe('Voice run caller-turn admission', () => {
   function createDeps(manager: ExecutionRunHostBridge, sessionId: string | null = scope) {
     return createExecutionRunRpcActionDeps({
       manager, context: { sessionId, cwd: directory },
-      policy: resolveExecutionRunPolicy({ defaults: {
-        maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
       } }), isExecutionRunsEnabled: () => true,
     });
   }

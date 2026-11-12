@@ -687,7 +687,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       expect(manager.getPublic(recipient.runId)).toMatchObject({ lifecycle: { state: boundedRecovery ? 'recoverable_with_input' : 'recoverable' } });
       if (!boundedRecovery) expect(await manager.ensure(recipient.runId, { resume: true })).toEqual({ ok: true });
       const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId, cwd: directory },
-        isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
       const readExecutionRun = async (request: Readonly<{ sessionId: string; runId: string; signal?: AbortSignal }>) => {
         observedRuns.push(request.runId);
@@ -1565,7 +1565,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       launch: { cwd: directory }, intentInput: { reviewNarration: { reviewFindings: [finding] } },
       structuredMeta: { kind: 'scm_diff_summary.v1', payload: {} } }));
     const rpc = createExecutionRunRpcActionDeps({ manager: harness.manager, context: { sessionId, cwd: directory },
-      isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+      isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
     const observed = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!(sessionId, { runId: 'run-1', includeStructured: true }));
     expect(observed).toMatchObject({ structuredMeta: { kind: 'scm_diff_summary.v1' },
@@ -1587,7 +1587,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     nativeOpen.mockImplementation(async () => ({ watch() { return { dispose() {} }; }, send: nativeSend, async dispose() {} }));
     const harness = createHarness(false, true);
     const rpc = createExecutionRunRpcActionDeps({ manager: harness.manager, context: { sessionId: 'session-1', cwd: directory },
-      isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+      isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...rpc,
       reviewEnginesList: async () => ({ items: await buildReviewEngineInventoryItems({}) }),
@@ -1663,7 +1663,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       // saved artifact can become readable before that completion loop projects
       // the Run, so wait at the public observation boundary itself.
       const rpc = createExecutionRunRpcActionDeps({ manager: harness.manager, context: { sessionId: null, cwd: directory },
-        isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
       await vi.waitFor(async () => {
         const observed = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!(null, { runId: started.runId, includeStructured: true }));

@@ -1020,7 +1020,7 @@ describe('production daemon detached Workflow admission', () => {
         resolveHomeServerIdentityId: async () => homeId, verifyMachineAdmission: async () => true }) });
     const executor = createExecutionRunRpcActionExecutor({ manager: bridge,
       context: { sessionId: null, cwd: directory, serverId },
-      policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
     registerExecutionRunActionRpcHandlers(receiver, { executor, defaultSessionId: null, machineId, serverId, runtimeAccountId: accountId });
     registerCapabilitiesHandlers(receiver, { filesystemEffectAdmission: createFilesystemEffectAdmission({

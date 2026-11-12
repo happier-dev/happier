@@ -234,10 +234,7 @@ describe('resumeBackendControllerForResumableRun', () => {
     };
     const runs = new Map([[run.runId, run]]);
     const controllers = new Map();
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 1,
-      maxConcurrentOneShotTasks: null,
-    });
+    const budgetRegistry = new ExecutionBudgetRegistry();
 
     const resultPromise = resumeBackendControllerForResumableRun({
       runId: run.runId,

@@ -59,7 +59,6 @@ function buildRuntimeActionExecute(input: Readonly<{
         manager: stubManager,
         policy: {
             allowIoModes: new Set(['headless']),
-            maxConcurrentRuns: null,
         } as never,
         isExecutionRunsEnabled: () => true,
         context: {
@@ -149,7 +148,6 @@ describe('peer-mediation observability dispatch wiring', () => {
             manager: stubManager,
             policy: {
                 allowIoModes: new Set(['headless']),
-                maxConcurrentRuns: null,
             } as never,
             isExecutionRunsEnabled: () => true,
             context: {

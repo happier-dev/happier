@@ -323,7 +323,7 @@ describe('executeBoundedBackendRun', () => {
         runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 0,
       };
       const runs = new Map([[runId, state]]);
-      const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: null });
+      const budgetRegistry = new ExecutionBudgetRegistry();
       expect(budgetRegistry.tryAcquireExecutionRun(runId)).toBe(true);
       let terminal = false;
       void ctrl.terminalPromise.then(() => { terminal = true; });

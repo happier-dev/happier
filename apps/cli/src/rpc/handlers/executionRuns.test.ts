@@ -2246,7 +2246,7 @@ describe('executionRuns session RPC handlers', () => {
           createBackend: (opts) => {
             createdBackends.push({ backendId: opts.backendId, permissionMode: opts.permissionMode, modelId: opts.modelId });
             return createStaticBackend(
-              `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`,
+              'Hello.',
             );
           },
           sendAcp: async () => {},
@@ -2294,8 +2294,8 @@ describe('executionRuns session RPC handlers', () => {
     const sideEffect = (read.events as any[]).find(
       (event) => event.t === 'voice_output' && event.output?.kind === 'side_effect',
     ) ?? null;
-    expect(turnFinal?.output?.text).toBe('I sent that to the coding assistant and am waiting for its update.');
-    expect(sideEffect?.output?.action?.t).toBe('sendSessionMessage');
+    expect(turnFinal?.output?.text).toBe('Hello.');
+    expect(sideEffect).toBeNull();
   });
 
   it('hydrates cached voice replay summaries on the daemon before the first streamed turn', async () => {
@@ -2885,7 +2885,7 @@ describe('executionRuns session RPC handlers', () => {
 
   it('supports voice_agent stream resume via execution.run.stream.start(resume=true) after stop when backend supports loadSession', async () => {
     const createBackend = createResumableBackendFactory(
-      `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`,
+      'Hello.',
     );
 
     const client = createEncryptedRpcTestClient({
@@ -2933,7 +2933,7 @@ describe('executionRuns session RPC handlers', () => {
     expect((read1.events as any[]).find(
       (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
     )?.output?.text).toBe(
-      'I sent that to the coding assistant and am waiting for its update.',
+      'Hello.',
     );
 
     const stopped = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: started.runId });
@@ -2964,7 +2964,7 @@ describe('executionRuns session RPC handlers', () => {
     expect((read2.events as any[]).find(
       (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
     )?.output?.text).toBe(
-      'I sent that to the coding assistant and am waiting for its update.',
+      'Hello.',
     );
   });
 
@@ -2995,7 +2995,7 @@ describe('executionRuns session RPC handlers', () => {
                 const responseText =
                   modelKey === 'commit'
                     ? 'COMMIT_TEXT'
-                    : `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`;
+                    : 'Hello.';
                 runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
               },
               onWaitForTurnCompletion() {},
@@ -3074,7 +3074,7 @@ describe('executionRuns session RPC handlers', () => {
     expect((read2.events as any[]).find(
       (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
     )?.output?.text).toBe(
-      'I sent that to the coding assistant and am waiting for its update.',
+      'Hello.',
     );
     expect(loadCalls.chat).toEqual(['chat_provider_session_1']);
     expect(loadCalls.commit).toEqual(['commit_provider_session_1']);
@@ -3375,10 +3375,7 @@ describe('executionRuns session RPC handlers', () => {
   });
 
   it('releases execution budgets when a created voice_agent Run fails to initialize', async () => {
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 1,
-      maxConcurrentOneShotTasks: 1,
-    });
+    const budgetRegistry = new ExecutionBudgetRegistry();
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
@@ -3697,7 +3694,7 @@ describe('executionRuns session RPC handlers', () => {
           resolveRunReportPolicy: createSessionRunReportPolicyReader({ serverId: 'budget-home',
             serverHttpBaseUrl: 'https://budget.test', accountId: 'budget-account',
             readCredentials: async () => ({ token, encryption: null }), isCurrent: () => true }),
-          policy: { maxConcurrentRuns: 1, boundedTimeoutMs: 60_000 },
+          policy: { boundedTimeoutMs: 60_000 },
         });
       },
     });
@@ -3720,9 +3717,7 @@ describe('executionRuns session RPC handlers', () => {
     ]);
     const started = results.find(result => 'runId' in result);
     expect(started, JSON.stringify(results)).toMatchObject({ runId: expect.stringMatching(/^run_/) });
-    expect(results.filter(result => 'errorCode' in result)).toEqual([
-      expect.objectContaining({ ok: false, errorCode: 'execution_run_budget_exceeded' }),
-    ]);
+    expect(results.every(result => 'runId' in result)).toBe(true);
     if (!started || !('runId' in started)) throw new Error('Missing admitted Run');
     await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: started.runId }))
       .resolves.toMatchObject({ ok: true });
@@ -3730,7 +3725,7 @@ describe('executionRuns session RPC handlers', () => {
       .resolves.toMatchObject({ runId: expect.stringMatching(/^run_/) });
   });
 
-  it('does not enforce a fallback concurrent-run cap when maxConcurrentRuns is unset', async () => {
+  it('admits concurrent execution runs with uncapped defaults', async () => {
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
@@ -3740,7 +3735,7 @@ describe('executionRuns session RPC handlers', () => {
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
           sendAcp: async () => {},
-          policy: { maxConcurrentRuns: null as number | null, boundedTimeoutMs: null as number | null },
+          policy: { boundedTimeoutMs: null as number | null },
         });
       },
     });
@@ -3771,7 +3766,7 @@ describe('executionRuns session RPC handlers', () => {
     expect(second.runId).toMatch(/^run_/);
   });
 
-  it('uses centralized configuration defaults when no explicit policy override is provided', async () => {
+  it('ignores retired operator concurrency env caps', async () => {
     const previousMaxConcurrentRuns = process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION;
     process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION = '1';
     reloadConfiguration();
@@ -3813,73 +3808,12 @@ describe('executionRuns session RPC handlers', () => {
         ioMode: 'request_response',
       });
 
-      expect(second.ok).toBe(false);
-      expect(second.errorCode).toBe('execution_run_budget_exceeded');
+      expect(second.runId).toMatch(/^run_/);
     } finally {
       if (previousMaxConcurrentRuns === undefined) delete process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION;
       else process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION = previousMaxConcurrentRuns;
       reloadConfiguration();
     }
-  });
-
-  it('enforces per-intent budget caps when a budget registry is provided', async () => {
-    const budgetRegistry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 10,
-      maxConcurrentOneShotTasks: 10,
-      maxConcurrentByClass: { review: 1 },
-    });
-
-    const client = createEncryptedRpcTestClient({
-      scopePrefix: 'sess_1',
-      registerHandlers: (rpc) => {
-        registerExecutionRunHandlers(rpc, {
-          sessionId: 'sess_1',
-          cwd: process.cwd(),
-          parentProvider: 'claude',
-          createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-          sendAcp: async () => {},
-          policy: { maxConcurrentRuns: 50, boundedTimeoutMs: 60_000 },
-          budgetRegistry,
-        });
-      },
-    });
-
-    const first = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'review',
-      modelSelection: null,
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      instructions: 'Review.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-    });
-    expect(first.runId).toMatch(/^run_/);
-
-    const second = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'review',
-      modelSelection: null,
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      instructions: 'Review again.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-    });
-    expect(second.ok).toBe(false);
-    expect(second.errorCode).toBe('execution_run_budget_exceeded');
-
-    const plan = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'plan',
-      modelSelection: null,
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      instructions: 'Plan.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-    });
-    expect(plan.runId).toMatch(/^run_/);
   });
 
   it('does not impose a second depth limit on a human run from raw parent references', async () => {
@@ -3942,7 +3876,7 @@ describe('executionRuns session RPC handlers', () => {
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
           sendAcp: async () => {},
-          policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 10 },
+          policy: { boundedTimeoutMs: 10 },
         });
       },
     });
@@ -3977,7 +3911,6 @@ describe('executionRuns session RPC handlers', () => {
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
         const policy = {
-          maxConcurrentRuns: 5,
           boundedTimeoutMs: 10,
           reviewBoundedTimeoutMs: 100,
         };
@@ -4024,7 +3957,7 @@ describe('executionRuns session RPC handlers', () => {
           sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
             sent.push({ body, meta: opts?.meta });
           },
-          policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
+          policy: { boundedTimeoutMs: 60_000 },
         });
       },
     });
@@ -4070,7 +4003,7 @@ describe('executionRuns session RPC handlers', () => {
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('reply'),
           sendAcp: async () => {},
-          policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
+          policy: { boundedTimeoutMs: 60_000 },
         });
       },
     });
@@ -4133,7 +4066,7 @@ describe('executionRuns session RPC handlers', () => {
             onSendPrompt() {},
           }),
           sendAcp: async () => {},
-          policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
+          policy: { boundedTimeoutMs: 60_000 },
         });
       },
     });

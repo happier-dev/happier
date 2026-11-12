@@ -393,7 +393,7 @@ describe('retained Run provider-effect refusal', () => {
       expect(generationSignals.length).toBeGreaterThan(0);
       expect(generationSignals.every(signal => signal === runtimeSignal)).toBe(true);
       const rpc = createExecutionRunRpcActionDeps({ manager: harness.manager, context: { sessionId: 'session-1', cwd: directory },
-        isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        isExecutionRunsEnabled: () => true, policy: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
       expect(ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!('session-1', { runId: started.runId, includeStructured: true })))
         .toMatchObject({ run: { status: 'failed', lifecycle: { state: 'recoverable' } }, structuredMeta: { kind: 'scm_diff_summary.v1',

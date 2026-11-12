@@ -89,8 +89,6 @@ vi.mock('@/configuration', () => ({
     socketIoTransports: ['polling', 'websocket'],
     activeServerDir: '/private/tmp/happier-api-machine-connect-order',
     happyHomeDir: '/private/tmp/happier-api-machine-connect-order-home',
-    executionRunsMaxConcurrentPerSession: null,
-    oneShotTasksMaxConcurrentPerSession: null,
     organizationPolicy: { status: 'absent' },
   },
 }));

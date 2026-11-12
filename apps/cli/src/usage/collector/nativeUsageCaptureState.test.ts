@@ -51,7 +51,7 @@ describe('native accounting capture custody', () => {
             const posted: unknown[] = [];
             const store = createNativeUsageCaptureStore({ path, authority, storage });
             const collector = createNativeUsageCollector({ authority, storage, store,
-                budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+                budgetRegistry: new ExecutionBudgetRegistry(),
                 discoverSources: async () => [],
                 resolveRoot: async () => { throw new Error('No root edit requested'); },
                 readAccounting: (captured, signal) => readCodexNativeAccounting({ ...request, cursor: captured.cursor, signal }, source, { CODEX_HOME: directory }),

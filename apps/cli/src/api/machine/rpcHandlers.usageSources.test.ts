@@ -74,7 +74,7 @@ describe('native source Machine RPC with real capture custody', () => {
       });
       const activeServerDir = join(directory, 'home');
       collector = createNativeUsageCollector({ authority, storage, store, publisher,
-        budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+        budgetRegistry: new ExecutionBudgetRegistry(),
         discoverSources: () => discoverNativeUsageSourceMetadata({ agents, account: { connectedServicesV2: [] },
           activeServerId: authority.serverId, activeServerDir, signal: lifetime.signal, resolveBoundary: async () => boundary }),
         resolveRoot: async (source, root) => {

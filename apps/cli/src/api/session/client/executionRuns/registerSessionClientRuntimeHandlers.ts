@@ -1,4 +1,5 @@
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { registerDiscussionAgentPublisher } from '@/discussions/discussionAgentPublisher';
 import { registerSessionMessageReplyObservation } from '@/rpc/handlers/sessionMessageReply';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -311,7 +312,7 @@ export function registerSessionClientRuntimeHandlers(
         ? { mode: 'plain' as const }
         : { mode: 'e2ee' as const, dataEncryptionKey: transcriptQueryContext.encryptionKey };
     const parentProvider = resolveSessionClientParentProvider(params.metadata);
-    const workingDirectory = params.metadataPath ?? process.cwd();
+    const workingDirectory = params.metadataPath ?? sessionWorkingDirectory();
     const metadataMachineId = typeof (params.metadata as { machineId?: unknown })?.machineId === 'string'
         ? (params.metadata as { machineId: string }).machineId.trim()
         : '';
@@ -1329,12 +1330,6 @@ export function registerSessionClientRuntimeHandlers(
         },
         onExecutionRunVoiceAgentWelcomed: (run, welcomedEpoch) => {
             params.persistVoiceAgentRunMetadataFromPublicRun(run, welcomedEpoch);
-        },
-        policy: {
-            maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
-            boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
-            reviewBoundedTimeoutMs: configuration.executionRunsReviewBoundedTimeoutMs,
-            maxTurns: configuration.executionRunsMaxTurns,
         },
         resolveAccountSettings: async (actionId) => {
             // Restricted Session readers carry host-reviewed policy, not owner

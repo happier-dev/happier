@@ -1246,7 +1246,6 @@ describe('composed finite Run model recovery', () => {
       isExecutionRunsEnabled: () => true,
       policy: resolveExecutionRunPolicy({
         defaults: {
-          maxConcurrentRuns: null,
           boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null,
           maxTurns: null,

@@ -109,7 +109,6 @@ function createDetachedStartHarness() {
     context: { sessionId: null, cwd: process.cwd() },
     policy: resolveExecutionRunPolicy({
       defaults: {
-        maxConcurrentRuns: null,
         boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null,
         maxTurns: null,

@@ -91,7 +91,7 @@ async function fixture() {
             installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' },
         verifyMachineAdmissionCurrent: async () => { authorityChecks++; return true; } };
     const handlers = new Map<string, (input: never, context?: RpcHandlerContext) => unknown>();
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+    const registry = new ExecutionBudgetRegistry();
     registerBashHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, f.directory, {
         nativeOperationRuntime: f.machine, executionBudgetRegistry: registry,
         resolveHostHomeServerIdentityId: async () => f.homeServerIdentityId,

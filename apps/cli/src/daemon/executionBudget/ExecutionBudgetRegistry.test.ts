@@ -8,31 +8,32 @@ import { projectMachineWorkSummary } from '@/daemon/machines/machineWorkSummary'
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 describe('createExecutionBudgetRegistry', () => {
-  it('retains accepted run custody with uncapped defaults and still applies configured caps', () => {
-    vi.stubEnv('HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION', '');
-    vi.stubEnv('HAPPIER_ONE_SHOT_TASKS_MAX_CONCURRENT_PER_SESSION', '');
-    vi.stubEnv('HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION', '');
-    vi.stubEnv('HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON', '');
+  it('keeps run and one-shot custody uncapped when retired operator env caps are set', () => {
+    vi.stubEnv('HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION', '1');
+    vi.stubEnv('HAPPIER_ONE_SHOT_TASKS_MAX_CONCURRENT_PER_SESSION', '1');
+    vi.stubEnv('HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION', '1');
+    vi.stubEnv('HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON', '{"review":1,"automation":1}');
     try {
       reloadConfiguration();
-      const uncapped = createExecutionBudgetRegistry();
-      expect(uncapped?.tryAcquireExecutionRun('run-1')).toBe(true);
-      expect(uncapped?.tryAcquireExecutionRun('run-2')).toBe(true);
-      expect(uncapped?.getLiveWorkProducer().read()).toMatchObject({ coverage: 'complete', items: [
-        { ownerRef: 'run-1', state: 'active' }, { ownerRef: 'run-2', state: 'active' },
-      ] });
-      vi.stubEnv('HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION', '1');
-      reloadConfiguration();
-      const capped = createExecutionBudgetRegistry();
-      expect(capped?.tryAcquireExecutionRun('run-1')).toBe(true);
-      expect(capped?.tryAcquireExecutionRun('run-2')).toBe(false);
+      const registry = createExecutionBudgetRegistry();
+      for (let index = 0; index < 100; index += 1) {
+        expect(registry.tryAcquireExecutionRun('run-' + index, 'review')).toBe(true);
+        expect(registry.tryAcquireOneShotTask('task-' + index, 'automation')).toBe(true);
+      }
+      expect(registry.getInFlightSnapshot()).toEqual({ executionRuns: 100, oneShotTasks: 100 });
+      expect(registry.getLiveWorkProducer().read().items).toHaveLength(200);
+      for (let index = 0; index < 100; index += 1) {
+        registry.releaseExecutionRun('run-' + index);
+        registry.releaseOneShotTask('task-' + index);
+      }
+      expect(registry.getLiveWorkProducer().read().items).toEqual([]);
     } finally { vi.unstubAllEnvs(); reloadConfiguration(); }
   });
 });
 
 describe('ExecutionBudgetRegistry', () => {
   it.each(['preparing', 'active'] as const)('carries admitted requester attribution through %s run custody, acquisition and settlement without Sessions or terminals', async (phase) => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+    const registry = new ExecutionBudgetRegistry();
     const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
     const bob = { ...target, accountId: 'bob' };
     const alice = { ...target, accountId: 'alice' };
@@ -74,7 +75,7 @@ describe('ExecutionBudgetRegistry', () => {
   });
 
   it('retains the actual finite process task without imposing execution caps or borrowing another token', async () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1, maxConcurrentTotal: 1 });
+    const registry = new ExecutionBudgetRegistry();
     registry.tryAcquireExecutionRun('running');
     let finish!: () => void;
     const task = new Promise<void>(resolve => { finish = resolve; });
@@ -85,7 +86,6 @@ describe('ExecutionBudgetRegistry', () => {
     ] });
     expect((await registry.getLiveWorkProducer().read()).items[1]?.ownerRef).toBe(task);
     expect(registry.getInFlightSnapshot()).toEqual({ executionRuns: 1, oneShotTasks: 0 });
-    expect(registry.tryAcquireExecutionRun('other')).toBe(false);
     finish();
     release();
     expect(registry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [
@@ -93,14 +93,13 @@ describe('ExecutionBudgetRegistry', () => {
     ] });
   });
 
-  it('retains accepted preparation in the same token without changing cap admission or releasing another preparer', () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
+  it('retains accepted preparation in the same token without releasing another preparer', () => {
+    const registry = new ExecutionBudgetRegistry();
     registry.tryAcquireExecutionRun('running', 'review');
     const releaseFirst = registry.retainExecutionRunPreparation('preparing', 'review');
     const releaseSecond = registry.retainExecutionRunPreparation('preparing', 'review');
     expect(registry.getLiveWorkProducer().read()).toMatchObject({ items: [{ ownerRef: 'running' }, { ownerRef: 'preparing', state: 'active' }] });
     expect(registry.getInFlightSnapshot()).toEqual({ executionRuns: 1, oneShotTasks: 0 });
-    expect(registry.tryAcquireExecutionRun('preparing', 'review')).toBe(false);
     releaseFirst();
     expect(registry.getLiveWorkProducer().read()).toMatchObject({ items: [{ ownerRef: 'running' }, { ownerRef: 'preparing' }] });
     registry.releaseExecutionRun('running');
@@ -111,13 +110,13 @@ describe('ExecutionBudgetRegistry', () => {
     expect(registry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
   });
 
-  it('projects accepted work through release without treating a rejected acquisition as work', () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
+  it('projects accepted work through release without treating an invalid acquisition as work', () => {
+    const registry = new ExecutionBudgetRegistry();
     const producer = registry.getLiveWorkProducer();
     const observations: unknown[] = [];
     const unsubscribe = producer.subscribe(() => observations.push(producer.read()));
     expect(registry.tryAcquireExecutionRun('run-1', 'review')).toBe(true);
-    expect(registry.tryAcquireExecutionRun('run-2', 'review')).toBe(false);
+    expect(registry.tryAcquireExecutionRun('', 'review')).toBe(false);
     expect(producer.read()).toEqual({ coverage: 'complete', items: [
       { category: 'execution_run', ownerRef: 'run-1', attribution: { kind: 'unknown' }, state: 'active' },
     ] });
@@ -132,91 +131,5 @@ describe('ExecutionBudgetRegistry', () => {
     unsubscribe();
     registry.tryAcquireExecutionRun('run-3');
     expect(observations).toHaveLength(4);
-  });
-
-  it('enforces maxConcurrentExecutionRuns across intents and releases capacity for reacquisition', () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
-    expect(registry.tryAcquireExecutionRun('run1', 'review')).toBe(true);
-    expect(registry.tryAcquireExecutionRun('run1', 'review')).toBe(true);
-    expect(registry.tryAcquireExecutionRun('run2', 'delegate')).toBe(false);
-    expect(registry.tryAcquireOneShotTask('task1', 'automation')).toBe(true);
-    expect(registry.tryAcquireOneShotTask('task2', 'scm_commit_message')).toBe(false);
-    registry.releaseExecutionRun('run1');
-    expect(registry.tryAcquireExecutionRun('run2', 'delegate')).toBe(true);
-    expect(registry.getInFlightSnapshot()).toEqual({ executionRuns: 1, oneShotTasks: 1 });
-  });
-
-  it('allows unlimited execution runs when maxConcurrentExecutionRuns is unset', () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null as number | null, maxConcurrentOneShotTasks: 1 });
-    expect(registry.tryAcquireExecutionRun('run1')).toBe(true);
-    expect(registry.tryAcquireExecutionRun('run2')).toBe(true);
-    expect(registry.getInFlightSnapshot().executionRuns).toBe(2);
-  });
-
-  it('enforces maxConcurrentOneShotTasks', () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
-    expect(registry.tryAcquireOneShotTask('task1')).toBe(true);
-    expect(registry.tryAcquireOneShotTask('task2')).toBe(false);
-    registry.releaseOneShotTask('task1');
-    expect(registry.tryAcquireOneShotTask('task2')).toBe(true);
-  });
-
-  it('allows unlimited one-shot tasks when maxConcurrentOneShotTasks is unset', () => {
-    const registry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 1,
-      maxConcurrentOneShotTasks: null as number | null,
-    });
-
-    expect(registry.tryAcquireOneShotTask('task1')).toBe(true);
-    expect(registry.tryAcquireOneShotTask('task2')).toBe(true);
-    expect(registry.getInFlightSnapshot().oneShotTasks).toBe(2);
-
-    expect(registry.tryAcquireOneShotTask('automation-1', 'automation')).toBe(true);
-    expect(registry.getInFlightSnapshot().oneShotTasks).toBe(3);
-  });
-
-  it('treats automation and one-shot tasks as one shared budget', () => {
-    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
-
-    expect(registry.tryAcquireOneShotTask('automation-1', 'automation')).toBe(true);
-    expect(registry.tryAcquireOneShotTask('task-1', 'scm_commit_message')).toBe(false);
-    registry.releaseOneShotTask('automation-1');
-    expect(registry.tryAcquireOneShotTask('task-1', 'scm_commit_message')).toBe(true);
-
-    expect(registry.tryAcquireOneShotTask('automation-2', 'automation')).toBe(false);
-  });
-
-  it('enforces per-class caps when configured', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible constructor shape
-    const registry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: null,
-      maxConcurrentOneShotTasks: 10,
-      maxConcurrentByClass: {
-        review: 1,
-      },
-    } as any);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible overload
-    expect((registry as any).tryAcquireExecutionRun('run1', 'review')).toBe(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible overload
-    expect((registry as any).tryAcquireExecutionRun('run2', 'review')).toBe(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible overload
-    expect((registry as any).tryAcquireExecutionRun('run3', 'plan')).toBe(true);
-    expect(registry.tryAcquireExecutionRun('run4', 'delegate')).toBe(true);
-  });
-
-  it('enforces a global cap when configured', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible constructor shape
-    const registry = new ExecutionBudgetRegistry({
-      maxConcurrentExecutionRuns: 10,
-      maxConcurrentOneShotTasks: 10,
-      maxConcurrentTotal: 2,
-    } as any);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible overload
-    expect((registry as any).tryAcquireExecutionRun('run1', 'review')).toBe(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible overload
-    expect((registry as any).tryAcquireExecutionRun('run2', 'plan')).toBe(true);
-    expect(registry.tryAcquireOneShotTask('task1')).toBe(false);
   });
 });
