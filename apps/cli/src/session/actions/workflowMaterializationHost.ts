@@ -70,12 +70,23 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
     const call = (method: string, request: unknown) => deps.callMachineAction({
       machineId: target.machineId, method, request, ...(target.signal ? { signal: target.signal } : {}),
     });
-    const observeMachine = async () => {
+    const observeRoster = async () => {
       try {
-        const roster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await call(
+        return DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await call(
           RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
           { machineId: target.machineId, selection: 'workflowMaterialization' },
         ));
+      } catch {
+        target.signal?.throwIfAborted();
+        return null;
+      }
+    };
+    let rosterObservation: ReturnType<typeof observeRoster> | undefined;
+    const readRoster = () => rosterObservation ??= observeRoster();
+    const observeMachine = async () => {
+      try {
+        const roster = await readRoster();
+        if (!roster) return null;
         const agents = buildMachineAgentInventoryDescriptors(roster.projection);
         const request = buildMachineAgentsDetectRequest({ agents });
         const response = await call(RPC_METHODS.CAPABILITIES_DETECT, {
@@ -146,9 +157,11 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
       return roleSelection;
     };
     const observeActionContract: NonNullable<Materialization['effects']['readActionContract']> = async (actionId) => {
-      const machine = await readMachine();
-      if (!machine) return null;
-      const contributed = machine.roster.projection.actionsById[actionId];
+      // Native and contributed Action contracts do not consume Agent launch
+      // readiness; a missing requester OS user must not hide their schemas.
+      const roster = await readRoster();
+      if (!roster) return null;
+      const contributed = roster.projection.actionsById[actionId];
       if (contributed?.available === false) return null;
       try {
         target.signal?.throwIfAborted();

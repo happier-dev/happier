@@ -12,6 +12,7 @@ import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { Server } from 'socket.io';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { loadWorkflowActionTransportForTests } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions';
@@ -368,13 +369,24 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         }
     });
 
-    it.each([true, false])('freezes receiving Setup contracts without requiring a second local terminal credential (%s)', async available => {
+    it.each(['available', 'disabled', 'agent_user_missing'] as const)('freezes receiving Setup contracts without Agent detection or a second local terminal credential (%s)', async state => {
+        const available = state !== 'disabled';
         const setup = MachineSetupApplyInputV1Schema.parse({ homeId: 'server-1', machineId: 'machine-1', targets: [{
             homeId: 'server-1', machineId: 'machine-1', desiredRevision: 0,
             sources: [{ kind: 'direct', setup: { items: [], scripts: [{ body: 'printf setup-fixture' }] } }], recipePlans: [],
         }] });
         const definition = buildMachineSetupWorkflow(setup);
         const boundary = await createBoundaryHarness(undefined, definition, false, true);
+        if (state === 'agent_user_missing') {
+            const invoke = machineRpc.getMockImplementation()!;
+            machineRpc.mockImplementation(async (...args: Parameters<typeof invoke>) => {
+                if (args[0].method === RPC_METHODS.CAPABILITIES_DETECT) throw new PluginError({
+                    code: 'agent_isolation_unavailable', message: 'The private requester identity is unavailable', retryable: false,
+                    details: { reason: 'agent_user_missing', phase: 'native_execution_preparation' },
+                });
+                return invoke(...args);
+            });
+        }
         if (!available) {
             const readHttp = http.get.getMockImplementation()!;
             http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
@@ -416,6 +428,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
                 } }],
         } });
         expect(terminal).not.toHaveBeenCalled();
+        expect(machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.CAPABILITIES_DETECT)).toHaveLength(0);
     });
 
     it.each([true, false])('reads an exact remote Setup catalog through Home and preserves availability (%s)', async available => {
