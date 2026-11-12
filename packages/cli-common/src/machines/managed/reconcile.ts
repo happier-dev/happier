@@ -1,6 +1,7 @@
 import type { JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
@@ -16,9 +17,16 @@ export { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdent
     type CapturedManagedNativeIdentity } from './issuedNativeIdentity.js';
 export { bindManagedMachineRoleCredentials, projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1 } from './roleCredentials.js';
 
-export type ManagedNativeRole = keyof MachineProvisionerContributionV1['actions'] | 'exec' | 'putFile' | 'reconcile' | 'cleanup' | 'nativeCredentialApply';
+export type ManagedNativeRole = keyof MachineProvisionerContributionV1['actions'] | 'exec' | 'putFile' | 'stream' | 'reconcile' | 'cleanup' | 'nativeCredentialApply';
+/** The live byte channel of the `stream` role, for the life of its invocation. */
+export type ManagedNativeChannelIO = Readonly<{
+    onOutput(output: Readonly<{ stream: 'stdout' | 'stderr'; data: Uint8Array }>): void;
+    /** The provider's channel process is running: feed it; returns the unbind. */
+    bindInput(process: Readonly<{ write(data: Uint8Array): Promise<void>; closeStdin(): Promise<void> }>): () => void;
+}>;
 export type ManagedNativeInvocationIO = Readonly<{
     signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void;
+    channel?: ManagedNativeChannelIO;
     beforeNativeEffect?: () => Promise<void>;
 }>;
 export type ManagedNativeInvocation = (role: ManagedNativeRole, body: unknown, io?: ManagedNativeInvocationIO) => Promise<JsonValue | null>;
@@ -113,7 +121,7 @@ export async function reconcileManagedAcquisitionIdentity(input: Pick<ManagedMac
         || retained.contributionRef.localId !== machine.launch.provider.localId
         || retained.schemaVersion !== machine.launch.schemaVersion)) throw new ManagedMachineControllerError('resource_mismatch');
     if (!input.provisioner?.reconciliation) throw new ManagedMachineControllerError('provider_unavailable');
-    const reportBound = input.action === 'machines.managed.acquire' || input.action === 'machines.managed.bootstrap.retry'
+    const reportBound = input.action === 'machines.managed.acquire' || input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
         ? await input.home.preparePendingAcquireBoundReport(machine) : null;
     let result: AcquireResultV1;
     try {
@@ -150,9 +158,11 @@ export async function reconcileManagedAcquisitionIdentity(input: Pick<ManagedMac
         kind: 'unknown', recovery: { reference: machine.recovery?.reference ?? machine.id, reason },
         ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}),
     } : result;
-    return await input.home.row('report', { ...input.home.correlation(machine), result: fact,
+    const reported = await input.home.row('report', { ...input.home.correlation(machine), result: fact,
         observation: { observedAt: Date.now(), availability: absent ? 'absent' : 'unavailable', reason,
             ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) } }, null);
+    if (input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) throw acquisitionFailure(fact);
+    return reported;
 }
 
 /** Persist only the dispatcher's closed diagnostic; arbitrary native exception text stays private. */
@@ -234,14 +244,17 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     let startPending = false;
     const provisioner = input.provisioner;
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return machine;
-    if (machine.enrolledMachineId && input.action !== 'machines.managed.bootstrap.retry') {
+    if (machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
         if (input.action !== 'machines.managed.acquire') return machine;
         if (!machine.observation?.reason?.startsWith('bootstrap.')) {
             await input.bootstrap.complete?.(machine);
             return machine;
         }
     }
-    if (!machine.resource && machine.allocation !== 'unsubmitted' && !machine.nativeOperationRef && !provisioner?.reconciliation) return machine;
+    if (!machine.resource && machine.allocation !== 'unsubmitted' && !machine.nativeOperationRef && !provisioner?.reconciliation) {
+        if (input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) throw new ManagedMachineControllerError('native_acquisition_unconfirmed');
+        return machine;
+    }
     const native = input.createNative(() => machine, () => credentialRevision);
     const invoke = native.invoke;
     const bootstrapCredentialKind = native.bootstrapCredentialKind;
@@ -297,7 +310,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         if (result.kind !== 'bound') throw acquisitionFailure(result);
         startPending = result.startPending === true;
     }
-    if (!machine.resource || machine.enrolledMachineId && input.action !== 'machines.managed.bootstrap.retry') return machine;
+    if (!machine.resource || machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) return machine;
     const boundResource = machine.resource;
     input.onResource?.(machine);
     // Save before guest IO: a host exit can lose its operation, never the fact enrollment was unfinished.

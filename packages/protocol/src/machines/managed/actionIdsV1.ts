@@ -79,10 +79,11 @@ export function isOrdinaryMachineSetupNativeActionIdV1(actionId: string): action
     || actionId === MACHINE_SETUP_REMOVE_ACTION_ID_V1 || actionId === 'machines.setup.updates.apply';
 }
 
+export const MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 = 'machines.managed.bootstrap.retry';
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
   'machines.managed.acquire', 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.references.get',
-  'machines.managed.inspect', 'machines.managed.bootstrap.retry', 'machines.managed.cancel',
+  'machines.managed.inspect', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
   'machines.managed.credentials.install',
   'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, 'machines.setup.updates.apply',
   'machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.resize', 'machines.managed.retention.update', 'machines.managed.delete',
@@ -99,7 +100,7 @@ export function isManagedCreationMutationActionIdV1(actionId: string): actionId 
 /** Recovery completes only the retained enrollment policy, never unrelated creation effects. */
 export function isManagedEnrollmentRecoveryChildV1(rootActionId: string, childActionId: string): boolean {
   const isolation = childActionId === 'machines.agentIsolation.preview' || childActionId === 'machines.agentIsolation.set';
-  return rootActionId === 'machines.managed.bootstrap.retry' && (childActionId === 'machines.setup.adminAccess.set' || childActionId === 'machines.roles.set' || isolation)
+  return rootActionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && (childActionId === 'machines.setup.adminAccess.set' || childActionId === 'machines.roles.set' || isolation)
     || rootActionId === 'machines.managed.inspect' && isolation;
 }
 
@@ -123,9 +124,9 @@ export function managedAccountNativeReadEffectActionIdV1(rootActionId: string, r
 
 /** Deferred controls keep the same executor: its reconciler owns the idle wait. Home owns admission. */
 export function isManagedRetainedControlInvocation(actionId: string, _input: unknown): actionId is
-  'machines.managed.inspect' | 'machines.managed.bootstrap.retry' | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
+  'machines.managed.inspect' | typeof MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
   | typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
-  return actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
+  return actionId === 'machines.managed.inspect' || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
     || isManagedCreationMutationActionIdV1(actionId)
     || actionId === 'machines.managed.resize'
     || isManagedPowerOrDeleteActionIdV1(actionId);
