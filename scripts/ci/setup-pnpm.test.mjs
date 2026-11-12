@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { chmod, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,3 +122,38 @@ test('cold setup waits for joint host capacity before downloading or installing,
       env: { ...env, HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: join(root, 'unavailable-admission') }, stdio: 'pipe' });
     assert.equal((await readFile(join(root, 'admissions'), 'utf8')).trim().split('\n').length, 2);
   });
+
+// These are the setup-time source COPY inputs shared by all three Docker deps
+// stages. Deliberately omit apps/stack: it is copied only after pnpm install.
+async function dockerSetupPath(root) {
+  for (const relative of [
+    'scripts/ci/setup-pnpm.mjs',
+    'scripts/workspaces',
+    'packages/cli-common/windowsCommandInvocation.mjs',
+  ]) {
+    const destination = join(root, relative);
+    await mkdir(join(destination, '..'), { recursive: true });
+    await cp(new URL(`../../${relative}`, import.meta.url), destination, { recursive: true });
+  }
+  return join(root, 'scripts/ci/setup-pnpm.mjs');
+}
+
+test('Docker deps-stage files support cold and warm integrity-pinned setup without host tooling', async t => {
+  const { root, env } = await fixture(t);
+  const imageSetup = await dockerSetupPath(root);
+  execFileSync(process.execPath, [imageSetup, root], { env, stdio: 'pipe' });
+  execFileSync(process.execPath, [imageSetup, root], { env, stdio: 'pipe' });
+  const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(calls.map(([command]) => command), ['pack', 'install']);
+  assert.ok(calls[0].includes('pnpm@12.14.0'));
+  assert.ok(calls[1].includes('--global'));
+  assert.equal(await readFile(join(root, 'installed'), 'utf8'), 'ready');
+});
+
+test('Docker deps-stage setup rejects an archive that does not match the root integrity pin', async t => {
+  const { root, env } = await fixture(t, { corrupt: true });
+  const imageSetup = await dockerSetupPath(root);
+  assert.throws(() => execFileSync(process.execPath, [imageSetup, root], { env, stdio: 'pipe' }), /integrity mismatch/);
+  const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(calls.map(([command]) => command), ['pack']);
+});

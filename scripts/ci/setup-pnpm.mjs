@@ -1,13 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { resolveNpmCommandInvocation, resolvePnpmCommandInvocation } from '../workspaces/execPnpmCommand.mjs';
-import { resolveLockedInstallEnv, withDependencyRefreshLock } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
-
-import { runHostAdmittedTask } from '../../apps/stack/scripts/utils/proc/admission_client.mjs';
 
 const repoDir = resolve(process.argv[2] ?? process.cwd());
 const { packageManager } = JSON.parse(readFileSync(join(repoDir, 'package.json'), 'utf8'));
@@ -38,23 +35,35 @@ function installedVersionMatches() {
 
 try {
   if (!installedVersionMatches()) {
-    // Admission precedes the canonical dependency writer; warm launches need
-    // neither the unused archive nor mutation custody.
-    await runHostAdmittedTask({ className: 'dependency-install', repoDir }, admittedEnv =>
-      withDependencyRefreshLock({ installDir: repoDir, env: admittedEnv }, async context => {
-        if (installedVersionMatches()) return;
-        const installEnv = resolveLockedInstallEnv(admittedEnv, context);
-        // npm ships with Node even where Corepack does not (Node 25+). Verify
-        // the registry archive against the root pin before installing it.
-        const packed = JSON.parse(run(resolveNpmCommandInvocation([
-          'pack', `pnpm@${version}`, '--ignore-scripts', '--json', '--pack-destination', temporaryDir,
-        ], { npmExecPath: process.env.npm_execpath }), 'pipe', repoDir, installEnv));
-        const archivePath = join(temporaryDir, packed[0].filename);
-        const actualIntegrity = createHash('sha512').update(readFileSync(archivePath)).digest('hex');
-        if (actualIntegrity !== integrity.toLowerCase()) throw new Error('pnpm archive integrity mismatch');
-        run(resolveNpmCommandInvocation(['install', '--global', archivePath], { npmExecPath: process.env.npm_execpath }), 'inherit', repoDir, installEnv);
-        if (!installedVersionMatches()) throw new Error(`Expected installed pnpm ${version}`);
-      }));
+    const installPinnedPnpm = installEnv => {
+      // npm ships with Node even where Corepack does not (Node 25+). Verify
+      // the registry archive against the root pin before installing it.
+      const packed = JSON.parse(run(resolveNpmCommandInvocation([
+        'pack', `pnpm@${version}`, '--ignore-scripts', '--json', '--pack-destination', temporaryDir,
+      ], { npmExecPath: process.env.npm_execpath }), 'pipe', repoDir, installEnv));
+      const archivePath = join(temporaryDir, packed[0].filename);
+      const actualIntegrity = createHash('sha512').update(readFileSync(archivePath)).digest('hex');
+      if (actualIntegrity !== integrity.toLowerCase()) throw new Error('pnpm archive integrity mismatch');
+      run(resolveNpmCommandInvocation(['install', '--global', archivePath], { npmExecPath: process.env.npm_execpath }), 'inherit', repoDir, installEnv);
+      if (!installedVersionMatches()) throw new Error(`Expected installed pnpm ${version}`);
+    };
+
+    // Docker deps stages carry only the pin installer and its workspace command
+    // adapter. Full checkouts retain host admission and dependency-refresh custody.
+    const dependencyRefreshUrl = new URL('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs', import.meta.url);
+    if (existsSync(dependencyRefreshUrl)) {
+      const { resolveLockedInstallEnv, withDependencyRefreshLock } = await import(dependencyRefreshUrl.href);
+      const { runHostAdmittedTask } = await import('../../apps/stack/scripts/utils/proc/admission_client.mjs');
+      // Admission precedes the canonical dependency writer; warm launches need
+      // neither the unused archive nor mutation custody.
+      await runHostAdmittedTask({ className: 'dependency-install', repoDir }, admittedEnv =>
+        withDependencyRefreshLock({ installDir: repoDir, env: admittedEnv }, async context => {
+          if (installedVersionMatches()) return;
+          installPinnedPnpm(resolveLockedInstallEnv(admittedEnv, context));
+        }));
+    } else {
+      installPinnedPnpm(process.env);
+    }
   }
   console.log(`pnpm ${version} ready`);
 } finally {
