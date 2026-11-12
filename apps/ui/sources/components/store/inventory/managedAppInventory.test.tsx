@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ProjectSourceV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -14,6 +15,8 @@ installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
 const { storage } = await import('@/sync/domains/state/storage');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+const { ManagedInventoryDirectory } = await import('./ManagedInventoryDirectory');
+const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { InstalledScreen } = await import('./InstalledScreen');
 const { MachineManagedInventorySection } = await import('@/components/machines/page/MachineManagedInventorySection');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
@@ -29,7 +32,7 @@ const fields = {
 const NO_OPEN = () => {};
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
-it('feeds both inventory doors and opens each App through its native Environment home, including platform Apps', async () => {
+it('groups native Projects without checkouts, retains No project, and opens both App inventory doors', async () => {
     const identity = 'srv_app_doors';
     const home = await account.restore({ serverIdentityId: identity,
         machines: ['runtime', 'controller'].map(id => createMachineFixture({ id })) });
@@ -38,6 +41,9 @@ it('feeds both inventory doors and opens each App through its native Environment
     const context = await captureLazyActionAccountContext(scope.serverId);
     let own = createDeploymentEnvironmentHeaderV1({ serverId: identity, controllerMachineId: 'controller', buildMachineId: 'controller' });
     const platform = createDeploymentEnvironmentHeaderV1({ ...own, id: 'platform-app', contentArtifactId: 'platform-label', projectSourceId: 'platform-source', runtimeTargetLinkId: 'platform-link' });
+    const source = ProjectSourceV1Schema.parse({ id: own.projectSourceId, revision: 1, name: 'REPLAY129-C',
+        audience: [], createdByAccountId: scope.accountId });
+    account.home.answer(home.serverId, '/v1/projects/sources', { body: { ok: true, sources: [source], coverage: { complete: true, nextCursor: null } } });
     const runtime = createDeploymentTargetLinkHeaderV1({ machines: ['runtime'], members: [{ machineId: 'runtime', installationId: 'runtime-installation', state: 'active' }] });
     for (const environment of [own, platform]) await context.createArtifactDocument({ artifactId: environment.contentArtifactId,
         header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Same App name' }, body: '{}' });
@@ -53,11 +59,13 @@ it('feeds both inventory doors and opens each App through its native Environment
         const [filters, setFilters] = React.useState({});
         return <PluginSurfaceFocusEligibilityProvider active>
             <InstalledScreen query={{ scope, machine: null, projectKey: null, presented: true }}
-                draft={{ query, setQuery, filters, setFilters }} fields={fields} groupBy="kind" openKey={null} onOpenChange={NO_OPEN}>
-                {state => { installed = state; return null; }}
+                draft={{ query, setQuery, filters, setFilters }} fields={fields} groupBy="project" openKey={null} onOpenChange={NO_OPEN}>
+                {state => { installed = state; return <ItemList><ManagedInventoryDirectory state={state}
+                    input={{ scope, machine: null, projectKey: null }} groupBy="project" columns={2} preview={null}
+                    testIDPrefix="installed-project" /></ItemList>; }}
             </InstalledScreen>
             <MachineManagedInventorySection query={{ scope, machine: { serverIdentityId: identity, machineId: 'runtime' }, projectKey: null, presented: true }}
-                groupBy="kind" openKey={null} onOpenChange={NO_OPEN}>
+                groupBy="project" openKey={null} onOpenChange={NO_OPEN}>
                 {state => { machine = state; return null; }}
             </MachineManagedInventorySection>
         </PluginSurfaceFocusEligibilityProvider>;
@@ -74,12 +82,20 @@ it('feeds both inventory doors and opens each App through its native Environment
             projectSourceId: own.projectSourceId, environmentId: own.id }), scope });
         expect(all.machines).toEqual([{ serverIdentityId: identity, machineId: 'runtime' }]);
         expect(all.facts.fields.machine).toEqual([inventoryMachineKey(scope, { serverIdentityId: identity, machineId: 'runtime' })]);
+        await vi.waitFor(() => expect(installed.groups.find(group => group.key === own.projectSourceId)?.rows.map(row => row.key)).toContain(key));
+        expect(screen.getTextContent()).toContain('REPLAY129-C');
+        expect(screen.getTextContent()).toContain('No project');
+        expect(installed.presentations.get(key)?.projects).toEqual([own.projectSourceId]);
         const platformKey = serverAccountScopedResourceKey(scope, 'app', platform.id);
         expect(installed.presentations.get(platformKey)?.machines).toBeNull();
+        expect(installed.groups.find(group => group.key === 'unassigned')?.rows.map(row => row.key)).toContain(platformKey);
         expect(installed.presentations.get(platformKey)?.home).toEqual({ href: buildDeploymentEnvironmentHref({ serverId: identity,
             environmentId: platform.id, projectSourceId: platform.projectSourceId }), scope });
         const reads = account.home.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments');
         expect(reads).toHaveLength(2);
+        // Both doors share the native Project catalog; no per-App detail reads.
+        expect(account.home.requests.filter(request => request.path.split('?')[0] === '/v1/projects/sources')).toHaveLength(1);
+        expect(account.home.requests.filter(request => request.path.startsWith('/v1/projects/sources/'))).toHaveLength(0);
         expect(reads.map(request => new URL(request.path, 'https://home.test').searchParams.get('machineId')).sort()).toEqual([null, 'runtime'].sort());
         expect(account.home.requests.filter(request => request.path.startsWith('/v1/deployments/environments/'))).toHaveLength(0);
         expect(rpc.state.requests.filter(request => request.method !== 'capabilities.detect')).toHaveLength(0);

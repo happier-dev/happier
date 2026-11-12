@@ -28,7 +28,7 @@ export function useManagedConfiguredBackups(app: InstalledAppsResult) {
         const next = app.rows.filter(row => row.native.backupConfigured === true).map((row): ManagedConfiguredBackupRow => {
             const key = serverAccountScopedResourceKey(row.scope, 'configured-backup', row.native.environment.id);
             const held = retained.get(key);
-            if (held?.native === row.native && held.scope === row.scope && held.projectKeys === row.projectKeys) return held;
+            if (held?.native === row.native && held.scope === row.scope && held.projectKeys === row.projectKeys && held.projectSource === row.projectSource) return held;
             return { ...row, kind: 'configuredBackup', key, home: buildDeploymentEnvironmentHref({
                 serverId: row.native.environment.serverId, projectSourceId: row.native.environment.projectSourceId,
                 environmentId: row.native.environment.id, tab: 'settings', section: 'backups',

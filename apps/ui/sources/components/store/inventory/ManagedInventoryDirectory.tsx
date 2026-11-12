@@ -131,6 +131,15 @@ export function ManagedInventoryDirectory(
         ];
       });
     }
+    const projectNames = new Map<string, string>();
+    if (groupBy === 'project') {
+      for (const project of projects) projectNames.set(project.projectKey, project.name);
+      for (const row of state.rows) {
+        if ((row.kind === 'app' || row.kind === 'configuredBackup') && row.projectSource) {
+          projectNames.set(row.projectSource.id, row.projectSource.name);
+        }
+      }
+    }
     return state.groups.flatMap((group) => {
       const rows = own(group.rows);
       return rows.length === 0 ? [] : [{ ...group, rows }];
@@ -152,12 +161,12 @@ export function ManagedInventoryDirectory(
           : {
               key: group.key,
               title: groupBy === 'project'
-                ? projects.find(project => project.projectKey === group.key)?.name ?? t('storeInstalled.noProjectGroup')
+                ? projectNames.get(group.key) ?? t('storeInstalled.noProjectGroup')
                 : names.byKey.get(group.key) ?? t('storeInstalled.machineFallback'),
               rows: group.rows,
             },
     );
-  }, [added, groupBy, included, names.byKey, projects, state.families, state.groups]);
+  }, [added, groupBy, included, names.byKey, projects, state.families, state.groups, state.rows]);
   const lines = React.useMemo(() => groupManagedInventoryAttention(state.attention), [state.attention]);
   const mixed = groupBy !== 'kind';
   const pluginFolded =

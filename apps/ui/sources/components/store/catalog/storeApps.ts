@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { useProjectSources } from '@/components/projects/sources/useProjectSources';
 import type { DeploymentEnvironmentReadCollectionV1, DeploymentReadFailureV1 } from '@happier-dev/deployments';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { useDeploymentInventory } from '@/components/projects/deployments/useDeploymentProject';
@@ -13,6 +15,8 @@ export type InstalledAppRow = Readonly<{
     kind: 'app'; key: string; scope: ServerAccountScope;
     native: DeploymentEnvironmentReadCollectionV1['items'][number];
     projectKeys: readonly string[] | null;
+    /** Native Project identity and label, shared with the Environment detail page. */
+    projectSource?: Pick<ProjectSourceV1, "id" | "name">;
     home: string;
 }>;
 type NativeRead = ReturnType<typeof useDeploymentInventory>;
@@ -20,6 +24,7 @@ type NativeReason = NonNullable<InstalledScopeAdmission['failure']> | Deployment
     | NativeRead['snapshot'] | DeploymentEnvironmentReadCollectionV1 | ProjectAccountRowsSnapshot;
 export type InstalledAppsResult = InstalledFamilyResult<InstalledAppRow, NativeReason, NativeRead['nextPage'] | NativeRead['refresh']>
     & Readonly<{ navigation: Pick<NativeRead, 'hasNextPage' | 'hasPreviousPage' | 'nextPage' | 'previousPage' | 'refresh'> }>;
+const NO_ACCOUNT_SCOPE = { serverId: '', accountId: '' } as const;
 const EMPTY_ROWS: readonly InstalledAppRow[] = Object.freeze([]);
 
 /** One native page: membership, runtime placement, freshness and paging remain deployment-owned. */
@@ -29,6 +34,9 @@ export function useInstalledApps(input: StoreInstalledInput, demand: StoreDemand
         && rows.scope.accountId === admitted.scope.accountId
         && areServerProfileIdentifiersEquivalent(rows.scope.serverId, admitted.scope.serverId) ? rows : null, [admitted.scope]);
     const projects = useProjectAccountRows(selectProjects, demand.presented && admitted.scope !== null);
+    const sourceCatalog = useProjectSources(admitted.binding?.accountLifetime?.scope ?? admitted.scope ?? NO_ACCOUNT_SCOPE,
+        { enabled: demand.presented && admitted.scope !== null }).state;
+    const sourceById = React.useMemo(() => new Map(sourceCatalog.rows.map(source => [source.id, source])), [sourceCatalog.rows]);
     const projectKeysBySource = React.useMemo(() => {
         const index = new Map<string, Set<string>>();
         for (const ref of projects?.workspaceRefs ?? []) {
@@ -37,8 +45,12 @@ export function useInstalledApps(input: StoreInstalledInput, demand: StoreDemand
             keys.add(projectWorkspaceRefV1(ref).projectKey);
             index.set(ref.source.sourceId, keys);
         }
+        // Native Projects need no local checkout. Keep existing checkout grouping where one exists.
+        for (const source of sourceCatalog.rows) {
+            if (!index.has(source.id)) index.set(source.id, new Set([source.id]));
+        }
         return index;
-    }, [projects?.workspaceRefs, admitted.scope]);
+    }, [projects?.workspaceRefs, admitted.scope, sourceCatalog.rows]);
     const sources = React.useMemo(() => input.projectKey
         ? [...projectKeysBySource].filter(([, keys]) => keys.has(input.projectKey!)).map(([id]) => id) : null,
     [projectKeysBySource, input.projectKey]);
@@ -57,18 +69,19 @@ export function useInstalledApps(input: StoreInstalledInput, demand: StoreDemand
         const next = (read.snapshot.value?.items ?? [])
             .filter(native => !sources || sources.includes(native.environment.projectSourceId)).map((native): InstalledAppRow => {
                 const retained = previous.get(native);
+                const projectSource = sourceById.get(native.environment.projectSourceId);
                 const projectKeys = projectKeysBySource.has(native.environment.projectSourceId)
                     ? [...projectKeysBySource.get(native.environment.projectSourceId)!] : null;
-                if (retained?.scope === scope && (retained.projectKeys === projectKeys || retained.projectKeys && projectKeys
+                if (retained?.scope === scope && retained.projectSource?.id === projectSource?.id && retained.projectSource?.name === projectSource?.name && (retained.projectKeys === projectKeys || retained.projectKeys && projectKeys
                     && retained.projectKeys.length === projectKeys.length && retained.projectKeys.every((key, index) => key === projectKeys[index]))) return retained;
-                return { kind: 'app', key: serverAccountScopedResourceKey(scope, 'app', native.environment.id), scope, native, projectKeys,
+                return { kind: 'app', key: serverAccountScopedResourceKey(scope, 'app', native.environment.id), scope, native, projectKeys, projectSource,
                     home: buildDeploymentEnvironmentHref({ serverId: native.environment.serverId,
                         projectSourceId: native.environment.projectSourceId, environmentId: native.environment.id }) };
             });
         if (next.length === previousRows.current.length && next.every((row, index) => row === previousRows.current[index])) return previousRows.current;
         previousRows.current = next;
         return next;
-    }, [admitted.scope, demand.presented, read.snapshot.value?.items, sources, projectKeysBySource]);
+    }, [admitted.scope, demand.presented, read.snapshot.value?.items, sources, projectKeysBySource, sourceById]);
     return React.useMemo<InstalledAppsResult>(() => {
         if (!admitted.scope) return { rows: EMPTY_ROWS, coverage: admitted.coverage, navigation };
         if (!demand.presented) return { rows: EMPTY_ROWS, coverage: 'loading', navigation };
