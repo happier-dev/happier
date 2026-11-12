@@ -8,7 +8,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { getActionSpec, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseInputTypeOptionsSourceId } from '@happier-dev/protocol/inputs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { loadDaemonMergedProjectionCacheEntry, readObservedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -19,6 +19,7 @@ import {
 } from './accountActionTransport';
 
 type OptionsRelayRequest = Pick<PublicActionInputById['action.options.resolve'], 'optionsSourceId' | 'actionId' | 'fieldPath'>;
+const ACTION_RELAY_SECTIONS = ['actionsById'] as const;
 const OPTIONS_RELAY_SECTIONS = ['familiesById.inputTypes', 'actionsById', 'resourcesById'] as const;
 
 function ownMachines(account: Pick<ActionAccountContext, 'serverId' | 'accountId'>) {
@@ -42,6 +43,11 @@ function receiverDeclaresOptions(projection: PluginProjectionV2 | null | undefin
     return !!resource && (resource.execution?.target !== 'account' || resource.accountRuntimeDeclared === true);
 }
 
+function receiverDeclaresAction(projection: PluginProjectionV2 | null | undefined, identity: PluginContributionIdentityV1): boolean {
+    const action = projection?.actionsById[buildQualifiedPluginContributionKey(identity)];
+    return action?.execution.target === 'account' && action.available === true;
+}
+
 /** Automatic Account execution stays on an own Machine; explicit native targets retain their reviewed path. */
 export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAccountContext, 'serverId' | 'accountId'>,
     options?: Readonly<{
@@ -50,6 +56,7 @@ export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAcco
         /** Registry's user-triggered refresh retries its supplier after a failed request. */
         allowUnreachableFallback?: boolean;
         optionsRequest?: OptionsRelayRequest;
+        action?: PluginContributionIdentityV1;
         /** Existing receiver projection answers, also used by composed owner tests. */
         receiverProjections?: ReadonlyMap<string, PluginProjectionV2>;
         accountLifetime?: ActiveServerAccountScopeLifetime | null;
@@ -61,15 +68,46 @@ export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAcco
     const target = options?.target;
     if (target) return target.kind === 'machine'
         ? candidates.find(machine => machine.id === target.machineId)?.id ?? null : null;
-    const ownCandidates = candidates.filter(machine => machine.access?.custodian.accountId === account.accountId
-        && (!options?.optionsRequest || receiverDeclaresOptions(options.receiverProjections?.get(machine.id)
-            ?? (() => {
-                const cached = readObservedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
-                    accountLifetime: options.accountLifetime, sections: OPTIONS_RELAY_SECTIONS });
-                return cached?.kind === 'ready' ? cached.inputs.pluginProjectionV2 : null;
-            })(), options.optionsRequest)));
+    const ownCandidates = candidates.filter(machine => {
+        if (machine.access?.custodian.accountId !== account.accountId) return false;
+        if (!options?.optionsRequest && !options?.action) return true;
+        const cached = options.receiverProjections?.get(machine.id) ?? (() => {
+            const entry = readObservedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
+                accountLifetime: options.accountLifetime, sections: options.optionsRequest ? OPTIONS_RELAY_SECTIONS : ACTION_RELAY_SECTIONS });
+            return entry?.kind === 'ready' ? entry.inputs.pluginProjectionV2 : null;
+        })();
+        return options.optionsRequest ? receiverDeclaresOptions(cached, options.optionsRequest)
+            : receiverDeclaresAction(cached, options.action!);
+    });
     return ownCandidates.find(machine => isMachineReachable(account, machine))?.id
         ?? (options?.allowUnreachableFallback ? ownCandidates[0]?.id ?? null : null);
+}
+
+/** Shared placement for whole Account Actions and declaration-backed options. */
+export async function resolveUiAccountActionReceiverMachineId(account: LazyActionAccountContext,
+    args: Parameters<UiAccountActionExecute>[0]): Promise<string | null> {
+    const action = args.actionId === 'action.invoke'
+        ? (getActionSpec('action.invoke').inputSchema.parse(args.input) as PublicActionInputById['action.invoke']).action : undefined;
+    const request = args.actionId === 'action.options.resolve'
+        ? getActionSpec('action.options.resolve').inputSchema.parse(args.input) as PublicActionInputById['action.options.resolve'] : undefined;
+    const type = request?.optionsSourceId && parseInputTypeOptionsSourceId(request.optionsSourceId);
+    const optionsRequest = request && ((type && 'pluginId' in type) || parseQualifiedPluginActionId(request.actionId)) ? request : undefined;
+    if (!action && !optionsRequest) return resolveUiAccountActionFallbackMachineId(account);
+    const relayOptions = { action, optionsRequest, accountLifetime: account.accountLifetime };
+    const heldReceiver = resolveUiAccountActionFallbackMachineId(account, relayOptions);
+    if (heldReceiver) return heldReceiver;
+    // Reuse the registry owner's current answers and demand path. No liveness probe,
+    // activation, operation attempt, polling or fallback execution is added.
+    const sections = optionsRequest ? OPTIONS_RELAY_SECTIONS : ACTION_RELAY_SECTIONS;
+    for (const machine of ownMachines(account).filter(machine => isMachineReachable(account, machine))) {
+        const demand = { machineId: machine.id, serverId: account.serverId, accountLifetime: account.accountLifetime,
+            sections, reuseFreshReady: true, signal: args.signal ?? args.context.signal };
+        if (readObservedDaemonMergedProjectionCacheEntry(demand)?.kind === 'ready') continue;
+        const answer = await loadDaemonMergedProjectionCacheEntry(demand);
+        const projection = answer?.kind === 'ready' ? answer.inputs.pluginProjectionV2 : null;
+        if (optionsRequest ? receiverDeclaresOptions(projection, optionsRequest) : receiverDeclaresAction(projection, action!)) return machine.id;
+    }
+    return null;
 }
 
 /** Compose the existing machine relay with the invocation's captured Account. */
@@ -79,29 +117,7 @@ export function createUiAccountAction(params: Readonly<{
 }>): UiAccountActionExecute {
     const execute = createUiAccountActionTransport({
         account: params.account,
-        resolveFallbackMachineId: async args => {
-            if (args.actionId !== 'action.options.resolve') return resolveUiAccountActionFallbackMachineId(params.account);
-            const request = getActionSpec('action.options.resolve').inputSchema.parse(args.input) as PublicActionInputById['action.options.resolve'];
-            const type = request.optionsSourceId && parseInputTypeOptionsSourceId(request.optionsSourceId);
-            if (!(type && 'pluginId' in type) && !parseQualifiedPluginActionId(request.actionId)) {
-                return resolveUiAccountActionFallbackMachineId(params.account);
-            }
-            // Demand only declarations, sharing the projection owner's held answers and invalidation.
-            // No activation, Resource attempt, liveness RPC or retry loop runs during selection.
-            const relayOptions = { optionsRequest: request, accountLifetime: params.account.accountLifetime };
-            const heldReceiver = resolveUiAccountActionFallbackMachineId(params.account, relayOptions);
-            if (heldReceiver) return heldReceiver;
-            for (const machine of ownMachines(params.account).filter(machine => isMachineReachable(params.account, machine))) {
-                const demand = { machineId: machine.id, serverId: params.account.serverId,
-                    accountLifetime: params.account.accountLifetime, sections: OPTIONS_RELAY_SECTIONS, reuseFreshReady: true,
-                    signal: args.signal ?? args.context.signal };
-                if (readObservedDaemonMergedProjectionCacheEntry(demand)?.kind === 'ready') continue;
-                const answer = await loadDaemonMergedProjectionCacheEntry(demand);
-                const projection = answer?.kind === 'ready' ? answer.inputs.pluginProjectionV2 : null;
-                if (receiverDeclaresOptions(projection, request)) return machine.id;
-            }
-            return null;
-        },
+        resolveFallbackMachineId: args => resolveUiAccountActionReceiverMachineId(params.account, args),
         transport: params.transport ?? (async input => {
             const execution = await executeOriginalAccountMachineAction({ account: params.account, actionId: input.actionId,
                 machineId: input.machineId, machineTarget: input.target, requestId: input.requestId, input: input.payload, invocation: input.invocation,

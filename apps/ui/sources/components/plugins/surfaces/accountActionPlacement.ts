@@ -10,7 +10,7 @@ import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
+import { createUiAccountAction, resolveUiAccountActionReceiverMachineId } from '@/sync/ops/actions/accountActionDeps';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
@@ -28,11 +28,6 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
     executeLocal(): unknown;
 }>): unknown {
     if (params.execution.invokingUi) return params.executeLocal();
-    const fallbackMachineId = params.context.externalActionTarget ? null
-        : resolveUiAccountActionFallbackMachineId(params.accountScope);
-    const target = params.context.externalActionTarget
-        ?? (fallbackMachineId ? { kind: 'machine' as const, machineId: fallbackMachineId } : undefined);
-    if (!target) return params.executeLocal();
     return executeOnSelectedHost();
 
     async function executeOnSelectedHost() {
@@ -43,6 +38,12 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
         const account = await captureLazyActionAccountContext(params.accountScope.serverId, params.signal);
         try {
             const input = { action: params.action, ...(params.input === undefined ? {} : { input: params.input }) };
+            const fallbackMachineId = params.context.externalActionTarget ? null
+                : await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
+                    context: params.context, signal: params.signal });
+            const target = params.context.externalActionTarget
+                ?? (fallbackMachineId ? { kind: 'machine' as const, machineId: fallbackMachineId } : undefined);
+            if (!target) throw new PluginError({ code: 'target_unavailable', message: 'target_unavailable' });
             const requestId = params.context.actionRequestId ?? randomUUID();
             const confirmation = params.confirmedInvocation && sameStrictJsonValue(params.confirmedInvocation.input, input)
                 ? { actionId: ACTION_INVOKE_ACTION_ID_V1, inputDigest: params.confirmedInvocation.inputDigest, requestId,

@@ -2338,6 +2338,77 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { credentials.mockRestore(); await activation.composition.unload(); accountLifetime.retire(); }
     });
 
+    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit'] as const)('places automatic Account Actions using receiver runtime availability (%s)', async state => {
+        const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { createMachineFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { buildDeferredDaemonProjectionSections } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const lifetime = clientAccountLifetime();
+        const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
+        const previous = getStorage().getState();
+        const identity = { pluginId: 'acme.placement', localId: 'read' };
+        const action = createClientTargetAction({ identity, accountPlacement: true });
+        let effects = 0;
+        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
+            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'usable',
+            actionId: 'action.invoke', tokenEpoch: 0, execute: () => { effects++; return { selected: 'usable' }; } });
+        const fixtureBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
+            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'fixture',
+            actionId: 'action.invoke', tokenEpoch: 0, execute: () => ({ selected: 'fixture' }) });
+        const machines = ['fixture', 'usable'].map(id => createMachineFixture({ id, createdAt: id === 'fixture' ? 2 : 1,
+            active: state !== 'offline' || id !== 'fixture', activeAt: id === 'fixture' && state === 'offline' ? 0 : Date.now(), access: boundary.machine.access }));
+        getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+            machineListByServerId: { [lifetime.scope.serverId]: machines }, machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
+        daemonRpc.mockImplementation(async (request: { method: string; machineId: string; payload?: { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } } }) => {
+            if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return undefined;
+            const usable = request.machineId === 'usable' && state !== 'none';
+            const snapshot = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: (usable ? 'a' : 'b').repeat(64), projection: {
+                v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+                actionsById: usable || state === 'unavailable' || state === 'offline'
+                    ? { 'acme.placement/read': { ...action, available: usable || state === 'offline' } } : {},
+            } });
+            const read = request.payload?.sectionRead;
+            return read ? snapshot.read(read.digest, read.offset, read.includeDigests) : snapshot.manifest;
+        });
+        network.setHttpResponder(async (url, init) => {
+            if (new URL(String(url)).pathname === '/v1/machines/read-batch') {
+                return createMachineReadBatchResponseFixture(init?.body, id =>
+                    [boundary, fixtureBoundary].find(item => item.machine.id === id)?.machine ?? null);
+            }
+            return await boundary.handle(new URL(String(url)), init)
+                ?? await fixtureBoundary.handle(new URL(String(url)), init)
+                ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init);
+        });
+        accountBrowserRelay.enabled = true;
+        try {
+            for (const machine of machines) {
+                if (!machine.active || state === 'cold' || state === 'explicit') continue;
+                const answer = await loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
+                    accountLifetime: account.accountLifetime, sections: ['actionsById'], reuseFreshReady: true });
+                expect(answer, JSON.stringify(answer)).toMatchObject({ kind: 'ready' });
+            }
+            const reads = network.requests.length;
+            const result = executeAccountActionAtRuntimeHost({ accountScope: lifetime.scope, action: identity,
+                execution: { target: 'account', account: { artifactId: 'fixture', exportName: 'activate' } }, input: {},
+                context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                    ...(state === 'explicit' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'usable' } } : {}) },
+                signal: new AbortController().signal, executeLocal: () => { throw new Error('No local fallback on browser'); } });
+            if (state === 'none') await expect(result).rejects.toMatchObject({ code: 'target_unavailable' });
+            else await expect(result).resolves.toEqual({ selected: 'usable' });
+            expect(effects).toBe(state === 'none' ? 0 : 1);
+            if (state === 'cold') {
+                expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+                    && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(2);
+            } else expect(network.requests.length).toBe(reads);
+        } finally {
+            accountBrowserRelay.enabled = false; account.dispose(); lifetime.retire();
+            getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+                machineListStatusByServerId: previous.machineListStatusByServerId });
+        }
+    });
+
     it('retains the Account refusal proof through the HTTP carrier and client invocation', async () => {
         const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
         const { createPluginSurfaceActionFailureError, projectClientActionInvocationFailure } = await import('./actionFailure');

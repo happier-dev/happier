@@ -46,6 +46,28 @@ describe('Account Action carrier selection', () => {
         };
     }
 
+    it.each([false, true])('selects an available Account Action receiver and refuses when absent (%s)', async usable => {
+        const action = { pluginId: 'acme.account', localId: 'read' };
+        const base = receiver(false);
+        const declaration: PluginProjectionV2['actionsById'][string] = {
+            id: action.localId, pluginId: action.pluginId, occurrenceId: 'acme.account:1', title: 'Read',
+            scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+            execution: { target: 'account', account: { artifactId: 'account', exportName: 'activate' } }, available: true,
+        };
+        const receiverProjections = new Map<string, PluginProjectionV2>([
+            ['general', { ...base, actionsById: { 'acme.account/read': { ...declaration, available: false } } }],
+            ['supplier', { ...base, actionsById: usable ? { 'acme.account/read': declaration } : {} }],
+            ['offline', { ...base, actionsById: { 'acme.account/read': declaration } }],
+        ]);
+        const execute = createUiAccountActionTransport({ account: { ...scope, assertCurrent() {}, assertResultCurrent() {} },
+            resolveFallbackMachineId: () => resolveUiAccountActionFallbackMachineId(scope, { action, receiverProjections }),
+            transport: async input => ({ selected: input.machineId }),
+        });
+        expect(await execute({ actionId: 'action.invoke', input: { action, input: {} },
+            context: { ...scope, runtimeAccountId: scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+        })).toEqual(usable ? { selected: 'supplier' } : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+    });
+
     it('skips the stale first receiver with zero compiled Resources and chooses the current second receiver', () => {
         expect(resolveUiAccountActionFallbackMachineId(scope, { optionsRequest,
             receiverProjections: new Map([['general', receiver(false)], ['supplier', receiver(true)]]),
