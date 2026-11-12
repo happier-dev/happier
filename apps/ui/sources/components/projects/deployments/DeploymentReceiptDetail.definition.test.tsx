@@ -12,6 +12,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { ScmWorkingSnapshotSchema, createScmCapabilities } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { t } from '@/text';
+import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -28,6 +29,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const { CopyIconButton } = await import('@/components/ui/copy/CopyIconButton');
 const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
 const { DeploymentEnvironmentDetail } = await import('./DeploymentEnvironmentDetail');
 const { createDeploymentActions } = await import('./deploymentActions');
@@ -43,9 +45,81 @@ async function waitForReceipt(screen: Awaited<ReturnType<typeof renderAccountScr
   });
 }
 
+const originalNavigatorShare = Object.getOwnPropertyDescriptor(globalThis.navigator, 'share');
+
 describe('retained stored deployment source', () => {
   beforeEach(async () => { await homes.reset(); rpc.mockReset(); router.spies.push.mockClear(); });
-  afterEach(async () => { Modal.hideAll(); await standardCleanup(); });
+  afterEach(async () => {
+    Modal.hideAll();
+    await standardCleanup();
+    if (originalNavigatorShare) Object.defineProperty(globalThis.navigator, 'share', originalNavigatorShare);
+    else Reflect.deleteProperty(globalThis.navigator, 'share');
+    vi.unstubAllGlobals();
+  });
+
+  it.each(['current', 'historical', 'other-target', 'pending-domain', 'other-service', 'no-share', 'platform', 'platform-no-share'] as const)(
+    'exposes only the current native serving address and available share sheet: %s', async scenario => {
+      const share = vi.fn(async () => {});
+      Object.defineProperty(globalThis.navigator, 'share', { configurable: true, value: scenario.endsWith('no-share') ? undefined : share });
+      const serverId = await homes.addHome({ name: 'Live app', serverUrl: 'https://live-app.test',
+        serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+      const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+      const base = createDeploymentReceiptDetailV1();
+      const platform = scenario.startsWith('platform');
+      const receipt = createDeploymentReceiptDetailV1({ deployment: { ...base.deployment,
+        id: scenario === 'historical' ? 'earlier-deployment' : base.deployment.id },
+        content: platform ? DeploymentPlatformContentV1Schema.parse({ sourceIntent: base.content.sourceIntent,
+          sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
+          platform: { targetLinkRevision: 1,
+            credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+              purpose: { consumer: { pluginId: 'acme.alpha', localId: 'deploy' }, purpose: 'deploy' },
+              target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
+            providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
+              urls: ['https://platform.example.test/'] } },
+        }) : base.content });
+      const listDomains = vi.fn(async () => ({ ok: true as const, value: { items: [{
+        domain: { v: 1 as const, id: 'app-domain', environmentId: environment.environment.id,
+          targetLinkId: scenario === 'other-target' ? 'old-target' : receipt.deployment.targetLinkId,
+          revision: 1, state: scenario === 'pending-domain' ? 'pending' as const : 'active' as const,
+          contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+          createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1 },
+        title: 'app.example.test', content: { hostname: 'app.example.test',
+          target: { service: scenario === 'other-service' ? 'worker' : 'app', containerPort: 3000, path: '/welcome' } },
+      }], nextCursor: null } }));
+      const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner',
+        projectSourceId: environment.environment.projectSourceId }, transport: {
+        listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: environment }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: true, value: receipt }), listDomains,
+      } });
+      try {
+        const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller}
+          environmentId={environment.environment.id} deploymentId={receipt.deployment.id} environmentName="Staging"
+          demand={{ mounted: true, visible: true, focused: true }} accountId="account-owner" serverId={serverId}
+          readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null} phone={false} linkPath={null}
+          review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+        await waitForReceipt(screen);
+        const hasUrl = scenario === 'current' || scenario === 'no-share' || platform;
+        const expectedUrl = platform ? 'https://platform.example.test/' : 'https://app.example.test/welcome';
+        if (hasUrl) {
+          await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.receipt.outcome.open')).not.toBeNull());
+          expect(screen.findAllByType(CopyIconButton).some(button => button.props.text === expectedUrl)).toBe(true);
+          expect(screen.findByTestId('project-deployments.receipt.outcome.share') !== null).toBe(!scenario.endsWith('no-share'));
+          if (scenario === 'current' || scenario === 'platform') {
+            await screen.pressByTestIdAsync('project-deployments.receipt.outcome.share');
+            expect(share).toHaveBeenCalledWith({ text: expectedUrl });
+          }
+        } else {
+          await act(async () => {});
+          expect(screen.findByTestId('project-deployments.receipt.outcome.open')).toBeNull();
+          expect(screen.findByTestId('project-deployments.receipt.outcome.share')).toBeNull();
+        }
+        // Historical receipts never demand the Environment's current Domains.
+        expect(listDomains.mock.calls.length).toBe(scenario === 'historical' || platform ? 0 : 1);
+      } finally { controller.retire(); vi.unstubAllGlobals(); }
+    });
 
   it.each(['deploy', 'teardown'] as const)('keeps exact retained definition history for %s without claiming removed apps survive', async operation => {
     const serverId = await homes.addHome({ name: 'Definitions', serverUrl: 'https://definitions.test',

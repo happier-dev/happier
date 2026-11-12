@@ -46,6 +46,8 @@ import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+import { isTextSharingAvailable, shareTextSafe } from '@/utils/ui/shareText';
+import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { t } from '@/text';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -68,7 +70,7 @@ import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } fro
 import { useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
-import { useDeploymentEnvironment, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
@@ -133,6 +135,12 @@ export const DeploymentReceiptDetail = React.memo(
       props.demand,
     );
     const value = receipt.snapshot.value;
+    const serving = value !== null && activeId === value.deployment.id
+      && environmentValue?.runtimeTargetLink?.id === value.deployment.targetLinkId;
+    // Native addresses belong to current Domains; a historical receipt never borrows them.
+    const nativeAddressDemand = serving && value?.deployment.state === 'succeeded' && !value.content.platform;
+    const domains = useDeploymentEnvironmentDomains(nativeAddressDemand ? props.controller : null,
+      nativeAddressDemand ? props.environmentId : null, props.demand);
     const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
       receipt: value, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
     });
@@ -247,7 +255,14 @@ export const DeploymentReceiptDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const images = 'images' in content ? content.images : NO_IMAGES;
     const notice = deploymentStateNotice(deployment.state, facts.failure);
-    const serving = activeId !== null && activeId === deployment.id;
+    const primaryService = content.sourceIntent?.kind === 'repository'
+      ? content.sourceIntent.compose?.primaryService : content.sourceIntent?.primaryService;
+    const nativeDomain = primaryService ? domains.result.items.find(item =>
+      item.domain.targetLinkId === deployment.targetLinkId
+      && (item.domain.state === 'active' || item.domain.state === 'warning')
+      && item.content.target.service === primaryService) : undefined;
+    const outcomeUrl = facts.urls?.[0]
+      ?? (nativeAddressDemand && nativeDomain ? readDeploymentDomainServingUrlV1(nativeDomain.content) : null);
     const firstMachine = machineName(content.machines[0] ?? '');
     // A failed deploy's way back is the incumbent it recorded; the rollback Action decides admission at the press.
     const target = facts.rollbackTarget;
@@ -277,6 +292,7 @@ export const DeploymentReceiptDetail = React.memo(
     };
     const stripFacts = receiptFacts({
       facts,
+      addressAvailable: outcomeUrl !== null,
       serving,
       health: environmentValue?.healthAggregate,
       state: deployment.state,
@@ -500,6 +516,7 @@ export const DeploymentReceiptDetail = React.memo(
                 serverId={props.serverId}
                 accountId={props.accountId}
                 facts={facts}
+                url={outcomeUrl}
                 machine={firstMachine}
                 serving={serving}
               />
@@ -692,12 +709,13 @@ function ReceiptMenu(props: Readonly<{
  */
 const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
   facts: DeploymentReceiptFactsV1;
+  url: string | null;
   machine: string;
   serving: boolean;
   serverId: string;
   accountId: string;
 }>) {
-  const url = props.facts.urls?.[0] ?? null;
+  const url = props.url;
   const address = url ? url.replace(/^https?:\/\//, '').replace(/\/$/, '') : null;
   const members = props.facts.health.members;
   const parts: string[] = [];
@@ -719,6 +737,14 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
         rightElement={url ? (
           <View style={styles.outcomeActions}>
             <CopyIconButton text={url} testID="project-deployments.receipt.outcome.copy" />
+            {isTextSharingAvailable() ? (
+              <RoundButton
+                testID="project-deployments.receipt.outcome.share"
+                size="small"
+                title={t('common.share')}
+                onPress={() => { void shareTextSafe(url); }}
+              />
+            ) : null}
             <RoundButton
               testID="project-deployments.receipt.outcome.open"
               size="small"
@@ -764,11 +790,12 @@ function failureConsequence(
 
 /**
  * The receipt's few facts beside its outcome (the Environment overview's `fc-facts`): current health and address
- * while it serves, the version it replaced and what the Environment keeps for rollback. The address has no
- * current producer here yet, so it says so rather than repeating a recorded one as current.
+ * while it serves, the version it replaced and what the Environment keeps for rollback. A missing
+ * address stays explicit when neither the receipt nor its current native Domain supplies one.
  */
 function receiptFacts(input: Readonly<{
   facts: DeploymentReceiptFactsV1;
+  addressAvailable: boolean;
   serving: boolean;
   health: Parameters<typeof deploymentHealthFact>[0];
   state: Parameters<typeof deploymentHealthFact>[1];
@@ -777,7 +804,7 @@ function receiptFacts(input: Readonly<{
   if (input.serving) {
     list.push({ key: 'health', testID: 'project-deployments.receipt.facts.health',
       label: t('projects.deployments.factHealthNow'), ...deploymentHealthFact(input.health, input.state) });
-    if (!input.facts.urls?.length) {
+    if (!input.addressAvailable) {
       list.push({ key: 'address', label: t('projects.deployments.factAddress'), value: t('projects.deployments.factNotAvailable') });
     }
   }
