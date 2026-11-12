@@ -2,6 +2,10 @@ import { AgentProviderBindingLaunchMaterializationV1Schema, PROVIDER_BINDING_MAT
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { AgentProviderBindingLaunchMaterializationV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { z } from 'zod/mini';
+import { isDeepStrictEqual } from 'node:util';
+import { AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
+import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY =
     'HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1';
@@ -11,25 +15,38 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
 export type ProviderBindingLaunchHandoffV1 = Readonly<{
     v: 1;
     materialization: AgentProviderBindingLaunchMaterializationV1;
-    sessionBindingMetadata: SessionProviderBindingMetadataV1;
-}>;
+}> & (
+    | Readonly<{ sessionBindingMetadata: SessionProviderBindingMetadataV1; providerBinding?: never; selection?: never }>
+    | Readonly<{ providerBinding: AgentSessionProviderBinding; selection: ProviderBoundModelRef; sessionBindingMetadata?: never }>
+);
 
-const ProviderBindingLaunchHandoffV1Schema: z.ZodMiniType<ProviderBindingLaunchHandoffV1> = z.strictObject({
-    v: z.literal(1),
-    materialization: AgentProviderBindingLaunchMaterializationV1Schema,
-    sessionBindingMetadata: SessionProviderBindingMetadataV1Schema,
-});
+const ProviderBindingLaunchHandoffV1Schema: z.ZodMiniType<ProviderBindingLaunchHandoffV1> = z.union([
+    z.strictObject({
+        v: z.literal(1),
+        materialization: AgentProviderBindingLaunchMaterializationV1Schema,
+        sessionBindingMetadata: SessionProviderBindingMetadataV1Schema,
+    }),
+    z.strictObject({
+        v: z.literal(1),
+        materialization: AgentProviderBindingLaunchMaterializationV1Schema,
+        providerBinding: AgentSessionProviderBindingV1Schema,
+        selection: ProviderBoundModelRefSchema,
+    }).check(z.refine(value => value.selection.providerConnectionId === null
+        && 'source' in value.providerBinding && value.providerBinding.source.kind === 'connected_account'
+        && isDeepStrictEqual(value.materialization, value.providerBinding.materialization))),
+]);
 
+export function serializeProviderBindingLaunchHandoffForEnv(input: ProviderBindingLaunchHandoffV1): string;
 export function serializeProviderBindingLaunchHandoffForEnv(
     input: AgentProviderBindingLaunchMaterializationV1,
     sessionBindingMetadata: SessionProviderBindingMetadataV1,
+): string;
+export function serializeProviderBindingLaunchHandoffForEnv(
+    input: AgentProviderBindingLaunchMaterializationV1 | ProviderBindingLaunchHandoffV1,
+    sessionBindingMetadata?: SessionProviderBindingMetadataV1,
 ): string {
-    const materialization = AgentProviderBindingLaunchMaterializationV1Schema.parse(input);
-    const parsed = ProviderBindingLaunchHandoffV1Schema.parse({
-        v: 1,
-        materialization,
-        sessionBindingMetadata,
-    });
+    const parsed = ProviderBindingLaunchHandoffV1Schema.parse('materialization' in input
+        ? input : { v: 1, materialization: input, sessionBindingMetadata });
     const json = JSON.stringify(parsed);
     const bytes = Buffer.byteLength(json, 'utf8');
     if (bytes > PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.launch.maxEncodedBytes) {

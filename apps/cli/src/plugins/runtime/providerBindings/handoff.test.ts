@@ -8,6 +8,21 @@ import {
 } from './handoff';
 
 describe('provider-binding launch materialization handoff', () => {
+    it('consumes an exact Connected Account binding with its admitted native selection', () => {
+        const materialization = { v: 1, kind: 'spawnEnv' };
+        const handoff = { v: 1, materialization,
+            selection: { agentTargetKey: 'agent:acme.agent/agent', providerConnectionId: null, modelId: 'native/model' },
+            providerBinding: {
+                source: { kind: 'connected_account', purpose: { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'inference' },
+                    account: { service: { pluginId: 'acme.accounts', localId: 'subscription' }, accountId: 'account-1' } },
+                model: { id: 'model', name: 'Model' },
+                upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:43123/v1', credential: 'apiKey' }, materialization,
+            } };
+        const environment = { [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]: Buffer.from(JSON.stringify(handoff)).toString('base64url') };
+        expect(consumeProviderBindingLaunchHandoffFromEnvironments([environment])).toEqual(handoff);
+        expect(environment).toEqual({});
+    });
+
     const materialization = {
         v: 1 as const,
         kind: 'engineConfig' as const,
