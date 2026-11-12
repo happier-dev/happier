@@ -1099,7 +1099,9 @@ const listRowContentStyle: HappierPortableStyle = {
   paddingVertical: TABLE.paddingY,
   minWidth: 0,
 };
-const lineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 };
+/** The gap between a row's own control and its peek chevron when it carries both. */
+const ROW_ACCESSORY_GAP = 8;
+const lineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: ROW_ACCESSORY_GAP, minWidth: 0 };
 /** A single-line list row: its one line centred on the row's planned height, the mark beside it. */
 const singleLineRowContentStyle: HappierPortableStyle = { paddingTop: 0, paddingBottom: 0, alignItems: 'center' };
 /**
@@ -2057,7 +2059,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // is a title column alone is the list with less in it, so there the rows recompose (COLLECTION.md "Phones").
   // Everything a row draws after its cells, the row's own end inset included, so a header and a skeleton keep the rows' columns.
   const rowAccessoryWidth = anatomy.peek === undefined && props.useRowActions === undefined ? 0
-    : (anatomy.peek === undefined ? 0 : TABLE.chevronWidth) + (props.useRowActions !== undefined ? ROW_ACTIONS_WIDTH : 0) + LIST_ACTION_INSET;
+    // A row's own control (its ⋯) is a chevron-sized slot, with the accessory gap only when the peek chevron stands beside it.
+    : (anatomy.peek === undefined ? 0 : TABLE.chevronWidth)
+      + (props.useRowActions === undefined ? 0 : TABLE.chevronWidth + (anatomy.peek === undefined ? 0 : ROW_ACCESSORY_GAP))
+      + LIST_ACTION_INSET;
   // A nested table leads every row with the disclosure slot (an owner's depth); the list draws owners only.
   const tree = presentation === 'table' || presentation === 'list' ? model.tree : null;
   const treeLeadingWidth = tree !== null && presentation === 'table' ? TABLE.treeIndent + TABLE.gap : 0;

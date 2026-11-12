@@ -87,7 +87,9 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
   const hasActions =
     props.actions != null || search !== null || createControl !== null;
   return (
-    <>
+    // One piece: a host that spaces its header's pieces (a Collection's header stack) never splits the title from
+    // the chips under it, so the band stands at the same step under the title on every main screen.
+    <View style={styles.head}>
       {phone && mainScreen ? <Stack.Screen options={MAIN_SCREEN_BAR} /> : null}
       <NavigationLargeTitleProvider largeTitle={phone}>
         <PageHeader
@@ -157,7 +159,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
           </View>
         </View>
       ) : null}
-    </>
+    </View>
   );
 });
 
@@ -201,6 +203,9 @@ export function useMainScreenSearch(search: MainScreenSearch | null): Readonly<{
 const MAIN_SCREEN_BAR = Object.freeze({ headerShown: false });
 
 const styles = StyleSheet.create((theme) => ({
+  head: {
+    alignSelf: 'stretch',
+  },
   // Right under the title (owner 11-11), on the sheets' edge: the header's own bottom padding is the gap above; the
   // band, the open field and the count line sit one small step apart and end with that step before the page's first
   // section, so the chips sit on the title and the count line on what it counts.
