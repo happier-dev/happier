@@ -77,6 +77,18 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
     } });
 
     const screen = await renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
+    const { getPermissionModeLabelForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
+    const agent = () => screen.findAll(node => node.props.testID === 'team-settings-member-defaults-agent:claude'
+        && typeof node.props.onExpandedChange === 'function')[0];
+    await waitForHomeGovernance(() => expect(agent()).toBeDefined());
+    await act(async () => { agent()!.props.onExpandedChange(true); });
+    const permission = screen.findAllByType(DropdownMenu).find(node =>
+        node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-agent:claude:permission');
+    expect(permission).toBeDefined();
+    for (const mode of ['read-only', 'yolo'] as const) {
+        expect(permission!.props.items.find((item: { id: string }) => item.id === mode)?.title)
+            .toBe(getPermissionModeLabelForAgentType('claude', mode));
+    }
     const menu = () => screen.findAllByType(DropdownMenu).find(node =>
         node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-machine');
     await waitForHomeGovernance(() => expect(menu()).toBeDefined());

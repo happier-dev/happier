@@ -79,7 +79,7 @@ export function resolveMachineDestinationPurposeEligibility(
 ): Readonly<{ eligible: true; managedWake?: 'asleep' | 'starting'; worker?: Extract<ProjectWorkerStatusResultV1, { eligible: true }> }>
     | (Extract<ReturnType<typeof resolveMachineDestinationWorkerRefusal>, { reason: 'needs_copy' }> & Readonly<{ worker: ProjectWorkerStatusResultV1 }>)
     | Readonly<{ eligible: false; reason: 'new_session_wake_unavailable'; newSessionWake?: NonNullable<Machine['managedInputRuntime']>['newSessionWake']; worker?: never }>
-    | Readonly<{ eligible: false; reason: 'access_unavailable' | 'content_unavailable' | 'machine_unavailable' | 'worker_status_unavailable' | 'worker_refused'; worker?: ProjectWorkerStatusResultV1; statusFailed?: true }> {
+    | Readonly<{ eligible: false; reason: 'access_unavailable' | 'content_unavailable' | 'worker_status_unavailable' | 'worker_refused'; worker?: ProjectWorkerStatusResultV1; statusFailed?: true }> {
     const shared = machine?.isShared === true || facts?.ownership === 'shared';
     // Boards retain owned unreadable items; they do not dispatch work or disclose locked content.
     if (purpose !== 'boards' && machine?.availability?.kind === 'locked') {
@@ -98,7 +98,6 @@ export function resolveMachineDestinationPurposeEligibility(
         }
         return { eligible: true, managedWake };
     }
-    if (shared && presence && !presence.selectable) return { eligible: false, reason: 'machine_unavailable' };
     if (purpose === 'finite' || purpose === 'service-start') {
         if (!facts?.worker) return { eligible: false, reason: 'worker_status_unavailable', ...(facts?.workerStatusFailed ? { statusFailed: true as const } : {}) };
         if (!facts.worker.eligible) {

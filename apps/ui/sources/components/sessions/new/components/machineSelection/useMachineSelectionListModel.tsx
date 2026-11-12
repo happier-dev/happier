@@ -336,9 +336,8 @@ function isBlockedOnlyByPresence(
     presence: ReturnType<typeof resolveMachinePickerPresence>,
 ): boolean {
     if (presence.status !== 'offline') return false;
-    // A shared machine that is only offline says so in its presence line, not again as "Unavailable".
     return eligibility.eligible ? !eligibility.managedWake
-        : eligibility.reason === 'worker_status_unavailable' || eligibility.reason === 'machine_unavailable';
+        : eligibility.reason === 'worker_status_unavailable';
 }
 
 /**

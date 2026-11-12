@@ -10,11 +10,34 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 installNewSessionComponentsCommonModuleMocks();
+vi.mock('react-native', async () =>
+    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
-beforeEach(async () => { home = await createPlainArtifactHomeFixture('https://machine-selector.test'); });
+beforeEach(async () => { home = await createPlainArtifactHomeFixture('https://machine-selector.test', { currentAccount: true, accountId: 'machine-selector-account' }); });
 afterEach(async () => { await home?.dispose(); home = undefined; });
-const { MachineSelector } = await import('./MachineSelector');
+const { MachineSelector: MachineSelectorOwner } = await import('./MachineSelector');
+function MachineSelector(props: React.ComponentProps<typeof MachineSelectorOwner>) {
+    return <MachineSelectorOwner serverId={home!.home.id} {...props} />;
+}
+
+async function renderMachineSelector(element: React.ReactElement<React.ComponentProps<typeof MachineSelector>>) {
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { linkMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+    const scope = { serverId: home!.home.id, accountId: 'machine-selector-account' };
+    await act(async () => {
+        await publishMachineInventoryForTest(scope, element.props.machines);
+        for (const machine of element.props.machines) {
+            const admitted = storage.getState().machineRecordsByServerId[scope.serverId]?.[machine.id];
+            if (!admitted) throw new Error('Expected an admitted Machine fixture');
+            linkMachineActivity(admitted, machine);
+        }
+    });
+    return renderScreen(element);
+}
 
 function machine(id: string, active: boolean): Machine {
     return { id, seq: 1, createdAt: 1, updatedAt: 1, active, activeAt: active ? Date.now() : 0,
@@ -23,11 +46,51 @@ function machine(id: string, active: boolean): Machine {
 }
 
 describe('MachineSelector', () => {
+    it.each(['list', 'dropdown'] as const)('offers own and shared offline defaults equally in %s', async presentation => {
+        const owned = machine('owned', false);
+        const shared: Machine = { ...machine('shared', false), isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
+        } };
+        const onSelect = vi.fn();
+        const screen = await renderMachineSelector(<MachineSelector machines={[owned, shared]} selectedMachine={null}
+            presentation={presentation} disableOfflineMachines={false} onSelect={onSelect} showCliGlyphs={false}
+            showFavorites={false} showRecent={false} testIdPrefix="defaults" />);
+        if (presentation === 'dropdown') {
+            const props = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
+            expect(props.items.map(row => row.disabled)).toEqual([false, false]);
+            expect(props.items[0]?.category).toBe(t('machines.destinations.yours'));
+            await act(async () => { props.onOpenChange(true); });
+        } else {
+            const props = screen.tree.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>;
+            const rows = props.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+            expect(rows.map(row => row.disabled)).toEqual([false, false]);
+        }
+        const optionHosts = screen.findAll(node => typeof node.type === 'string' && (
+            node.props.testID === 'defaults-option:owned' || node.props.testID === 'defaults-option:shared'));
+        expect(optionHosts.map(node => ({ id: node.props.testID, role: node.props.role })))
+            .toEqual([{ id: 'defaults-option:owned', role: 'option' }, { id: 'defaults-option:shared', role: 'option' }]);
+        await screen.pressByTestIdAsync('defaults-option:shared');
+        expect(onSelect).toHaveBeenCalledWith(shared);
+        if (presentation === 'dropdown') expect(screen.tree.findByType(DropdownMenu).props.open).toBe(false);
+    });
+    it('folds the dropdown through the same list owner at account scale', async () => {
+        const screen = await renderMachineSelector(<MachineSelector machines={[machine('online', true),
+            ...Array.from({ length: 230 }, (_, index) => machine(`offline-${index}`, false))]}
+            selectedMachine={null} presentation="dropdown" onSelect={vi.fn()} showCliGlyphs={false}
+            showFavorites={false} showRecent={false} />);
+        await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
+        const list = screen.tree.findByType(SelectionList);
+        const rows = () => (list.props as React.ComponentProps<typeof SelectionList>).rootStep.sections
+            .flatMap(section => section.kind === 'static' ? section.options : []);
+        expect(rows().map(row => row.id)).toEqual(['online', 'offline:all']);
+        await act(async () => { rows()[1]?.onSelect?.(); });
+        expect(rows()).toHaveLength(232);
+    });
     it('folds offline-only workflow destinations through the real list model, while keeping locked rows named', async () => {
         const online = machine('online', true);
         const offline = [machine('studio', false), machine('server', false)];
         const locked: Machine = { ...machine('locked', false), availability: { kind: 'locked', reason: 'recipient_key_pending' } };
-        const screen = await renderScreen(<MachineSelector purpose="workflow" machines={[online, ...offline, locked]}
+        const screen = await renderMachineSelector(<MachineSelector purpose="workflow" machines={[online, ...offline, locked]}
             selectedMachine={null} onSelect={() => {}} showFavorites={false} showRecent={false} showSearch={false}
             showCliGlyphs={false} testIdPrefix="targets" />);
         const options = () => (screen.tree.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>)
@@ -46,7 +109,7 @@ describe('MachineSelector', () => {
             resourceMode: 'plain', accessState: 'ready',
         } };
         const onSelect = vi.fn();
-        const screen = await renderScreen(<MachineSelector purpose="workflow" machines={[shared]} selectedMachine={null}
+        const screen = await renderMachineSelector(<MachineSelector purpose="workflow" machines={[shared]} selectedMachine={null}
             presentation={presentation} onSelect={onSelect} showCliGlyphs={false} />);
         if (presentation === 'dropdown') {
             const props = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
@@ -71,7 +134,7 @@ describe('MachineSelector', () => {
             resourceMode: 'plain', accessState: 'ready',
         }, managedInputRuntime: { nativeReady: false, wakeState, newSessionWake: { kind: 'available' } } };
         const onSelect = vi.fn();
-        const screen = await renderScreen(<MachineSelector machines={[shared]} selectedMachine={null}
+        const screen = await renderMachineSelector(<MachineSelector machines={[shared]} selectedMachine={null}
             presentation={presentation} onSelect={onSelect} showCliGlyphs={false} />);
         const wakeReason = wakeState === 'asleep' ? t('managedWake.startsOnSend') : t('managedWake.starting', { machine: 'shared' });
         if (presentation === 'dropdown') {
@@ -90,7 +153,7 @@ describe('MachineSelector', () => {
         expect(onSelect).toHaveBeenCalledWith(shared);
     });
     it('names machines, not commands, when the dropdown has none to offer', async () => {
-        const screen = await renderScreen(<MachineSelector machines={[]} selectedMachine={null}
+        const screen = await renderMachineSelector(<MachineSelector machines={[]} selectedMachine={null}
             presentation="dropdown" onSelect={vi.fn()} showCliGlyphs={false} noItemsMessage="No machines available" />);
         const props = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
         expect(props.emptyLabel).toBe('No machines available');
@@ -99,7 +162,7 @@ describe('MachineSelector', () => {
         const online = machine('online', true);
         const offline = machine('offline', false);
         const onSelect = vi.fn();
-        const screen = await renderScreen(<MachineSelector machines={[online, offline]} selectedMachine={online}
+        const screen = await renderMachineSelector(<MachineSelector machines={[online, offline]} selectedMachine={online}
             presentation="dropdown" onSelect={onSelect} showCliGlyphs={false} dropdownTitle="Select computer" dropdownTestID="machine-dropdown" />);
         const dropdown = screen.tree.findByType(DropdownMenu);
         // React's test renderer erases the props type of the actual component above.
@@ -114,7 +177,7 @@ describe('MachineSelector', () => {
         const online = machine('online', true);
         const offline = machine('offline', false);
         const onSelect = vi.fn();
-        const screen = await renderScreen(<MachineSelector machines={[online, offline]} selectedMachine={null}
+        const screen = await renderMachineSelector(<MachineSelector machines={[online, offline]} selectedMachine={null}
             recentMachines={[online]} favoriteMachines={[online]} onSelect={onSelect} showCliGlyphs={false} testIdPrefix="machine" />);
         const list = screen.tree.findByType(SelectionList);
         // React's test renderer erases the props type of the actual component above.

@@ -36,7 +36,8 @@ export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
         if (entry.name === null || resolution.kind !== 'shared_resource') return [];
         const status = resolution.status;
         const ready = status === 'ready' && !stale;
-        return [{ entry, disabled: !ready, note: status === 'ready' ? null : resolveActionExecutionErrorMessage(resolution.errorCause, sharedSecretStatusLabel(status), { safeToRetry: true }) }];
+        return [{ entry, disabled: !ready, note: resolution.resolving && status === 'temporarily_unavailable' ? t('common.loading')
+            : status === 'ready' ? null : resolveActionExecutionErrorMessage(resolution.errorCause, sharedSecretStatusLabel(status), { safeToRetry: true }) }];
     }), [catalog.entries, catalog.resolveReference, stale]);
     const retry = React.useCallback(() => {
         void catalog.reload().catch(() => {});

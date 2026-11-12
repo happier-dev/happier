@@ -2,7 +2,7 @@ import React from 'react';
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { type View as RNView } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { SelectionList } from '@/components/ui/selectionList';
+import { SelectionList, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { supportsManagedMachineSelection, useMachineSelectionListModel } from './machineSelection/useMachineSelectionListModel';
 import type { ManagedMachineSelectionOffer } from './machineSelection/managedMachineSelection';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
@@ -11,17 +11,14 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { describeMachineSharedOwnership } from '@/sync/domains/machines/machineOwnershipGroups';
 import { t } from '@/text';
 import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { buildMachineSelectionBuckets } from './machineSelection/buildMachineSelectionBuckets';
+import { Icon } from '@/components/ui/icons/Icon';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
-import { describeMachineDestinationEligibility, describeMachineDestinationWorkerFacts, resolveMachineDestinationPurposeEligibility, type MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
-import { useMachineDestinationWorkerStatus, type MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import type { MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
+import type { MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
+import { buildServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 
 const EMPTY_MACHINES: readonly Machine[] = [];
 const EMPTY_MANAGED_MACHINES: readonly ManagedMachineSelectionOffer[] = [];
@@ -99,335 +96,85 @@ export interface MachineSelectorProps {
     dropdownInCallerSection?: boolean;
 }
 
-export function MachineSelector({
-    purpose = 'session',
-    workerPlacement,
-    resolveMachinePlacementFacts: suppliedMachinePlacementFacts,
-    machines,
-    selectedMachine,
-    managedMachines = EMPTY_MANAGED_MACHINES,
-    managedPlacementPreset,
-    onDropdownOpenChange,
-    recentMachines = [],
-    favoriteMachines = [],
-    onSelect,
-    onToggleFavorite,
-    showFavorites = true,
-    showRecent = true,
-    showSearch = true,
-    presentation = 'list',
-    showCliGlyphs = true,
-    autoDetectCliGlyphs = true,
-    serverId,
-    favoriteGroupPlacement = 'afterRecent',
-    searchPlaceholder: searchPlaceholderProp,
-    recentSectionTitle: recentSectionTitleProp,
-    favoritesSectionTitle: favoritesSectionTitleProp,
-    allSectionTitle: allSectionTitleProp,
-    noItemsMessage: noItemsMessageProp,
-    testIdPrefix,
-    currentUiContextCommandScope,
-    currentUiContextForegroundOverlay,
-    disableOfflineMachines = true,
-    includeSelectedUnavailableMachine = false,
-    describeMachine,
-    dropdownTitle,
-    dropdownSubtitle,
-    dropdownTestID,
-    popoverBoundaryRef,
-    dropdownClearOption,
-    dropdownInCallerSection = false,
-}: MachineSelectorProps) {
+export function MachineSelector(props: MachineSelectorProps) {
     const { theme } = useUnistyles();
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const { binding } = useServerCredentialAccountScopeBinding(serverId ?? getAppliedActiveServerSnapshot().serverId);
-    const scope = binding?.isCurrent() ? binding.scope : null;
-    const [dropdownOpen, setDropdownOpen] = React.useState(false);
-    const changeDropdownOpen = React.useCallback((open: boolean) => {
-        setDropdownOpen(open);
-        onDropdownOpenChange?.(open);
-    }, [onDropdownOpenChange]);
-    const managedOffers = supportsManagedMachineSelection(purpose) ? managedMachines : EMPTY_MANAGED_MACHINES;
-    const selectedManagedOffer = managedPlacementPreset ? managedOffers.find(offer =>
-        offer.homeId === managedPlacementPreset.homeId && offer.presetId === managedPlacementPreset.presetId) : undefined;
-    const demandedWorkerFacts = useMachineDestinationWorkerStatus({
-        purpose,
-        workerPlacement: presentation === 'dropdown' ? workerPlacement : undefined,
-        groups: [{ serverId: serverId ?? '', machines, loading: false, signedOut: false }],
-    });
-    const resolveMachinePlacementFacts = presentation === 'dropdown' && workerPlacement && (purpose === 'finite' || purpose === 'service-start')
-        ? demandedWorkerFacts : suppliedMachinePlacementFacts;
-
-    const searchPlaceholder = searchPlaceholderProp ?? t('newSession.machinePicker.searchPlaceholder');
-    const recentSectionTitle = recentSectionTitleProp ?? t('newSession.machinePicker.recentTitle');
-    const favoritesSectionTitle = favoritesSectionTitleProp ?? t('newSession.machinePicker.favoritesTitle');
-    const allSectionTitle = allSectionTitleProp ?? t('newSession.machinePicker.allTitle');
-    const noItemsMessage = noItemsMessageProp ?? t('newSession.machinePicker.emptyMessage');
-    const machineOptionTestIdPrefix = typeof testIdPrefix === 'string' && testIdPrefix.trim()
-        ? `${testIdPrefix.trim()}-option`
-        : undefined;
-    const getMachineOptionTestID = React.useCallback((machine: Machine) => {
-        return machineOptionTestIdPrefix ? `${machineOptionTestIdPrefix}:${machine.id}` : undefined;
-    }, [machineOptionTestIdPrefix]);
-    const selectedMachineId = selectedMachine?.id ?? null;
-    const bucketModel = React.useMemo(() => buildMachineSelectionBuckets({
-        scope,
-        machines,
-        recentMachines,
-        favoriteMachines,
-        showFavorites,
-        showRecent,
-        disableOfflineMachines,
-        favoriteGroupPlacement,
-        includeSelectedUnavailableMachineId: includeSelectedUnavailableMachine ? selectedMachineId : null,
-    }), [
-        disableOfflineMachines,
-        favoriteGroupPlacement,
-        favoriteMachines,
-        includeSelectedUnavailableMachine,
-        machines,
-        recentMachines,
-        selectedMachineId,
-        showFavorites,
-        showRecent,
-        serverId,
-        reachabilityRevision,
-        scope,
-    ]);
-    const visibleMachines = bucketModel.visibleMachines;
-    // One naming owner for every machine this selector shows, telling same-named machines apart.
-    const machineNames = React.useMemo(() => resolveMachineDisplayNames(machines), [machines]);
-    const machineName = (machine: Machine): string => machineNames.get(machine.id) ?? getMachineDisplayName(machine) ?? machine.id;
-    const launchPinnedFavoriteMachines = bucketModel.favoriteMachines;
-    const favoriteMachineIdSet = bucketModel.favoriteMachineIdSet;
-    const visibleRecentMachinesWithoutFavorites = bucketModel.recentMachinesWithoutFavorites;
-    const visibleAllMachines = bucketModel.allMachines;
-    const machineById = React.useMemo(() => {
-        return new Map([
-            ...visibleMachines,
-            ...visibleRecentMachinesWithoutFavorites,
-            ...launchPinnedFavoriteMachines,
-        ].map((machine) => [machine.id, machine] as const));
-    }, [launchPinnedFavoriteMachines, visibleMachines, visibleRecentMachinesWithoutFavorites]);
-
-    const renderFavoriteToggle = React.useCallback((machine: Machine, isFavorite: boolean) => {
-        if (!showFavorites || !onToggleFavorite) return null;
-
-        const selectedColor = theme.colors.button.primary.background;
-        return (
-            <HappierPressable
-                hitReach={0}
-                onPress={(event) => {
-                    event?.stopPropagation?.();
-                    onToggleFavorite(machine);
-                }}
-            >
-                <Icon
-                    name="star"
-                    size={20}
-                    color={isFavorite ? selectedColor : theme.colors.text.secondary}
-                    weight={isFavorite ? 'fill' : 'regular'}
-                />
-            </HappierPressable>
-        );
-    }, [onToggleFavorite, showFavorites, theme.colors.button.primary.background, theme.colors.text.secondary]);
-
-    const toDropdownItem = React.useCallback((
-        machine: Machine,
-        category: string,
-        isFavorite: boolean,
-        iconName: IconName,
-    ): DropdownMenuItem => {
-        const presence = resolveMachinePickerPresence(machine, undefined, scope);
-        const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine, scope);
-        const purposeEligible = eligibility.eligible;
-        const unavailable = !purposeEligible || (!eligibility.managedWake && !presence.selectable);
-        return {
-            id: machine.id,
-            testID: getMachineOptionTestID(machine),
-            title: machineName(machine),
-            subtitle: [describeMachine?.(machine), describeMachineSharedOwnership(machine), describeMachineDestinationEligibility(eligibility, machine)
-                ?? describeMachineDestinationWorkerFacts(eligibility, undefined, purpose, machineName(machine))
-                ?? (unavailable ? t('common.unavailable') : t('status.online'))].filter(Boolean).join(' · '),
-            category,
-            disabled: !purposeEligible || (disableOfflineMachines && unavailable),
-            icon: (
-                <Icon
-                    name={iconName}
-                    size={20}
-                    color={theme.colors.text.secondary}
-                />
-            ),
-            rightElement: renderFavoriteToggle(machine, isFavorite),
-        };
-    }, [describeMachine, disableOfflineMachines, getMachineOptionTestID, purpose, reachabilityRevision, resolveMachinePlacementFacts, serverId, scope, renderFavoriteToggle, theme.colors.text.secondary]);
-
-    const dropdownItems = React.useMemo(() => {
-        const favoriteItems = showFavorites
-            ? launchPinnedFavoriteMachines.map((machine) => toDropdownItem(
-                machine,
-                favoritesSectionTitle,
-                true,
-                'desktop',
-            ))
-            : [];
-        const recentItems = showRecent
-            ? visibleRecentMachinesWithoutFavorites.map((machine) => toDropdownItem(
-                machine,
-                recentSectionTitle,
-                favoriteMachineIdSet.has(machine.id),
-                'clock',
-            ))
-            : [];
-        const allItems = bucketModel.buckets.filter((bucket) => bucket.id === 'all' || bucket.id === 'shared').flatMap((bucket) =>
-            bucket.machines.map((machine) => toDropdownItem(machine, bucket.id === 'shared'
-                ? t('machines.destinations.shared', { team: bucket.custodian?.displayName || t('common.unknown') })
-                : allSectionTitle, favoriteMachineIdSet.has(machine.id), 'desktop')));
-
-        const machineItems = favoriteGroupPlacement === 'beforeRecent'
-            ? [...favoriteItems, ...recentItems, ...allItems]
-            : [...recentItems, ...favoriteItems, ...allItems];
-        // Presets read as New Session's "New machine" group: their mark (else the stack glyph) and where they run.
-        return [...machineItems, ...managedOffers.map(offer => ({
-            id: offer.id,
-            title: offer.title,
-            subtitle: [offer.subtitle, offer.unavailableText].filter(Boolean).join(' ') || undefined,
-            category: t('newSession.managedMachine.title'),
-            icon: offer.mark ?? <Icon name="stack" size={20} color={theme.colors.text.secondary} />,
-            disabled: offer.disabled,
-        }))];
-    }, [
-        allSectionTitle,
-        bucketModel.buckets,
-        favoriteGroupPlacement,
-        favoriteMachineIdSet,
-        favoritesSectionTitle,
-        launchPinnedFavoriteMachines,
-        managedOffers,
-        recentSectionTitle,
-        showFavorites,
-        showRecent,
-        theme.colors.text.secondary,
-        toDropdownItem,
-        visibleAllMachines,
-        visibleRecentMachinesWithoutFavorites,
-    ]);
-
-    if (presentation === 'dropdown') {
-        const dropdown = (
-                <DropdownMenu
-                    open={dropdownOpen}
-                    onOpenChange={changeDropdownOpen}
-                    items={dropdownClearOption
-                        ? [{ id: CLEAR_OPTION_ID, title: dropdownClearOption.title, subtitle: dropdownClearOption.subtitle }, ...dropdownItems]
-                        : dropdownItems}
-                    selectedId={selectedMachineId ?? selectedManagedOffer?.id ?? (dropdownClearOption?.current ? CLEAR_OPTION_ID : null)}
-                    onSelect={(machineId) => {
-                        if (dropdownClearOption && machineId === CLEAR_OPTION_ID) {
-                            dropdownClearOption.onSelect();
-                            return;
-                        }
-                        const managed = managedOffers.find(offer => offer.id === machineId);
-                        if (managed) {
-                            if (!managed.disabled) managed.onSelect?.();
-                            return;
-                        }
-                        const machine = machineById.get(machineId);
-                        if (!machine) return;
-                        const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine, scope);
-                        if (!eligibility.eligible) return;
-                        if (disableOfflineMachines && !eligibility.managedWake && !resolveMachinePickerPresence(machine, undefined, scope).selectable) return;
-                        onSelect(machine);
-                    }}
-                    rowKind="item"
-                    variant="selectable"
-                    search={showSearch}
-                    searchPlaceholder={searchPlaceholder}
-                    emptyLabel={noItemsMessage}
-                    showCategoryTitles={showFavorites || showRecent || managedOffers.length > 0 || visibleAllMachines.some((machine) => machine.isShared)}
-                    matchTriggerWidth
-                    connectToTrigger
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: dropdownTitle ?? t('newSession.selectMachineTitle'),
-                        subtitle: dropdownSubtitle ?? (selectedMachine
-                            ? machineName(selectedMachine)
-                            : selectedManagedOffer?.title ?? dropdownClearOption?.title ?? t('newSession.selectMachineDescription')),
-                        showSelectedDetail: false,
-                        showSelectedSubtitle: false,
-                        icon: (
-                            <Icon
-                                name="desktop"
-                                size={24}
-                                color={theme.colors.text.secondary}
-                            />
-                        ),
-                        itemProps: { testID: dropdownTestID },
-                    }}
-                />
-        );
-        return dropdownInCallerSection ? dropdown : <ItemGroup title="">{dropdown}</ItemGroup>;
-    }
-
-    return <MachineSelectorList
-        purpose={purpose} workerPlacement={workerPlacement} resolveMachinePlacementFacts={resolveMachinePlacementFacts}
-        machines={machines} selectedMachine={selectedMachine} recentMachines={recentMachines} favoriteMachines={favoriteMachines}
-        managedMachines={managedMachines} managedPlacementPreset={managedPlacementPreset}
-        onSelect={onSelect} onToggleFavorite={onToggleFavorite} showFavorites={showFavorites} showRecent={showRecent}
-        showSearch={showSearch} showCliGlyphs={showCliGlyphs} autoDetectCliGlyphs={autoDetectCliGlyphs} serverId={serverId}
-        favoriteGroupPlacement={favoriteGroupPlacement} testIdPrefix={testIdPrefix} disableOfflineMachines={disableOfflineMachines}
-        currentUiContextCommandScope={currentUiContextCommandScope}
-        currentUiContextForegroundOverlay={currentUiContextForegroundOverlay}
-        includeSelectedUnavailableMachine={includeSelectedUnavailableMachine} searchPlaceholder={searchPlaceholder}
-        recentSectionTitle={recentSectionTitle} favoritesSectionTitle={favoritesSectionTitle} allSectionTitle={allSectionTitle}
-        noItemsMessage={noItemsMessage}
-    />;
-}
-
-function MachineSelectorList(props: MachineSelectorProps) {
-    const { theme } = useUnistyles();
-    const [offlineOpen, setOfflineOpen] = React.useState(false);
+    const presentation = props.presentation ?? 'list';
+    const purpose = props.purpose ?? 'session';
     const groupServerId = props.serverId ?? getAppliedActiveServerSnapshot().serverId;
     const { binding } = useServerCredentialAccountScopeBinding(groupServerId);
     const scope = binding?.isCurrent() ? binding.scope : null;
+    const [dropdownOpen, setDropdownOpen] = React.useState(false);
+    const [offlineOpen, setOfflineOpen] = React.useState(false);
+    const changeDropdownOpen = React.useCallback((open: boolean) => {
+        setDropdownOpen(open);
+        props.onDropdownOpenChange?.(open);
+    }, [props.onDropdownOpenChange]);
+    const requestClose = React.useCallback(() => {
+        if (presentation === 'dropdown') changeDropdownOpen(false);
+    }, [changeDropdownOpen, presentation]);
+    const managedOffers = supportsManagedMachineSelection(purpose)
+        ? props.managedMachines ?? EMPTY_MANAGED_MACHINES : EMPTY_MANAGED_MACHINES;
+    const placementPreset = props.managedPlacementPreset;
+    const selectedManagedOffer = placementPreset ? managedOffers.find(offer =>
+        offer.homeId === placementPreset.homeId && offer.presetId === placementPreset.presetId) : undefined;
     const groups = React.useMemo(() => [{
         serverId: groupServerId, serverName: '', loading: false, signedOut: false,
-        machines: props.machines.map((machine) => ({ ...machine, serverId: groupServerId, serverName: '' })),
+        machines: props.machines.map(machine => buildServerScopedMachine(machine, { serverId: groupServerId, serverName: '' })),
     }], [groupServerId, props.machines]);
+    const allSectionTitle = props.allSectionTitle ?? (props.machines.some(machine => machine.isShared)
+        ? t('machines.destinations.yours') : t('newSession.machinePicker.allTitle'));
     const sectionTitles = React.useMemo(() => ({
-        recent: props.recentSectionTitle, favorites: props.favoritesSectionTitle, all: props.allSectionTitle,
-    }), [props.recentSectionTitle, props.favoritesSectionTitle, props.allSectionTitle]);
+        recent: props.recentSectionTitle ?? t('newSession.machinePicker.recentTitle'),
+        favorites: props.favoritesSectionTitle ?? t('newSession.machinePicker.favoritesTitle'),
+        all: allSectionTitle,
+    }), [props.recentSectionTitle, props.favoritesSectionTitle, allSectionTitle]);
     const resolveAvailability = React.useCallback((machine: Machine) => {
         const presence = resolveMachinePickerPresence(machine, undefined, scope);
         return { selectable: presence.selectable || (props.disableOfflineMachines === false && presence.status === 'offline') };
     }, [props.disableOfflineMachines, scope]);
     const selectMachine = React.useCallback((machine: Machine) => {
-        const original = props.machines.find((candidate) => candidate.id === machine.id);
-        if (original) props.onSelect(original);
-    }, [props.machines, props.onSelect]);
+        const original = props.machines.find(candidate => candidate.id === machine.id);
+        if (original) {
+            props.onSelect(original);
+            requestClose();
+        }
+    }, [props.machines, props.onSelect, requestClose]);
     const toggleFavorite = React.useCallback((machine: Machine) => {
-        const original = props.machines.find((candidate) => candidate.id === machine.id);
+        const original = props.machines.find(candidate => candidate.id === machine.id);
         if (original) props.onToggleFavorite?.(original);
     }, [props.machines, props.onToggleFavorite]);
+    const describeMachine = props.describeMachine;
+    const resolveMachinePresentation = React.useCallback((machine: Machine) => ({
+        subtitle: describeMachine?.(machine) ?? undefined,
+    }), [describeMachine]);
     const model = useMachineSelectionListModel({
-        purpose: props.purpose ?? 'session', workerPlacement: props.workerPlacement, resolveMachinePlacementFacts: props.resolveMachinePlacementFacts,
+        purpose, workerPlacement: props.workerPlacement, resolveMachinePlacementFacts: props.resolveMachinePlacementFacts,
         groups, selectedMachine: props.selectedMachine, selectedServerId: groupServerId,
-        managedMachines: props.managedMachines, managedPlacementPreset: props.managedPlacementPreset,
+        managedMachines: managedOffers, managedPlacementPreset: props.managedPlacementPreset,
         recentMachines: props.recentMachines ?? EMPTY_MACHINES, favoriteMachines: props.favoriteMachines ?? EMPTY_MACHINES,
         onSelectMachine: selectMachine, onSelectScopedMachine: selectMachine,
         onToggleFavorite: props.onToggleFavorite ? toggleFavorite : undefined,
         showFavorites: props.showFavorites ?? true, showRecent: props.showRecent ?? true, showSearch: props.showSearch ?? true,
-        showCliGlyphs: props.showCliGlyphs ?? true, autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
+        showCliGlyphs: presentation === 'list' && (props.showCliGlyphs ?? true), autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
         serverId: props.serverId, favoriteGroupPlacement: props.favoriteGroupPlacement, testIdPrefix: props.testIdPrefix,
         disableOfflineMachines: props.disableOfflineMachines,
         resolveMachineAvailability: props.disableOfflineMachines === false ? resolveAvailability : undefined,
+        resolveMachinePresentation: describeMachine ? resolveMachinePresentation : undefined,
         includeSelectedUnavailableMachineId: props.includeSelectedUnavailableMachine ? props.selectedMachine?.id : null,
-        searchPlaceholder: props.searchPlaceholder, emptyStateLabel: props.noItemsMessage, sectionTitles,
+        searchPlaceholder: props.searchPlaceholder ?? t('newSession.machinePicker.searchPlaceholder'),
+        emptyStateLabel: props.noItemsMessage ?? t('newSession.machinePicker.emptyMessage'), sectionTitles,
     });
+    const clearOption = props.dropdownClearOption;
+    const sections = React.useMemo<readonly SelectionListSectionDescriptor[]>(() => clearOption ? [{
+        kind: 'static' as const, id: 'clear', options: [{
+            id: CLEAR_OPTION_ID, label: clearOption.title, subtitle: clearOption.subtitle,
+            onSelect: () => { clearOption.onSelect(); requestClose(); },
+        }],
+    }, ...model.rootStep.sections] : model.rootStep.sections, [clearOption, model.rootStep.sections, requestClose]);
     const rootStep = React.useMemo(() => {
         const offlineIds = new Set(model.offlineOnlyMachineIdsByServerId[groupServerId] ?? []);
-        return { ...model.rootStep, sections: foldOfflineWorkers(model.rootStep.sections,
-            option => option.disabled === true && offlineIds.has(option.id), {
+        return { ...model.rootStep, sections: foldOfflineWorkers(sections,
+            option => offlineIds.has(option.id), {
                 label: count => t('projectWorkers.offlineMachines', { count }),
                 detail: t('projectWorkers.offlineWorkersDetail'),
                 open: offlineOpen,
@@ -435,9 +182,46 @@ function MachineSelectorList(props: MachineSelectorProps) {
                 icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
                 accessory: <Icon name={offlineOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
             }) };
-    }, [groupServerId, model.rootStep, model.offlineOnlyMachineIdsByServerId, offlineOpen, theme]);
-    return <SelectionList testID={props.testIdPrefix ? `${props.testIdPrefix}-list` : 'machine-selector-list'}
+    }, [groupServerId, model.rootStep, model.offlineOnlyMachineIdsByServerId, offlineOpen, sections, theme]);
+    const closeManagedSelection = React.useCallback((id: string) => {
+        if (managedOffers.some(offer => offer.id === id)) requestClose();
+    }, [managedOffers, requestClose]);
+    const selectedOptionId = model.selectedOptionId ?? (clearOption?.current ? CLEAR_OPTION_ID : null);
+    const renderList = (maxHeight?: number) => <SelectionList
+        testID={props.testIdPrefix ? `${props.testIdPrefix}-list` : 'machine-selector-list'}
         currentUiContextCommandScope={props.currentUiContextCommandScope}
         currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
-        rootStep={rootStep} selectedOptionId={model.selectedOptionId} onSelect={() => {}} onRequestClose={() => {}} />;
+        maxHeight={maxHeight} rootStep={rootStep} selectedOptionId={selectedOptionId}
+        onSelect={closeManagedSelection} onRequestClose={requestClose} />;
+    // Dropdown trigger metadata and legacy selection callbacks consume the same options as its rendered list.
+    const dropdownOptions = React.useMemo(() => sections.flatMap(section => section.kind === 'static'
+        ? section.options.map(option => ({ option, category: section.title })) : []), [sections]);
+    const dropdownItems: readonly DropdownMenuItem[] = React.useMemo(() => dropdownOptions.map(({ option, category }) => ({
+        id: option.id, testID: option.testID, title: option.label, subtitle: option.subtitle, disabled: option.disabled, category,
+    })), [dropdownOptions]);
+    const machineNames = React.useMemo(() => resolveMachineDisplayNames(props.machines), [props.machines]);
+    if (presentation !== 'dropdown') return renderList();
+    const dropdown = <DropdownMenu
+        open={dropdownOpen} onOpenChange={changeDropdownOpen}
+        renderContent={({ maxHeight }) => renderList(maxHeight)}
+        items={dropdownItems} selectedId={selectedOptionId}
+        onSelect={id => {
+            const option = dropdownOptions.find(candidate => candidate.option.id === id)?.option;
+            if (!option || option.disabled) return;
+            option.onSelect?.();
+            closeManagedSelection(id);
+        }}
+        rowKind="item" variant="selectable" search={false}
+        emptyLabel={props.noItemsMessage ?? t('newSession.machinePicker.emptyMessage')}
+        matchTriggerWidth connectToTrigger popoverBoundaryRef={props.popoverBoundaryRef}
+        itemTrigger={{
+            title: props.dropdownTitle ?? t('newSession.selectMachineTitle'),
+            subtitle: props.dropdownSubtitle ?? (props.selectedMachine
+                ? machineNames.get(props.selectedMachine.id) ?? getMachineDisplayName(props.selectedMachine) ?? props.selectedMachine.id
+                : selectedManagedOffer?.title ?? clearOption?.title ?? t('newSession.selectMachineDescription')),
+            showSelectedDetail: false, showSelectedSubtitle: false,
+            icon: <Icon name="desktop" size={24} color={theme.colors.text.secondary} />,
+            itemProps: { testID: props.dropdownTestID },
+        }} />;
+    return props.dropdownInCallerSection ? dropdown : <ItemGroup title="">{dropdown}</ItemGroup>;
 }

@@ -54,7 +54,7 @@ function normalizeServerIds(ids: ReadonlyArray<string>): string[] {
     return next;
 }
 
-function buildServerScopedMachine(machine: Machine, params: Readonly<{ serverId: string; serverName: string }>): ServerScopedMachine {
+export function buildServerScopedMachine(machine: Machine, params: Readonly<{ serverId: string; serverName: string }>): ServerScopedMachine {
     const row = {
         ...machine,
         serverId: params.serverId,
@@ -138,7 +138,7 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
         const nextRows = new Map<string, Map<string, Readonly<{ source: Machine; row: ServerScopedMachine }>>>();
         const groups = allowedServerIds.map((serverId) => {
             const profile = serverProfiles.get(serverId);
-            const serverName = resolveHomeDisplayLabel(profile, serverId);
+            const serverName = resolveHomeDisplayLabel(profile, serverId, activeServerId);
             const isActive = Boolean(activeServerId) && areServerProfileIdentifiersEquivalent(serverId, activeServerId);
             const inventory = resolveServerScopedMachineInventory({
                 serverId,

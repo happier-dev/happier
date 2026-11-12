@@ -196,13 +196,13 @@ describe('buildMachineDestinationModel', () => {
         expect(model.soleSelectableDestination).toBeNull();
         expect(resolveMachineDestinationPurposeEligibility('session', undefined, shared)).toEqual({ eligible: false, reason: 'content_unavailable' });
     });
-    it('does not let worker admission widen an offline shared Machine into a selectable target', () => {
-        const shared = machine('shared', { active: false, activeAt: 0, isShared: true, access: {
+    it.each([false, true])('does not let worker admission select an offline Machine (shared=%s)', isShared => {
+        const candidate = machine('offline', { active: false, activeAt: 0, isShared, access: {
             custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
         } });
-        expect(resolveMachineDestinationPurposeEligibility('finite', {
-            ownership: 'shared', worker: eligibleWorker('shared'),
-        }, shared)).toEqual({ eligible: false, reason: 'machine_unavailable' });
+        expect(buildMachineDestinationModel({ purpose: 'finite', groups: [group({ machines: [candidate] })],
+            resolveMachinePlacementFacts: () => ({ ownership: isShared ? 'shared' : 'owned', worker: eligibleWorker(candidate.id) }),
+        }).soleSelectableDestination).toBeNull();
     });
 
     it.each(['session', 'finite', 'service-start', 'workflow', 'trigger', 'background', 'boards'] as const)('admits a ready shared exact target for %s', (purpose) => {
@@ -231,14 +231,16 @@ describe('buildMachineDestinationModel', () => {
         expect(buildMachineDestinationModel({ purpose: 'session', groups: [group({ machines: [shared] })],
             managedMachineProjection: { state: 'unavailable', rowCount: 0 },
             resolveMachinePlacementFacts: () => facts }).soleSelectableDestination?.machine).toBe(shared);
-        expect(resolveMachineDestinationPurposeEligibility('session', facts, { ...shared, managedInputRuntime: undefined }))
-            .toEqual({ eligible: false, reason: 'machine_unavailable' });
+        const selectable = (candidate: Machine) => buildMachineDestinationModel({ purpose: 'session',
+            groups: [group({ machines: [candidate] })], managedMachineProjection: { state: 'unavailable', rowCount: 0 },
+            resolveMachinePlacementFacts: () => facts }).soleSelectableDestination;
+        expect(selectable({ ...shared, managedInputRuntime: undefined })).toBeNull();
         for (const blocked of [
             { ...shared, metadata: null },
             { ...shared, access: { ...shared.access!, accessState: 'key_pending' as const } },
             { ...shared, revokedAt: 1 },
             { ...shared, replacedByMachineId: 'replacement' },
-        ]) expect(resolveMachineDestinationPurposeEligibility('session', facts, blocked).eligible).toBe(false);
+        ]) expect(selectable(blocked)).toBeNull();
     });
 
     it.each(['key_pending', 'refused'] as const)('does not turn online shared %s into a usable destination', (accessState) => {

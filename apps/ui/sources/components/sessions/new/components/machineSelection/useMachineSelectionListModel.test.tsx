@@ -7,7 +7,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { storage } from '@/sync/domains/state/storageStore';
-import { buildMachineDestinationModel as buildScopedMachineDestinationModel, resolveMachineDestinationPurposeEligibility } from './buildMachineDestinationModel';
+import { buildMachineDestinationModel as buildScopedMachineDestinationModel } from './buildMachineDestinationModel';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine, ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { ManagedMachineSelectionOffer } from './managedMachineSelection';
@@ -286,11 +286,11 @@ describe('useMachineSelectionListModel', () => {
             act(() => option().onSelect?.());
             expect(handlers.selectSpy).not.toHaveBeenCalled();
             expect(rendered.getCurrent().rootStep.sections.filter(section => section.id === 'recent' || section.id === 'favorites')).toEqual([]);
-            if (placement === 'shared') {
-                expect(resolveMachineDestinationPurposeEligibility('finite', { ownership: 'shared', worker: {
+            expect(buildMachineDestinationModel({ purpose: 'finite', groups: fixture.groups,
+                resolveMachinePlacementFacts: () => ({ ownership: placement === 'shared' ? 'shared' : 'owned', worker: {
                     eligible: true, candidate: { serverId: 'server-a', machineId: machine.id }, load: { kind: 'unknown' }, explanation: 'load_unknown',
-                } }, machine, fixtureScope)).toEqual({ eligible: false, reason: 'machine_unavailable' });
-            }
+                } }),
+            }).soleSelectableDestination).toBeNull();
             await act(async () => recordMachineRequestSucceeded({ ...fixtureScope, machineId: machine.id, observedAtMs: 3 }));
             expect(option().disabled).not.toBe(true);
             expect(destinations().soleSelectableDestination?.machine.id).toBe(machine.id);

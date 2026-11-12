@@ -71,11 +71,9 @@ export function getPermissionModesForAgentType(agentType: AgentType): readonly P
     return getAgentPermissionModeCore(agentType) ? PERMISSION_MODE_OPTIONS : [];
 }
 
-export function getPermissionModeOptionsForAgentType(agentType: AgentType, presentation: 'menu' | 'settings' = 'menu'): readonly PermissionModeOption[] {
+export function getPermissionModeOptionsForAgentType(agentType: AgentType, _presentation: 'menu' | 'settings' = 'menu'): readonly PermissionModeOption[] {
     if (!getAgentPermissionModeCore(agentType)) return [];
-    const label = (mode: PermissionMode) => presentation === 'settings'
-        ? t(`settingsSession.permissions.modeLabels.${PERMISSION_MODE_KEY_SEGMENT[mode]}` as TranslationKey)
-        : getPermissionModeLabelForAgentType(agentType, mode);
+    const label = (mode: PermissionMode) => getPermissionModeLabelForAgentType(agentType, mode);
 
     return [
         { value: 'default', label: label('default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield' },
