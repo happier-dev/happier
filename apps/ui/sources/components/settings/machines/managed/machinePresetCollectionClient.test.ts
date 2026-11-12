@@ -1,27 +1,29 @@
 import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ManagedMachinePresetV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import type { MachinePresetEditDraft } from './machinePresetEditDraft';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+    renderCustomModals: true,
+    settleTransientConfirmations: false,
+}).module);
 // Boundary mocks must be registered first; cold module transformation is not this contract.
 const { useMachinePresets, useMachinePresetDetail } = await import('./useMachinePresets');
 const { createMachinePresetCollectionClient } = await import('./machinePresetCollectionClient');
-const { useActionApprovalContinuation } = await import('@/components/approvals/useActionApprovalContinuation');
+const { ModalProvider } = await import('@/modal');
 beforeEach(async () => {
     await harness.reset();
     (await import('@/sync/ops/actions/scopedHomeActionExecutor')).resetScopedHomeActionExecutorsForTests();
@@ -747,7 +749,7 @@ describe('preset collection and history through Actions', () => {
             await waitForHomeGovernance(() => expect(hook.getCurrent().state?.value).toBeNull());
         } finally { await hook.unmount(); }
     });
-    it('refreshes ordinary history reads invalidated after an approved preset read settles', async () => {
+    it('starts ordinary history reads only after their inline review is confirmed', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
         let releaseHistory!: () => void;
@@ -755,30 +757,25 @@ describe('preset collection and history through Actions', () => {
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
         harness.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [resource] }, respondAfter: historyGate });
         await harness.requireUiApproval(serverId, 'machines.presets.get');
-        const rendered = await renderHook(() => {
-            const registration = React.useRef<(approval: ActionApprovalRegistration) => void>(() => {});
-            const onApprovalPending = React.useCallback((approval: ActionApprovalRegistration) => registration.current(approval), []);
-            const detail = useMachinePresetDetail(serverId, 'preset', onApprovalPending);
-            const approval = useActionApprovalContinuation({ serverId, scopeKey: `${serverId}:owner:history`, onExecuted: () => {} });
-            registration.current = approval.requestApproval;
-            return { detail, approval };
-        });
+        const modalHost = await renderScreen(React.createElement(ModalProvider));
+        const rendered = await renderHook(() => useMachinePresetDetail(serverId, 'preset'));
         try {
-            await waitForHomeGovernance(() => expect(rendered.getCurrent().approval.approvalStatus).toBe('open'));
-            const approvalId = rendered.getCurrent().approval.approvalId;
-            if (!approvalId) throw new Error('Expected the preset read approval');
-            await expect(decideApprovalAsInbox(serverId, approvalId, 'approve')).resolves.toMatchObject({ ok: true });
+            await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            expect(harness.requestsFor('/v1/machines/presets/get')).toEqual([]);
+            await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1));
             await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/managed/actions/list')).toHaveLength(2));
-            await act(async () => publishHomeAccountChange(serverId));
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
-            expect(harness.artifacts(serverId).list()).toHaveLength(2);
-            expect(rendered.getCurrent().approval.approvalId).not.toBe(approvalId);
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            releaseHistory();
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().state).toMatchObject({ loading: false, error: null }));
         } finally {
             releaseHistory();
             await rendered.unmount();
+            await modalHost.unmount();
         }
     });
-    it.each(['collection', 'detail'] as const)('keeps the %s read approval through Home wakes while another Home refreshes, then settles mixed-change rejection', async kind => {
+    it.each(['collection', 'detail'] as const)('keeps the %s result while a later inline review is canceled', async kind => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
         const otherId = await harness.addHome({ name: 'Other', serverUrl: 'https://other-history.example',
@@ -789,46 +786,39 @@ describe('preset collection and history through Actions', () => {
         const otherPreset = { ...preset, id: 'other', homeId: 'srv_other_history' };
         harness.answer(otherId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [otherPreset] } });
         await harness.requireUiApproval(serverId, kind === 'collection' ? 'machines.presets.list' : 'machines.presets.get');
+        const modalHost = await renderScreen(React.createElement(ModalProvider));
         const rendered = await renderHook(() => {
-            const registration = React.useRef<(approval: ActionApprovalRegistration) => void>(() => {});
-            const onApprovalPending = React.useCallback((approval: ActionApprovalRegistration) => registration.current(approval), []);
-            const collection = useMachinePresets(kind === 'collection' ? [serverId, otherId] : [otherId], onApprovalPending);
-            const detail = useMachinePresetDetail(serverId, kind === 'detail' ? 'preset' : '', onApprovalPending);
-            const approval = useActionApprovalContinuation({ serverId, scopeKey: `${serverId}:owner:${kind}`, onExecuted: () => {} });
-            registration.current = approval.requestApproval;
-            return { collection, detail, approval };
+            const collection = useMachinePresets(kind === 'collection' ? [serverId, otherId] : [otherId]);
+            const detail = useMachinePresetDetail(serverId, kind === 'detail' ? 'preset' : '');
+            return { collection, detail };
         });
         const state = () => kind === 'collection' ? rendered.getCurrent().collection.statesByServerId[serverId] : rendered.getCurrent().detail.state;
-        await waitForHomeGovernance(() => expect(rendered.getCurrent().approval.approvalStatus).toBe('open'));
-        const approvalId = rendered.getCurrent().approval.approvalId;
-        if (!approvalId) throw new Error('Expected the read approval');
-        await act(async () => publishHomeAccountChange(serverId));
-        await flushHookEffects();
-        expect(rendered.getCurrent().approval.approvalId).toBe(approvalId);
-        expect(harness.artifacts(serverId).list()).toHaveLength(1);
-        const otherReads = () => harness.requestsFor('/v1/machines/presets/list').filter(request => request.serverId === otherId);
-        const readsBefore = otherReads().length;
-        await act(async () => publishHomeAccountChange(otherId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
-        await waitForHomeGovernance(() => expect(otherReads()).toHaveLength(readsBefore + 1));
-        expect(rendered.getCurrent().approval.approvalId).toBe(approvalId);
-        expect(harness.artifacts(serverId).list()).toHaveLength(1);
-        await expect(decideApprovalAsInbox(serverId, approvalId, 'approve')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(state()).toMatchObject({ loading: false, error: null }));
-        const retained = state()?.value;
-        expect(retained).toEqual(kind === 'collection' ? [preset] : { preset, machines: [resource] });
-        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['artifact', 'account'] }));
-        await waitForHomeGovernance(() => expect(rendered.getCurrent().approval.approvalStatus).toBe('open'));
-        const rejectedId = rendered.getCurrent().approval.approvalId;
-        if (!rejectedId || rejectedId === approvalId) throw new Error('Expected the fresh read approval');
-        await expect(decideApprovalAsInbox(serverId, rejectedId, 'reject')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(state()).toMatchObject({ loading: false, error: 'approval_rejected' }));
-        expect(state()?.value).toBe(retained);
-        await rendered.unmount();
+        try {
+            await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+            await waitForHomeGovernance(() => expect(state()).toMatchObject({ loading: false, error: null }));
+            const retained = state()?.value;
+            expect(retained).toEqual(kind === 'collection' ? [preset] : { preset, machines: [resource] });
+            const otherReads = () => harness.requestsFor('/v1/machines/presets/list').filter(request => request.serverId === otherId);
+            const readsBefore = otherReads().length;
+            await act(async () => publishHomeAccountChange(otherId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(otherReads()).toHaveLength(readsBefore + 1));
+            await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+            await waitForHomeGovernance(() => expect(state()).toMatchObject({ loading: false, error: 'approval_canceled' }));
+            expect(state()?.value).toBe(retained);
+        } finally {
+            await rendered.unmount();
+            await modalHost.unmount();
+        }
     });
     it.each([
         { kind: 'conflict', currentRevision: 5 },
         { kind: 'refused', code: 'permission_denied' },
-    ] satisfies PresetMutationResultV1[])('retains the typed $kind result of an approved preset mutation', async result => {
+    ] satisfies PresetMutationResultV1[])('retains the typed $kind result after a preset mutation inline review', async result => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
@@ -839,26 +829,24 @@ describe('preset collection and history through Actions', () => {
                 patch: { name: 'Updated' } });
         expect(direct).toEqual({ kind: 'succeeded', value: result });
         await harness.requireUiApproval(serverId, 'machines.presets.update');
-        const rendered = await renderHook(() => {
-            const registration = React.useRef<(approval: ActionApprovalRegistration) => void>(() => {});
-            const onApprovalPending = React.useCallback((approval: ActionApprovalRegistration) => registration.current(approval), []);
-            const detail = useMachinePresetDetail(serverId, 'preset', onApprovalPending);
-            const approval = useActionApprovalContinuation({ serverId, scopeKey: `${serverId}:owner:preset`, onExecuted: detail.refresh });
-            registration.current = approval.requestApproval;
-            return { detail, approval };
-        });
+        const modalHost = await renderScreen(React.createElement(ModalProvider));
+        const rendered = await renderHook(() => ({ detail: useMachinePresetDetail(serverId, 'preset') }));
         await waitForHomeGovernance(() => expect(rendered.getCurrent().detail.state.value?.preset.id).toBe('preset'));
-        await act(async () => { expect(await rendered.getCurrent().detail.update({ name: 'Updated' })).toMatchObject({ kind: 'approval_pending' }); });
-        await waitForHomeGovernance(() => expect(rendered.getCurrent().approval.approvalStatus).toBe('open'));
+        let mutation: Promise<unknown> | null = null;
+        await act(async () => { mutation = rendered.getCurrent().detail.update({ name: 'Updated' }); });
+        await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1);
+        expect(harness.artifacts(serverId).list()).toEqual([]);
         if (result.kind === 'refused') harness.answer(serverId, '/v1/machines/presets/get', { status: 403, body: result });
-        await expect(decideApprovalAsInbox(serverId, harness.artifacts(serverId).list()[0]!.id, 'approve'))
-            .resolves.toMatchObject({ ok: true });
+        await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        if (!mutation) throw new Error('Expected preset mutation');
+        await expect(mutation).resolves.toEqual({ kind: 'succeeded', value: result });
         await waitForHomeGovernance(() => expect(rendered.getCurrent().detail.mutationResult).toEqual(result));
         expect(rendered.getCurrent().detail.mutationResult).toEqual(result);
         if (result.kind === 'refused') expect(rendered.getCurrent().detail.state.value).toBeNull();
         else expect(rendered.getCurrent().detail.state.value?.preset.revision).toBe(3);
         await rendered.unmount();
+        await modalHost.unmount();
     });
 
     it('retains setup-only Presets in the Machines inventory without a controller catalog or managed-resource answer', async () => {
@@ -994,33 +982,44 @@ describe('preset collection and history through Actions', () => {
         expect(harness.requests.some(request => request.path.includes('/acquire'))).toBe(false);
     });
 
-    it('keeps archive/restore at the approval owner and never mutates the preset or resources while approval is pending', async () => {
+    it('keeps archive at the action owner until its inline review is approved', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example', serverIdentityId: 'srv_history', accountId: 'owner' });
+        const archived = { ...preset, archivedAt: 42 };
+        harness.answer(serverId, '/v1/machines/presets/archive', { body: { kind: 'saved', preset: archived } });
         await harness.requireUiApproval(serverId, 'machines.presets.archive');
         const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_history');
-        const result = await client.execute('machines.presets.archive', { homeId: 'srv_history', id: 'preset', expectedRevision: 3 });
-        expect(result).toMatchObject({ kind: 'approval_pending', approval: { artifactId: expect.any(String) } });
+        const modalHost = await renderScreen(React.createElement(ModalProvider));
+        const result = client.execute('machines.presets.archive', { homeId: 'srv_history', id: 'preset', expectedRevision: 3 });
+        await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(harness.requestsFor('/v1/machines/presets/archive')).toEqual([]);
+        expect(harness.artifacts(serverId).list()).toEqual([]);
         expect(harness.requests.some(request => request.path.includes('/managed/'))).toBe(false);
+        await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await expect(result).resolves.toEqual({ kind: 'succeeded', value: { kind: 'saved', preset: archived } });
+        expect(harness.requestsFor('/v1/machines/presets/archive')).toHaveLength(1);
+        await modalHost.unmount();
     });
 
-    it('settles a rejected archive approval visibly while retaining the acknowledged preset and its history', async () => {
+    it('leaves the acknowledged preset and history intact when its archive review is canceled', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example', serverIdentityId: 'srv_history', accountId: 'owner' });
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...preset, archivedAt: undefined } } });
         harness.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [resource] } });
         await harness.requireUiApproval(serverId, 'machines.presets.archive');
-        const approvals: ActionApprovalRegistration[] = [];
-        const rendered = await renderHook(() => useMachinePresetDetail(serverId, 'preset', registration => approvals.push(registration)));
+        const modalHost = await renderScreen(React.createElement(ModalProvider));
+        const rendered = await renderHook(() => useMachinePresetDetail(serverId, 'preset'));
         await waitForHomeGovernance(() => expect(rendered.getCurrent().state.value?.machines).toHaveLength(1));
-        await act(async () => { expect(await rendered.getCurrent().archiveOrRestore()).toMatchObject({ kind: 'approval_pending' }); });
-        const registration = approvals[0];
-        if (!registration || typeof registration === 'string') throw new Error('Expected the real typed Action approval continuation');
-        // Drive the published terminal callback; the approval Artifact reader owns when it is delivered.
-        await act(async () => registration.onTerminal?.('rejected'));
-        expect(rendered.getCurrent().state.error).toBe('approval_rejected');
+        let archive: Promise<unknown> | null = null;
+        await act(async () => { archive = rendered.getCurrent().archiveOrRestore(); });
+        await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+        await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+        if (!archive) throw new Error('Expected archive mutation');
+        await expect(archive).resolves.toEqual({ kind: 'failed', code: 'approval_canceled' });
+        expect(rendered.getCurrent().state.error).toBeNull();
         expect(rendered.getCurrent().state.value?.preset.archivedAt).toBeUndefined();
         expect(rendered.getCurrent().history[0]?.managedId).toBe('resource');
         expect(harness.requestsFor('/v1/machines/presets/archive')).toEqual([]);
         await rendered.unmount();
+        await modalHost.unmount();
     });
 });

@@ -1,13 +1,15 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import type { MachinePoolMemberEligibilityV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -15,11 +17,12 @@ import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { SelectionListStep } from '@/components/ui/selectionList';
-import { Modal } from '@/modal';
+import { Modal, ModalProvider } from '@/modal';
 import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { publishMachineActivities } from '@/sync/domains/machines/machineActivity';
 import { resetMachinePoolSyncRuntimeForTests } from '@/sync/engine/machines/machinePoolSyncRuntime';
 import { FocusReturnProvider } from '@/keyboard/focusReturn';
 import { machinePoolSettingsRowTestId } from '../sections/MachinePoolsSection';
@@ -53,6 +56,9 @@ const boundaries = vi.hoisted(() => ({
 }));
 
 const artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+let accountSettingsBoundary: ReturnType<typeof createAccountSettingsHttpBoundary> | null = null;
+let accountSettings = settingsParse({});
+let accountSettingsVersion = 0;
 
 vi.mock('react-native', async () => {
     const {
@@ -126,7 +132,7 @@ vi.mock('expo-router', async () => {
 });
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ renderCustomModals: true, settleTransientConfirmations: false }).module;
 });
 vi.mock('@/platform/randomUUID', () => ({ randomUUID: () => boundaries.randomUUID() }));
 vi.mock('@react-navigation/native', async () => {
@@ -201,12 +207,30 @@ async function readInput(init?: RequestInit): Promise<Record<string, unknown>> {
     return JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
 }
 
+function requireUiApproval(actionIds: readonly ('machines.pools.create' | 'machines.pools.update' | 'machines.pools.delete')[]): void {
+    let actionsSettingsV1 = accountSettings.actionsSettingsV1;
+    for (const actionId of actionIds) {
+        actionsSettingsV1 = setActionApprovalOverride({
+            settings: actionsSettingsV1, actionId, surface: 'ui', approvalRequired: true,
+        });
+    }
+    accountSettings = settingsParse({ ...accountSettings, actionsSettingsV1 });
+    getStorage().getState().applySettingsLocal({ actionsSettingsV1: accountSettings.actionsSettingsV1 });
+    if (!accountSettingsBoundary) throw new Error('Expected Account Settings boundary');
+    accountSettingsBoundary.replaceAccountSettings('account-a', {
+        content: { t: 'plain', v: accountSettings },
+        version: ++accountSettingsVersion,
+    });
+}
+
 async function actionResponse(url: string, init?: RequestInit): Promise<Response> {
     const input = await readInput(init);
     const pathname = new URL(url).pathname;
     if (pathname === '/v1/auth/ping' || pathname === '/health') return Response.json({ ok: true });
     if (pathname === '/v1/features') return Response.json(featureResponse);
     if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+    const settingsResponse = accountSettingsBoundary?.handle(url, init);
+    if (settingsResponse) return settingsResponse;
     const artifactResponse = artifactStore.handle(pathname, init);
     if (artifactResponse) return artifactResponse;
     const action = pathname.split('/').at(-1) ?? '';
@@ -257,6 +281,14 @@ describe('MachinePoolEditorScreen', () => {
         invalidateAccountEncryptionModeCache();
         getStorage().setState(initialStorageState, true);
         boundaries.serverId = (await upsertAndActivateServer({ serverUrl: 'https://machine-pools-editor.test', name: 'Machine Pools Test' })).id;
+        accountSettings = settingsParse({});
+        accountSettingsVersion = 1;
+        accountSettingsBoundary = createAccountSettingsHttpBoundary({
+            serverUrl: 'https://machine-pools-editor.test',
+            initialAccounts: [{ accountId: 'account-a', snapshot: {
+                content: { t: 'plain', v: accountSettings }, version: accountSettingsVersion,
+            } }],
+        });
         boundaries.pools = null;
         boundaries.machines = [];
         boundaries.memberEligibility = null;
@@ -265,7 +297,7 @@ describe('MachinePoolEditorScreen', () => {
         boundaries.create.mockReset();
         boundaries.update.mockReset();
         boundaries.remove.mockReset();
-        vi.mocked(Modal.show).mockReset().mockReturnValue('machine-pool-member-picker');
+        vi.mocked(Modal.show).mockClear();
         vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
         boundaries.back.mockReset();
         boundaries.push.mockReset();
@@ -473,7 +505,7 @@ describe('MachinePoolEditorScreen', () => {
         { action: 'create' as const, actionId: 'machines.pools.create' as const },
         { action: 'update' as const, actionId: 'machines.pools.update' as const },
         { action: 'delete' as const, actionId: 'machines.pools.delete' as const },
-    ])('completes an approved $action through the pushed approval route at Machines Settings', async ({ action, actionId }) => {
+    ])('completes a policy-confirmed $action through inline UI review at Machines Settings', async ({ action, actionId }) => {
         const current = poolView(1);
         const next = {
             ...poolView(1),
@@ -485,14 +517,11 @@ describe('MachinePoolEditorScreen', () => {
         boundaries.update.mockResolvedValue(poolView(2));
         boundaries.remove.mockResolvedValue(undefined);
         await act(async () => publishBoundaryState());
-        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-            [actionId]: { approvalRequiredSurfaces: ['ui'] },
-        } }) });
+        requireUiApproval([actionId]);
         const [{ MachinePoolsSection }, { MachinePoolEditorScreen }] = await Promise.all([
             import('../sections/MachinePoolsSection'),
             import('./MachinePoolEditorScreen'),
         ]);
-        const ApprovalDetailPage = (await import('@/app/(app)/inbox/approvals/[id]')).default;
         const group = {
             serverId: boundaries.serverId,
             serverName: 'Machine Pools Test',
@@ -502,13 +531,13 @@ describe('MachinePoolEditorScreen', () => {
         const originTestId = machinePoolSettingsRowTestId(boundaries.serverId, current.pool.id);
         const nextTestId = machinePoolSettingsRowTestId(boundaries.serverId, next.pool.id);
         const screen = action === 'delete'
-            ? await renderScreen(<FocusReturnProvider><MachinePoolsSection groups={[group]} /></FocusReturnProvider>)
-            : await renderScreen(<FocusReturnProvider><MachinePoolEditorScreen serverId={boundaries.serverId} poolId={action === 'update' ? current.pool.id : undefined} /></FocusReturnProvider>);
+            ? await renderScreen(<ModalProvider><FocusReturnProvider><MachinePoolsSection groups={[group]} /></FocusReturnProvider></ModalProvider>)
+            : await renderScreen(<ModalProvider><FocusReturnProvider><MachinePoolEditorScreen serverId={boundaries.serverId} poolId={action === 'update' ? current.pool.id : undefined} /></FocusReturnProvider></ModalProvider>);
 
         if (action === 'delete') {
             await screen.pressByTestIdAsync(originTestId);
             await screen.update(
-                <FocusReturnProvider><MachinePoolEditorScreen serverId={boundaries.serverId} poolId={current.pool.id} /></FocusReturnProvider>,
+                <ModalProvider><FocusReturnProvider><MachinePoolEditorScreen serverId={boundaries.serverId} poolId={current.pool.id} /></FocusReturnProvider></ModalProvider>,
             );
         }
         if (action !== 'delete') {
@@ -522,24 +551,19 @@ describe('MachinePoolEditorScreen', () => {
         }
         if (action === 'delete') await chooseDelete(screen);
         else await screen.pressByTestIdAsync('settings.machinePools.editor.save');
-        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(artifactStore.list()).toEqual([]);
         expect(boundaries[action === 'create' ? 'create' : action === 'update' ? 'update' : 'remove']).not.toHaveBeenCalled();
-
-        await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
-        expect(boundaries.routeStack).toHaveLength(3);
-        await screen.update(<FocusReturnProvider><ApprovalDetailPage /></FocusReturnProvider>);
-        await vi.waitFor(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
-        await screen.pressByTestIdAsync('approvals.approve');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
 
         const actionBoundary = boundaries[action === 'create' ? 'create' : action === 'update' ? 'update' : 'remove'];
         await vi.waitFor(() => expect(actionBoundary).toHaveBeenCalledOnce());
         await vi.waitFor(() => expect(boundaries.routeStack).toEqual(['/settings/machines']));
-        expect(boundaries.dismissTo).toHaveBeenCalledWith('/settings/machines');
         expect(actionBoundary).toHaveBeenCalledTimes(1);
 
         if (action === 'delete') {
             await screen.update(
-                <FocusReturnProvider><MachinePoolsSection groups={[group]} /></FocusReturnProvider>,
+                <ModalProvider><FocusReturnProvider><MachinePoolsSection groups={[group]} /></FocusReturnProvider></ModalProvider>,
             );
             await vi.waitFor(() => expect(boundaries.pressableFocus).toHaveBeenCalledWith(nextTestId));
             expect(boundaries.pressableFocus).not.toHaveBeenCalledWith(originTestId);
@@ -556,69 +580,43 @@ describe('MachinePoolEditorScreen', () => {
         vi.unstubAllGlobals();
     });
 
-    it('preserves a proposed create and opens its pending approval without submitting another request', async () => {
-        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-            'machines.pools.create': { approvalRequiredSurfaces: ['ui'] },
-        } }) });
+    it('preserves a proposed create while its inline review is unresolved', async () => {
+        requireUiApproval(['machines.pools.create']);
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
-        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
+        const screen = await renderScreen(<ModalProvider><MachinePoolEditorScreen serverId={boundaries.serverId} /></ModalProvider>);
         await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Development'));
 
         await screen.pressByTestIdAsync('settings.machinePools.editor.save');
-        await vi.waitFor(() => expect(Object.keys(getStorage().getState().artifacts)).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+        expect(Object.keys(getStorage().getState().artifacts)).toEqual([]);
         expect(boundaries.create).not.toHaveBeenCalled();
         expect(boundaries.back).not.toHaveBeenCalled();
         expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development');
         expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
-        // The approval Artifact id is derived from the request identity (account-scoped), not drawn at random: open the one created.
-        const [approvalArtifactId] = Object.keys(getStorage().getState().artifacts);
-        await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
-        expect(boundaries.push).toHaveBeenCalledWith(
-            `/inbox/approvals/${approvalArtifactId}?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
-        );
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(false));
+        expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development');
+        expect(boundaries.create).not.toHaveBeenCalled();
     });
 
-    it('restores the form after its policy-required Delete approval is rejected', async () => {
-        // Request identities and artifact identities both use the OS randomness
-        // boundary. Mint distinct values without assuming their consumption order.
-        let nextUuid = 0;
-        boundaries.randomUUID.mockImplementation(() => `00000000-0000-4000-8000-${String(++nextUuid).padStart(12, '0')}`);
+    it('restores the form after its policy-required Delete inline review is rejected', async () => {
         boundaries.pools = [poolView(1)];
         await act(async () => publishBoundaryState());
-        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-            'machines.pools.delete': { approvalRequiredSurfaces: ['ui'] },
-            'machines.pools.update': { approvalRequiredSurfaces: ['ui'] },
-        } }) });
+        requireUiApproval(['machines.pools.delete']);
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
-        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={poolView(1).pool.id} />);
+        const screen = await renderScreen(<ModalProvider><MachinePoolEditorScreen serverId={boundaries.serverId} poolId={poolView(1).pool.id} /></ModalProvider>);
         await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Unsaved change'));
         await chooseDelete(screen);
-        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(1));
-        const rejectedApprovalId = artifactStore.list()[0]!.id;
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+        expect(artifactStore.list()).toEqual([]);
         expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
         expect(boundaries.remove).not.toHaveBeenCalled();
         expect(boundaries.back).not.toHaveBeenCalled();
-        await act(async () => {
-            const rejected = await createDefaultActionExecutor().execute('approval.request.decide', {
-                artifactId: rejectedApprovalId, decision: 'reject',
-            }, { serverId: boundaries.serverId, surface: 'ui' });
-            expect(rejected).toMatchObject({ ok: true, result: { status: 'rejected' } });
-        });
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(false));
         expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Unsaved change');
         expect(boundaries.remove).not.toHaveBeenCalled();
         expect(boundaries.back).not.toHaveBeenCalled();
-
-        // A rejected delete keeps the Pool. A later Save therefore returns focus to that Pool,
-        // not to the stale next-row target computed for the abandoned delete proposal.
-        await screen.pressByTestIdAsync('settings.machinePools.editor.save');
-        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(2));
-        const nextApprovalId = artifactStore.list().map((artifact) => artifact.id).find((id) => id !== rejectedApprovalId);
-        expect(nextApprovalId).toBeDefined();
-        await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
-        expect(boundaries.push).toHaveBeenLastCalledWith(
-            `/inbox/approvals/${nextApprovalId}?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
-        );
     });
 
     it('reuses the author-minted pool ID when a create response is lost and the user retries', async () => {
@@ -746,18 +744,17 @@ describe('MachinePoolEditorScreen', () => {
         );
     });
 
-    it('retires the editor with a pending Delete approval when the Home credential changes', async () => {
+    it('refuses a pending Delete inline review after the Home credential changes', async () => {
         boundaries.pools = [poolView(1)];
         await act(async () => publishBoundaryState());
-        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
-            actions: { 'machines.pools.delete': { approvalRequiredSurfaces: ['ui'] } },
-        }) });
+        requireUiApproval(['machines.pools.delete']);
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
         const screen = await renderScreen(
-            <MachinePoolEditorScreen serverId={boundaries.serverId} poolId={poolView(1).pool.id} />,
+            <ModalProvider><MachinePoolEditorScreen serverId={boundaries.serverId} poolId={poolView(1).pool.id} /></ModalProvider>,
         );
         await chooseDelete(screen);
-        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(artifactStore.list()).toEqual([]);
         expect(boundaries.remove).not.toHaveBeenCalled();
 
         const accountBCredentials = { token: createAccountTokenForTests('account-b') };
@@ -769,9 +766,14 @@ describe('MachinePoolEditorScreen', () => {
                 accountBCredentials,
             );
         });
-        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe(''));
-        await chooseDelete(screen);
+        // The visible review remains the person's pending decision. Confirming it after the
+        // captured Home Account retires cancels the stale invocation rather than dispatching it.
+        expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeNull());
+        expect(screen.findByTestId('settings.machinePools.editor.error')).toBeNull();
         expect(boundaries.remove).not.toHaveBeenCalled();
+        expect(boundaries.routeStack).toEqual(['/settings/machines']);
         await TokenStorage.removeCredentialsForServerUrl(
             'https://machine-pools-editor.test',
             { serverId: boundaries.serverId },
@@ -972,20 +974,26 @@ describe('MachinePoolEditorScreen', () => {
         const machine = createMachineFixture({ id: 'draft-member', active: true, activeAt: Date.now(), presenceProtocolVersion: 1, metadata: machineMetadata('Draft machine') });
         boundaries.machines = [machine];
         await publishBoundaryState();
-        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
-        observeMachinePresenceForTest({ serverId: boundaries.serverId, accountId: 'account-a' }, [machine.id]);
+        await publishMachineInventoryForTest({ serverId: boundaries.serverId, accountId: 'account-a' }, [machine]);
+        const projection = getStorage().getState().machineRecordsByServerId[boundaries.serverId]?.[machine.id];
+        if (!projection) throw new Error('Expected published Machine projection');
+        await act(async () => publishMachineActivities([{ machine,
+            activity: { active: machine.active, activeAt: machine.activeAt }, projections: [projection] } ]));
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
-        const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
         const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
         await screen.pressByTestIdAsync('settings.machinePools.editor.addMachines');
         const config = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
         await act(async () => config?.props?.onSelect(machine.id));
         const status = () => screen.findByTestId(`settings.machinePools.editor.member.${machine.id}.status`)?.props.accessibilityLabel;
-        expect(status()).toBe(t('status.online'));
-        await act(async () => publishMachineActivity(machine, { active: false, activeAt: Date.now() }, []));
+        await vi.waitFor(() => expect(status()).toBe(t('status.online')));
+        await act(async () => publishMachineActivities([{ machine, activity: { active: false, activeAt: Date.now() }, projections: [
+            projection,
+        ] }]));
         expect(machine.active).toBe(true);
         expect(status()).toBe(t('status.offline'));
-        await act(async () => publishMachineActivity(machine, { active: true, activeAt: Date.now() }, []));
+        await act(async () => publishMachineActivities([{ machine, activity: { active: true, activeAt: Date.now() }, projections: [
+            projection,
+        ] }]));
         expect(status()).toBe(t('status.online'));
     });
 
@@ -993,6 +1001,13 @@ describe('MachinePoolEditorScreen', () => {
         boundaries.machines = [createMachineFixture({ id: 'unknown', activeAt: Date.now(), metadata: machineMetadata('Unknown machine') }),
             createMachineFixture({ id: 'offline', active: false, activeAt: 0, metadata: machineMetadata('Offline machine') })];
         await publishBoundaryState();
+        await publishMachineInventoryForTest({ serverId: boundaries.serverId, accountId: 'account-a' }, boundaries.machines);
+        const projections = boundaries.machines.map(machine => {
+            const projection = getStorage().getState().machineRecordsByServerId[boundaries.serverId]?.[machine.id];
+            if (!projection) throw new Error(`Expected published Machine projection for ${machine.id}`);
+            return { machine, activity: { active: machine.active, activeAt: machine.activeAt }, projections: [projection] };
+        });
+        await act(async () => publishMachineActivities(projections));
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
         const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
         const { withdrawMachinePresenceForScope, captureMachinePresenceObservation, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
