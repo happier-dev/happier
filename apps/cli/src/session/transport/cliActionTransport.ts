@@ -13,7 +13,7 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { getPreferredHostName } from '@/daemon/machine/metadata';
 import type { readSettings } from '@/persistence';
 import { createCliBoundSessionMetadataReader } from '../actions/resolveCliActionCallerSession';
-import { prepareInstalledWorkflowActionAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { prepareInstalledWorkflowActionAuthorization } from '@/api/installedWorkflowActionAuthorization';
 import type { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { type SessionResumeRequestV1 } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';

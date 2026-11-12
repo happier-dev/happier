@@ -21,7 +21,8 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
 
-import { prepareInstalledWorkflowActionAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { prepareInstalledWorkflowActionAuthorization } from '@/api/installedWorkflowActionAuthorization';
+import type { ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { StoredCredentials } from '@/persistence';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';

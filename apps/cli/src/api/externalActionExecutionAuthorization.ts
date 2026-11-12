@@ -1808,9 +1808,6 @@ export async function prepareExternalActionRequesterAccountAuthorization(
   return (await prepareExternalActionRequesterAccountAuthorizationWithEnvelope(input))?.authorization ?? null;
 }
 
-export { prepareInstalledWorkflowActionAuthorization, prepareInstalledWorkflowActionAuthorizationWithEnvelope }
-  from './installedWorkflowActionAuthorization';
-
 /** Spend the existing requester projection without substituting an Account bearer. */
 export async function resolveExternalActionRequesterServerRequestHeaders(input: Readonly<{
   context: Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'>;

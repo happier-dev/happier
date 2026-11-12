@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import * as owner from './externalActionExecutionAuthorization';
+import * as owner from './installedWorkflowActionAuthorization';
 
 afterEach(() => vi.restoreAllMocks());
 
