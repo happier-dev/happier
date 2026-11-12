@@ -11,7 +11,7 @@ import { createServerAccountConnectionProbeHttpResponse, installDisconnectedServ
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
@@ -713,8 +713,8 @@ describe('managed Machine detail', () => {
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: machine.controller.machineId,
-            installationId: machine.controller.installationId, updatedAt: Date.now() })] } });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: machine.controller.machineId,
+            installationId: machine.controller.installationId, updatedAt: Date.now() })]);
         const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'native-failure', revision: 2,
             actionId: 'machines.managed.delete', state: 'failed', scope: { accountId: 'owner', machineId: machine.controller.machineId },
             title: 'Delete retained resource', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
@@ -747,7 +747,7 @@ describe('managed Machine detail', () => {
         } else {
             expect(show).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
                 request: removed === 'credential' ? { scope: { serverId, accountId: 'owner' }, intent: 'reconnect', service: account.service, account, anchor: { kind: 'view', ref: { current: trigger } } }
-                    : { scope: { serverId, accountId: 'owner' }, service: undefined, anchor: { kind: 'view', ref: { current: trigger } } },
+                    : { scope: { serverId, accountId: 'owner' }, intent: 'link', service: undefined, anchor: { kind: 'view', ref: { current: trigger } } },
             }) }));
             expect(router.push).not.toHaveBeenCalled();
         }
@@ -2684,9 +2684,12 @@ describe('managed Machine detail', () => {
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         }), ...(basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure' || incomplete ? [createMachineFixture({ id: 'enrolled-guest', installationId: 'guest-installation',
             active: incomplete, activeAt: 1, updatedAt: Date.now(),
+            presenceProtocolVersion: 1,
             daemonState: { status: 'running', startupSource: 'background-service', serviceManaged: true },
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         })] : [])]);
+        const enrolledGuest = storage.getState().machineListByServerId[serverId]?.find(candidate => candidate.id === 'enrolled-guest');
+        if (enrolledGuest) publishMachineActivityForTest([enrolledGuest], { active: incomplete, activeAt: Date.now() });
         const provider = { pluginId: 'custom.native', localId: 'guest' };
         const machine: ManagedMachineV1 = { id: 'boot-managed', homeId, custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Enrolled guest', choices: {} }, controller,
@@ -2774,8 +2777,9 @@ describe('managed Machine detail', () => {
         if (basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure') {
             expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
             const guest = storage.getState().machineListByServerId[serverId]!.find(candidate => candidate.id === 'enrolled-guest')!;
-            await act(async () => storage.getState().applyMachines([{ ...guest, active: true, activeAt: Date.now(), updatedAt: Date.now() }], false,
-                { sourceServerId: serverId }));
+            await act(async () => {
+                publishMachineActivityForTest([guest], { active: true, activeAt: Date.now() });
+            });
             await flushHookEffects({ cycles: 10 });
             expect(screen.findByTestId('managed-machine.installation-error'), JSON.stringify({ enrolled: screen.tree.findByType(ManagedCreationProgress).props.enrolledMachine,
                 guest: storage.getState().machineListByServerId[serverId]?.find(candidate => candidate.id === 'enrolled-guest') })).toBeNull();
@@ -3527,10 +3531,16 @@ describe('managed Machine detail', () => {
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'same-native' } },
             desired, desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            ...(desired === 'start' ? { submittedNativeEffect: { intentRevision: 4, requestId: 'submitted-start', intent: 'start' as const,
+                controller: { machineId: 'controller', installationId: 'installation' } } } : {}),
             observation: { availability: 'present', observedAt: 2, power: 'stopped', storage: 'retained' },
             reviewedFacts: { launch, controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current',
                 billing: { location: 'cloud', stoppedBilling: 'not-billed' }, prerequisites: [],
                 retentionCapabilities: { supportedIntents: ['start', 'stop'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
+            id: machine.controller.machineId, installationId: machine.controller.installationId, updatedAt: Date.now(),
+        })]);
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const nativeRequests: unknown[] = [];
         setRuntimeFetch(async (input, init) => {
@@ -3605,10 +3615,14 @@ describe('managed Machine detail', () => {
             workspaceFolder: { type: 'string' }, configPath: { type: 'string' } },
             required: ['workspaceFolder', 'configPath'], additionalProperties: false } };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        const controllerActivity = { active: controllerState !== 'offline', activeAt: Date.now() };
         const controllerMachine = createMachineFixture({ id: 'controller',
             installationId: controllerState === 'replaced' ? 'replacement' : 'installation',
-            active: controllerState !== 'offline', updatedAt: controllerState === 'offline' ? 1 : Date.now() });
+            ...controllerActivity, updatedAt: controllerActivity.activeAt, presenceProtocolVersion: 1 });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controllerMachine]);
+        const publishedController = storage.getState().machineListByServerId[serverId]?.find(candidate => candidate.id === controllerMachine.id);
+        if (!publishedController) throw new Error('Expected the published controller');
+        publishMachineActivityForTest([publishedController], controllerActivity);
         const rebuilds: unknown[] = [];
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         setRuntimeFetch(async (input, init) => {
@@ -3868,7 +3882,8 @@ describe('managed Machine detail', () => {
                 prices: [{ amount: '0.125', currency: 'USD', unit: 'hour', source: 'captured-price', observedAt: 5 }] } } satisfies ManagedMachineV1;
         const receiptController = createMachineFixture({ id: 'original-controller', installationId: 'original-installation',
             metadata: { ...createMachineFixture().metadata!, displayName: 'Original controller computer' } });
-        storage.getState().applyMachines([receiptController], true, { sourceServerId: resolveServerProfileScopeIdForIdentifier(target.id) });
+        const machineScope = { serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'owner' };
+        await publishMachineInventoryForTest(machineScope, [receiptController]);
         let denied = false;
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
@@ -3899,18 +3914,17 @@ describe('managed Machine detail', () => {
         expect(receipt.props.model.spec).toBe(`Four-core guest · ${t('managedMachines.receipt.cores', { count: 4 }).replace(/ /g, '\u00a0')}`);
         // Delete sits at the receipt's foot. Power is not observed yet, so no Start beside Stop: Check now reads it first.
         expect(receipt.props.model.secondary?.map((action: { testID?: string }) => action.testID))
-            .toEqual(['managed-machine.delete']);
+            .toEqual(['managed-machine.resize', 'managed-machine.delete']);
         // What it was made with is the receipt alone: no second "Size, image and place" section repeats it.
         expect(screen.findByTestId('managed-machine.launch')).toBeNull();
         expect(receipt.props.model.facts.map((fact: { id: string }) => fact.id)).toEqual(expect.arrayContaining(['image', 'location']));
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy').length).toBeGreaterThan(0);
         const controller = createMachineFixture({ id: machine.controller.machineId,
             installationId: machine.controller.installationId, activeAt: Date.now() });
-        const machineSource = { sourceServerId: resolveServerProfileScopeIdForIdentifier(target.id) };
-        await act(async () => storage.getState().applyMachines([controller], true, machineSource));
+        await act(async () => { await publishMachineInventoryForTest(machineScope, [controller]); });
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.controller').length).toBeGreaterThan(0);
-        await act(async () => storage.getState().applyMachines([{ ...controller, installationId: 'replacement-installation',
-            seq: controller.seq + 1, updatedAt: controller.updatedAt + 1 }], true, machineSource));
+        await act(async () => { await publishMachineInventoryForTest(machineScope, [{ ...controller, installationId: 'replacement-installation',
+            seq: controller.seq + 1, updatedAt: controller.updatedAt + 1 }]); });
         // Online presence for a same-id replacement does not prove the required installation is available.
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.controller')).toHaveLength(0);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.controller-unavailable').length).toBeGreaterThan(0);
@@ -3937,7 +3951,7 @@ describe('managed Machine detail', () => {
             expect(screen.tree.findAllByType(MachineConfigurationReceipt)).toHaveLength(0);
             expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy')).toHaveLength(0);
         });
-        await act(async () => storage.getState().applyMachines([], true, machineSource));
+        await act(async () => { await publishMachineInventoryForTest(machineScope, []); });
     });
     it.each([390, 1440])('names a created machine in its header by where it came from and its observed power at %i px', async width => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });

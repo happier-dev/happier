@@ -3,12 +3,18 @@ import {
     type MachineReachabilityScope,
 } from '@/sync/domains/machines/reachability/machineReachability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { publishMachineActivities, type MachineActivityFacts } from '@/sync/domains/machines/machineActivity';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 /** A fresh fixture ingress after publishing its rows; reconnect alone is not an observation. */
 export function observeMachinePresenceForTest(scope: MachineReachabilityScope, machineIds: readonly string[]): void {
     captureMachinePresenceObservation(scope)(machineIds);
+}
+
+/** Answer activity on supplied rows when a test separately controls hydration projections. */
+export function publishMachineActivityForTest(machines: readonly Machine[], activity?: MachineActivityFacts): void {
+    publishMachineActivities(machines.map(machine => ({ machine, activity: activity ?? machine, projections: [] })));
 }
 
 /** Publish the addressed Home inventory before observing its fresh presence ingress. */
