@@ -1,7 +1,9 @@
+import { machineOutcomeEvents, machineOutcomeEventActions, machineOutcomeEventBackgroundServices } from './machineOutcomeEvents.js';
 import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSchema,
     HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema,
     type HealthCheckKindContributionV1, type HealthCheckKindV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { httpRequestActions } from './httpRequest.js';
 import { systemdRuntime } from './systemd.js';
 import { healthCatalogActions } from './healthCatalog.js';
 import { monitorActions } from './monitorWebhooks.js';
@@ -40,7 +42,7 @@ export const plugin = definePlugin({
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...monitorActions, ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
             title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],
@@ -108,7 +110,7 @@ export const plugin = definePlugin({
         action: `health/${id}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>]), ...monitorKinds.map(kind => [kind, {
         title: monitorDefinitions[kind].title, configSchema: monitorDefinitions[kind].configSchema.jsonSchema,
         action: `health/${kind}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])]),
-    events: { ...Object.fromEntries(monitorKinds.map(kind => [monitorDefinitions[kind].observedEventId, { declaration: {
+    events: { ...machineOutcomeEvents, ...Object.fromEntries(monitorKinds.map(kind => [monitorDefinitions[kind].observedEventId, { declaration: {
         kind: 'event' as const, title: `${monitorDefinitions[kind].title} observation received`, payloadSchema: monitorObserved.jsonSchema,
     } }])), ...Object.fromEntries(monitorKinds.map(kind => [`watch-${monitorDefinitions[kind].observedEventId}`, {
         declaration: { kind: 'subscription' as const, target: { kind: 'plugin' as const,
@@ -130,8 +132,12 @@ export const plugin = definePlugin({
             setupActionRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/setup' },
             setupSurface: { renderer: 'health-setup' } } },
     } }])) },
+    // Machine roles (OWNER-RULINGS 2026-11-12): local service health and events belong to the Deployments role.
+    machineRoles: { services: { title: 'Machine services', description: 'Saved health checks and service events on this Machine.', partOf: 'deployments',
+        backgroundServices: ['health-observer', ...[...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices,
+            ...mcpUpdateEventBackgroundServices, ...machinePresenceEventBackgroundServices, ...machineOutcomeEventBackgroundServices].map(service => service.declaration.id)] } },
     backgroundServices: [{ declaration: { id: 'health-observer', title: 'Saved health checks', placement: 'daemon' }, runner: runHealthCheckObserver },
-        ...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices, ...mcpUpdateEventBackgroundServices, ...machinePresenceEventBackgroundServices],
+        ...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices, ...mcpUpdateEventBackgroundServices, ...machinePresenceEventBackgroundServices, ...machineOutcomeEventBackgroundServices],
     hostAccess: { required: [{ id: 'health-status-storage', capability: 'storage.account',
         reason: 'Retain the last admitted health status and pending transition for enabled saved checks.', scope: { enabled: true },
     }, { id: 'systemd-process', capability: 'process',

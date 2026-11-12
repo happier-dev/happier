@@ -5382,6 +5382,22 @@ or cancellation discards late checkpoint effects. A buffered immediate drain tha
 cannot advance before admission settles waits for settlement or an authenticated
 wake. Finite `once` mode still awaits admission and checkpoint completion.
 
+In unreleased 0.3 source, the Machine services catalog also projects backup
+success/failure and existing memory/CPU/disk alert transitions. The Action
+operation store owns backup settlement; `machineVitalsAlerts.ts` owns pressure
+transition suppression. Both publish the Account-scoped, typed
+`@happier/machine/service-observed` Host Event. The plugin consumes that one
+bridge through the shared observer; it adds no threshold evaluator, watchdog,
+history scan or idle timer. Pressure includes both firing and recovery, and
+only enabled alert rules produce transitions. Backup payloads expose the failure
+code, never native output or error prose.
+
+These sources buffer live facts while their daemon watcher is running. Saving
+the checkpoint removes only its admitted prefix; it is not a persisted history
+cursor and does not recover observations missed while the watcher was stopped.
+The closed Host Event addition requires matching development Protocol, SDK,
+daemon and Machine services plugin readers; it changes no server wire format.
+
 The Account change-feed producer marks credential/settings-only Host Event wakes
 with `definitionsChanged: false`. The observer retains its existing adopted
 catalog for those wakes and provider eligibility cycles; it confirms definitions
@@ -6494,6 +6510,16 @@ for the external author contract. The maintained public-import fixture is
 `packages/plugin-sdk/fixtures/authoring-inference/providerEndpointPolicies.ts`.
 
 ### Workflow patterns and Run presentation (0.3 development source)
+
+The Machine services plugin contributes `http/request` as an ordinary daemon
+Action for Workflow Action steps and direct agent/MCP/CLI invocation. Its
+`destination` explicitly names the HTTP(S) URL; `method`, optional text `body`
+and optional `headers: [{ name, secret: { ref, resourceRevision } }]` describe
+the request. Header values come from Saved Secrets through existing Account
+custody and host redaction. The result carries `statusCode`, `bodyExcerpt` and
+`durationMs`. The HTTP service owns response-body limits; the Action adds no
+timeout, truncation cap or retry. Redirects are not followed. Non-2xx responses
+throw `http_response_failed`, retaining those response facts in error details.
 
 In unreleased 0.3 source, Workflow step editing uses the shared Session model
 picker: its heading is Model, without an Effective row. Thinking choices use
