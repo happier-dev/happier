@@ -1098,6 +1098,13 @@ preparation_component_relative_dir=$policy_component
 [ "$preparation_component_relative_dir" = . ] && preparation_component_relative_dir=
 preflight_command=$requested_command
 [ "$requires_remote_dependencies" -eq 1 ] && preflight_command=npm
+rust_toolchain_required=0
+case " $requested_command_name $policy_requiredTools " in
+  *' cargo '*|*' rustc '*|*' rustup '*) rust_toolchain_required=1 ;;
+esac
+if [ "$rust_toolchain_required" = 1 ]; then
+  . "$script_dir/../scripts/utils/dev_targets/native_rust_environment.sh" || exit 1
+fi
 required_bun_version=
 case " $policy_requiredTools " in
   *' bun '*)
@@ -1271,6 +1278,9 @@ remote_load_probe() {
   path_setup="PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin"):\$PATH; export PATH; "
   if [ -n "$remote_path" ]; then
     path_setup="PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin:$remote_path"):\$PATH; export PATH; "
+  fi
+  if [ "$rust_toolchain_required" = 1 ]; then
+    path_setup="$path_setup$(remote_rust_environment "$remote_executor_repo")"
   fi
   case "$preflight_command" in
     /*) availability="[ -x $(quote_remote "$preflight_command") ]" ;;
@@ -2066,6 +2076,9 @@ remote_script="$remote_script$projected_command_environment"
 remote_script="$remote_script$explicit_remote_dependency_environment"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 remote_script="$remote_script PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin"):\$PATH; export PATH;"
+if [ "$rust_toolchain_required" = 1 ]; then
+  remote_script="$remote_script $(remote_rust_environment "$remote_executor_repo")"
+fi
 remote_setup_script=
 # Prefer each checkout-owned entrypoint, falling back for older checkouts.
 # File existence is evaluated on the worker after synchronizing that checkout.

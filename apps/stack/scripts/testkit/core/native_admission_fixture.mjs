@@ -172,6 +172,7 @@ esac
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh'), join(targets, 'remote_execution_custody.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh'), join(targets, 'native_execution_signals.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_placement.sh'), join(targets, 'native_placement.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_rust_environment.sh'), join(targets, 'native_rust_environment.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_go_toolchain.sh'), join(targets, 'native_go_toolchain.sh')),
   ]);
   // A live admission change can prove its exact sibling candidate before the

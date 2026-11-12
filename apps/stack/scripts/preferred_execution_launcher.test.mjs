@@ -9177,3 +9177,45 @@ for (const [kind, args, reusable] of [
     assert.ok(started.filter(processKind => processKind === 'owner').length <= 1);
   }
 });
+
+
+test('native cargo dispatch resolves worker CARGO_HOME outside login PATH', async t => {
+  const fixture = await memoryRoutingFixture(t);
+  const native = await installNativeAdmissionFixture({ root: fixture.root });
+  const workerRepo = resolve(native.launcher, '../../../..');
+  await mkdir(join(workerRepo, 'packages/iroh-native/scripts'), { recursive: true });
+  await writeFile(join(workerRepo, 'packages/iroh-native/scripts/ensure-rust-toolchain.mjs'),
+    await readFile(join(repoRoot, 'packages/iroh-native/scripts/ensure-rust-toolchain.mjs')));
+  const projection = join(fixture.stackDir, 'dev-target-exec-v1.sh');
+  await writeNativeProjectionFixture(projection, (await readFile(projection, 'utf8'))
+    .replace(/^target_2_repo_dir=.*$/m, `target_2_repo_dir='${workerRepo}'`)
+    .replace(/^target_2_executor_repo_dir=.*$/m, `target_2_executor_repo_dir='${workerRepo}'`));
+  await executable(join(fixture.binDir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+  const cargoHome = join(fixture.root, 'worker cargo home');
+  await mkdir(join(cargoHome, 'bin'), { recursive: true });
+  await executable(join(cargoHome, 'bin/cargo'), '#!/bin/sh\nprintf "cargo worker-fixture\\n"\n');
+  // SSH is the OS boundary: evaluate the actual generated probe and payload.
+  await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
+for argument in "$@"; do remote=$argument; done
+case "$*" in *-O\\ check*|*-MNf*) exit 0 ;; esac
+/bin/sh -c "$remote" 2>> "$WORKER_ERRORS"
+exit $?
+`);
+  // A non-interactive worker has its own Cargo home, absent from login PATH.
+  const loginEnv = join(fixture.root, 'worker-login');
+  await writeFile(loginEnv, `export PATH='${fixture.binDir}':/usr/bin:/bin\nexport CARGO_HOME='${cargoHome}'\n`);
+  const invocation = { ...fixture.invocation, env: { ...fixture.invocation.env,
+    CARGO_HOME: cargoHome, BASH_ENV: loginEnv, WORKER_ERRORS: join(fixture.root, 'worker-errors') } };
+  const result = spawnSync('/bin/sh', [launcher, '--target=roomy', '--', 'cargo', '--version'], invocation);
+  assert.equal(result.status, 0, result.stderr + await readFile(join(fixture.root, 'worker-errors'), 'utf8').catch(() => ''));
+  assert.match(result.stdout, /cargo worker-fixture/);
+  const warm = spawnSync('/bin/sh', [launcher, '--target=roomy', '--', 'cargo', '--version'], invocation);
+  assert.equal(warm.status, 0, warm.stderr);
+  assert.match(warm.stdout, /cargo worker-fixture/);
+  await unlink(join(cargoHome, 'bin/cargo'));
+  await rm(join(fixture.stackDir, 'dev-target-command-load-native'), { recursive: true, force: true });
+  const missing = spawnSync('/bin/sh', [launcher, '--target=roomy', '--', 'cargo', '--version'], invocation);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /HSTACK_EXEC_DISPATCH_REFUSED/);
+  assert.doesNotMatch(missing.stdout, /cargo worker-fixture/);
+});
