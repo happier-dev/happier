@@ -3720,6 +3720,7 @@ model DeploymentEnvironment {
     @@index([buildMachineId, deletedAt, id])
     @@index([edgeMachineId, deletedAt, id])
     @@index([previewPullRequestId, purpose, deletedAt, id], map: "DeploymentEnvironment_preview_scope_idx")
+    @@index([contentArtifactId])
 }
 
 model DeploymentEnvironmentDeployer {
@@ -3773,6 +3774,7 @@ model DeploymentTargetLink {
     @@index([environmentId, role, deletedAt, id])
     @@index([machineId, deletedAt, id])
     @@index([pluginId, contributionLocalId])
+    @@index([contentArtifactId])
 }
 
 model DeploymentDomain {
@@ -3798,6 +3800,7 @@ model DeploymentDomain {
 
     @@index([environmentId, deletedAt, id])
     @@index([environmentId, state, id])
+    @@index([contentArtifactId])
 }
 
 model DeploymentTargetLinkMachine {
@@ -3859,6 +3862,7 @@ model Deployment {
     @@index([actionOperationId])
     @@index([acceptedControllerMachineId, state, id])
     @@index([acceptedBuildMachineId, state, id])
+    @@index([contentArtifactId])
 }
 
 /// Invite links are resolved only by authenticated Artifact sharing routes.
