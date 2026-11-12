@@ -1,6 +1,6 @@
 import type { Tx } from '@/storage/inTx';
-import { DeploymentTeardownProofV1Schema, type DeploymentEnvironmentDeleteInputV1, type DeploymentTargetUnlinkInputV1,
-    type DeploymentEnvironmentDeleteResultV1, type DeploymentTargetUnlinkResultV1 } from '@happier-dev/protocol';
+import type { DeploymentEnvironmentDeleteInputV1, DeploymentTargetUnlinkInputV1,
+    DeploymentEnvironmentDeleteResultV1, DeploymentTargetUnlinkResultV1 } from '@happier-dev/protocol';
 import type { DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { defaultRepeatKeyExpiresAt, fetchRepeatKey, saveRepeatKey } from '@/storage/queue/repeatKey';
@@ -9,13 +9,13 @@ import { deploymentFailure, admitDeploymentDefinitionMachinesInTx, readDeploymen
     type DeploymentAuthentication } from './deploymentAdmission';
 import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx,
     type DeploymentEnvironmentRow, type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
-import { deploymentInProgressStates, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
+import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import { readDeploymentDomainInventoryInTx } from './deploymentDomainService';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { withdrawEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
+import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { publishSavedSecretUsageChangesInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
@@ -40,31 +40,18 @@ function readAcknowledgement(value: string, digest: string) {
 /** Current proof is shared with Source custody; disposition additionally requires its supplied receipt ids. */
 export async function hasCompleteTeardownInTx(tx: Tx, link: Link, teardownDeploymentIds: readonly string[] | undefined,
     runtimeTargetLinkId: string | null, knownLinks?: readonly DeploymentTargetLinkHeaderV1[]) {
-    const latest = await tx.deployment.findFirst({ where: { environmentId: link.environmentId, targetLinkId: link.id },
-        orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }] });
-    const accepted = latest ? readDeploymentAcceptedExecution(latest) : null;
-    const subjects = await readDeploymentTeardownSubjectsInTx(tx, link, accepted, runtimeTargetLinkId, knownLinks);
+    const teardown = await readLatestDeploymentTeardownInTx(tx, link);
+    const subjects = await readDeploymentTeardownSubjectsInTx(tx, link, teardown.accepted, runtimeTargetLinkId, knownLinks);
     if (link.machines.length > 0 && subjects.length === 0) return true;
-    if (!latest) return link.state === 'configured' && !link.activeDeploymentId;
-    if ((teardownDeploymentIds !== undefined && !teardownDeploymentIds.includes(latest.id))
-        || latest.operation !== 'teardown' || latest.state !== 'succeeded'
-        || !latest.settledAt || !accepted || link.activeDeploymentId) return false;
-    const proof = DeploymentTeardownProofV1Schema.safeParse(latest.teardownProof);
+    if (!teardown.latest) return link.state === 'configured' && !link.activeDeploymentId;
+    const { proof } = teardown;
+    if (!proof || link.activeDeploymentId
+        || link.state !== (proof.retainedProviderResource ? 'provisioned' : 'configured')) return false;
     // Signed settlement advances once; canonical unlink/delete advances once
     // more. Only a retained read consumes that disposition, never new admission.
     const dispositionRevision = teardownDeploymentIds === undefined && link.deletedAt !== null ? 1 : 0;
-    if (!proof.success || proof.data.targetLinkRevision + 1 + dispositionRevision !== link.revision
-        || link.state !== (proof.data.retainedProviderResource ? 'provisioned' : 'configured')
-        || proof.data.machines.length !== subjects.length
-        || !subjects.every(member => proof.data.machines.some(proved => proved.machineId === member.machineId
-            && proved.installationId === member.installationId))) return false;
-    // A replacement installation cannot inherit an earlier installation's cleanup fact.
-    const currentInstallations = new Map<string, string | null>();
-    for (const ids of portableQueryChunks({ values: subjects.map(member => member.machineId), bindingsPerValue: 1 })) {
-        const machines = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: { id: true, installationId: true } });
-        for (const machine of machines) currentInstallations.set(machine.id, machine.installationId);
-    }
-    return subjects.every(member => currentInstallations.get(member.machineId) === member.installationId);
+    return hasCurrentDeploymentTeardownProofInTx(tx, teardown, { teardownDeploymentIds,
+        targetLinkRevision: link.revision - 1 - dispositionRevision, machines: subjects });
 }
 
 function installations(links: readonly Link[]) {
@@ -110,11 +97,11 @@ export async function unlinkDeploymentTargetInTx(tx: Tx, actorAccountId: string,
         return result ? { ok: true as const, environmentId: input.environmentId, targetLinkId: input.targetLinkId, ...result }
             : deploymentFailure('deployment_conflict');
     }
-    if (loaded.row.deletedAt) return deploymentFailure('deployment_unavailable');
+    if (loaded.row.deletedAt) return deploymentFailure('deployment_unavailable', { phase: 'deployment.target.unlink.environment', causeKind: 'already_deleted' });
     if (loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
     const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: input.environmentId,
         deletedAt: null, detachedAt: null }, include: { machines: true } });
-    if (!link) return deploymentFailure('deployment_unavailable');
+    if (!link) return deploymentFailure('deployment_unavailable', { phase: 'deployment.target.unlink.load', causeKind: 'not_found' });
     if (link.revision !== input.expectedTargetLinkRevision) return deploymentFailure('deployment_conflict');
     const denied = await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, loaded.admission.owner,
         await readDeploymentDefinitionMachinesInTx(tx, loaded.row));
@@ -168,7 +155,7 @@ export async function deleteDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
         return result ? { ok: true as const, environmentId: input.environmentId, revision: result.revision, detached: result.detached }
             : deploymentFailure('deployment_conflict');
     }
-    if (loaded.row.deletedAt) return deploymentFailure('deployment_unavailable');
+    if (loaded.row.deletedAt) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.delete', causeKind: 'already_deleted' });
     if (loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
     const denied = await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, loaded.admission.owner,
         await readDeploymentDefinitionMachinesInTx(tx, loaded.row));

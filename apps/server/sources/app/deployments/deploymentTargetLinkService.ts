@@ -1,4 +1,4 @@
-import { DeploymentTeardownProofV1Schema, DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
+import { DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
 import type { Prisma } from '@prisma/client';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
@@ -11,6 +11,7 @@ import { admitDeploymentStoredContentInTx, deploymentContentReference } from './
 import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
+import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
 
 /** Plugin daemon roles use the selected scalar installation; native workloads use their member rows. */
 export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
@@ -149,18 +150,13 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
         // A fleet reduction consumes the existing signed member teardown. A Move
         // to disjoint Machines retains predecessor custody through disposition.
         if (input.drainedDeploymentId !== undefined || (retainsMembers && removed.length > 0)) {
-            const latest = await tx.deployment.findFirst({ where: { environmentId: loaded.row.id, targetLinkId: previous.id },
-                orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }] });
-            const neverDeployed = input.drainedDeploymentId === undefined && !latest
+            const teardown = await readLatestDeploymentTeardownInTx(tx, previous);
+            const neverDeployed = input.drainedDeploymentId === undefined && !teardown.latest
                 && previous.state === 'configured' && !previous.activeDeploymentId;
-            const proof = DeploymentTeardownProofV1Schema.safeParse(latest?.teardownProof);
-            // A later failed attempt can restart a member without advancing U.
-            if (!neverDeployed && (!input.drainedDeploymentId || latest?.id !== input.drainedDeploymentId
-                || latest.operation !== 'teardown' || latest.state !== 'succeeded' || !latest.settledAt
-                || !proof.success || proof.data.targetLinkRevision !== previous.revision
-                || proof.data.machines.length !== removed.length
-                || !removed.every(member => proof.data.machines.some(proved =>
-                    proved.machineId === member.machineId && proved.installationId === member.installationId)))) {
+            if (!neverDeployed && !await hasCurrentDeploymentTeardownProofInTx(tx, teardown, {
+                teardownDeploymentIds: input.drainedDeploymentId ? [input.drainedDeploymentId] : [],
+                targetLinkRevision: previous.revision, machines: removed,
+            })) {
                 return deploymentFailure('deployment_teardown_required');
             }
         }

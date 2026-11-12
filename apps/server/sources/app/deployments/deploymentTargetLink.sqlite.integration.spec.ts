@@ -379,6 +379,7 @@ describe('current runtime membership replacement', () => {
         { count: 1, state: 'succeeded' as const, baseline: false, domain: undefined },
         { count: 2, state: 'succeeded' as const, baseline: false, domain: undefined },
         { count: 2, state: 'succeeded' as const, baseline: false, domain: 'up' },
+        { count: 2, state: 'succeeded' as const, baseline: false, domain: 'up', reinstalled: true },
         { count: 2, state: 'succeeded' as const, baseline: false, domain: 'down' },
         { count: 2, state: 'succeeded' as const, baseline: false, domain: 'pending' },
         { count: 2, state: 'running_unverified' as const, baseline: false, domain: 'up' },
@@ -386,7 +387,7 @@ describe('current runtime membership replacement', () => {
         { count: 2, state: 'running_unverified' as const, baseline: false, domain: 'pending' },
         { count: 1, state: 'failed' as const, baseline: false }, { count: 1, state: 'outcome_unknown' as const, baseline: false },
         { count: 2, state: 'failed' as const, baseline: true },
-    ])('requires ingress admission and successful release settlement ($count members, $state, baseline=$baseline, domain=$domain, preserve=$preserve)', async ({ count, state, baseline, domain, preserve = false }) => {
+    ])('requires ingress admission and successful release settlement ($count members, $state, baseline=$baseline, domain=$domain, preserve=$preserve, reinstalled=$reinstalled)', async ({ count, state, baseline, domain, preserve = false, reinstalled = false }) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = count === 2 && !baseline ? await db.team.create({ data: { name: 'Shared native rollout' } }) : null;
         if (team) await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
@@ -834,6 +835,17 @@ describe('current runtime membership replacement', () => {
                         expect(stale.json()).toMatchObject({ error: 'deployment_teardown_required' });
                         expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } }))
                             .toMatchObject({ revision: currentLink.revision, activeDeploymentId: receipt.id });
+                        return;
+                    }
+                    if (reinstalled) {
+                        // The same Machine id now names a new installation. Its
+                        // predecessor's signed drain cannot remove current custody.
+                        await db.machine.update({ where: { id: members[1]!.id }, data: { installationId: crypto.randomUUID() } });
+                        const staleInstallation = await drop(dropInput);
+                        expect(staleInstallation.statusCode, staleInstallation.body).toBe(409);
+                        expect(staleInstallation.json()).toMatchObject({ error: 'deployment_teardown_required' });
+                        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } }))
+                            .toMatchObject({ runtimeTargetLinkId: link.id, revision: dropInput.expectedRevision });
                         return;
                     }
                     const dropped = await drop(dropInput);
