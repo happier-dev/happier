@@ -3,12 +3,13 @@ import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/p
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
-import { resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
+import { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1, resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1, SESSION_AGENT_READINESS_CHILDREN_V1, readSessionAgentReadinessChildActionV1 } from '../../../managed/actionIdsV1.js';
 export { readSessionAgentReadinessChildActionV1 } from '../../../managed/actionIdsV1.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../../../../actions/externalActionApi.js';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionIdsV1.js';
+import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectDefinitionActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
@@ -21,6 +22,7 @@ const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionI
 export type { MachineRpcGovernanceClassification } from './governanceV1.js';
 
 export type MachineRpcMethod =
+  | (typeof PROJECT_DEFINITION_ACTION_RPC_METHODS_V1)[keyof typeof PROJECT_DEFINITION_ACTION_RPC_METHODS_V1]
   | (typeof RPC_METHODS)[keyof typeof RPC_METHODS]
   | (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS]
   | (typeof ACTION_OPERATION_RPC_METHODS_V1)[keyof typeof ACTION_OPERATION_RPC_METHODS_V1]
@@ -100,11 +102,7 @@ export type MachineRpcRoutePolicyV1 = Readonly<{
   ephemeralRunnerAuthority?: EphemeralRunnerMachineRpcAuthority;
 }>;
 
-/** Native vault reads run as the executing Machine's OS principal. This is
- * the same access requirement as native browser-login source reads. */
-export const MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 = Object.freeze({
-  sharedMachineAccess: 'manage',
-} as const satisfies Pick<MachineRpcRoutePolicyV1, 'sharedMachineAccess'>);
+export { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 } from './governanceV1.js';
 
 export type MachineRpcRelayFallbackDeploymentKind = 'shared_server' | 'self_hosted';
 
@@ -290,7 +288,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE, 'Nonce- and Home-bound exact-Machine Run currentness read for broker admission; no credential or durable proof.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.', 'use'),
   directEphemeral(RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE, 'Private human continuation consumes exact approval custody; ephemeral input is never receipted or replayed. Normal authenticated relay remains available.', 'use'),
-  directEphemeral(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE, 'Private native vault metadata/write exchange; values stay inside the Account content codec and no invocation receipt is persisted.', MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.sharedMachineAccess),
+  directEphemeral(MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.method, MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.rationale, MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.sharedMachineAccess),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, 'Daemon-local memory settings read with no account mutation.', 'custodian_only'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, 'Daemon-local voice inference worker status read.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST, 'Daemon-local installed/available model list read.', 'use'),
@@ -646,6 +644,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.PROJECTS_OPEN, 'auth', 'Project Open requires current requester Account and exact Machine admission before SCM/Sync realization and Account ref acceptance.', 'projects.open', 'use', undefined, true),
   ...Object.entries(PROJECT_FINITE_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
     'Finite Project execution requires its original admitted Action and exact Machine authority before the incumbent finite operation accepts work.', actionId, 'use', undefined, true)),
+  ...Object.entries(PROJECT_DEFINITION_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
+    'Project definitions retain their original admitted Action and custodian Machine access.', actionId, 'custodian_only')),
   ...Object.entries(WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS).map(([actionId, method]) => actionSpecServerRequired(method,
     'destructive_or_recovery_mutation', 'Workspace Sync controls retain the admitted requester and its Account relationship owner.',
     actionId, 'use', undefined, true)),
@@ -1096,6 +1096,7 @@ function createPolicyMap(
 
 function collectRegisteredMachineRpcMethods(): readonly string[] {
   return Object.freeze([
+    ...Object.values(PROJECT_DEFINITION_ACTION_RPC_METHODS_V1),
     ...Object.values(RPC_METHODS),
     ...Object.values(SESSION_RPC_METHODS),
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,

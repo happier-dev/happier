@@ -10388,9 +10388,10 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it.each(['projects.open', 'machines.managed.acquire', 'projects.inspect'] as const)('verifies and relays the original Session source proof to a different admitted Machine for %s', async actionId => {
+    it.each(['projects.open', 'machines.managed.acquire', 'projects.inspect', 'projects.manifest.update'] as const)('verifies and relays the original Session source proof to a different admitted Machine for %s', async actionId => {
         const fixture = await createFixture({ qualifiedPat: false });
-        const custodian = actionId === 'projects.inspect' ? fixture.account
+        const definitionAction = actionId === 'projects.inspect' || actionId === 'projects.manifest.update';
+        const custodian = definitionAction ? fixture.account
             : await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const destinationKeys = tweetnacl.sign.keyPair();
         const destination = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
@@ -10414,7 +10415,7 @@ describe("external Action execution authorization", () => {
             verifiedMachineInstallationId: destination.installationId }, timeout: () => ({ emitWithAck: effect }) };
         qualifyCurrentAccountStoredContentSocket(target);
         const method = `${destination.id}:${actionId === 'projects.open' ? RPC_METHODS.PROJECTS_OPEN
-            : actionId === 'projects.inspect' ? getActionSpec(actionId).bindings!.rpcMethod! : actionId}`;
+            : definitionAction ? getActionSpec(actionId).bindings!.rpcMethod! : actionId}`;
         // Only Socket.IO discovery/delivery are simulated; signing, Home auth, source/publisher and C41 are real.
         const io = createSocketRoomDiscoveryHarness(async room => {
             if (room === getAccountSessionSocketRoom(fixture.account.id, session.id)) {
@@ -10433,8 +10434,9 @@ describe("external Action execution authorization", () => {
         const params = actionId === 'projects.open'
             ? { serverId: homeId, machineId: destination.id, source: { kind: 'folder', path: '/workspace/project' },
                 materialization: { kind: 'attach' } }
-            : actionId === 'projects.inspect' ? { workspace: { serverId: homeId, workspaceId: 'accepted-checkout',
-                machineId: destination.id, rootPath: '/workspace/project' } }
+            : definitionAction ? { workspace: { serverId: homeId, workspaceId: 'accepted-checkout',
+                machineId: destination.id, rootPath: '/workspace/project' },
+                ...(actionId === 'projects.manifest.update' ? { expectedBasis: { kind: 'absent' }, bytes: '{"version":1}' } : {}) }
             : { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'one-off', homeId,
                 controller: { machineId: destination.id, installationId: destination.installationId! },
                 launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1,

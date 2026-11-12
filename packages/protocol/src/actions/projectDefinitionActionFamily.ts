@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
+import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from './projectDefinitionActionIdsV1.js';
 export { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
@@ -113,7 +113,7 @@ function createProjectDefinitionActionSpecs() {
     id: 'projects.inspect', approval: {result: 'required'}, title: 'Inspect project definitions', description: 'Read current project declarations and detect native references without evaluating project code. Setup readiness uses the same requester-bound review as Scripts; unknown includes the actual unavailable or failed-read reason and never proves setup is unnecessary. Reading readiness does not approve or run setup. To inspect this checkout from an ongoing Session, first call session.status.get with {"sessionId":"self","includeAcceptedWorkspace":true}; pass its result.acceptedWorkspace.checkout unchanged as workspace. If that proof is absent, report the checkout identity unavailable; do not guess identifiers from a folder name or path. Then read projects.worker.preferences.get with the checkout serverId and workspaceId as refId. A script is worker-portable only when its declaration permits it; absent execution permission and detected native commands remain primary-only. An unavailable or invalid definition is not an empty script list. The default read (read.kind "scripts") lists undeclared native Script references (name and file) with empty importCandidates; to get a reference\'s resolved command, availability and invocation, call again with read {"kind":"detail","sources":[...]} passing the chosen detection.entries unchanged. Every result carries a revision; passing it back as ifRevision returns {unchanged:true, revision} with no body while the result is equal, so keep using the result you hold. Use these current reads rather than an earlier authoring prompt.',
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    bindings: { mcpToolName: 'projects_inspect', rpcMethod: 'daemon.projects.inspect.v1' },
+    bindings: { mcpToolName: 'projects_inspect', rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1['projects.inspect'] },
     cli: { acceptsServerId: true, commands: [{ path: ['project', 'inspect'], visibility: 'canonical' }] },
     inputSchema: ProjectDefinitionInspectInputSchema, outputSchema: ProjectDefinitionInspectResultSchema,
     inputHints: { fields: [{ path: 'workspace', title: 'Qualified checkout', prompt: 'Which workspace?', widget: 'json', required: true }] },
@@ -122,7 +122,7 @@ function createProjectDefinitionActionSpecs() {
     id: 'projects.manifest.update', approvalPolicy: { uiConfirmation: 'policy' }, approval: {result: 'required'}, title: 'Update project file', description: 'Save reviewed project file bytes against the expected absence or content hash. Form, raw and imports share this writer.',
     safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    bindings: { mcpToolName: 'projects_manifest_update', rpcMethod: 'daemon.projects.manifest.update.v1' },
+    bindings: { mcpToolName: 'projects_manifest_update', rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1['projects.manifest.update'] },
     cli: { acceptsServerId: true, commands: [{ path: ['project', 'manifest', 'update'], visibility: 'canonical' }] },
     inputSchema: ProjectManifestUpdateInputSchema, outputSchema: ProjectManifestUpdateOutputSchema,
     inputHints: { fields: [

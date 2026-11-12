@@ -1,4 +1,5 @@
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
+import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectDefinitionActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
@@ -15,7 +16,17 @@ export type MachineRpcGovernanceMetadataV1 = Readonly<{
   readOnly?: true;
 }>;
 
+/** One declaration supplies native vault governance and route access. Native
+ * acquisition runs as the Machine OS principal and requires Manage (encryption.md). */
+export const MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 = Object.freeze({
+  method: RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE,
+  rpcClassification: 'internal_only',
+  sharedMachineAccess: 'manage',
+  rationale: 'Private native vault metadata/write exchange; values stay inside the Account content codec and no invocation receipt is persisted.',
+} as const);
+
 const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
+  ...Object.fromEntries(Object.entries(PROJECT_DEFINITION_ACTION_RPC_METHODS_V1).map(([id, method]) => [method, id])),
   [RPC_METHODS.CAPABILITIES_DETECT]: MACHINE_CAPABILITIES_DETECT_ACTION_ID,
   [RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST]: 'machines.runs.list',
   [RPC_METHODS.MACHINES_COMMAND_RUN]: 'machines.command.run',
@@ -451,6 +462,9 @@ const VOICE_FOUNDATION_INTERNAL_METHODS = new Set<string>([
 ]);
 
 export function resolveMachineRpcGovernance(method: string): MachineRpcGovernanceMetadataV1 {
+  if (method === MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.method) {
+    return { rpcClassification: MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.rpcClassification };
+  }
   const actionSpecId = ACTION_SPEC_RPC_METHOD_IDS[method as keyof typeof ACTION_SPEC_RPC_METHOD_IDS];
   if (actionSpecId) {
     return { rpcClassification: 'action_spec_bound', actionSpecId };
