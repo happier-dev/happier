@@ -8,6 +8,7 @@ type ReceiptCopy = Readonly<{
   all: string;
   clear: string;
   noMatches: string;
+  allStates: string;
   policy: string;
   rollbackAll: string;
   keepPartial: string;
@@ -55,6 +56,7 @@ export const deploymentReceiptTranslations = {
     all: "All",
     clear: "Clear filters",
     noMatches: "No deployments match these filters.",
+    allStates: "All",
     policy: "If a Machine fails",
     rollbackAll: "Roll all back",
     keepPartial: "Keep partial",
@@ -100,6 +102,7 @@ export const deploymentReceiptTranslations = {
     all: "Tout",
     clear: "Effacer les filtres",
     noMatches: "Aucun déploiement ne correspond à ces filtres.",
+    allStates: "Tous",
     policy: "Si une machine échoue",
     rollbackAll: "Tout rétablir",
     keepPartial: "Garder les réussites",
@@ -145,6 +148,7 @@ export const deploymentReceiptTranslations = {
     all: "Alle",
     clear: "Filter löschen",
     noMatches: "Keine Bereitstellung entspricht diesen Filtern.",
+    allStates: "Alle",
     policy: "Wenn eine Maschine fehlschlägt",
     rollbackAll: "Alle zurücksetzen",
     keepPartial: "Teilerfolg behalten",
@@ -190,6 +194,7 @@ export const deploymentReceiptTranslations = {
     all: "Todos",
     clear: "Borrar filtros",
     noMatches: "Ningún despliegue coincide con estos filtros.",
+    allStates: "Todos",
     policy: "Si falla una máquina",
     rollbackAll: "Revertir todos",
     keepPartial: "Conservar parciales",
@@ -235,6 +240,7 @@ export const deploymentReceiptTranslations = {
     all: "Tutti",
     clear: "Cancella filtri",
     noMatches: "Nessun deploy corrisponde a questi filtri.",
+    allStates: "Tutti",
     policy: "Se una macchina fallisce",
     rollbackAll: "Ripristina tutte",
     keepPartial: "Mantieni parziale",
@@ -280,6 +286,7 @@ export const deploymentReceiptTranslations = {
     all: "Todos",
     clear: "Limpar filtros",
     noMatches: "Nenhuma implantação corresponde aos filtros.",
+    allStates: "Todos",
     policy: "Se uma máquina falhar",
     rollbackAll: "Reverter todas",
     keepPartial: "Manter parcial",
@@ -325,6 +332,7 @@ export const deploymentReceiptTranslations = {
     all: "Tots",
     clear: "Esborra els filtres",
     noMatches: "Cap desplegament coincideix amb aquests filtres.",
+    allStates: "Tots",
     policy: "Si falla una màquina",
     rollbackAll: "Reverteix-les totes",
     keepPartial: "Conserva el parcial",
@@ -370,6 +378,7 @@ export const deploymentReceiptTranslations = {
     all: "Wszystkie",
     clear: "Wyczyść filtry",
     noMatches: "Brak wdrożeń pasujących do filtrów.",
+    allStates: "Wszystkie",
     policy: "Gdy maszyna zawiedzie",
     rollbackAll: "Wycofaj wszystkie",
     keepPartial: "Zachowaj częściowe",
@@ -415,6 +424,7 @@ export const deploymentReceiptTranslations = {
     all: "Все",
     clear: "Сбросить фильтры",
     noMatches: "Нет развёртываний с такими фильтрами.",
+    allStates: "Все",
     policy: "Если машина даст сбой",
     rollbackAll: "Откатить все",
     keepPartial: "Сохранить частично",
@@ -460,6 +470,7 @@ export const deploymentReceiptTranslations = {
     all: "すべて",
     clear: "フィルターを解除",
     noMatches: "条件に一致するデプロイはありません。",
+    allStates: "すべて",
     policy: "マシンで失敗した場合",
     rollbackAll: "すべて戻す",
     keepPartial: "一部を維持",
@@ -505,6 +516,7 @@ export const deploymentReceiptTranslations = {
     all: "全部",
     clear: "清除筛选",
     noMatches: "没有符合筛选条件的部署。",
+    allStates: "全部",
     policy: "机器失败时",
     rollbackAll: "全部回滚",
     keepPartial: "保留部分",

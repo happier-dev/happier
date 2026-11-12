@@ -7,13 +7,16 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { t } from '@/text';
 import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import type { useDeploymentChangePress } from './deploymentActionOutcome';
+import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 type StoredDefinition = Extract<DeploymentEnvironmentContentV1['definition'], { kind: 'stored' }>;
 export type StoredDefinitionDocument = Readonly<{ document: string; change: (document: string) => void }>;
 
 /** The page owns typing across tab changes; a newly loaded document supplies the next editing base. */
 export function useStoredDefinitionDocument(environmentId: string, definition: DeploymentEnvironmentContentV1['definition'] | undefined): StoredDefinitionDocument {
-  const base = definition?.kind === 'stored' ? definition.document : '';
+  // People edit the file as they read it: a document stored as JSON opens as YAML (the receipt shows the same text).
+  const stored = definition?.kind === 'stored' ? definition.document : null;
+  const base = React.useMemo(() => (stored === null ? '' : storedComposeDocumentText(stored)), [stored]);
   const [draft, setDraft] = React.useState<Readonly<{ environmentId: string; base: string; document: string }> | null>(null);
   return { document: draft?.environmentId === environmentId && draft.base === base ? draft.document : base,
     change: document => setDraft({ environmentId, base, document }) };
@@ -29,10 +32,12 @@ export function StoredDefinitionEditor(props: Readonly<{
 }>) {
   const { definition, editing, change } = props;
   const document = props.document.document;
-  const changed = document !== definition.document;
+  const readable = React.useMemo(() => storedComposeDocumentText(definition.document), [definition.document]);
+  const changed = document !== readable;
   return <ItemGroup testID="project-deployments.definition"
-    title={t('projects.deployments.composeFile')}
-    description={t('projects.deployments.review.versionStored', { revision: definition.contentRevision })}
+    // Section names the concept; the row names the file, so "Compose file" is said once (lab stored/overview).
+    title={t('projects.deployments.overviewStatus.definitionTitle')}
+    description={t('projects.deployments.overviewStatus.definitionStoredDescription', { revision: definition.contentRevision })}
     action={editing ? <SectionActionButton testID="project-deployments.definition.save" title={t('common.save')}
       loading={change.running} disabled={change.running || !changed || document.trim().length === 0}
       onPress={() => change.press(() => editing.actions.updateEnvironment(props.environment, {
@@ -46,6 +51,6 @@ export function StoredDefinitionEditor(props: Readonly<{
         editable={editing !== null && !change.running} multiline growWithText monospace
         autoCapitalize="none" autoComplete="off" />} />
     {editing && changed ? <Item title={t('common.cancel')} testID="project-deployments.definition.cancel"
-      disabled={change.running} onPress={() => props.document.change(definition.document)} /> : null}
+      disabled={change.running} onPress={() => props.document.change(readable)} /> : null}
   </ItemGroup>;
 }

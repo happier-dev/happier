@@ -43,9 +43,11 @@ export function MoveDefinitionToRepository(props: Props) {
     const [progress, setProgress] = React.useState<Progress>({ result: null, captured: null });
     const [running, setRunning] = React.useState(false);
     if (props.detail.content.definition.kind !== 'stored' || !props.move || !props.lifetime) return null;
-    return <ItemGroup testID={ID} title={t(`${COPY}.title`)} description={t(`${COPY}.body`)}
-        action={<SectionActionButton testID={`${ID}.open`} title={t(`${COPY}.title`)} icon="git-branch"
-            expanded={open} disabled={running} onPress={() => setOpen(value => !value)} />}>
+    // One row that says what moving does, with its one door (lab stored/overview), not an empty titled section.
+    return <ItemGroup testID={ID} header="none">
+        <Item title={t(`${COPY}.title`)} subtitle={t(`${COPY}.body`)} showChevron={false} accessoryLayout="adaptive"
+            rightElement={<SectionActionButton testID={`${ID}.open`} title={t('projects.deployments.overviewStatus.definitionMoveOpen')}
+                icon="git-branch" expanded={open} disabled={running} onPress={() => setOpen(value => !value)} />} />
         {open ? <MoveRepositoryFields {...props} lifetime={props.lifetime} move={props.move}
             progress={progress} onProgress={setProgress} running={running} onRunning={setRunning} /> : null}
     </ItemGroup>;

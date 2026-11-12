@@ -934,6 +934,25 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('reads a Compose file stored as JSON as YAML in the editor, unchanged until someone edits it', async () => {
+    const base = environmentDetailForHome();
+    const detail = { ...base, content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1,
+      composeDigest: `sha256:${'a'.repeat(64)}`, document: '{"services":{"app":{"image":"nginx:1"}}}', profiles: [], services: ['app'] } } };
+    const { controller } = controllerFor({ detail });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { createDeploymentActions } = await import('./deploymentActions');
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        destination={{ tab: 'settings', section: null }} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
+        environmentActions={createDeploymentActions(lifetime, detail.environment.projectSourceId)} />);
+      await waitForContent(screen, 'project-deployments.environment.settings.lead');
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe('services:\n  app:\n    image: nginx:1\n');
+      expect(screen.findByTestId('project-deployments.definition.save')?.props.disabled).toBe(true);
+      expect(screen.findByTestId('project-deployments.definition.cancel')).toBeNull();
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
   it('keeps an unsaved Variables edit across Settings and counts a renamed Saved-secret reference as an added secret', async () => {
     const base = environmentDetailForHome();
     const binding = createDeploymentSecretVariableBindingV1({ name: 'ORIGINAL', phase: 'runtime', resourceId: 'saved', resourceRevision: 1 });

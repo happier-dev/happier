@@ -17,6 +17,7 @@ import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -427,13 +428,17 @@ export const DeploymentEnvironmentDetail = React.memo(
           serverIdentityId: detail.environment.serverId, serverApiUrl: ciHome.canonicalServerUrl ?? ciHome.serverUrl,
           scope: props.lifetime.scope, lifetime: props.lifetime } satisfies DeploymentCiInput : null;
     const platformName = platform?.title ?? null;
+    // Where it runs, what defines it, then where people reach it (lab d1 header): vps-2 · Compose · compose.yaml · address.
+    const composeHosted = runtime ? runtime.source.kind === 'host' : definition !== null;
     const meta: PageHeaderMetaFact[] = [
-      ...(domainHost ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
       ...(platformName ? [{ key: 'platform', text: platformName }] : []),
       ...machineIds.flatMap((machineId) => {
         const name = knownMachine(machineId);
         return name ? [{ key: `machine:${machineId}`, text: name, icon: 'hard-drives' as const }] : [];
       }),
+      ...(composeHosted ? [{ key: 'compose', text: t('projects.deployments.compose') }] : []),
+      ...(composeHosted && definition ? [{ key: 'definition', text: definition, mono: true }] : []),
+      ...(domainHost ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
     ];
     const environmentEditing: DeploymentEnvironmentEditing | null = props.environmentActions ? {
       actions: props.environmentActions,
@@ -951,9 +956,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                 )}
                 {/* The Environment's own agent actions sit on the facts' edge; Deploy stays the page's one primary. */}
                 <View style={styles.agentActions}>
-                  {ciInput ? <SectionActionButton testID="project-deployments.environment.ci"
-                    title={t('projects.deployments.overviewStatus.ciTitle')}
-                    onPress={() => showDeploymentCiTokenSheet(ciInput)} /> : null}
                   <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
                     controllerMachineId={detail.environment.controllerMachineId}
                     preparation={props.lifetime && detail.content.definition.kind === 'repository'
@@ -1063,6 +1065,19 @@ export const DeploymentEnvironmentDetail = React.memo(
                   }
                 >
                   {recentReceipts.map(receiptRow)}
+                </ItemGroup>
+              ) : null}
+              {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
+              {ciInput ? (
+                <ItemGroup testID="project-deployments.environment.ci.section"
+                  title={t('projects.deployments.overviewStatus.ciTitle')}
+                  description={t('projects.deployments.overviewStatus.ciDescription', { name: detail.content.name })}>
+                  <Item title={t('projects.deployments.overviewStatus.ciTokensTitle')}
+                    subtitle={t('projects.deployments.overviewStatus.ciTokensBody')}
+                    showChevron={false} accessoryLayout="adaptive"
+                    rightElement={<RoundButton size="small" display="secondary" testID="project-deployments.environment.ci"
+                      title={t('projects.deployments.overviewStatus.manage')}
+                      onPress={() => showDeploymentCiTokenSheet(ciInput)} />} />
                 </ItemGroup>
               ) : null}
             </>
@@ -1343,7 +1358,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
     paddingBottom: theme.space.s8,
   },
-  historyTokens: { flex: 1, minWidth: 0 },
+  historyTokens: { flex: 1, minWidth: 0, alignItems: 'flex-start' },
+  historyTokenRow: { paddingBottom: theme.space.s8 },
   paging: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -1527,6 +1543,9 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
  * and operation. The filter button opens the shared condition editor; what is on reads as tokens beneath it. The
  * tab names the list, so it carries no section title.
  */
+type HistoryOutcome = 'all' | 'succeeded' | 'failed';
+const HISTORY_STATED_FIELDS: readonly string[] = Object.freeze(['state']);
+
 function DeploymentHistoryPage(
   props: Readonly<{
     controller: DeploymentReadControllerV1;
@@ -1556,8 +1575,13 @@ function DeploymentHistoryPage(
     filters,
     setFilters,
     baseFilter: EMPTY_DEPLOYMENT_HISTORY_FILTER,
+    // Outcome is what people narrow History by most: one segmented press, so it is not also a token.
+    // A rarer state chosen in the editor (Cancelled…) stays a token, since the segment can't say it.
+    statedFields: filters.state === undefined || filters.state === 'succeeded' || filters.state === 'failed'
+      ? HISTORY_STATED_FIELDS : undefined,
   });
-  const filtered = header.tokens.length > 0;
+  const filtered = Object.keys(filters).length > 0;
+  const outcome: HistoryOutcome = filters.state === 'succeeded' || filters.state === 'failed' ? filters.state : 'all';
   const receipts = history.result.items;
   // Newest first, by local day, through the one day-grouping owner the Session lists use.
   const days = React.useMemo(() => buildSessionListDateGroups({ items: receipts,
@@ -1565,9 +1589,21 @@ function DeploymentHistoryPage(
   return (
     <>
       <View style={styles.historyFilters}>
-        {header.tokenRow ? <View style={styles.historyTokens}>{header.tokenRow}</View> : <View style={styles.historyTokens} />}
+        <View style={styles.historyTokens}>
+          <SegmentedTabBar<HistoryOutcome> role="radiogroup" segmentSizing="content"
+            accessibilityLabel={t('projects.deployments.receipt.state')}
+            testIDPrefix="project-deployments.history.outcome" activeTabId={outcome}
+            tabs={[{ id: 'all', label: t('projects.deployments.receipt.allStates') },
+              { id: 'succeeded', label: deploymentStateLabel('succeeded') },
+              { id: 'failed', label: deploymentStateLabel('failed') }]}
+            onSelectTab={(id) => setFilters(current => {
+              const { state: _state, ...rest } = current;
+              return id === 'all' ? rest : { ...rest, state: id };
+            })} />
+        </View>
         {header.filterButton}
       </View>
+      {header.tokenRow ? <View style={styles.historyTokenRow}>{header.tokenRow}</View> : null}
       {header.editorOverlay}
       {days.map((day) => (
         <ItemGroup key={day.dateKey} testID={`project-deployments.environment.history.day.${day.dateKey}`} title={day.title}>

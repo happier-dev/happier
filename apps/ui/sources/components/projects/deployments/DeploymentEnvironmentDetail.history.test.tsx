@@ -238,6 +238,30 @@ describe('Environment → History', () => {
     }
   });
 
+  it('narrows by outcome in one press, at the read owner, and All returns every deploy', async () => {
+    const queries: DeploymentHistoryQueryV1[] = [];
+    const environmentId = createDeploymentEnvironmentDetailV1().environment.id;
+    const { screen, controller, settle } = await renderHistory((query) => {
+      queries.push(query);
+      const match = receipts(environmentId).filter(
+        (receipt) => query.state === undefined || receipt.state === query.state,
+      );
+      return { ok: true, items: match, nextCursor: null };
+    });
+    try {
+      expect(await settle('project-deployments.receipt.row.receipt-two')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.history.outcome:failed');
+      expect(await settle('project-deployments.receipt.row.receipt-two', false)).toBeNull();
+      expect(screen.findByTestId('project-deployments.receipt.row.receipt-one')).not.toBeNull();
+      expect(queries.at(-1)).toEqual(expect.objectContaining({ state: 'failed' }));
+      await screen.pressByTestIdAsync('project-deployments.history.outcome:all');
+      expect(await settle('project-deployments.receipt.row.receipt-two')).not.toBeNull();
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
   it('narrows at the read owner by state, started by and operation, and Clear returns every deploy', async () => {
     const queries: DeploymentHistoryQueryV1[] = [];
     const environmentId = createDeploymentEnvironmentDetailV1().environment.id;
@@ -291,9 +315,13 @@ describe('Environment → History', () => {
       expect(queries.at(-1)).toEqual(
         expect.objectContaining({ state: 'failed' }),
       );
+      // The outcome segment states Failed, so it is not repeated as a token.
       expect(
         screen.findByTestId('project-deployments.history-filter-token:state'),
-      ).not.toBeNull();
+      ).toBeNull();
+      expect(
+        screen.findByTestId('project-deployments.history.outcome:failed')?.props.accessibilityState,
+      ).toEqual(expect.objectContaining({ checked: true }));
 
       // Failed and started by you match nothing: one inline line with Clear, never the unfiltered empty state.
       await act(async () => {

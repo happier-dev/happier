@@ -529,39 +529,7 @@ export const DeploymentReceiptDetail = React.memo(
                 </View>
               </ItemGroup>
             ) : null}
-            <DeploymentUploadProvenance testID="project-deployments.receipt.upload"
-              provenance={content.platform?.observation.uploadProvenance} />
-            {content.sourceIntent ? <DeploymentVersionComparison source={content.sourceIntent}
-              current={environmentValue?.content.definition ?? null} workspaceRef={props.workspaceRef}
-              serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
-            {content.buildMachineId !== undefined && deployment.operation !== 'teardown' ? <ItemGroup testID="project-deployments.receipt.storage"
-              title={t('projects.deployments.editors.sharedData')} description={t('projects.deployments.editors.retention')}>
-              <Item title={t('projects.deployments.review.engineNative')} subtitle={t('projects.deployments.editors.survival')} showChevron={false} />
-              {content.ownServer?.sources?.flatMap(source => source.sharedBinds?.map(bind => <Item
-                key={`${source.machineId}:${source.installationId}:${source.deploymentId}:${bind.relativePath}`}
-                title={bind.relativePath} detail={bind.services.join(', ')} showChevron={false} />) ?? [])}
-            </ItemGroup> : null}
-            {images.length > 0 ? (
-              // The exact images this release ran (lab `rollback/image`): what a rollback to it starts again.
-              <ItemGroup
-                testID="project-deployments.receipt.images"
-                title={t('projects.deployments.receipt.imagesTitle')}
-                description={t('projects.deployments.receipt.imagesDescription')}
-              >
-                {images.map((image) => (
-                  <Item
-                    key={`${image.service}:${image.platform}`}
-                    testID={`project-deployments.receipt.image.${image.service}.${image.platform}`}
-                    title={image.service}
-                    subtitle={image.registryReference ?? image.configDigest}
-                    subtitleStyle={styles.mono}
-                    subtitleLines={phone ? 2 : 1}
-                    detail={image.platform}
-                    showChevron={false}
-                  />
-                ))}
-              </ItemGroup>
-            ) : null}
+            {/* What happened comes first (lab d3d): the log and steps, then the record of what was deployed. */}
             {logs.map((log) => (
               <ItemGroup
                 key={`${log.reference.machineId}:${log.reference.installationId}`}
@@ -601,6 +569,39 @@ export const DeploymentReceiptDetail = React.memo(
                 {...stepLogs}
               />
             )}
+            <DeploymentUploadProvenance testID="project-deployments.receipt.upload"
+              provenance={content.platform?.observation.uploadProvenance} />
+            {content.sourceIntent ? <DeploymentVersionComparison source={content.sourceIntent}
+              current={environmentValue?.content.definition ?? null} workspaceRef={props.workspaceRef}
+              serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
+            {content.buildMachineId !== undefined && deployment.operation !== 'teardown' ? <ItemGroup testID="project-deployments.receipt.storage"
+              title={t('projects.deployments.editors.sharedData')} description={t('projects.deployments.editors.retention')}>
+              <Item title={t('projects.deployments.review.engineNative')} subtitle={t('projects.deployments.editors.survival')} showChevron={false} />
+              {content.ownServer?.sources?.flatMap(source => source.sharedBinds?.map(bind => <Item
+                key={`${source.machineId}:${source.installationId}:${source.deploymentId}:${bind.relativePath}`}
+                title={bind.relativePath} detail={bind.services.join(', ')} showChevron={false} />) ?? [])}
+            </ItemGroup> : null}
+            {images.length > 0 ? (
+              // The exact images this release ran (lab `rollback/image`): what a rollback to it starts again.
+              <ItemGroup
+                testID="project-deployments.receipt.images"
+                title={t('projects.deployments.receipt.imagesTitle')}
+                description={t('projects.deployments.receipt.imagesDescription')}
+              >
+                {images.map((image) => (
+                  <Item
+                    key={`${image.service}:${image.platform}`}
+                    testID={`project-deployments.receipt.image.${image.service}.${image.platform}`}
+                    title={image.service}
+                    subtitle={image.registryReference ?? image.configDigest}
+                    subtitleStyle={styles.mono}
+                    subtitleLines={phone ? 2 : 1}
+                    detail={image.platform}
+                    showChevron={false}
+                  />
+                ))}
+              </ItemGroup>
+            ) : null}
           </ItemList>
           {phone && pinned ? (
             <KeyboardStickyFooter>
