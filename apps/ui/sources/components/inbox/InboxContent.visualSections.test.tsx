@@ -276,6 +276,41 @@ function NavigableInbox(props: Readonly<{ model: InboxModel; view: InboxItemView
         <Text testID="inbox.selected">{JSON.stringify(focus)}</Text></>;
 }
 
+beforeEach(async () => {
+    heldInvocationId = null;
+    viewport.width = 1024;
+    storage.setState({ settings: { ...storage.getState().settings, sessionListIdentityDisplay: 'agentLogo' } });
+    routerPush.mockClear();
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://server-a', accountId: 'account-a',
+        request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
+                recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+            });
+            if (path === '/v3/automations/runs/workflow-storage') {
+                const operation = JSON.parse(String(init?.body)) as { operation: string };
+                if (operation.operation === 'invocations.list') return Response.json({ invocations: heldInvocationId ? [
+                    createWorkflowInvocationIndexFixture({ id: heldInvocationId, runId: 'library-run', lifecycle: 'waiting_for_review' }),
+                ] : [], parentRevision: 0 });
+            }
+            return new Response('{}', { status: 404 });
+        },
+    });
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+});
+
+afterEach(async () => {
+    await standardCleanup();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    await connection?.dispose();
+    connection = null;
+    storage.setState(initialStorageState, true);
+});
+
 describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-I1, P4)', () => {
     it('keeps a disabled plugin’s rows with one repair note and never calls unknown enablement disabled', async () => {
         const { InboxContent } = await import('./InboxContent');
@@ -405,31 +440,6 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         expect(retry).toHaveBeenCalledOnce();
         expect(workflowRetry).not.toHaveBeenCalled();
     });
-    beforeEach(async () => {
-        heldInvocationId = null;
-        viewport.width = 1024;
-        storage.setState({ settings: { ...storage.getState().settings, sessionListIdentityDisplay: 'agentLogo' } });
-        routerPush.mockClear();
-        connection = await restoreServerAccountForTest({ serverUrl: 'https://server-a', accountId: 'account-a',
-            request: async (url, init) => {
-                const path = new URL(String(url)).pathname;
-                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
-                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-                if (path === '/v1/account/encryption/currentness') return Response.json({
-                    mode: 'plain', version: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
-                    recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
-                });
-                if (path === '/v3/automations/runs/workflow-storage') {
-                    const operation = JSON.parse(String(init?.body)) as { operation: string };
-                    if (operation.operation === 'invocations.list') return Response.json({ invocations: heldInvocationId ? [
-                        createWorkflowInvocationIndexFixture({ id: heldInvocationId, runId: 'library-run', lifecycle: 'waiting_for_review' }),
-                    ] : [], parentRevision: 0 });
-                }
-                return new Response('{}', { status: 404 });
-            },
-        });
-        vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
-    });
 
     it.each([false, true])('keeps the exact Run and Home through mobile and wide navigation (held=%s)', async (held) => {
         const { InboxContent } = await import('./InboxContent');
@@ -464,14 +474,7 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         await screen.pressByTestIdAsync('inbox.run.library-run');
         expect(routerPush).not.toHaveBeenCalled();
     });
-    afterEach(async () => {
-        await standardCleanup();
-        vi.unstubAllGlobals();
-        vi.useRealTimers();
-        await connection?.dispose();
-        connection = null;
-        storage.setState(initialStorageState, true);
-    });
+
 
     it('updates an unchanged Automation attention row age on the shared clock and keeps its open target', async () => {
         // Relative-date deadlines use timeouts; keep that genuine clock boundary under fake time too.
@@ -829,11 +832,7 @@ function mentionItem(id: string): InboxItem {
 }
 
 describe('InboxContent renders the canonical item model in three views (C1 L10, lab P4)', () => {
-    afterEach(async () => {
-        standardCleanup(); vi.unstubAllGlobals();
-        await connection?.dispose(); connection = null;
-        storage.setState(initialStorageState, true);
-    });
+
     it('groups Needs you by type — Approvals, Decisions, Blocked — never by work root', async () => {
         const { InboxContent } = await import('./InboxContent');
         const model = createModel({ heldStep: { invocationId: 'inv-1', label: 'Write changelog' } });
