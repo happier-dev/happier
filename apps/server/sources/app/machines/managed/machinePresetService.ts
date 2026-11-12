@@ -7,8 +7,7 @@ import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/c
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plugins/contribution-identity";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
-import { isMachineProvisionerCredentialPurposeRequiredV1, MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
@@ -26,12 +25,13 @@ import {
 import { listQualifiedConnectedAccountsInTx } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
 import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import {
-    ManagedMachineError, managedPresetMachineName, requireManagedControllerInTx, resolveManagedDeclarationInTx,
+    ManagedMachineError, requireManagedControllerInTx, resolveManagedDeclarationInTx,
     sameManagedInput, projectManagedControllerAccess, readManagedProjectionFactsInTx,
     type ManagedDeclaration, type ManagedProjectionFacts, readManagedReviewedDeclaration,
 } from "./managedRows";
 import { readTeamResourcePublicationAudienceInTx } from '@/app/teams/resourcePublicationAudience';
-import { readManagedPresetPoolCandidatesInTx, buildManagedPoolPresetReview } from './machinePresetPool';
+import { readManagedPresetPoolCandidatesInTx } from './machinePresetPool';
+import { buildManagedPresetSavedReview } from './machinePresetReview';
 import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
 import type { ManagedControllerV1, ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
@@ -72,7 +72,7 @@ async function readPresetCredentialProfilesInTx(tx: Tx, rows: readonly StoredPre
         const accountId = facts.controllers.get(row.controllerMachineId)?.accountId;
         if (!accountId) continue;
         const refs = refsByAccount.get(accountId) ?? [];
-        refs.push(...(projectPreset(row).launch?.credentials ?? []).map(credential => credential.account));
+        refs.push(...(projectPreset(row).launch?.credentials ?? []).flatMap(credential => 'account' in credential ? [credential.account] : []));
         refsByAccount.set(accountId, refs);
     }
     return new Map(await Promise.all([...refsByAccount].map(async ([accountId, refs]) => {
@@ -125,7 +125,7 @@ async function projectPresetInTx(tx: Tx, row: StoredPreset,
             const declaration = pool.candidates[0]!.declaration;
             return ManagedMachinePresetV1Schema.parse({ ...publicPreset,
                 ...(pool.custodianAccountId === context.accountId ? { launch: preset.launch } : {}), delegatedAcquire: { kind: 'ready',
-                provisioner: declaration.provisioner, reviewedFacts: buildManagedPoolPresetReview(preset, declaration) } });
+                provisioner: declaration.provisioner, reviewedFacts: buildManagedPresetSavedReview(preset, declaration) } });
         } catch (error) {
             if (!(error instanceof ManagedMachineError)) throw error;
             return { ...publicPreset, delegatedAcquire: { kind: 'unavailable', code: error.code } };
@@ -142,15 +142,8 @@ async function projectPresetInTx(tx: Tx, row: StoredPreset,
             const { declaration, controller } = await validateStoredManagedLaunchInTx(tx, preset, credentialProfiles, projection);
             const access = projectManagedControllerAccess(controller, preset.controller);
             if (!access || !controller.active) throw new ManagedMachineError('controller_unavailable');
-            const provisioner = MachineProvisionerContributionV1Schema.parse(declaration.provisioner);
             return ManagedMachinePresetV1Schema.parse({ ...publicPreset, delegatedAcquire: { kind: 'ready', controller: access,
-                provisioner, reviewedFacts: buildManagedConfigurationFactsV1({
-                    choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema),
-                    launch: { ...launch, name: managedPresetMachineName(declaration.provisioner) }, controller: preset.controller,
-                    optionStatus: 'current', prerequisites: [], billing: declaration.billing, retentionCapabilities: declaration.retention,
-                    preset: { id: preset.id, revision: preset.revision, name: preset.name,
-                        retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage }, setup: preset.setup,
-                }) } });
+                provisioner: declaration.provisioner, reviewedFacts: buildManagedPresetSavedReview(preset, declaration, preset.controller) } });
         } catch (error) {
             if (!(error instanceof ManagedMachineError)) throw error;
             return { ...publicPreset, delegatedAcquire: { kind: 'unavailable', code: error.code } };
@@ -269,7 +262,7 @@ export async function validateStoredManagedLaunchInTx(tx: Tx, preset: PresetCrea
         if (!sameManagedInput(credential.purpose.consumer, preset.launch.provider)) throw new ManagedMachineError("credential_unavailable");
         const matches = requests.filter(binding => binding.request.id === credential.purpose.purpose);
         const request = matches[0]?.request;
-        if (matches.length !== 1 || !request || !request.scope.serviceRefs.some(service =>
+        if (matches.length !== 1 || !request || 'account' in credential && !request.scope.serviceRefs.some(service =>
             sameManagedInput(qualifyPluginContributionReferenceV1(service, preset.launch.provider.pluginId), credential.account.service))) {
             throw new ManagedMachineError("credential_unavailable");
         }
@@ -277,9 +270,10 @@ export async function validateStoredManagedLaunchInTx(tx: Tx, preset: PresetCrea
     const profiles = credentialProfiles
         ? credentialProfiles.get(custodianAccountId)
         : new Map((await listQualifiedConnectedAccountsInTx(tx, { accountId: custodianAccountId,
-            refs: credentials.map(credential => credential.account) }))
+            refs: credentials.flatMap(credential => 'account' in credential ? [credential.account] : []) }))
             .map(profile => [createQualifiedConnectedAccountIdentityDigest(profile.ref), profile]));
     for (const credential of credentials) {
+        if (!('account' in credential)) continue;
         const selected = profiles?.get(createQualifiedConnectedAccountIdentityDigest(credential.account));
         if (!selected || !isQualifiedConnectedAccountProfileActiveV4(selected, Date.now())) throw new ManagedMachineError("credential_unavailable");
     }

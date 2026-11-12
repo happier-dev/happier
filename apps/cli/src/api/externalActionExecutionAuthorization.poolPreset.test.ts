@@ -23,7 +23,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied', 'fixed-ready', 'fixed-account-ready', 'fixed-bound-ready', 'fixed-mcp-ready'] as const)('originates a controller preset through the real host entry (%s)', async status => {
+it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied', 'fixed-ready', 'fixed-account-ready', 'fixed-bound-ready', 'fixed-mcp-ready', 'fixed-member-bound-ready', 'fixed-member-reviewed-ready'] as const)('originates a controller preset through the real host entry (%s)', async status => {
     const fixed = status.startsWith('fixed-');
     const own = status === 'account-ready' || status === 'fixed-account-ready' || status === 'fixed-bound-ready';
     const mcp = status === 'mcp-ready' || status === 'fixed-mcp-ready';
@@ -52,7 +52,8 @@ it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied'
     const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: preset.id, revision: preset.revision },
         retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage,
         enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, ...(fixed ? {} : { reviewedFacts: facts }),
-        ...(status === 'bound' || status === 'fixed-bound-ready' ? { controller } : {}) });
+        ...(status === 'fixed-member-reviewed-ready' ? { reviewedFacts: { ...facts, controller } } : {}),
+        ...(status === 'bound' || status === 'fixed-bound-ready' || status === 'fixed-member-bound-ready' ? { controller } : {}) });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
         provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
     const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['cli', 'mcp'] } });

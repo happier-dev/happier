@@ -1,8 +1,6 @@
 import type { ManagedMachinePresetCreationV1, ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { MachinePoolResolveInputV1, MachinePoolResolveResultV1 } from '@happier-dev/protocol/machines/pools/v1';
-import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import { listQualifiedConnectedAccountsInTx } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { resolveMachinePoolForManagedPresetInTx } from '@/app/machines/pools/machinePoolService';
@@ -10,8 +8,9 @@ import { getMachineDaemonPresenceInventory, type MachineDaemonPresenceInventory,
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { ManagedMachineError, managedPresetMachineName, projectManagedControllerAccess, readManagedProjectionFactsInTx, sameManagedInput } from './managedRows';
+import { ManagedMachineError, projectManagedControllerAccess, readManagedProjectionFactsInTx, sameManagedInput } from './managedRows';
 import { getMachinePresetInTx, resolveMachinePresetForAcquireInTx, validateStoredManagedLaunchInTx } from './machinePresetService';
+import { buildManagedPresetSavedReview } from './machinePresetReview';
 
 type Context = Readonly<{ accountId: string; authentication?: Partial<TeamOperationAuthenticationContext> }>;
 type Creation = Pick<ManagedMachinePresetV1, 'homeId'> & ManagedMachinePresetCreationV1
@@ -38,7 +37,7 @@ export async function readManagedPresetPoolCandidatesInTx(tx: Tx, context: Conte
     const inputs = controllers.map(controller => ({ homeId: preset.homeId, custodianAccountId, controller, provider: preset.launch.provider }));
     const facts = await readManagedProjectionFactsInTx(tx, inputs);
     const profiles = await listQualifiedConnectedAccountsInTx(tx, { accountId: custodianAccountId,
-        refs: (preset.launch.credentials ?? []).map(credential => credential.account) });
+        refs: (preset.launch.credentials ?? []).flatMap(credential => 'account' in credential ? [credential.account] : []) });
     const credentials = new Map([[custodianAccountId, new Map(profiles.map(profile => [createQualifiedConnectedAccountIdentityDigest(profile.ref), profile]))]]);
     const candidates: Array<Omit<Awaited<ReturnType<typeof validateStoredManagedLaunchInTx>>, 'controller'> & {
         controller: ManagedControllerV1;
@@ -67,20 +66,6 @@ export async function readManagedPresetPoolCandidatesInTx(tx: Tx, context: Conte
         throw new ManagedMachineError('provider_unavailable');
     }
     return { custodianAccountId, snapshot, candidates };
-}
-
-/** Saved facts are controller-independent. Executable presence remains explicitly unobserved. */
-export function buildManagedPoolPresetReview(preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1,
-    declaration: Awaited<ReturnType<typeof readManagedPresetPoolCandidatesInTx>>['candidates'][number]['declaration'],
-    controller?: ManagedControllerV1) {
-    const { credentials: _credentials, ...stored } = preset.launch;
-    const launch = { ...stored, name: managedPresetMachineName(declaration.provisioner) };
-    return buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema),
-        launch, ...(controller ? { controller } : {}), provisioner: declaration.provisioner,
-        optionStatus: 'current', prerequisites: declaration.provisioner.prerequisites.map(requirement => ({ requirement, status: 'unknown' as const })),
-        billing: declaration.billing, retentionCapabilities: declaration.retention,
-        preset: { id: preset.id, revision: preset.revision, name: preset.name,
-            retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage }, setup: preset.setup });
 }
 
 /** The only pool selection: fresh acquire resolves once; admission later consumes its exact input. */
@@ -117,7 +102,7 @@ export async function resolveManagedPresetPool(params: Context & Readonly<{
         if (selected.kind === 'refused') return unavailable(selected.code);
         const controller = selected.preset.controller;
         if (!controller || !selected.controllerAccess || selected.poolPriorityTier === undefined) throw new ManagedMachineError('controller_unavailable');
-        const reviewedFacts = buildManagedPoolPresetReview(selected.preset, selected.declaration, controller);
+        const reviewedFacts = buildManagedPresetSavedReview(selected.preset, selected.declaration, controller);
         // Own invocations retain saved references for admission; delegated invocations never disclose them.
         return { ok: true, value: { kind: 'resolved', poolId: params.input.poolId, machineId: controller.machineId,
             priorityTier: selected.poolPriorityTier, managedPreset: { controller, controllerAccess: selected.controllerAccess,

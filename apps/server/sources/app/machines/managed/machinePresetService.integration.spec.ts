@@ -174,6 +174,39 @@ describe("Machine preset relational owner", () => {
         } finally { await app.close(); }
     });
 
+    it.each(['exact', 'pool'] as const)('does not claim current native options for an unchecked saved %s delegated preset', async placement => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = `unchecked-preset-owner-${placement}`;
+        const member = `unchecked-preset-member-${placement}`;
+        await db.account.createMany({ data: [owner, member].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Saved choices' } });
+        await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' }] });
+        const controller = await seedCurrentProvisioner(owner, homeId, undefined, true);
+        await db.machine.update({ where: { id: controller.machineId }, data: {
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey) } });
+        const poolId = '6b6489de-7a75-4f80-9f04-9d8b3678e139';
+        if (placement === 'pool') await db.machinePool.create({ data: { id: poolId, accountId: owner, teamId: team.id,
+            name: 'Saved choices pool', members: { create: [{ machineId: controller.machineId, priorityTier: 0, enabled: true }] } } });
+        const savedLaunch = { ...launch, choices: { image: 'template:fixture-missing-g1-options-1111' } };
+        const definition = { id: `unchecked-preset-${placement}`, homeId, name: 'Unchecked choice', owner: { kind: 'team', teamId: team.id },
+            ...(placement === 'pool' ? { controllerPoolId: poolId } : { controller }), launch: savedLaunch, teamAcquireDelegated: true };
+        const created = await requestPreset(owner, 'create', definition);
+        expect(created.statusCode, created.body).toBe(200);
+        const read = await requestPreset(member, 'get', { homeId, id: definition.id });
+        expect(read.statusCode, read.body).toBe(200);
+        const preset = read.json().preset;
+        expect(preset.delegatedAcquire).toMatchObject({ kind: 'ready', reviewedFacts: {
+            launch: { choices: savedLaunch.choices }, optionStatus: 'unavailable',
+            prerequisites: [{ requirement: { kind: 'systemTool', id: 'shell' }, status: 'unknown' }],
+        } });
+        expect(preset.delegatedAcquire.reviewedFacts).not.toHaveProperty('nativeFacts');
+        const listed = await requestPreset(member, 'list', { homeId });
+        expect(listed.statusCode, listed.body).toBe(200);
+        expect(listed.json().presets).toContainEqual(preset);
+        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+    });
+
     it('projects only public delegated controller and fixed review facts for a Plain member without Machine access', async () => {
         const encryptionMode = 'plain';
         const homeId = await getOrCreateServerIdentityId();
@@ -262,7 +295,7 @@ describe("Machine preset relational owner", () => {
             expect(preset.launch).not.toHaveProperty('credentials');
             expect(preset.delegatedAcquire).toMatchObject({ kind: 'ready', controller: { custodian: { accountId: owner },
                 installationPublicKey: encodeBase64(installationPublicKey, 'base64url') },
-                reviewedFacts: { controller, launch: { ...launch, name: 'Guest' }, optionStatus: 'current' } });
+                reviewedFacts: { controller, launch: { ...launch, name: 'Guest' }, optionStatus: 'unavailable' } });
             expect(preset.delegatedAcquire).not.toHaveProperty('credentialPurposes');
             expect(preset.delegatedAcquire.controller).not.toHaveProperty('metadata');
             expect(preset.delegatedAcquire.reviewedFacts).not.toHaveProperty('credentials');
@@ -601,7 +634,7 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(accountId, 'create', teamPreset)).json()).toMatchObject({ kind: 'saved' });
         const memberRead = (await requestPreset(memberId, 'get', { homeId, id: teamPreset.id })).json();
         expect(memberRead).toMatchObject({ kind: 'found', preset: { delegatedAcquire: { kind: 'ready',
-            reviewedFacts: { optionStatus: 'current' } } } });
+            reviewedFacts: { optionStatus: 'unavailable' } } } });
         const memberList = (await requestPreset(memberId, 'list', { homeId })).json();
         expect(memberList.presets).toContainEqual(memberRead.preset);
         const acquired = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'crabbox-direct-reviewed',
@@ -1156,7 +1189,7 @@ describe("Machine preset relational owner", () => {
         expect(saved.json(), saved.body).toMatchObject({ kind: 'saved', preset: { controllerPoolId: poolId } });
         const projected = (await requestPreset(member, 'get', { homeId, id: definition.id })).json().preset;
         expect(projected).not.toHaveProperty('controller');
-        expect(projected.delegatedAcquire).toMatchObject({ kind: 'ready', reviewedFacts: { optionStatus: 'current' } });
+        expect(projected.delegatedAcquire).toMatchObject({ kind: 'ready', reviewedFacts: { optionStatus: 'unavailable' } });
         expect(projected.delegatedAcquire).not.toHaveProperty('controller');
         expect(projected.delegatedAcquire.reviewedFacts).not.toHaveProperty('controller');
         expect(projected.delegatedAcquire.reviewedFacts.prerequisites).toEqual([
