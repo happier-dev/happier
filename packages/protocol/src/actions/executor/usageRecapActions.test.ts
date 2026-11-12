@@ -54,13 +54,13 @@ describe('usage recap Action composition', () => {
   it('requests selected recap facts independently of the originating widget demand', async () => {
     const result = await executeUsageAction('usage.recap.private.compose', {
       query: { ...query, includeAccounting: false, includeInsights: false, includeActivity: false,
-        includeSeries: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+        includeSeries: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeCoach: false,
         includeWorkEvidence: false, includeLeaders: true, includeComparison: true, includeQuotaHistory: true },
       selectedFields: ['tokens', 'activeDays', 'streak', 'modelMix', 'agentMix', 'cache', 'rhythm', 'parallel', 'night', 'work', 'coach', 'highlights'],
     }, { query: async request => {
       const demanded = request.queries[0]!;
       expect(demanded).toMatchObject({ includeAccounting: true, includeInsights: true, includeActivity: true,
-        includeSeries: true, includeSessionEvidence: true, includeTranscriptEvidence: true,
+        includeSeries: true, includeSessionEvidence: true, includeTranscriptEvidence: true, includeCoach: true,
         includeWorkEvidence: true, includeLeaders: false, includeComparison: false, includeQuotaHistory: false,
         includeContributions: false, includeModelTimeline: false, includeMessageStats: false, breakdown: ['agent', 'model'] });
       return resolveUsagePageAggregation({ queries: request.queries,
@@ -68,12 +68,15 @@ describe('usage recap Action composition', () => {
     } }, {});
     expect(result).toMatchObject({ ok: true, result: { kind: 'composed', facts: { tokens: { total: 12 } } } });
   });
-  it('does not acquire unrelated evidence for a tokens-only recap', async () => {
-    const result = await executeUsageAction('usage.recap.private.compose', { query, selectedFields: ['tokens'] }, {
+  it.each(['tokens', 'parallel', 'night'] as const)('does not acquire unselected Coach evidence for a %s recap', async field => {
+    const privateDetail = field !== 'tokens';
+    const result = await executeUsageAction('usage.recap.private.compose', {
+      query: { ...query, includeCoach: true }, selectedFields: field === 'tokens' ? ['tokens'] : ['tokens', field],
+    }, {
       query: async request => {
         const demanded = request.queries[0]!;
-        expect(demanded).toMatchObject({ includeAccounting: true, includeInsights: false, includeActivity: false,
-          includeSeries: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+        expect(demanded).toMatchObject({ includeAccounting: true, includeInsights: false, includeActivity: field === 'night',
+          includeSeries: false, includeSessionEvidence: privateDetail, includeTranscriptEvidence: privateDetail, includeCoach: false,
           includeWorkEvidence: false, includeLeaders: false, includeComparison: false, includeQuotaHistory: false,
           includeContributions: false, includeModelTimeline: false, includeMessageStats: false, breakdown: [] });
         return resolveUsagePageAggregation({ queries: request.queries,

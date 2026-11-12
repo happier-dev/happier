@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createUsageQuerySessionInputs, type SessionInputEvidence } from './usageQuerySessionInputs';
+import { createUsageQuerySessionInputs, getUsageQuerySessionInputDemand, type SessionInputEvidence } from './usageQuerySessionInputs';
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
@@ -7,8 +7,77 @@ import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usa
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsContributionSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageQueryEvidencePhase } from './usageQueryEvidencePhase';
+import { SessionPartsHttpError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('reuses admitted Coach inputs for work-only demand while acquiring missing Coach inputs', async () => {
+    const scope = { serverId: 'usage-fact-scope-retention.test', accountId: 'account' };
+    const previous = storage.getState();
+    storage.setState({ profileScope: scope, sessions: {} });
+    const controller = new AbortController();
+    const owner = createUsageQuerySessionInputs({ lifetime: { scope, isCurrent: () => true,
+        onRetire: () => ({ dispose() {} }) }, signal: controller.signal, assertCurrent() {} });
+    const nowMs = 1_800_000_000_000;
+    const coach = normalizeUsageQuery({ period: { relative: '90days' }, includeCoach: true });
+    const work = normalizeUsageQuery({ ...coach, includeCoach: false });
+    const coachDemand = getUsageQuerySessionInputDemand(coach, nowMs);
+    const workDemand = getUsageQuerySessionInputDemand(work, nowMs);
+    let loads = 0;
+    let selections = 0;
+    const value = (id: string): SessionInputEvidence => {
+        const session = projectUsageSessionInput(createSessionFixture({ id, encryptionMode: 'plain' }));
+        return { session, callerDataKeyEnvelope: null, completeMessageCoverage: true,
+            detail: projectSessionUsageWorkEvidence(session) };
+    };
+    const select = async () => { selections++; return { ids: ['coach-first'] }; };
+    const read = (id: string, demand: Parameters<typeof owner.read>[5]) => owner.read(id, false,
+        async () => { loads++; return value(id); }, undefined, undefined, demand);
+    try {
+        await owner.readSelection(coachDemand.key, select);
+        const admitted = await read('coach-first', coachDemand);
+        expect((await owner.readSelection(workDemand.key, select)).ids).toEqual(['coach-first']);
+        expect.soft(selections, 'switching to work-only reuses admitted membership').toBe(1);
+        const warm = read('coach-first', workDemand);
+        expect.soft(warm, 'work-only evidence is immediately available from admitted Coach facts').not.toBeInstanceOf(Promise);
+        expect.soft(await warm).toBe(admitted);
+        expect.soft(loads, 'switching to work-only acquires no additional private evidence').toBe(1);
+        await read('work-first', workDemand);
+        const beforeCoach = loads;
+        await read('work-first', coachDemand);
+        expect(loads, 'work-only admission cannot satisfy missing private Coach demand').toBe(beforeCoach + 1);
+        const converted = { ...value('converted'), workFactsPersisted: true };
+        await owner.read('converted', false, async () => converted, undefined, undefined, workDemand);
+        const beforeConvertedCoach = loads;
+        expect(read('converted', coachDemand), 'a complete transcript conversion already owns both fact kinds').toBe(converted);
+        expect(loads).toBe(beforeConvertedCoach);
+        const liveSummary = { ...value('live-converted'), completeMessageCoverage: false };
+        await owner.read('live-converted', false, async () => liveSummary, undefined, undefined, workDemand);
+        const liveTranscript = { ...liveSummary, completeMessageCoverage: true, messageEvidence: {}, workFactsPersisted: false };
+        await owner.read('live-converted', true, async () => liveTranscript, undefined, liveSummary,
+            getUsageQuerySessionInputDemand(normalizeUsageQuery({ ...coach, includeTranscriptEvidence: true }), nowMs));
+        expect(read('live-converted', coachDemand), 'complete in-memory transcript facts need no persistence to satisfy Coach')
+            .toBe(liveTranscript);
+        expect(loads).toBe(beforeConvertedCoach);
+        await read('coach-first', getUsageQuerySessionInputDemand(normalizeUsageQuery({ ...coach,
+            period: { relative: 'all' } }), nowMs));
+        expect(loads, 'different populations retain their own admission').toBe(beforeConvertedCoach + 1);
+        for (const status of [403, 503]) {
+            const id = `refused-${status}`;
+            const refusal = new SessionPartsHttpError(status, { error: status === 403 ? 'forbidden' : 'unavailable' });
+            let refusalReads = 0;
+            const fail = async () => { refusalReads++; throw refusal; };
+            await expect(owner.read(id, false, fail, undefined, undefined, coachDemand)).rejects.toBe(refusal);
+            await expect(owner.read(id, false, fail, undefined, undefined, workDemand)).rejects.toBe(refusal);
+            expect(refusalReads, 'a settled Session refusal survives narrower demand; ordinary outages need a fresh attempt')
+                .toBe(status === 403 ? 1 : 2);
+        }
+    } finally {
+        owner.dispose();
+        controller.abort();
+        storage.setState({ profileScope: previous.profileScope, sessions: previous.sessions });
+    }
+});
 
 it('reuses settled Session inputs without per-Session cancellation subscriptions and reads only a changed Session', async () => {
     // The loaded Account's complete phase contained 3,634 Sessions (FREEZE-3).
@@ -31,13 +100,14 @@ it('reuses settled Session inputs without per-Session cancellation subscriptions
     let loads = 0;
     let asynchronousReads = 0;
     const values = new Map<string, SessionInputEvidence>();
+    const demand = getUsageQuerySessionInputDemand(normalizeUsageQuery({ period: { relative: '90days' } }), 1_800_000_000_000);
     const read = async (id: string) => {
         const result = owner.read(id, false, async () => {
             loads++;
             const session = projectUsageSessionInput(storage.getState().sessions[id]!);
             return { session, callerDataKeyEnvelope: null, completeMessageCoverage: true,
                 detail: { status: 'available', facts: [] } };
-        }, value => { values.set(id, value); }, undefined, 'range', 'widget', controller.signal);
+        }, value => { values.set(id, value); }, undefined, demand, 'widget', controller.signal);
         if (result instanceof Promise) asynchronousReads++;
         const value = await result;
         if (value) values.set(id, value);
@@ -109,6 +179,9 @@ it('does no per-fact membership work for broad Coach and How projections, includ
         return row;
     });
     const admittedTurns = ids.map(id => ({ sessionId: id, get turnId() { accountingTurnReads++; return 'turn'; } }));
+    const coach = normalizeUsageQuery({ period: { relative: '90days' }, includeActivity: false, includeCoach: true });
+    const how = normalizeUsageQuery({ ...coach, includeActivity: true, includeCoach: false });
+    const demand = getUsageQuerySessionInputDemand(coach, 1_800_000_000_000);
     let loads = 0;
     const load = async (index: number, terminalAt = 200) => {
         const id = ids[index]!;
@@ -124,11 +197,9 @@ it('does no per-fact membership work for broad Coach and How projections, includ
                 Object.defineProperty(fact, 'workId', { get() { visits[index]!++; return workId; } });
             }
             return { session, detail, callerDataKeyEnvelope: null, completeMessageCoverage: true };
-        }, undefined, undefined, 'broad-history');
+        }, undefined, undefined, demand);
         phase.select(id, value, true);
     };
-    const coach = normalizeUsageQuery({ period: { relative: '90days' }, includeActivity: false });
-    const how = normalizeUsageQuery({ ...coach, includeActivity: true });
     const project = (query = coach) => owner.projectSelection({ query, nowMs: 1_800_000_000_000, admitted: true,
         selected: phase.selected, selectedIds: ids, scope, currentScope: scope, isCurrent: true, contributions, admittedTurns });
     try {
@@ -179,13 +250,14 @@ it('projects only a query’s consumed Session facts when the shared evidence ph
     Object.defineProperty(detail, 'facts', { get() { reads++; return facts; } });
     const load = async (id: string, demand: string, persisted: boolean) => {
         const value = await owner.read(id, true, async (_assertCurrent, _signal, retained) => retained
-            ? { ...retained, workFactsPersisted: persisted,
+            ? { ...retained, workFactsPersisted: persisted, workFactsWriteErrorCode: persisted ? undefined : 'usage_work_facts_write_failed',
                 ...(id === 'other' ? { session: projectUsageSessionInput(createSessionFixture({ id, encryptionMode: 'plain', seq: 2 })) } : {}) }
             : { session: id === 'selected' ? selectedSession
                 : projectUsageSessionInput(createSessionFixture({ id, encryptionMode: 'plain' })),
                 detail: id === 'selected' ? detail : { status: 'available', facts: [] },
-                callerDataKeyEnvelope: null, completeMessageCoverage: true, workFactsPersisted: persisted },
-        undefined, undefined, demand);
+                callerDataKeyEnvelope: null, completeMessageCoverage: true, workFactsPersisted: persisted,
+                ...(persisted ? {} : { workFactsWriteErrorCode: 'usage_work_facts_write_failed' }) },
+        undefined, undefined, getUsageQuerySessionInputDemand(normalizeUsageQuery({ session: demand }), 1_000));
         phase.select(id, value, true);
     };
     const project = () => owner.projectSelection({ query, nowMs: 1_000, admitted: true,

@@ -90,7 +90,10 @@ export function describeMachineRuntimePresence(
         return { online: true, status: 'online', label: t('settingsOverview.machineOnline'), nextAction: null, showStatus: false };
     if (machine.presence === null) return { online: false, status: 'unknown', label: '', nextAction: null, showStatus: false };
     const activity = readMachineActivity(machine);
-    const reachability = connection ?? (machine.id ? resolveMachineReachability(scope, { ...machine, ...activity, id: machine.id }, nowMs) : 'unknown');
+    // Keep the admitted row identity so the activity owner's unanswered presence is preserved.
+    const reachability = connection ?? (machine.id
+        ? resolveMachineReachability(scope, machine as MachinePresenceV1 & Readonly<{ id: string }>, nowMs)
+        : 'unknown');
     const nativePresence = managedPresence ?? projectMachineManagedPresence(machine);
     return presentMachinePresence({ reachability, presenceOnline: isMachineOnline(machine, nowMs),
         lastSeenAt: activity.activeAt ?? null,

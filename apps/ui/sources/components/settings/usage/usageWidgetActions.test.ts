@@ -13,8 +13,6 @@ import { setUsageWidgetMetric } from './usageWidgetActions';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageWidgetPageContext, readUsageWidgetPageScope } from './usageWidgetPageContext';
-import { captureActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { storage } from '@/sync/domains/state/storage';
 
@@ -91,7 +89,7 @@ it('edits only displayed widget metric inputs through real Actions and Artifact 
     for (const row of selectedGroup.children.filter(child => ids.includes(child.instance.id))) expect(row.instance.bindings.metric).toEqual({ kind: 'value', value: 'tokens' });
 });
 
-it.each(['approve', 'reject', 'retire'] as const)('settles each metric approval before continuing displayed widgets (%s)', async decision => {
+it.each(['approve', 'reject', 'retire'] as const)('settles each native metric review before continuing displayed widgets (%s)', async decision => {
     const names = Object.fromEntries(USAGE_WIDGET_PRESET_IDS.map(id => [id, id])) as Record<typeof USAGE_WIDGET_PRESET_IDS[number], string>;
     const presets = createUsageWidgetPresets(names);
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: {
@@ -112,11 +110,22 @@ it.each(['approve', 'reject', 'retire'] as const)('settles each metric approval 
         kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'overview',
     } };
     const values = readUsageWidgetPageContext(readUsageWidgetPageScope(normalizeUsageQuery({ period: { startMs: 1000 } })));
+    // Own UI presses use native review, not durable approval Artifacts (02102e614e1).
     const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
         serverId: focused.id, expectedAccountId: 'account-a', widgetAreaContext: { surface, values },
         actionsSettings };
-    const execute = createFrontDoorActionExecute(createDefaultActionExecutor({ resolveWidgetAreaPresets: () => presets }));
-    const inboxExecute = createFrontDoorActionExecute(createDefaultActionExecutor());
+    const controller = new AbortController();
+    let reviews = 0;
+    const execute = createFrontDoorActionExecute(createDefaultActionExecutor({
+        resolveWidgetAreaPresets: () => presets,
+        // The native presenter is the boundary; admission, input review and writes stay real.
+        presentUserActionConfirmation: async ({ actionId }) => {
+            expect(actionId).toBe('widgets.item.inputs.set');
+            reviews++;
+            if (decision === 'retire') controller.abort();
+            return decision === 'approve';
+        },
+    }));
     const before = await execute('widgets.item.list', { surface }, context);
     if (!before.ok) throw new Error(before.errorCode);
     const original = WidgetSurfaceReadV1Schema.parse(before.result);
@@ -128,44 +137,27 @@ it.each(['approve', 'reject', 'retire'] as const)('settles each metric approval 
             instance: child.instance, fields, context: values, viewerValues: {},
         }).metric !== 'cost';
     }).map(child => child.instance.id);
-    // Every requested write changes its current value, so each one must cross approval admission.
-    expect(ids.length).toBeGreaterThan(1);
-    const decisions: Promise<void>[] = [];
-    const controller = new AbortController();
-    const onApprovalPending = (registration: ActionApprovalContinuation) => {
-        if (decision === 'retire') { controller.abort(); return; }
-        decisions.push((async () => {
-            // The Inbox and opened Artifact publication are the genuine system boundaries;
-            // approval admission, replay, input identity and continuation logic remain real.
-            expect(artifacts.list().filter(row => row.id !== buildWidgetSurfaceArtifactIdV1(surface))).toHaveLength(decisions.length + 1);
-            const settled = await inboxExecute('approval.request.decide', { artifactId: registration.artifactId, decision }, context);
-            expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true });
-            const account = await captureActionAccountContext(focused.id);
-            try {
-                const artifact = await account.fetchArtifact(registration.artifactId);
-                if (!artifact) throw new Error('missing_settled_approval');
-                if (artifact.header?.approvalStatus === 'executed') await registration.onExecuted(artifact);
-                else registration.onTerminal?.(decision === 'reject' ? 'rejected' : 'failed', artifact);
-            } finally { account.dispose(); }
-        })().catch(error => { controller.abort(); throw error; }));
-    };
-    const request = { metric: 'cost' as const, instanceIds: ids, signal: controller.signal,
-        onApprovalPending, target: { surface, context: {} }, port: {
-            execute: async (operation: Parameters<Parameters<typeof setUsageWidgetMetric>[0]['port']['execute']>[0], signal?: AbortSignal) => PluginUiWidgetAreaResultV1Schema.parse(await execute(operation.actionId,
+    // Every requested write changes its current value, so all three cross native review.
+    expect(ids).toHaveLength(3);
+    const writes = await setUsageWidgetMetric({ metric: 'cost', instanceIds: ids, signal: controller.signal,
+        onApprovalPending: () => { throw new Error('native_review_created_durable_approval'); },
+        target: { surface, context: {} }, port: {
+            execute: async (operation, signal) => PluginUiWidgetAreaResultV1Schema.parse(await execute(operation.actionId,
                 buildWidgetAreaActionInputV1(operation, surface), { ...context, signal })),
-        } };
-    const writes = await setUsageWidgetMetric(request);
-    await Promise.all(decisions);
-    expect(artifacts.list().filter(row => row.id !== buildWidgetSurfaceArtifactIdV1(surface)))
-        .toHaveLength(decision === 'approve' ? ids.length : 1);
+        } });
+    expect(reviews).toBe(decision === 'approve' ? ids.length : 1);
+    expect(artifacts.list().filter(row => row.id !== buildWidgetSurfaceArtifactIdV1(surface))).toHaveLength(0);
     expect(writes, JSON.stringify(writes)).toHaveLength(decision === 'approve' ? ids.length : 1);
     expect(writes.every(write => decision === 'approve' ? write.result.ok : !write.result.ok)).toBe(true);
+    if (decision !== 'approve') expect(writes[0]?.result).toMatchObject({
+        ok: false, errorCode: decision === 'retire' ? 'cancelled' : 'approval_canceled',
+    });
     const after = await execute('widgets.item.list', { surface }, context);
     if (!after.ok) throw new Error(after.errorCode);
     const changed = WidgetSurfaceReadV1Schema.parse(after.result).items![0]!;
     if (changed.kind !== 'group') throw new Error('expected_group');
     for (const child of changed.children.filter(child => ids.includes(child.instance.id))) {
-        // An unsettled write keeps each widget's own preset metric (Rhythm reads busy time, the others tokens).
+        // A rejected or retired review keeps each widget's own preset metric (Rhythm reads busy time, the others tokens).
         const before = group.children.find(row => row.instance.id === child.instance.id)!.instance.bindings.metric;
         expect(child.instance.bindings.metric).toEqual(decision === 'approve' ? { kind: 'value', value: 'cost' } : before);
         expect(child.instance.bindings.period).toEqual({ kind: 'context', slot: 'period' });

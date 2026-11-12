@@ -9,7 +9,7 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { UsageRecapComposer } from './UsageRecapComposer';
+import { openUsageRecapComposer, UsageRecapComposer } from './UsageRecapComposer';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -22,6 +22,7 @@ import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 } from '@happier-dev/protocol/acco
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 // The platform clipboard and the router are the effect boundaries; Action admission stays real.
 const clipboard = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
@@ -32,6 +33,13 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+// Focus and dismissable-layer listeners belong to the browser; modal ownership stays real.
+vi.mock('@/utils/web/radixCjs', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/utils/web/radixCjs')>();
+  const Inline = (props: React.PropsWithChildren) => props.children;
+  return { ...actual, requireRadixDismissableLayer: () => ({ Root: Inline, Branch: Inline }),
+    requireRadixFocusScope: () => ({ Root: Inline }) };
+});
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 let commandReader: CurrentUiContextReader | null = null;
@@ -41,7 +49,7 @@ const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
   cost: { reportedUsd: 3, estimatedUsd: 0, currency: 'USD' } } };
 
 async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], query = normalizeUsageQuery({ agents: ['claude', 'codex'] }), beforeRender?: () => void,
-  options: Readonly<{ publicProfiles?: boolean; onClose?: () => void; initialOutput?: 'badge' }> = {}) {
+  options: Readonly<{ publicProfiles?: boolean; onClose?: () => void; initialOutput?: 'badge'; modal?: boolean }> = {}) {
   await import('@/sync/ops/actions/defaultActionExecutor');
   const features = createRootLayoutFeaturesResponse();
   if (options.publicProfiles) features.features.account = { ...features.features.account, publicProfiles: { enabled: true } };
@@ -55,6 +63,7 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], qu
   const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
   await getServerFeaturesSnapshot({ serverId: server.id, force: true });
   let updateQuery!: (next: UsageQuery) => void;
+  let openModal!: () => void;
   function Host() {
     commandReader = useOptionalCurrentUiContextReader();
     const [shownQuery, setQuery] = React.useState(query);
@@ -62,8 +71,16 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], qu
     return <UsageRecapComposer query={shownQuery} serverId={server.id} onClose={options.onClose ?? (() => {})}
       {...(options.initialOutput ? { initialOutput: options.initialOutput } : {})} />;
   }
+  function ModalHost() {
+    commandReader = useOptionalCurrentUiContextReader();
+    const Bridge = useCurrentUiContextCommandBridge();
+    openModal = () => openUsageRecapComposer({ query, serverId: server.id }, Bridge);
+    return null;
+  }
   beforeRender?.();
-  const screen = await renderMountedCurrentUiContext(<Host />);
+  const screen = await renderMountedCurrentUiContext(options.modal ? <ModalHost /> : <Host />,
+    { withModalProvider: options.modal });
+  if (options.modal) await act(async () => { openModal(); });
   return { screen, updateQuery };
 }
 
@@ -145,7 +162,7 @@ describe('recap composer through authorized query and composition', () => {
       const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
       return Response.json({ v: 1, results: input.queries.map(query => ({ query, value: { ...accounting,
         totals: { ...accounting.totals, tokens: { ...accounting.totals.tokens, input: 'private-invalid-value' } } } })) });
-    });
+    }, undefined, undefined, { modal: true });
     await vi.waitFor(() => expect({ paths, states: screen.findAllByType(SurfaceStateCard).map(node => ({
       kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode,
     })) }).toMatchObject({ states: expect.arrayContaining([expect.objectContaining({
@@ -155,6 +172,7 @@ describe('recap composer through authorized query and composition', () => {
     expect(details).toContain('usage_query_result_invalid');
     expect(details).toContain('invalid_type');
     expect(details).not.toContain('private-invalid-value');
+    expect(screen.findAllByType(SurfaceStateCard)[0]!.findAll(node => node.props.children === details)).toHaveLength(0);
     const disclosure = commandReader!.readCurrentUiContext()?.commands.find(command => command.title.endsWith(': common.details'));
     expect(disclosure).toBeDefined();
     await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
@@ -306,7 +324,8 @@ describe('recap composer through authorized query and composition', () => {
     });
     await act(async () => { admitted.forEach(deferred => deferred.resolve(Response.json(accounting))); });
     await vi.waitFor(() => expect({ ready: screen.findByTestId('usage-recap-composer.card') !== null,
-      failure: screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode) }).toMatchObject({ ready: true }));
+      failure: screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode),
+      requests: pending.length }).toEqual({ ready: true, failure: [], requests: admitted.length }));
     expect(screen.findByTestId('usage-recap-composer.card')!.props.accessibilityLabel).toContain('12');
     expect(screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled).toBe(false);
     pending.forEach(deferred => deferred.resolve(Response.json(accounting)));
@@ -325,7 +344,8 @@ describe('recap composer through authorized query and composition', () => {
       screen.findAllByType(SegmentedTabBar).find(node => node.props.testIDPrefix === 'usage-recap-format')!.props.onSelectTab('story');
     });
     // Still composing the story: the square card and every style tile stay on screen.
-    expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull();
+    expect({ ready: screen.findByTestId('usage-recap-composer.card') !== null,
+      failure: screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode) }).toEqual({ ready: true, failure: [] });
     expect(screen.findAllByType(SelectionTiles)[0]!.props.options.every((option: { preview?: unknown }) => option.preview !== undefined)).toBe(true);
     expect(screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled).toBe(true);
     await act(async () => { hold!.resolve(Response.json(accounting)); });

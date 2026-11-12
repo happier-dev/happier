@@ -180,7 +180,7 @@ function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: bo
     // The substituted host ingress supplies the authenticated human identity;
     // production gets this from the front door, never from the Coach caller.
     executor: { execute: (id, input, context) => executor.execute(id, input,
-      { ...context, authority: 'present_user', actionCaller: { kind: 'host' } }) },
+      { ...context, authority: 'present_user', actionCaller: { kind: 'host' }, actionsSettings: settings }) },
   });
   return {
     ...scope,
@@ -273,10 +273,10 @@ describe('Usage Coach widget controller', () => {
     });
   });
 
-  it('refuses an Apply the approval policy has not admitted, without claiming it happened', async () => {
+  it('refuses an Apply that still needs native UI review, without claiming it happened', async () => {
     const { controller, store } = harness({ approve: false });
     const result = await controller.apply(query, finding);
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect(store.get(ANCHOR)).toBe(false);
     expect(controller.getSnapshot()).toMatchObject({ applied: [], error: { evidenceKey: finding.evidenceKey }, pending: [] });
   });

@@ -491,8 +491,12 @@ it('changes the Usage selector when request reachability changes without a machi
   publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://usage-selector.test', generation: 0 });
   const machines = ['first', 'second'].map(id => createMachineFixture({ id, activeAt: Date.now() }));
   const scope = { serverId, accountId: 'selector-account' };
-  storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }), machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-    machineListByServerId: { [serverId]: machines } });
+  storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }) });
+  storage.getState().applyMachines(machines, true, { sourceServerId: serverId, sourceAccountId: scope.accountId });
+  await act(async () => {
+    recordMachineRequestSucceeded({ serverId, accountId: scope.accountId, machineId: 'first' });
+    recordMachineRequestSucceeded({ serverId, accountId: scope.accountId, machineId: 'second' });
+  });
   const hook = await renderHook(() => useUsageSelectorMachineId());
   expect(hook.getCurrent()).toBe('first');
   await act(async () => recordMachineRequestFailed({ ...scope, machineId: 'first' }));

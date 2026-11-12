@@ -112,7 +112,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
         includeInsights: selected.has('activeDays') || selected.has('streak'),
         includeActivity: selected.has('rhythm') || selected.has('night'), activityResolution: 'both',
         includeSeries: selected.has('highlights'), includeLeaders: false, includeModelTimeline: false, includeMessageStats: false,
-        includeSessionEvidence: privateDetail, includeTranscriptEvidence: privateDetail,
+        includeSessionEvidence: privateDetail, includeTranscriptEvidence: privateDetail, includeCoach: selected.has('coach'),
         includeWorkEvidence: selected.has('work') || selected.has('highlights'), workProjection: 'detail',
         breakdown: [
           ...(selected.has('agentMix') ? ['agent' as const] : []),

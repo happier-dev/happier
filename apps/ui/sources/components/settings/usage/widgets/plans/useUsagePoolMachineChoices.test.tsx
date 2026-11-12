@@ -27,15 +27,17 @@ it('renders a pool Machine chooser only for a change to its chosen names or elig
   const rows = ['selected', 'other'].map(id => createMachineFixture({ id, activeAt: Date.now(), presenceProtocolVersion: 1,
     metadata: { ...createMachineFixture().metadata!, displayName: id, host: `${id}.local` } }));
   storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }) });
-  storage.getState().applyMachines(rows, true, { sourceServerId: server.id });
+  storage.getState().applyMachines(rows, true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
   storage.getState().markMachineListSettled(server.id);
   const machineIds = ['selected'];
+  recordMachineRequestSucceeded({ serverId: server.id, accountId: scope.accountId, machineId: 'selected' });
+  recordMachineRequestSucceeded({ serverId: server.id, accountId: scope.accountId, machineId: 'other' });
   let renders = 0;
   const chooser = await renderHook(() => { renders += 1; return useUsagePoolMachineChoices(machineIds); });
   expect(chooser.getCurrent()).toEqual([{ id: 'selected', name: 'selected' }]);
   const publish = async (id: string, change: Partial<typeof rows[number]>) => act(async () => {
     const current = storage.getState().machines[id]!;
-    storage.getState().applyMachines([{ ...current, ...change }], false, { sourceServerId: server.id });
+    storage.getState().applyMachines([{ ...current, ...change }], false, { sourceServerId: server.id, sourceAccountId: scope.accountId });
   });
   const expectQuiet = async (update: () => Promise<unknown>) => {
     renders = 0;
@@ -76,13 +78,13 @@ it('renders a pool Machine chooser only for a change to its chosen names or elig
   const offlineAt = Date.now() + 10;
   await act(async () => storage.getState().applyMachineActivityUpdates([
     { id: 'selected', active: false, activeAt: offlineAt },
-  ], { sourceServerId: server.id }));
+  ], { sourceServerId: server.id, sourceAccountId: scope.accountId }));
   expect(renders).toBe(1);
   expect(chooser.getCurrent()).toEqual([]);
   renders = 0;
   await act(async () => storage.getState().applyMachineActivityUpdates([
     { id: 'selected', active: true, activeAt: offlineAt + 1 },
-  ], { sourceServerId: server.id }));
+  ], { sourceServerId: server.id, sourceAccountId: scope.accountId }));
   expect(renders).toBe(1);
   expect(chooser.getCurrent()).toEqual([{ id: 'selected', name: 'Renamed' }]);
   renders = 0;

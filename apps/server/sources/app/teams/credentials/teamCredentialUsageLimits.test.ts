@@ -25,6 +25,17 @@ describe('Team credential usage limits', () => {
         expect(result).toMatchObject({ ok: false, denied: { recorded: 150, maximum: 120 } });
     });
 
+    it('allows known token parts just below the ceiling when the reported total is unknown', () => {
+        const result = evaluateTeamCredentialUsageLimits({
+            limits: [limit({ metric: 'total_tokens', maximum: '120' })],
+            events: [event({ totalTokens: null, tokens: { input: 100, output: 19, reasoning: null, cacheRead: null, cacheWrite: null, total: null } })],
+            actorAccountId: 'member-1',
+            now,
+        });
+
+        expect(result).toMatchObject({ ok: true, applied: [{ recorded: 119, maximum: 120 }] });
+    });
+
     it('keeps a fully unmeasured token event out of the recorded total', () => {
         const result = evaluateTeamCredentialUsageLimits({
             limits: [limit({ metric: 'total_tokens', maximum: '120' })],

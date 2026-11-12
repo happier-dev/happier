@@ -1,6 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { UsageSessionMessageEvidence, projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { isUsageSessionFactRecordAddress } from '@happier-dev/protocol/usage/usageSessionFactKinds';
+import { getUsageSessionFactKinds, isUsageSessionFactRecordAddress, type UsageSessionFactKindV1 } from '@happier-dev/protocol/usage/usageSessionFactKinds';
 import type { UsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -30,11 +30,25 @@ export type SessionInputEvidence = Readonly<{
     workFactsPersisted?: boolean;
     workFactsWriteErrorCode?: string;
 }>;
+export type SessionInputDemand = Readonly<{ key: string; factKinds: readonly UsageSessionFactKindV1[] }>;
+
+/** Membership is shared; private payload admission still follows the demanded kinds. */
+export function getUsageQuerySessionInputDemand(query: Parameters<typeof getUsageSessionEvidenceDemandKey>[0], nowMs: number): SessionInputDemand {
+    return { key: getUsageSessionEvidenceDemandKey({ ...query, includeCoach: false }, nowMs),
+        factKinds: getUsageSessionFactKinds(query) };
+}
+
+export function usageSessionInputDemandCovers(admitted: SessionInputDemand, requested: SessionInputDemand,
+    value?: SessionInputEvidence): boolean {
+    return admitted.key === requested.key && (value?.workFactsPersisted === true
+        || requested.factKinds.every(kind => admitted.factKinds.includes(kind)));
+}
+
 export type SessionInputReader = (sessionId: string, readTranscript: boolean,
     load: (assertCurrent: () => void, signal: AbortSignal, retained: SessionInputEvidence | undefined,
         onProgress: (value: SessionInputEvidence) => void) => Promise<SessionInputEvidence | null>,
     onProgress?: (value: SessionInputEvidence) => void,
-    admitted?: SessionInputEvidence, demandKey?: string, sourceReferenceKey?: string,
+    admitted?: SessionInputEvidence, demandKey?: SessionInputDemand, sourceReferenceKey?: string,
     /** The caller's demand. A shared read ends once every signalled borrower has left. */
     signal?: AbortSignal) => SessionInputEvidence | null | Promise<SessionInputEvidence | null>;
 /** Selected ids, plus the rows a selection read opened for the borrowers of that same read. */
@@ -100,7 +114,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     }>): boolean;
     dispose(): void;
 }> {
-    type InputEntry = { sessionId: string; readTranscript: boolean; sourceReferenceKeys: Set<string>;
+    type InputEntry = { sessionId: string; readTranscript: boolean; demandKey?: SessionInputDemand; sourceReferenceKeys: Set<string>;
         basis: Readonly<{ storage: ReturnType<typeof readBasis>; admitted?: readonly unknown[] }>; needsAdmission: boolean;
         value?: SessionInputEvidence; failure?: unknown; read: ReturnType<SessionInputReader>;
         listeners: Set<(value: SessionInputEvidence) => void>; shared?: SharedRead; lastGood?: SessionInputEvidence };
@@ -123,7 +137,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         // A first refusal publishes the admitted subset before selection ends.
         // Keep that phase from replacing the complete selection's aggregate
         // while sibling widget queries consume the same opened inputs.
-        const key = JSON.stringify([getUsageSessionEvidenceDemandKey({ ...value.query, includeTranscriptEvidence: false }, value.nowMs), value.admitted]);
+        const key = JSON.stringify([getUsageQuerySessionInputDemand({ ...value.query, includeTranscriptEvidence: false }, value.nowMs).key, value.admitted]);
         const previous = projections.get(key);
         if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)
             && previous
@@ -237,7 +251,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                 entry.shared!.abort.abort();
                 if (group.get(key) !== entry) return;
                 const lastGood = entry.lastGood;
-                if (lastGood) group.set(key, { sessionId, readTranscript, sourceReferenceKeys: entry.sourceReferenceKeys, basis: entry.basis,
+                if (lastGood) group.set(key, { sessionId, readTranscript, demandKey, sourceReferenceKeys: entry.sourceReferenceKeys, basis: entry.basis,
                     needsAdmission: true, value: lastGood, read: lastGood, listeners: new Set() });
                 else group.delete(key);
             });
@@ -249,7 +263,23 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         if (retained && areSnapshotProjectionsEquivalent(retained.basis.storage, basis.storage)
             && areSnapshotProjectionsEquivalent(retained.basis.admitted, basis.admitted)
             && !retained.needsAdmission) return observe(retained);
-        const entry: InputEntry = { sessionId, readTranscript,
+        if (demandKey) {
+            for (const candidate of group.values()) {
+                const candidateDemand = candidate.demandKey;
+                const settledRefusal = candidate.shared?.settled && candidate.failure instanceof SessionPartsHttpError
+                    && !readUsageHistoryFailure(candidate.failure).retryable;
+                // Reuse only settled admission from the same population and phase.
+                // A completed transcript conversion owns both saved fact kinds.
+                if (candidate.readTranscript !== readTranscript || !candidateDemand
+                    || candidate.needsAdmission
+                    || (!settledRefusal && (candidate.failure || !candidate.value || candidate.read instanceof Promise))
+                    || !areSnapshotProjectionsEquivalent(candidate.basis.storage, basis.storage)
+                    || !areSnapshotProjectionsEquivalent(candidate.basis.admitted, basis.admitted)
+                    || !usageSessionInputDemandCovers(candidateDemand, demandKey, candidate.value)) continue;
+                return observe(candidate);
+            }
+        }
+        const entry: InputEntry = { sessionId, readTranscript, demandKey,
             sourceReferenceKeys: new Set(sourceReferenceKey ? [sourceReferenceKey] : []), basis, needsAdmission: false,
             read: null, listeners: new Set(),
             ...(retained?.value && !retained.failure ? { lastGood: retained.value } : {}) };
@@ -266,10 +296,12 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             // Selection can precede per-Session admission. A wake during that
             // finite read must leave its replacement requiring fresh evidence.
             entry.needsAdmission ||= !areSnapshotProjectionsEquivalent(readBasis(sessionId), basis.storage);
-            entry.needsAdmission ||= value?.workFactsPersisted === false;
+            // Ineligible live Sessions remain unchecked, but their complete
+            // in-memory transcript needs no readmission. Failed writes do.
+            entry.needsAdmission ||= value?.workFactsPersisted === false && value.workFactsWriteErrorCode !== undefined;
             entry.needsAdmission ||= readTranscript && value?.completeMessageCoverage === false;
             if (value) entry.value = value;
-            if (value?.workFactsPersisted && value.completeMessageCoverage && !entry.needsAdmission) {
+            if (value?.completeMessageCoverage && (readTranscript || value.workFactsPersisted) && !entry.needsAdmission) {
                 // One converted Session also completes its already-admitted summaries.
                 // Keep this in the input owner: an ordinary reopen must not revive Not read.
                 const openedVersion = version(value.session);
@@ -280,6 +312,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                         || !areSnapshotProjectionsEquivalent(version(sibling.value.session), openedVersion)) continue;
                     sibling.value = value;
                     sibling.read = value;
+                    if (sibling.demandKey && demandKey) sibling.demandKey = { ...sibling.demandKey, factKinds: demandKey.factKinds };
                     for (const listener of sibling.listeners) listener(value);
                 }
             }
