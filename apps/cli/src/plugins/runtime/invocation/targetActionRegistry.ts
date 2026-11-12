@@ -642,6 +642,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(deploymentSource ? { deploymentSource } : {}),
                     ...(managedWorkloads ? { managedWorkloads } : {}),
                     ...(reviewedParent ? { reviewedParent } : {}),
+                    ...(ownUiPress ? { presentUserIntent: 'confirmed' as const } : {}),
                     ...(operationAcceptance && operationOwnerUpdate ? { finiteOperation: Object.freeze({
                         operationAcceptance, operationOwnerUpdate,
                     }) } : {}),

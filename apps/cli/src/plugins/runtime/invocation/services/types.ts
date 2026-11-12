@@ -80,8 +80,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
     /** Exact role source acquisition captured by the deployment admission owner. */
     deploymentSource?: Pick<Parameters<typeof import('@/deployments/targets/ownServer/exactCommitRelease').createDeploymentSourceMaterializationPort>[0], 'admit'> & Readonly<{
-        identity: Readonly<Pick<import('@happier-dev/plugin-sdk/services').DeploymentSourceMaterializationRequestV1, 'environmentId' | 'deploymentId'>>;
-        createExecEnv?(source: import('@happier-dev/plugin-sdk').DeploymentSourceMaterializationV1, signal: AbortSignal, retainCleanup: NonNullable<PluginInvocationServicesSeed['retainCleanup']>): import('@happier-dev/plugin-sdk').DeploymentExecEnvPortV1;
+        identity: Readonly<Pick<import('@happier-dev/plugin-sdk').DeploymentSourceMaterializationRequestV1, 'environmentId' | 'deploymentId'>>;
+        createExecEnv?(source: import('@happier-dev/plugin-sdk').DeploymentSourceMaterializationV1, signal: AbortSignal, retainCleanup: NonNullable<PluginInvocationServicesSeed['retainCleanup']>): import('@happier-dev/plugin-sdk/exec').DeploymentExecEnvPortV1;
     }>;
     /** Exact shared-save id/purpose/audience reviewed by the root Action. */
     sharedSaveAdmission?: import('@/plugins/runtime/context/secrets').PluginSharedSaveAdmission;
@@ -127,6 +127,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     resolveAccountSourceMachine?(signal?: AbortSignal): ReturnType<typeof import('../actions/accountMachineActionTransport').resolveAccountMachineSourceActionMachine>;
     /** Existing issuer's admitted whole-operation parent; never public plugin input. */
     reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
+    /** The handler admission owner's own-UI decision; host-private, never an SDK operand. */
+    presentUserIntent?: 'confirmed';
     /** Existing finite operation owns nested effect progress and early transport acceptance. */
     finiteOperation?: Readonly<{
         operationAcceptance: NonNullable<ActionExecutorContext['operationAcceptance']>;

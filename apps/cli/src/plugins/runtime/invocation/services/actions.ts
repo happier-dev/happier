@@ -76,6 +76,7 @@ export type PluginActionsServiceSeed = Readonly<{
     resolveAccountSourceMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine'];
     /** The canonical admitted parent, projected once by the target invocation owner. */
     reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
+    presentUserIntent?: PluginInvocationServicesSeed['presentUserIntent'];
     finiteOperation?: PluginInvocationServicesSeed['finiteOperation'];
     /** Host-only finite invocation cause; never a fallback for an active-turn reader. */
     actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
@@ -162,6 +163,8 @@ export type InvokeContributedAction = (params: Readonly<{
     surface: 'plugin';
     /** Diagnostic origin, deliberately separate from the target authorization surface. */
     originSurface?: PluginInvocationOriginSurface;
+    /** Present person's admission, captured before nesting narrows the caller authority. */
+    presentUserIntent?: 'confirmed';
     /** Host-stamped immediate caller; plugin input never supplies this value. */
     caller: Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
     initiatingActionCaller?: ActionCaller;
@@ -468,6 +471,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             surface: 'plugin',
             ...(readObservation ? { requiredReadOnly: true as const, readObservation } : {}),
             ...(caller.originSurface ? { originSurface: caller.originSurface } : {}),
+            ...(params.seed.presentUserIntent ? { presentUserIntent: params.seed.presentUserIntent } : {}),
             caller,
             initiatingActionCaller: actionCaller,
             ...(params.seed.requestId === undefined ? {} : { requestId: params.seed.requestId }),

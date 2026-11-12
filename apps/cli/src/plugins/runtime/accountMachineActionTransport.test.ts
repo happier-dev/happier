@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import fastify from 'fastify';
 import { afterEach, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -17,8 +18,12 @@ import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
+import { manifest as admittedSourceManifest } from './accountMachineActionIntent.fixture';
 import { resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
 
 const { machineRpc } = vi.hoisted(() => ({ machineRpc: vi.fn() }));
@@ -48,10 +53,14 @@ const provider = definePlugin({ id: 'acme.account-source-provider', version: '1.
         run: async ({ key }) => ({ key, machine: true as const }) },
 }, contributesTo: { 'acme.account-actions': { sources: {
     provider: protocol.contribute({ operations: { read: protocol.operations.read.bind('read') } }),
+} }, 'acme.account-admitted': { sources: {
+    provider: protocol.contribute({ operations: { read: protocol.operations.read.bind('read') } }),
 } } } });
 
 it.each([
     { outcome: 'acknowledged', placement: 'selected' },
+    { outcome: 'ui', placement: 'selected' },
+    { outcome: 'uiAutomation', placement: 'selected' },
     { outcome: 'lostAck', placement: 'selected' },
     { outcome: 'notSent', placement: 'selected' },
     { outcome: 'authorizationRefused', placement: 'selected' },
@@ -69,11 +78,14 @@ it.each([
         dataEncryptionKey: null, agentState: null, agentStateVersion: 0, responsibleAccountId: null, responsibleAccount: null,
         effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
     } }));
-    const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner');
+    const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner', outcome === 'ui' || outcome === 'uiAutomation' ? { primary: {
+        manifest: admittedSourceManifest, projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions'),
+        entryPath: resolve(import.meta.dirname, 'accountMachineActionIntent.fixture.ts'),
+    } } : {});
     const manifest = normalizePluginManifestV2(provider.manifest);
     const source = DaemonPluginTargetedSourceDeclarationV1Schema.parse({ manifest: { id: manifest.id, contributes: {
         actions: manifest.contributes.actions, pluginContributionPoints: [],
-        targetedPluginContributions: manifest.contributes.targetedPluginContributions, ui: { renderers: [] },
+        targetedPluginContributions: manifest.contributes.targetedPluginContributions.filter(entry => entry.target.pluginId === pluginId), ui: { renderers: [] },
     } }, occurrenceId: 'provider-machine-occurrence', sourceCustody: {
         kind: 'managed', immutableGenerationId: 'provider-machine-generation', installSource: 'archive',
     } });
@@ -107,10 +119,26 @@ it.each([
         const cli = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-machine',
             serverIdentityId: 'account-machine', serverApiUrl: endpoint,
             ...(placement === 'selected' ? { machineId: 'selected-machine' } : {}) });
-        const result = await cli.execute('action.invoke', { action: { pluginId, localId: 'source' }, input: { key: 'provider' } },
-            { surface: 'cli', runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine',
-                ...(placement !== 'selected' ? { defaultSessionId: 'bound-session' } : {}),
-                ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}) });
+        const context: ActionExecutorContext = {
+            surface: outcome === 'ui' || outcome === 'uiAutomation' ? 'ui' : 'cli',
+            ...(outcome === 'ui' ? { authority: 'present_user' as const } : outcome === 'uiAutomation' ? { authority: 'account_automation' as const } : {}),
+            ...(outcome === 'ui' || outcome === 'uiAutomation' ? { actionRequestId: '4d13dc15-d859-4c0e-9abe-d561a12894d5' } : {}),
+            runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine',
+            ...(placement !== 'selected' ? { defaultSessionId: 'bound-session' } : {}),
+            ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}),
+        };
+        const input = { action: { pluginId, localId: 'source' }, input: { key: 'provider' } };
+        const result = outcome === 'ui' || outcome === 'uiAutomation'
+            ? await (async () => {
+                const host = { token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
+                    serverHttpBaseUrl: endpoint, runtimeActionMachineId: 'selected-machine',
+                    serverId: 'account-machine', serverIdentityId: 'account-machine' };
+                const { deps } = createCliActionExecutorHarness(host);
+                const attempt = await executeAccountPluginAction({ host, deps, actionId: 'action.invoke', input, context });
+                if (!attempt.matched) throw new Error('Expected Account Action placement');
+                return attempt.result;
+            })()
+            : await cli.execute('action.invoke', input, context);
         expect(result, JSON.stringify(result)).toMatchObject(outcome === 'notSent'
             ? { ok: false, errorCode: 'plugin_action_execution_origin_unavailable' }
             : outcome === 'authorizationRefused' ? { ok: false, errorCode: 'action_forbidden' }
@@ -132,6 +160,10 @@ it.each([
                     invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId, contributionLocalId: 'source',
                         sourceCustody: { kind: 'account_release', pluginId } } } });
                 expect(input.invocation?.kind === 'clientPluginAction' && input.invocation.clientActionBinding.materializationRef).toBeUndefined();
+                expect(input.executionSurface).toBe(outcome === 'ui' ? 'ui' : 'cli');
+                expect(input.presentUserIntent).toBe(outcome === 'ui' ? 'confirmed' : undefined);
+                expect(input.requestId).toBe(context.actionRequestId);
+                expect(request.authorityCeiling).toBe('account_automation');
             }
         }
         expect(providerEffects).toBe(['notSent', 'authorizationRefused', 'modeMismatch', 'unclassified'].includes(outcome) ? 0 : 1);

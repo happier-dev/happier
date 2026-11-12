@@ -90,9 +90,14 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
         code: 'plugin_action_caller_unavailable', message: 'Current Account caller is unavailable', actionHandlerInvocation: 'notStarted' };
     await input.request.beforeHandlerInvocation?.();
     const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({ machineId: input.machineId,
+        ...(input.request.requestId === undefined ? {} : { requestId: input.request.requestId }),
         qualifiedActionId: buildQualifiedPluginContributionKey(input.request.action), input: input.request.input,
         ...(input.request.requiredReadOnly || input.request.readObservation ? { requiredReadOnly: true } : {}),
-        executionSurface: input.request.originSurface === 'agent' ? 'agent' : input.request.originSurface === 'mcp' ? 'mcp' : 'cli',
+        // Preserve the person's host-admitted UI press across the Machine hop.
+        // This carries intent without raising the Account-automation authority ceiling.
+        executionSurface: input.request.presentUserIntent === 'confirmed' ? 'ui'
+            : input.request.originSurface === 'agent' ? 'agent' : input.request.originSurface === 'mcp' ? 'mcp' : 'cli',
+        presentUserIntent: input.request.presentUserIntent,
         expectedContributorOccurrenceId: input.source.occurrenceId,
         ...(input.request.sessionId ? { sessionId: input.request.sessionId } : {}),
         invocation: { kind: 'clientPluginAction', clientActionBinding: {

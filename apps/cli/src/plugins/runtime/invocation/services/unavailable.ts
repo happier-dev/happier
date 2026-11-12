@@ -286,7 +286,7 @@ type PluginInvocationServiceDescriptorContext = Readonly<{
     connectedAccounts: ConnectedAccountsService | null;
     managedProviderRuntime: ManagedProviderRuntimeOperationBinding | null;
     interactions: InteractionsService;
-    fileSystem: FileSystemService | null;
+    fileSystem: ReturnType<typeof createPluginFileSystemService> | null;
     deploymentSource: PluginServices['deploymentSource'] | null;
     deploymentExecEnv: PluginServices['deploymentExecEnv'] | null;
 }>;
@@ -314,7 +314,7 @@ function createDeploymentInvocationServices(seed: PluginInvocationServicesSeed):
             return source;
         } }),
         deploymentExecEnv: admission.createExecEnv ? Object.freeze<PluginServices['deploymentExecEnv']>({ async prepare(request, options) {
-            if (!('source' in request)) throw new PluginError({ code: 'unavailable',
+            if (request.source === undefined) throw new PluginError({ code: 'unavailable',
                 message: 'A deployment source from this invocation is required' });
             const environment = environments.get(request.source);
             if (!environment) throw new PluginError({ code: 'unavailable',
@@ -329,7 +329,7 @@ function createDeploymentInvocationServices(seed: PluginInvocationServicesSeed):
 function createAvailablePluginFileSystemService(
     seed: PluginInvocationServicesSeed,
     params: PluginInvocationServicesFactoryParams,
-): FileSystemService | null {
+): ReturnType<typeof createPluginFileSystemService> | null {
     const filesystemRoots = params.filesystemRoots
         ?? params.resolveFilesystemRoots?.(seed)
         ?? null;
@@ -516,7 +516,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             if (!fileSystem && !seed.fileDownload) return null;
             const base = fileSystem ?? PLUGIN_SERVICE_DESCRIPTORS.fs.createUnavailable();
             return Object.freeze({ ...base, async prepareDownload(input: Parameters<FileSystemService['prepareDownload']>[0],
-                options?: Parameters<FileSystemService['prepareDownload']>[1]) {
+                options?: Parameters<FileSystemService['prepareDownload']>[1]): ReturnType<FileSystemService['prepareDownload']> {
                 const binding = seed.fileDownload;
                 if (!binding || input.destination.destinationId !== binding.destinationId) return {
                     success: false, status: 'failed', errorCode: 'filesystem_transfer_custody_required',
@@ -810,6 +810,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                     ...(seed.approvalContext ? { approvalContext: seed.approvalContext } : {}),
                     ...(seed.requesterAccount ? { requesterAccount: seed.requesterAccount } : {}),
                     ...(seed.reviewedParent ? { reviewedParent: seed.reviewedParent } : {}),
+                    ...(seed.presentUserIntent ? { presentUserIntent: seed.presentUserIntent } : {}),
                     ...(seed.finiteOperation ? { finiteOperation: seed.finiteOperation } : {}),
                     ...(seed.workflowActionContext ? { workflowActionContext: seed.workflowActionContext } : {}),
                     ...(seed.resolveCurrentPluginMaterializationRef
