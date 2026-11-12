@@ -7,6 +7,7 @@ import { isActionOperationTerminal, type ActionOperationObservation } from '@/sy
 import { canRequestActionOperationStop, readProjectCommandStepExitCode } from './actionOperationPresentation';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { t } from '@/text';
@@ -170,8 +171,10 @@ export function presentFailure(snapshot: ActionOperationSnapshot): ActionOperati
         ? t('localServices.actions.failure.exitCode', { code: String(observedStepExit) })
         : resolveSystemTaskFailureMessage({ code: errorCode, message: error }) ?? error;
     const presented = presentActionFailureOutcome({ ...snapshot.error, requestId: snapshot.requestId }, undefined, sentence);
+    const fallback = presented.reason || t('inbox.actionOperations.failureGeneric');
     return {
-        reason: presented.reason || t('inbox.actionOperations.failureGeneric'),
+        // Domain refusals retain their full cause in result; error may only summarize the settlement.
+        reason: resolveActionExecutionFailureMessage({ ok: true, result: snapshot.result }, fallback) ?? fallback,
         technicalLines: presented.technicalDetails,
     };
 }

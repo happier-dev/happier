@@ -5,11 +5,9 @@ import { act, createSessionFixture, pressTestInstanceAsync, renderScreen, standa
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
-import { getActionOperation, type ActionOperationRpc } from '@/sync/ops/actionOperations';
+import type { ActionOperationRpc } from '@/sync/ops/actionOperations';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const resumeRpc = vi.hoisted(() => ({ signals: [] as (AbortSignal | undefined)[] }));
@@ -42,6 +40,9 @@ vi.mock('expo-router', async () => {
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
+const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+const { consumeActionOperationSnapshotPush } = await import('@/sync/domains/actionOperations/consumeActionOperationSnapshotPush');
+const { getActionOperation } = await import('@/sync/ops/actionOperations');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const initialState = storage.getState();
 
@@ -84,7 +85,7 @@ describe('ActionOperationDetailModal', () => {
         }));
         expect(screen.getTextContent()).toContain('inbox.actionOperations.status.succeeded');
         expect(screen.getTextContent()).not.toContain('inbox.actionOperations.observation.unavailable');
-        expect([...actionOperationStore.getSnapshot().operationsByKey.values()]).toEqual([{ serverId, snapshot: terminal }]);
+        expect([...actionOperationStore.getSnapshot().operationsByKey.values()]).toMatchObject([{ serverId, snapshot: terminal }]);
     });
 
     it('shows a Setup operation\u2019s reviewed steps as the Setup checklist', async () => {

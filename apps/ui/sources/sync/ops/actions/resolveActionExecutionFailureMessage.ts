@@ -7,11 +7,13 @@ import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/action
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
+import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -97,6 +99,10 @@ export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
 function readFailureMessage(value: unknown, options?: FailurePresentationOptions): string | null {
     const record = asRecord(value);
     if (!record) return null;
+    if (record.type === 'error') {
+        const spawn = SessionSpawnNewActionResultV1Schema.safeParse(record);
+        return spawn.success && spawn.data.type === 'error' ? resolveSessionSpawnNewResultFailureMessage(spawn.data) : null;
+    }
     const pluginError = isPluginError(value);
     const authoredMessage = pluginError ? value.data.message : !(value instanceof Error) ? record.message : undefined;
     const message = typeof authoredMessage === 'string' ? authoredMessage.trim() : '';
@@ -187,7 +193,7 @@ export function resolveActionExecutionErrorMessage(error: unknown, fallbackMessa
 
 function isFailedResult(value: unknown): boolean {
     const record = asRecord(value);
-    return record?.ok === false;
+    return record?.ok === false || record?.type === 'error';
 }
 
 /** Both thrown adapters and returned Action envelopes use the cause owner's title. */
@@ -198,9 +204,9 @@ export function resolveActionExecutionFailureTitle(value: unknown, fallbackTitle
 
 function readFailureRecord(value: unknown): Record<string, unknown> | null {
     const topLevel = asRecord(value);
-    if (!topLevel || topLevel.ok === false) return topLevel;
+    if (!topLevel || isFailedResult(topLevel)) return topLevel;
     const inner = asRecord(topLevel.result);
-    if (inner?.ok === false) return inner;
+    if (isFailedResult(inner)) return inner;
     const results = Array.isArray(inner?.results) ? inner.results : [];
     return asRecord(results.find(isFailedResult));
 }

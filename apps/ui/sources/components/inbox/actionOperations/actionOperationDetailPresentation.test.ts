@@ -26,6 +26,26 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation detail presentation', () => {
+    it('uses a retained Action failure instead of its coarse settlement summary', () => {
+        const detail = projectActionOperationDetail(operation({ state: 'failed', settledAt: 2_000,
+            error: { errorCode: 'credential_unavailable', error: 'credential_unavailable' },
+            result: { ok: false, code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true },
+        }), 'available');
+        expect(detail.failure?.reason).toBe('Sign in to Docker: run sbx login');
+    });
+    it('shows the retained exhausted-pool cause using the shared Action result presenter', () => {
+        const detail = projectActionOperationDetail(operation({ actionId: 'session.spawn_new', state: 'failed', settledAt: 2_000,
+            requestId: 'pool-request', error: { errorCode: 'spawn_failed', error: 'spawn_failed' },
+            result: { type: 'error', code: 'spawn_failed', retryable: false,
+                launchError: { kind: 'launch_error', code: 'connected_service_auth_group_exhausted', message: 'Pool has no eligible account',
+                    connectedAccountPool: { serviceId: 'openai-codex', excluded: [
+                        { profileId: 'spent-account', reason: 'quota_exhausted' },
+                    ] } } },
+        }), 'available');
+        expect(detail.failure?.reason).toBe('No fallback account is available: 1 is used up');
+        expect(detail.failure?.technicalLines).toContainEqual(expect.objectContaining({ value: 'pool-request' }));
+    });
+
     it('shows retained Setup command failure evidence through the shared failure presenter', () => {
         const detail = projectActionOperationDetail(operation({ actionId: 'machines.setup.apply', state: 'failed',
             requestId: 'setup-request', settledAt: 2_000,

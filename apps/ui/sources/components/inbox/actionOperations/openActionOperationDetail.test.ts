@@ -13,6 +13,12 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 // The Radix DOM leaf is the system boundary; modal custody and detail rendering stay real.
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 
+// The Machine RPC transport is external; operation admission, store merge and Details stay real.
+const operationRpc = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<unknown>>());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: operationRpc,
+}));
+
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
@@ -29,6 +35,8 @@ describe('openActionOperationDetail', () => {
     beforeEach(() => {
         actionOperationStore.reset();
         entries = [];
+        operationRpc.mockReset();
+        operationRpc.mockImplementation(() => new Promise(() => {}));
     });
     afterEach(async () => {
         await standardCleanup();
@@ -68,6 +76,28 @@ describe('openActionOperationDetail', () => {
         expect(entries.filter(entry => 'visible' in entry && entry.visible === true)).toHaveLength(0);
         await act(async () => { await vi.advanceTimersByTimeAsync(motionTokens.overlay.modal.exitMs); });
         expect(screen.findAllByType(ActionOperationDetailModal)).toHaveLength(0);
+    });
+
+    it('loads the retained refusal when cold Activity only has its summary', async () => {
+        const { openActionOperationDetail } = await import('./openActionOperationDetail');
+        const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+        const full = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'cold-failure', revision: 2, actionId: 'acme.preview/deploy', state: 'failed',
+            requestId: 'cold-request', scope: { accountId: 'account', machineId: 'machine' }, title: 'Deploy',
+            createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported',
+            error: { errorCode: 'credential_unavailable', error: 'credential_unavailable' },
+            result: { ok: false, code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true },
+        });
+        const { result: _result, ...summary } = full;
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [summary] });
+        operationRpc.mockResolvedValue({ kind: 'found', operation: full });
+        const screen = await renderScreen(React.createElement(ModalProvider, null, React.createElement(ObserveModals)));
+        await act(async () => {
+            openActionOperationDetail({ serverId: 'home-a', operationId: 'cold-failure' });
+            await vi.dynamicImportSettled();
+        });
+        expect(screen.getTextContent()).toContain('Sign in to Docker: run sbx login');
+        expect(actionOperationStore.getSnapshot().operationsByKey.get(JSON.stringify(['home-a', 'cold-failure']))?.snapshot.result).toEqual(full.result);
     });
 
     it('does not open detail for an unqualified legacy operation', async () => {
