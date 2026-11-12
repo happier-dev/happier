@@ -44,15 +44,12 @@ import { resolvePublicShareApplicationBaseUrl } from '@/components/sessions/shar
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { Modal } from '@/modal';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
-import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
-import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
-import { isTextSharingAvailable, shareTextSafe } from '@/utils/ui/shareText';
-import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { t } from '@/text';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
+import { DeploymentPendingRequest } from './DeploymentPendingRequest';
 
 import {
   canPromoteDeploymentReceipt,
@@ -73,6 +70,7 @@ import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
+import { DeploymentLiveAddressActions, formatDeploymentLiveAddress, resolveDeploymentLiveUrl } from './deploymentLiveAddress';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
@@ -263,14 +261,8 @@ export const DeploymentReceiptDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const images = 'images' in content ? content.images : NO_IMAGES;
     const notice = deploymentStateNotice(deployment.state, facts.failure);
-    const primaryService = content.sourceIntent?.kind === 'repository'
-      ? content.sourceIntent.compose?.primaryService : content.sourceIntent?.primaryService;
-    const nativeDomain = primaryService ? domains.result.items.find(item =>
-      item.domain.targetLinkId === deployment.targetLinkId
-      && (item.domain.state === 'active' || item.domain.state === 'warning')
-      && item.content.target.service === primaryService) : undefined;
-    const outcomeUrl = facts.urls?.[0]
-      ?? (nativeAddressDemand && nativeDomain ? readDeploymentDomainServingUrlV1(nativeDomain.content) : null);
+    // Domains are read only while this receipt serves natively, so a historical one never borrows them.
+    const outcomeUrl = resolveDeploymentLiveUrl({ ...value, facts }, nativeAddressDemand ? domains.result.items : []);
     const firstMachine = machineName(content.machines[0] ?? '');
     // A failed deploy's way back is the incumbent it recorded; the rollback Action decides admission at the press.
     const target = facts.rollbackTarget;
@@ -447,6 +439,8 @@ export const DeploymentReceiptDetail = React.memo(
               actionsLayout={phone && !rollbackButton ? 'hang' : undefined}
               actionsPlacement="page"
             />
+            {deploymentInProgressStates().includes(deployment.state)
+              ? <DeploymentPendingRequest pending={environmentValue?.pendingDeployment} serverId={props.serverId} /> : null}
             {outcomeBanner(rollbackPress, 'rollback')}
             {/* A phone pressed these in its pinned bar, so their answers show there. */}
             {phone ? null : outcomeBanner(cancelPress, 'cancel')}
@@ -723,7 +717,7 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
   accountId: string;
 }>) {
   const url = props.url;
-  const address = url ? url.replace(/^https?:\/\//, '').replace(/\/$/, '') : null;
+  const address = url ? formatDeploymentLiveAddress(url) : null;
   const members = props.facts.health.members;
   const parts: string[] = [];
   if (members.length > 0 && members.every((member) => member.health === 'healthy')) parts.push(t('projects.deployments.receiptHealthPassed'));
@@ -742,23 +736,8 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
             : t('projects.deployments.ranOn', { machine: props.machine })}
         subtitle={parts.length > 0 ? parts.join(' · ') : undefined}
         rightElement={url ? (
-          <View style={styles.outcomeActions}>
-            <CopyIconButton text={url} testID="project-deployments.receipt.outcome.copy" />
-            {isTextSharingAvailable() ? (
-              <RoundButton
-                testID="project-deployments.receipt.outcome.share"
-                size="small"
-                title={t('common.share')}
-                onPress={() => { void shareTextSafe(url); }}
-              />
-            ) : null}
-            <RoundButton
-              testID="project-deployments.receipt.outcome.open"
-              size="small"
-              title={t('common.open')}
-              onPress={() => { void requestOpenExternalUrl(url, { serverId: props.serverId, expectedAccountId: props.accountId }); }}
-            />
-          </View>
+          <DeploymentLiveAddressActions url={url} serverId={props.serverId} accountId={props.accountId}
+            testIDPrefix="project-deployments.receipt.outcome" openEmphasis="primary" />
         ) : undefined}
         mode="info"
       />
@@ -863,5 +842,4 @@ const styles = StyleSheet.create((theme) => ({
   facts: {
     paddingBottom: theme.space.s8,
   },
-  outcomeActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
 }));
