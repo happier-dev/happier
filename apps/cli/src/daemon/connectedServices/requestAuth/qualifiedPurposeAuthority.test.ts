@@ -105,6 +105,7 @@ describe('qualified purpose credential admission', () => {
         { purpose, serviceRefs: [service], credentialKinds: ['token'] },
         { purpose, serviceRefs: [{ ...service, localId: 'different' }], credentialKinds: ['oauth'] },
       ] },
-    })).toThrow(expect.objectContaining({ code: 'provider_incompatible_with_agent', retryable: false }));
+    })).toThrow(expect.objectContaining({ code: 'provider_incompatible_with_agent', retryable: false,
+      details: expect.objectContaining({ requiredCredentialKinds: ['token'] }) }));
   });
 });

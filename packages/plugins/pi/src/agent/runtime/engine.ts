@@ -68,7 +68,7 @@ function initialConfigurationFailure(result: Readonly<{
   return new PluginError({
     code: 'agent_startup_failed', retryable: false, message,
     details: { failureCause: { code: 'agent_startup_failed', phase: 'client_start',
-      failureReason: 'unclassified_provider_error', retryable: false, providerErrorMessage: message } },
+      failureReason: 'unclassified_provider_error', retryable: false, providerErrorCode: code, providerErrorMessage: message } },
   });
 }
 
@@ -143,6 +143,7 @@ async function openPiSession(
           resumeSessionSelector: resolvePiResumeSessionSelector(request),
           resumeProviderSessionId: request.kind === 'resume' ? request.providerSessionId : null,
           sessionId: request.sessionId,
+          adoptsHeldAgent: context.session.services.adoptsHeldAgent === true,
           eagerStart: true,
           sessionOpenLifecycle: lifecycle,
           mcpServersStrictMode: request.mcpServersStrictMode,

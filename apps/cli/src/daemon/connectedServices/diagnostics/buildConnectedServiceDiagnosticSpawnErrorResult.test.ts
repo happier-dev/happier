@@ -14,6 +14,18 @@ import {
 import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
 describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
+  it('names the declared required kind in the presented incompatible-account refusal', () => {
+    const result = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi',
+      error: new PluginError({ code: 'provider_incompatible_with_agent', retryable: false,
+        details: { requiredCredentialKinds: ['token'], failureCause: {
+          code: 'provider_incompatible_with_agent', phase: 'authentication',
+          failureReason: 'permission_denied', retryable: false,
+        } },
+      }),
+    });
+    expect(result?.errorDetail).toMatchObject({ kind: 'launch_error',
+      message: expect.stringMatching(/API key/i) });
+  });
   it.each(['credential_unavailable', 'provider_incompatible_with_agent'] as const)(
     'preserves typed Connected Account launch refusal %s without private provider text', (code) => {
       const failureCause = { code, phase: 'authentication',

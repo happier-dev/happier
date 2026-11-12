@@ -77,7 +77,8 @@ export function assertQualifiedPurposeCredentialCompatibility(params: Readonly<{
   if (options[serviceId]?.[0]?.status !== 'unsupported_kind') return;
   throw new PluginError({ code: 'provider_incompatible_with_agent', retryable: false,
     message: 'The selected Connected Account credential kind is not supported by this Agent.',
-    details: { failureCause: { code: 'provider_incompatible_with_agent',
+    details: { requiredCredentialKinds: options[serviceId][0].requiredCredentialKinds ?? [],
+      failureCause: { code: 'provider_incompatible_with_agent',
       phase: 'authentication', failureReason: 'permission_denied', retryable: false } },
   });
 }

@@ -45,6 +45,7 @@ describe('Pi Agent runtime', () => {
     }, boundary.context).catch((error: unknown) => error);
     expect(failure).toMatchObject({ code: 'agent_startup_failed', retryable: false,
       details: { failureCause: { code: 'agent_startup_failed', phase: 'client_start',
+        providerErrorCode: 'pi_configuration_failed',
         providerErrorMessage: expect.stringContaining('Model not found: github-copilot/fixture-model') } } });
     expect(JSON.stringify(failure)).not.toContain('private-fixture-token');
     expect(boundary.disposeProcess).toHaveBeenCalled();

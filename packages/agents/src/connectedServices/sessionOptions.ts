@@ -10,6 +10,7 @@ export type ConnectedServicesProfileOption = Readonly<{
   profileId: string;
   status: ConnectedServiceCredentialHealthStatusV1 | 'unsupported_kind';
   kind?: 'oauth' | 'token' | null;
+  requiredCredentialKinds?: readonly ConnectedServiceCredentialKind[];
   providerEmail?: string | null;
   label?: string | null;
   unsupportedSubtitleKey?:
@@ -49,7 +50,7 @@ export function applyProjectedCredentialKindRestrictions(params: Readonly<{
   return Object.fromEntries(Object.entries(params.optionsByServiceId).map(([key, options]) => {
     const allowed = kindsByService.get(key);
     return [key, options.map(option => allowed && option.kind && !allowed.has(option.kind)
-      ? { ...option, status: 'unsupported_kind' as const }
+      ? { ...option, status: 'unsupported_kind' as const, requiredCredentialKinds: [...allowed] }
       : option)];
   }));
 }
