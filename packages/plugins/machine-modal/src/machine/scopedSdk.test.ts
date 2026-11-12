@@ -48,7 +48,7 @@ describe('Modal scoped SDK construction', () => {
     workerBoundary.reply = { ok: false, code: 'modal_sdk_unsupported' };
     try {
       const invocation = context(credentials).value;
-      expect(await handlers.get('check')!({}, invocation)).toMatchObject({ available: false, code: 'modal_sdk_unsupported' });
+      await expect(handlers.get('check')!({}, invocation)).rejects.toMatchObject({ name: 'PluginError', code: 'modal_sdk_unsupported' });
       await expect(handlers.get('acquire')!({ managedId: 'managed-1', launch: {
         appReference: 'selected', imageReference: 'ubuntu:24.04', resources: { cpu: 0.125, memoryMb: 512 }, timeoutMs: 300000,
       } }, invocation)).rejects.toMatchObject({ name: 'PluginError', code: 'modal_sdk_unsupported' });
@@ -170,9 +170,10 @@ mkdirSync(join(output, 'machine'), { recursive: true });
 writeFileSync(join(output, 'index.js'), 'export const ready = true;');
 writeFileSync(join(output, 'index.d.ts'), 'export declare const ready: true;');
 writeFileSync(join(output, 'machine/sdkWorker.js'), readFileSync('src/machine/sdkWorker.ts'));`);
-    for (const directory of ['scripts', 'node_modules']) {
-      symlinkSync(join(repoRoot, directory), join(fixtureRoot, directory), process.platform === 'win32' ? 'junction' : 'dir');
-    }
+    symlinkSync(join(repoRoot, 'scripts'), join(fixtureRoot, 'scripts'), process.platform === 'win32' ? 'junction' : 'dir');
+    // The fixture compiler has no package dependencies. Its installation root
+    // belongs to this fixture, as required by workspace preparation.
+    mkdirSync(join(fixtureRoot, 'node_modules'), { recursive: true });
     const prepare = () => {
       const result = spawnSync(manifest.scripts['test:unit:prepare'], { shell: true, cwd: packageRoot,
         encoding: 'utf8', env: { ...native.env, FIXTURE_COMPILER_EVENTS: eventsPath,

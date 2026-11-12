@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MODAL_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Modal public plugin activation', () => {
   it('admits the real manifest and activates its declared native roles through the public ABI', async () => {
-    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: MODAL_PLUGIN });
+    // Account selection is a host boundary; this unconfigured host has no binding.
+    const services = { connectedAccounts: { getBinding: async () => null } } as unknown as PluginTestServicesFixture;
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: MODAL_PLUGIN, services });
     try {
       expect(await testkit.invokeAction('check', {})).toMatchObject({ available: false });
       // No selected credential or vendor access is borrowed by an unconfigured
