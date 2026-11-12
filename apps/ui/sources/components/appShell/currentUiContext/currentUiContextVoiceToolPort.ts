@@ -70,6 +70,9 @@ import {
 export type CurrentUiContextVoiceInvocationOutcome =
     | Readonly<{ ok: true; result?: PluginUiJsonValueV1 }>
     | Readonly<{ ok: false; code: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['code'] | 'outcome_unknown'; errorCode?: string; actionHandlerInvocation?: 'notStarted';
+        message?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['message'];
+        retryable?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['retryable'];
+        remediation?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['remediation'];
         details?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['details'];
         failureCause?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['failureCause'] }>;
 
@@ -386,17 +389,21 @@ export function createCurrentUiContextVoiceToolPort(
                 isCurrent: () => isCurrent() && resource?.isCurrent?.() !== false && retainedInvocation?.isCurrent?.() !== false,
             });
             if (outcome.ok) return { ok: true, result: outcome.result };
+            const author = {
+                ...(outcome.message === undefined ? {} : { message: outcome.message }),
+                ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),
+                ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
+                ...(outcome.details === undefined ? {} : { details: outcome.details }),
+                ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
+            };
             if (outcome.reason === 'plugin_ui_action_outcome_unknown') {
                 // An issued effect remains indeterminate even if its UI binding
                 // retired while the acknowledgement was lost. Voice custody
                 // retains this canonical terminal result by stable effect ID.
-                return { ok: false, code: 'outcome_unknown',
-                    ...(outcome.details === undefined ? {} : { details: outcome.details }),
-                    ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }) };
+                return { ok: false, code: 'outcome_unknown', ...author };
             }
-            return { ok: false, code: outcome.code, errorCode: outcome.reason,
-                ...(outcome.details === undefined ? {} : { details: outcome.details }),
-                ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }) };
+            return { ok: false, code: outcome.code, errorCode: outcome.reason, ...author,
+                ...(outcome.actionHandlerInvocation ? { actionHandlerInvocation: outcome.actionHandlerInvocation } : {}) };
         } catch {
             return isCurrent() ? internalError() : stale();
         } finally {

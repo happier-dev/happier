@@ -19,7 +19,7 @@ vi.mock('@/utils/platform/tauri/transferFetch', () => ({
     resolveTauriRuntimeFetch: async () => (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
 }));
 
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
@@ -1832,6 +1832,35 @@ describe('current UI context Voice tool port', () => {
         } finally { await fixture.composition.unload(); }
     });
 
+    it('retains authored recovery from the mounted contributed Action through the generic executor', async () => {
+        const failureCause = { phase: 'deployment.target.create', errorClass: 'Error', errorCode: null,
+            nativeErrorCode: '10000', httpStatus: 403 } as const;
+        const fixture = createCurrentUiClientActionFixture({ surfaces: ['agent'], handler: async () => {
+            throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to the selected cloud account.',
+                remediation: { kind: 'retry' }, failureCause, details: { nativeCause: { localCause: 'native_options_changed' } },
+                diagnostics: [{ code: 'local_debug', severity: 'error', message: 'PRIVATE_DIAGNOSTIC' }],
+            }, { cause: new Error('PRIVATE_CAUSE') });
+        } });
+        await fixture.composition.unload();
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            readProjection: () => fixture.projection, readNavigationBinding: () => null,
+        }));
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const result = await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
+                surface: 'agent', expectedContributedActionOccurrenceId: fixture.action.occurrenceId,
+            });
+            expect(result).toMatchObject({ ok: false, errorCode: 'credential_unavailable',
+                error: 'Sign in to the selected cloud account.', failureCause,
+                details: { name: 'PluginError', code: 'credential_unavailable', remediation: { kind: 'retry' },
+                    details: { nativeCause: { localCause: 'native_options_changed' } } } });
+            expect(JSON.stringify(result)).not.toMatch(/PRIVATE_DIAGNOSTIC|PRIVATE_CAUSE/);
+        } finally { unregister(); await fixture.composition.unload(); }
+    });
+
     it('enforces the safe-only guard at generic default execution before a client handler can start', async () => {
         const handler = vi.fn(async () => ({ mutated: true }));
         const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['agent'], dangerLevel: 'writesRemote' });
@@ -1847,7 +1876,7 @@ describe('current UI context Voice tool port', () => {
             expect(await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
                 surface: 'agent', expectedContributedActionOccurrenceId: fixture.action.occurrenceId,
                 requiredContributedActionDangerLevel: 'safe',
-            })).toEqual({ ok: false, errorCode: 'plugin_action_read_requires_safe', error: 'plugin_action_read_requires_safe',
+            })).toMatchObject({ ok: false, errorCode: 'plugin_action_read_requires_safe', error: 'plugin_action_read_requires_safe',
                 details: { actionHandlerInvocation: 'notStarted' } });
             expect(handler).not.toHaveBeenCalled();
             unregister();

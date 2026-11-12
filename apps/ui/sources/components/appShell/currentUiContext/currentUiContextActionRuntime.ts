@@ -2,6 +2,8 @@ import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actio
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createPluginSurfaceActionFailureError } from '@/components/plugins/surfaces/actionFailure';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { CurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
@@ -170,10 +172,13 @@ export async function executeCurrentUiContextContributedAction(
     if (outcome.ok) return { ok: true as const, result: outcome.result ?? null };
     const errorCode = outcome.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome.errorCode ?? (outcome.code === 'denied' ? 'permission_denied' : 'contributed_action_unavailable');
-    return { ok: false as const, errorCode, error: errorCode,
-        ...(outcome.details === undefined ? {} : { details: outcome.details }),
-        ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
+    const failure = normalizeActionExecutorThrownError(createPluginSurfaceActionFailureError({
+        ...outcome, code: errorCode, reason: errorCode,
+    }));
+    return { ok: false, ...failure,
         ...(outcome.actionHandlerInvocation ? { details: {
-            ...(outcome.details !== null && typeof outcome.details === 'object' && !Array.isArray(outcome.details) ? outcome.details : {}),
-            actionHandlerInvocation: outcome.actionHandlerInvocation } } : {}) };
+            ...(failure.details !== null && typeof failure.details === 'object' && !Array.isArray(failure.details) ? failure.details : {}),
+            actionHandlerInvocation: outcome.actionHandlerInvocation,
+        } } : {}),
+    };
 }
