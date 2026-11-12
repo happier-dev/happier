@@ -9,7 +9,7 @@ import { buildQualifiedPluginContributionKey, qualifyPluginContributionReference
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentTargetLinkInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, DEPLOYMENT_TARGETS_TEST_SERVICE, answerDeploymentTargetInspectForHome } from './deploymentPlatformTargetPlugin.testFixture';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -29,14 +29,243 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { showDeploymentPlatformTargetSheet } = await import('./DeploymentPlatformTargetSheet');
-const { ModalProvider } = await import('@/modal');
+const { ModalProvider, Modal } = await import('@/modal');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
 const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+const { Item } = await import('@/components/ui/lists/Item');
 
-afterEach(standardCleanup);
+afterEach(async () => {
+  await act(async () => Modal.hideAll());
+  standardCleanup();
+});
+
+it.each([false, true])('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
+  const pluginId = 'com.example.create-cloud';
+  const providerUrl = 'https://console.provider.test/exact-created-beta';
+  const browserOpen = vi.fn();
+  vi.stubGlobal('open', browserOpen);
+  const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, upload: true });
+  const serverId = await homes.addHome({ name: 'Create cloud', serverUrl: 'https://create-cloud.test',
+    serverIdentityId: `srv_${'c'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+    activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
+  try {
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'create-environment', revision: 4, projectSourceId: 'source-app',
+      serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'controller', owner: { kind: 'account', accountId: 'owner' } });
+    homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: { ok: true, environment, targetLinks: [] } });
+    homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
+    homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+      id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner',
+    } } });
+    const creates: unknown[] = [];
+    const associations: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.targets.link',
+      machineId: environment.controllerMachineId, installationId: 'controller-installation', tokenEpoch: 0,
+      execute: raw => {
+        if (raw !== null && typeof raw === 'object' && 'providerCreate' in raw) {
+          const input = DeploymentTargetLinkCreateIntentInputV1Schema.parse(raw);
+          creates.push(input);
+          if (ambiguous) return { ok: false, error: 'action_outcome_unknown' };
+          const { providerCreate, ...intent } = input;
+          return { ok: false, error: 'deployment_link_incomplete', recovery: { ...intent, provisioned: true,
+            provider: { credentialPrincipal: providerCreate.credentialPrincipal,
+              providerIdentity: { providerAccountId: providerCreate.providerAccountId, providerResourceId: 'created-beta', providerEnvironment: 'production' },
+              providerEnvironment: { kind: 'production' }, providerUrl } } };
+        }
+        const input = DeploymentTargetLinkInputV1Schema.parse(raw);
+        associations.push(input);
+        if (associations.length === 1) return { ok: false, error: 'action_outcome_unknown' };
+        return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1 };
+      },
+      failure: result => result !== null && typeof result === 'object' && 'error' in result && typeof result.error === 'string'
+        ? { errorCode: result.error, error: result.error, details: result, effectAttempted: true } : null,
+    });
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment, ownerAccountId: 'owner',
+      lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, environment.projectSourceId), onApproval: () => {},
+      initialTargetKey: `${pluginId}/beta` }));
+    const mode = () => screen.root.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(mode()).toBeDefined(); });
+    await act(async () => mode()!.props.onChange('create'));
+    expect(screen.root.findAllByType(SegmentedChoiceItem).some(node => node.props.testID === 'project-deployments.platform.sourceMethod')).toBe(false);
+    await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account',
+      account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } }, null));
+    const patch = async (value: Record<string, unknown>) => act(async () => screen.root.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
+    await patch({ providerAccountId: 'organization' });
+    await patch({ resourceName: 'new-project' });
+    await patch({ providerEnvironment: { kind: 'production' } });
+    const disclosed = screen.findAllByType(Item);
+    expect({ mode: mode()!.props.value, controller: disclosed.find(node => node.props.testID === 'project-deployments.platform.controller')?.props.detail,
+      createAvailable: screen.findByTestId('project-deployments.platform.create') !== null }).toEqual({ mode: 'create', controller: environment.controllerMachineId, createAvailable: true });
+    expect(disclosed.find(node => node.props.testID === 'project-deployments.platform.access.principal')?.props.detail).toBeTruthy();
+    await screen.pressByTestIdAsync('project-deployments.platform.create');
+    const recovery = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === (ambiguous
+      ? 'project-deployments.platform.outcomeUnknown' : 'project-deployments.platform.provisioned'));
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(recovery()).toBeDefined(); });
+    expect(creates).toHaveLength(1);
+    expect(mode()!.props.disabled).toBe(true);
+    expect(DeploymentTargetLinkCreateIntentInputV1Schema.parse(creates[0]).providerCreate.sourceMethod).toBe('upload');
+    expect(screen.findByTestId('project-deployments.platform.create')).toBeNull();
+    if (ambiguous) {
+      await act(async () => mode()!.props.onChange('existing'));
+      await act(async () => mode()!.props.onChange('create'));
+      expect(screen.findByTestId('project-deployments.platform.create')).toBeNull();
+      expect(associations).toHaveLength(0);
+      return;
+    }
+    await screen.pressByTestIdAsync('project-deployments.platform.openProvider');
+    expect(browserOpen.mock.calls[0]?.[0]).toBe(providerUrl);
+    await act(async () => recovery()!.props.action.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(1); });
+    expect(creates).toHaveLength(1);
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(recovery()).toBeDefined();
+      expect(screen.findByTestId('project-deployments.platform.outcomeUnknown')).toBeNull();
+      const refusal = screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'project-deployments.platform.linkRefused');
+      expect(refusal?.props.diagnosticCode).toBe('action_outcome_unknown');
+    });
+    await act(async () => recovery()!.props.action.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(2); });
+    expect(creates).toHaveLength(1);
+    expect(associations.map(value => DeploymentTargetLinkInputV1Schema.parse(value).requestKey)).toEqual([
+      (creates[0] as { requestKey: string }).requestKey, (creates[0] as { requestKey: string }).requestKey,
+    ]);
+    const associated = DeploymentTargetLinkInputV1Schema.parse(associations[1]);
+    expect(associated).toMatchObject({ provisioned: true,
+      requestKey: (creates[0] as { requestKey: string }).requestKey });
+    const artifact = await context.readArtifactContent(associated.contentArtifactId);
+    if (!artifact) throw new Error('Expected the associated target artifact');
+    expect(JSON.parse(artifact.body)).toMatchObject({ providerIdentity: { providerResourceId: 'created-beta' } });
+  } finally { await installed.dispose(); context.dispose(); }
+});
+
+it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevision'] as const)('recovers the latest dismissed link operation on cold return without repeating native create (%s)', async outcome => {
+  const ambiguous = outcome === 'unknown';
+  const unavailable = outcome === 'unavailable';
+  const missingPlugin = outcome === 'missingPlugin';
+  const staleRevision = outcome === 'staleRevision';
+  const pluginId = 'com.example.cold-create-cloud';
+  const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true });
+  const serverId = await homes.addHome({ name: 'Cold create cloud', serverUrl: 'https://cold-create-cloud.test',
+    serverIdentityId: `srv_${'b'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = missingPlugin ? null : await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+    activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
+  const { ActionOperationSnapshotV1Schema, ACTION_OPERATION_RPC_METHODS_V2, projectActionOperationListSnapshotV1 } = await import('@happier-dev/protocol/actions/operations/v1');
+  const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+  try {
+    // After Unlink, the same Environment has advanced and no runtime target; Add must offer a fresh choice.
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'cold-create-environment', revision: staleRevision ? 5 : 4, projectSourceId: 'source-app',
+      serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'current-controller', owner: { kind: 'account', accountId: 'owner' } });
+    homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: { ok: true, environment, targetLinks: [] } });
+    homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
+    homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+      id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner',
+    } } });
+    const recovery = { serverId, environmentId: environment.id, expectedRevision: 4, requestKey: 'retained-create-key',
+      targetId: 'beta', role: 'runtime', targetKind: 'beta', machines: [], provisioned: true,
+      source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
+      provider: { credentialPrincipal: { kind: 'account', accountId: 'owner',
+        purpose: { consumer: { pluginId, localId: 'create-beta' }, purpose: 'beta.manage' },
+        target: { kind: 'account', account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } } },
+      providerIdentity: { providerAccountId: 'organization', providerResourceId: 'cold-created-beta', providerEnvironment: 'production' },
+      providerEnvironment: { kind: 'production' } } };
+    const result = ambiguous ? { ok: false, error: 'outcome_unknown' }
+      : { ok: false, error: 'deployment_link_incomplete', recovery };
+    const full = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'cold-created-operation', revision: 2,
+      actionId: 'deployments.targets.link', state: 'failed', scope: { accountId: 'owner', machineId: 'cold-controller' },
+      title: 'Create runtime target', requestId: 'cold-created-request', createdAt: 1, startedAt: 2, settledAt: 3,
+      cancellation: 'unsupported', domainRef: { kind: 'deploymentTargetLink', serverId, environmentId: environment.id, purpose: 'create', requestKey: recovery.requestKey },
+      result: ambiguous ? undefined : result, error: { errorCode: result.error, error: result.error, effectAttempted: true } });
+    actionOperationStore.mergeSnapshots({ serverId, snapshots: [projectActionOperationListSnapshotV1(full)] });
+    actionOperationStore.dismissOperation({ serverId, operationId: full.operationId });
+    const unrelated = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'unrelated-linked-operation', requestId: 'unrelated-linked-request',
+      state: 'succeeded', createdAt: 4, startedAt: 5, settledAt: 6, error: undefined,
+      domainRef: { ...full.domainRef, purpose: 'associate', requestKey: 'another-create-key' },
+      result: { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'another-link', targetLinkRevision: 1 } });
+    const failedAssociation = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'failed-association-operation', requestId: 'failed-association-request',
+      state: 'failed', createdAt: 7, startedAt: 8, settledAt: 9, domainRef: { ...full.domainRef, purpose: 'associate' },
+      result: undefined, error: { errorCode: 'deployment_conflict', error: 'deployment_conflict' } });
+    actionOperationStore.mergeSnapshots({ serverId, snapshots: [unrelated, failedAssociation], snapshotComplete: true });
+    let resolveRead: ((value: unknown) => void) | undefined;
+    const ownerRead = new Promise(resolve => { resolveRead = resolve; });
+    receiverRpc.call.mockClear();
+    receiverRpc.call.mockImplementation(async () => await ownerRead);
+    const associations: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.targets.link',
+      machineId: 'current-controller', installationId: 'current-controller-installation', tokenEpoch: 0,
+      execute: raw => {
+        // A repeated create cannot satisfy this assertion or be silently treated as recovery.
+        const associated = DeploymentTargetLinkInputV1Schema.parse(raw);
+        associations.push(associated);
+        return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'cold-link', targetLinkRevision: 1 };
+      } });
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    const open = async () => act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment, ownerAccountId: 'owner',
+      lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, environment.projectSourceId), onApproval: () => {},
+      initialTargetKey: `${pluginId}/beta` }));
+    await open();
+    const mode = () => screen.root.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.findByTestId('project-deployments.platform.pending')).not.toBeNull(); });
+    if (!missingPlugin) {
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(mode()).toBeDefined(); });
+      await act(async () => mode()!.props.onChange('create'));
+    }
+    expect(screen.findByTestId('project-deployments.platform.create')).toBeNull();
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(receiverRpc.call).toHaveBeenCalledWith(expect.objectContaining({ serverId, method: ACTION_OPERATION_RPC_METHODS_V2.get,
+        machineId: 'cold-controller', payload: expect.objectContaining({ operationId: full.operationId, waitForTerminal: true }) }));
+    });
+    await act(async () => resolveRead!(unavailable ? { error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' } : { kind: 'found', operation: full }));
+    if (staleRevision) {
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(screen.findByTestId('project-deployments.platform.create')).not.toBeNull();
+      });
+      expect(screen.findByTestId('project-deployments.platform.provisioned')).toBeNull();
+      expect(screen.findByTestId('project-deployments.platform.linkRefused')).toBeNull();
+      expect(associations).toHaveLength(0);
+      return;
+    }
+    const card = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === (unavailable
+      ? 'project-deployments.platform.recoveryUnavailable' : ambiguous
+        ? 'project-deployments.platform.outcomeUnknown' : 'project-deployments.platform.provisioned'));
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(card()).toBeDefined(); });
+    expect(screen.findByTestId('project-deployments.platform.create')).toBeNull();
+    expect(screen.findByTestId('project-deployments.platform.openProvider')).toBeNull();
+    if (!ambiguous && !unavailable) {
+      const previousFailure = screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'project-deployments.platform.linkRefused');
+      expect(previousFailure?.props.diagnosticCode).toBe('deployment_conflict');
+    }
+    if (unavailable) {
+      expect(card()!.props.diagnosticCode).toBe('RPC_FORBIDDEN');
+      expect(screen.findByTestId('project-deployments.platform.pending')).toBeNull();
+      expect(associations).toHaveLength(0);
+      return;
+    }
+    if (ambiguous) { expect(associations).toHaveLength(0); return; }
+    await act(async () => card()!.props.action.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(1); });
+    expect(associations[0]).toMatchObject({ provisioned: true, requestKey: recovery.requestKey, expectedRevision: recovery.expectedRevision });
+    const later = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'cold-linked-operation', requestId: 'cold-linked-request',
+      state: 'succeeded', scope: { accountId: 'owner', machineId: 'current-controller' }, createdAt: 10, startedAt: 11, settledAt: 12, error: undefined,
+      domainRef: { ...full.domainRef, purpose: 'associate' },
+      result: { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'cold-link', targetLinkRevision: 1 } });
+    await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [later], snapshotComplete: true }));
+    await open();
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.findByTestId('project-deployments.platform.provisioned')).toBeNull(); });
+  } finally {
+    await act(async () => actionOperationStore.reset());
+    await installed?.dispose();
+    context.dispose();
+  }
+});
 
 it('keeps a settled empty required choice visible with a typed reason and Retry', async () => {
   const pluginId = 'com.example.empty-deploy';

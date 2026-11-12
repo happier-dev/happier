@@ -1,5 +1,5 @@
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -7,7 +7,6 @@ import { DeploymentTemplateInstantiateResultV1Schema, DeploymentMoveToRepository
 import { readDeploymentTemplateInstantiationPartialV1, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
@@ -212,18 +211,22 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             if ('errorCode' in read) return read;
             const current = DeploymentEnvironmentGetResultV1Schema.parse(read);
             if (!current.ok) return current;
-            try {
-                const prepared = await prepareUiDeploymentTargetLink(account, intent, context, current);
-                if (!('contentArtifactId' in prepared)) return prepared;
-                input = prepared;
-                linkControllerMachineId = current.environment.controllerMachineId;
-            }
-            catch (error) {
-                if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
-                    const invalid = DeploymentInvalidV1Schema.safeParse('details' in error ? error.details : undefined);
-                    return invalid.success && invalid.data.error === error.code ? invalid.data : failure(error.code);
+            linkControllerMachineId = current.environment.controllerMachineId;
+            // Native creation is admitted and checkpointed by the controller before
+            // it has provider content to publish into the TargetLink Artifact.
+            if (!('providerCreate' in intent)) {
+                try {
+                    const prepared = await prepareUiDeploymentTargetLink(account, intent, context, current);
+                    if (!('contentArtifactId' in prepared)) return prepared;
+                    input = prepared;
                 }
-                throw error;
+                catch (error) {
+                    if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+                        const invalid = DeploymentInvalidV1Schema.safeParse('details' in error ? error.details : undefined);
+                        return invalid.success && invalid.data.error === error.code ? invalid.data : failure(error.code);
+                    }
+                    throw error;
+                }
             }
         }
         if (getActionSpec(actionId).executionPlacement !== 'machine'
@@ -255,12 +258,9 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             machineId = selectedReadInput && 'machineId' in selectedReadInput
                 && typeof selectedReadInput.machineId === 'string' ? selectedReadInput.machineId : selected.machineId;
         } else return failure('invalid_parameters');
-        // A person's Deploy or Promote asks the controller to prepare its existing review,
-        // rather than spending present-user authority before that review is confirmed.
-        const reviewDeploy = (actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(actionId)) && context.surface === 'ui'
-            && isPresentUserHostInvocation(context) && !context.approvedActionReplay;
-        // Keep the deployment root: its admission owns candidate preparation and publication.
-        const result = await machine(actionId, effectInput, reviewDeploy ? { ...context, authority: 'account_automation' } : context, machineId);
+        // The controller owns preparation and approval. Preserve the sealed person/agent origin so its
+        // existing review owner can carry a person's review back for native confirmation.
+        const result = await machine(actionId, effectInput, context, machineId);
         if (!result.ok) return result;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentActionOutputSchemasV1[actionId].parse(result.result);

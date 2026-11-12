@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred, flushHookEffects } from '@/dev/testkit';
 
 import {
     ACTION_OPERATION_RPC_METHODS_V1,
@@ -20,6 +21,9 @@ import {
     listActionOperations,
     type ActionOperationRpc,
 } from './actionOperations';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 const accepted: ActionOperationSnapshotV1 = {
     version: 1,
@@ -44,6 +48,54 @@ function createRpc(
 }
 
 describe('action operation transport', () => {
+    afterEach(() => {
+        actionOperationStore.reset();
+        vi.mocked(machineRpcWithServerScope).mockReset();
+    });
+
+    it('reports the owner read refusal code while settling its request observer', async () => {
+        vi.mocked(machineRpcWithServerScope)
+            .mockResolvedValueOnce({ items: [{ ...accepted, actionId: 'deployments.targets.link', requestId: 'created-resource-request' }], nextCursor: null })
+            .mockResolvedValueOnce({ error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        const onUnavailable = vi.fn();
+        const pending = observeActionOperationByRequestId({ serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
+            requestIdentity: { actionId: 'deployments.targets.link', requestId: 'created-resource-request' }, onUnavailable });
+        await expect(pending).resolves.toBeNull();
+        expect(onUnavailable).toHaveBeenCalledExactlyOnceWith(RPC_ERROR_CODES.FORBIDDEN);
+    });
+
+    it('does not publish a late owner refusal after request observation is cancelled', async () => {
+        const response = createDeferred<unknown>();
+        vi.mocked(machineRpcWithServerScope).mockReturnValue(response.promise);
+        const controller = new AbortController();
+        const onUnavailable = vi.fn();
+        const pending = observeActionOperationByRequestId({ serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
+            requestIdentity: { actionId: 'deployments.targets.link', requestId: 'created-resource-request' },
+            signal: controller.signal, onUnavailable });
+        controller.abort();
+        response.resolve({ error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        await expect(pending).resolves.toBeNull();
+        await flushHookEffects();
+        expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
+    it('retains request observation across transport loss until the owner publishes its complete result', async () => {
+        vi.mocked(machineRpcWithServerScope).mockResolvedValue({ error: 'Transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE });
+        const onUnavailable = vi.fn();
+        let settled = false;
+        const pending = observeActionOperationByRequestId({ serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
+            requestIdentity: { actionId: 'deployments.targets.link', requestId: 'created-resource-request' }, onUnavailable });
+        void pending.then(() => { settled = true; });
+        await flushHookEffects();
+        expect(settled).toBe(false);
+        expect(onUnavailable).not.toHaveBeenCalled();
+        const terminal: ActionOperationSnapshotV1 = { ...accepted, actionId: 'deployments.targets.link',
+            requestId: 'created-resource-request', state: 'failed', settledAt: 2_000 };
+        actionOperationStore.mergeSnapshots({ serverId: 'home-1', snapshots: [terminal], snapshotComplete: true });
+        await expect(pending).resolves.toEqual(terminal);
+        expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
     it('retains current Project review facts through the rich observation reader, not the predecessor projection', async () => {
         const review: ActionOperationSnapshotV1 = { ...accepted, actionId: 'projects.script.run',
             domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home', machineId: 'machine-1',

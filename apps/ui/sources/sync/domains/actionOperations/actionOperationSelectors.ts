@@ -26,6 +26,7 @@ export type ActionOperationProjection = Readonly<{
     snapshot: ActionOperationSnapshotV1;
     observation: ActionOperationObservation;
     isUnavailableProjection: boolean;
+    snapshotComplete?: true;
     followUpAttention?: string | null;
     agentIsolationRecovery?: QualifiedActionOperation['agentIsolationRecovery'];
 }>;
@@ -74,6 +75,7 @@ export type ActionOperationSelectors = Readonly<{
     ): ActionOperationSnapshotV1 | null;
     selectActive(state: ActionOperationStoreSnapshot): readonly ActionOperationProjection[];
     selectMachineReboots(state: ActionOperationStoreSnapshot, scope: Readonly<{ serverId: string; accountId: string }> | null): readonly ActionOperationProjection[];
+    selectDeploymentTargetLinks(state: ActionOperationStoreSnapshot, query: DeploymentTargetLinkOperationQuery): readonly ActionOperationProjection[];
     selectForSession(state: ActionOperationStoreSnapshot, address: ActionOperationSessionAddress): readonly ActionOperationProjection[];
     selectForProjectScript(state: ActionOperationStoreSnapshot, query: ActionOperationProjectScriptQuery): ActionOperationProjection | null;
     selectForProjectSetup(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
@@ -89,6 +91,14 @@ export type ActionOperationSelectors = Readonly<{
 
 const EMPTY_OPERATIONS: readonly ActionOperationProjection[] = Object.freeze([]);
 const EMPTY_INBOX_OPERATIONS: readonly InboxActionOperationEntry[] = Object.freeze([]);
+
+export type DeploymentTargetLinkOperationQuery = Readonly<{
+    serverId: string | null;
+    accountId: string | null;
+    /** Undefined recovers the Environment across its original controllers; null is unresolved. */
+    machineId: string | null | undefined;
+    environmentId: string | null;
+}>;
 
 export type TerminalActionOperationQuery = Readonly<{
     serverId: string | null;
@@ -193,6 +203,9 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     let previousMachineReboots: readonly ActionOperationProjection[] = EMPTY_OPERATIONS;
     let previousMachineRebootsState: ActionOperationStoreSnapshot | null = null;
     let previousMachineRebootScope: Readonly<{ serverId: string; accountId: string }> | null = null;
+    let previousDeploymentTargetLinks: readonly ActionOperationProjection[] = EMPTY_OPERATIONS;
+    let previousDeploymentTargetLinksState: ActionOperationStoreSnapshot | null = null;
+    let previousDeploymentTargetLinkQuery: DeploymentTargetLinkOperationQuery | null = null;
     let previousInbox: readonly InboxActionOperationEntry[] = EMPTY_INBOX_OPERATIONS;
     let previousActivitySummaryState: ActionOperationStoreSnapshot | null = null;
     let previousActivitySummary: ActionOperationActivitySummary = Object.freeze({ activeCount: 0, hasAttention: false });
@@ -216,6 +229,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             && cached.followUpAttention === followUpAttention
         ) return cached;
         const projection = Object.freeze({ serverId: operation.serverId, snapshot, observation, isUnavailableProjection, followUpAttention,
+            ...(operation.snapshotComplete ? { snapshotComplete: operation.snapshotComplete } : {}),
             ...(operation.agentIsolationRecovery ? { agentIsolationRecovery: operation.agentIsolationRecovery } : {}) });
         projectionCache.set(operation, projection);
         return projection;
@@ -252,6 +266,30 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         previousMachineRebootScope = scope;
         if (!hasSameItems(previousMachineReboots, next)) previousMachineReboots = Object.freeze(next);
         return previousMachineReboots;
+    };
+
+    const selectDeploymentTargetLinks = (state: ActionOperationStoreSnapshot, query: DeploymentTargetLinkOperationQuery): readonly ActionOperationProjection[] => {
+        if (state === previousDeploymentTargetLinksState && query === previousDeploymentTargetLinkQuery) return previousDeploymentTargetLinks;
+        const next: ActionOperationProjection[] = [];
+        if (query.serverId && query.accountId && query.machineId !== null && query.machineId !== '' && query.environmentId) {
+            for (const [key, operation] of state.operationsByKey) {
+                const { snapshot } = operation;
+                const domain = snapshot.domainRef;
+                if (domain?.kind !== 'deploymentTargetLink'
+                    || !areServerProfileIdentifiersEquivalent(operation.serverId, query.serverId)
+                    || !areServerProfileIdentifiersEquivalent(domain.serverId, query.serverId)
+                    || snapshot.scope.accountId !== query.accountId
+                    || query.machineId !== undefined && snapshot.scope.machineId !== query.machineId
+                    || domain.environmentId !== query.environmentId) continue;
+                // Activity dismissal does not discard an Environment's retained Link result.
+                next.push(readProjection(state, key, operation));
+            }
+            next.sort(compareOperations);
+        }
+        previousDeploymentTargetLinksState = state;
+        previousDeploymentTargetLinkQuery = query;
+        if (!hasSameItems(previousDeploymentTargetLinks, next)) previousDeploymentTargetLinks = Object.freeze(next);
+        return previousDeploymentTargetLinks;
     };
 
     const selectById = (state: ActionOperationStoreSnapshot, address: ActionOperationAddress) => {
@@ -508,6 +546,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectSnapshotByRequestId,
         selectActive,
         selectMachineReboots,
+        selectDeploymentTargetLinks,
         selectForSession,
         selectForProjectScript,
         selectForProjectSetup,

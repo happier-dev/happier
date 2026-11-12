@@ -45,7 +45,7 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
 export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
-  options: Readonly<{ emptyChoices?: boolean; upload?: boolean }> = {}) {
+  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -86,6 +86,22 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
     hostAccess: { required: ['alpha', 'beta'].map(name => ({ id: `${name}.manage`, capability: 'connectedAccounts', reason: `Use ${name}.`,
       scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } } as const)), optional: [] },
     actions: { 'inspect-alpha': inspect('alpha'), 'inspect-beta': inspect('beta'),
+      ...(options.create ? { 'create-beta': { ...inspect('beta'), title: 'Create Beta project', dangerLevel: 'writesRemote', readOnly: false,
+        confirmation: { title: 'Create this provider project?' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema,
+        inputHints: { fields: [
+          { path: 'providerAccountId', title: 'Account', widget: 'text', required: true },
+          { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
+          { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true, defaultValue: { kind: 'production' } },
+          { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload', options: [{ value: 'upload', label: 'Upload' }] },
+        ] },
+        run: async (input: JsonValue) => {
+          if (input === null || typeof input !== 'object' || Array.isArray(input) || input.credentialPrincipal === undefined)
+            throw new Error('Expected admitted create input');
+          return { credentialPrincipal: input.credentialPrincipal,
+            providerIdentity: { providerAccountId: String(input.providerAccountId), providerResourceId: 'created-beta', providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'production' } };
+        },
+      } } as const : {}),
       link: { ...inspect('alpha'), title: 'Link', dangerLevel: 'writesLocal', readOnly: false, confirmation: { title: 'Link this target?' } },
       deploy: { ...lifecycle, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema },
       ...(options.upload ? { upload: { ...lifecycle, execution: { target: 'daemon' },
@@ -96,6 +112,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
         actions: { inspect: 'inspect-alpha', link: 'link', deploy: 'deploy', observe: 'observe' } },
       beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
         actions: { inspect: 'inspect-beta', link: 'link', deploy: 'deploy', observe: 'observe',
+          ...(options.create ? { create: 'create-beta' } : {}),
           ...(options.upload ? { uploadDeploy: 'upload' } : {}) } },
     },
   });

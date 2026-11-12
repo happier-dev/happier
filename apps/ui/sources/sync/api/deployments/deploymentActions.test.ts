@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
-import { readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentActionOperationRequestIdV1, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { Platform } from 'react-native';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -19,6 +19,7 @@ import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } f
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinksListInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
@@ -345,6 +346,35 @@ async function answerLinkController(machineId: string, execute: (input: unknown)
     failure?: (result: unknown) => { errorCode: string; error: string } | null) {
     return answerControllerAction('deployments.targets.link', machineId, execute, failure);
 }
+
+it('routes reviewed resource creation to the controller without authoring a guessed target-link Artifact', async () => {
+    const writer = requireAccount();
+    const detail = createDeploymentEnvironmentDetailV1();
+    const credentialRef = { service: { pluginId: 'example.deploy', localId: 'account' }, accountId: 'credential' };
+    const input = DeploymentTargetLinkCreateIntentInputV1Schema.parse({
+        serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        requestKey: 'reviewed-create', targetId: 'runtime', targetKind: 'example', role: 'runtime', machines: [],
+        source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } },
+        providerCreate: { credentialRef, credentialPrincipal: { kind: 'account', accountId: 'owner',
+            purpose: { consumer: { pluginId: 'example.deploy', localId: 'create' }, purpose: 'manage' },
+            target: { kind: 'account', account: credentialRef } },
+            providerAccountId: 'organization', providerEnvironment: { kind: 'production' }, resourceName: 'new-project' },
+    });
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        ok: true, environment: detail.environment, targetLinks: [] } });
+    const linked = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+        targetLinkId: 'created-link', targetLinkRevision: 1 };
+    await answerLinkController(detail.environment.controllerMachineId, body => {
+        expect(DeploymentTargetLinkCreateIntentInputV1Schema.parse(body)).toEqual(input);
+        return linked;
+    });
+    const executor = createActionExecutor(createUiDeploymentActionDeps(writer) as ActionExecutorDeps);
+    const prepared = await executor.prepare('deployments.targets.link', input, { ...uiHost,
+        runtimeAccountId: writer.accountId, serverId, actionRequestId: 'reviewed-create' });
+    if (prepared.kind !== 'ready') throw new Error('Expected reviewed resource creation');
+    expect(await prepared.invocation.run()).toMatchObject({ ok: true, result: linked });
+    expect(homes.artifacts(serverId).list()).toHaveLength(0);
+});
 
 it.each([false, true])('retains controller failure-observer enrollment after UI Link (prepared: %s)', async preparedInput => {
     const writer = requireAccount();
@@ -952,18 +982,18 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         await answerControllerAction(actionId, 'destination-controller', (admitted, transport) => {
             expect(transport.target).toEqual({ kind: 'machine', machineId: 'destination-controller' });
             expect(admitted).toEqual(input);
-            if (actionId === 'deployments.promote') expect(transport.invocation.authority).toBe('account_automation');
+            expect(transport.invocation).toMatchObject({ surface: 'ui', authority: 'present_user' });
             return receipt;
         }, undefined, { id: detail.environment.projectSourceId, revision: 1 });
         const beforeArtifacts = homes.requestsFor('/v1/artifacts').length;
         const deps = createUiDeploymentActionDeps(requireAccount());
         if (actionId === 'deployments.rollback' || actionId === 'deployments.promote') {
-            expect(await createActionExecutor(deps as ActionExecutorDeps).execute(actionId, input, {
+            expect(await createActionExecutor(deps as ActionExecutorDeps).execute(actionId, input, bindPresentUserActionConfirmation(actionId, input, {
                 surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
                 serverId, runtimeAccountId: requireAccount().accountId, actionRequestId: 'receipt-original',
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
                     actions: { 'artifact.create': { approvalRequiredSurfaces: ['ui'] } } }),
-            })).toMatchObject({ ok: true, result: receipt });
+            }))).toMatchObject({ ok: true, result: receipt });
         } else expect(await deps.deploymentAction!(actionId, input, { ...uiHost, actionRequestId: 'receipt-original' })).toEqual(receipt);
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(beforeArtifacts);
         expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);

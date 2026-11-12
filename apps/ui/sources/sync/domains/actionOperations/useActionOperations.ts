@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type TerminalActionOperationQuery } from './actionOperationSelectors';
+import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type DeploymentTargetLinkOperationQuery, type TerminalActionOperationQuery } from './actionOperationSelectors';
 import { actionOperationStore } from './actionOperationStore';
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
 
@@ -69,6 +69,16 @@ export function useMachineRebootActionOperations(scope: Readonly<{ serverId: str
         const selectors = createActionOperationSelectors();
         return () => selectors.selectMachineReboots(actionOperationStore.getSnapshot(), scope);
     }, [scope]);
+    return useActionOperationSelector(read);
+}
+
+export function useDeploymentTargetLinkOperations(query: DeploymentTargetLinkOperationQuery) {
+    const { serverId, accountId, machineId, environmentId } = query;
+    const read = React.useMemo(() => {
+        const selectors = createActionOperationSelectors();
+        const scope = { serverId, accountId, machineId, environmentId };
+        return () => selectors.selectDeploymentTargetLinks(actionOperationStore.getSnapshot(), scope);
+    }, [serverId, accountId, machineId, environmentId]);
     return useActionOperationSelector(read);
 }
 

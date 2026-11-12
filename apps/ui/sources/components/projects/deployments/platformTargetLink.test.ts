@@ -86,6 +86,33 @@ const repository = {
 };
 
 describe('platform target link model', () => {
+  it('offers runtime logs only when the runtime target declares that canonical role', () => {
+    const runtime = manifest.contributes.deploymentTargets![0]!;
+    const withLogs = { ...manifest, contributes: { ...manifest.contributes,
+      deploymentTargets: [{ ...runtime, actions: { ...runtime.actions, logs: { runtime: 'runtime-logs-read' } } }],
+    } } as PluginPortableReleaseManifestV1;
+    expect(readDeploymentPlatformTargets([{ manifest: withLogs }])[0]).toHaveProperty('runtimeLogs', true);
+    expect(readDeploymentPlatformTargets([{ manifest }])[0]).not.toHaveProperty('runtimeLogs');
+  });
+  it('offers creation fields and credential purpose only from an implemented create Action', () => {
+    const runtime = manifest.contributes.deploymentTargets![0]!;
+    const create = { ...manifest.contributes.actions![0]!, id: 'create-project',
+      hostAccess: ['create.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'create.manage' }],
+      inputHints: { fields: [{ path: 'resourceName', title: 'Project name', widget: 'text' as const, required: true }] } };
+    const withCreation = { ...manifest,
+      hostAccess: { ...manifest.hostAccess, required: [...manifest.hostAccess!.required,
+        { ...manifest.hostAccess!.required[0]!, id: 'create.manage' }] },
+      contributes: { ...manifest.contributes, actions: [...manifest.contributes.actions!, create],
+        deploymentTargets: [{ ...runtime, actions: { ...runtime.actions, create: 'create-project' } }] },
+    } as PluginPortableReleaseManifestV1;
+    expect(readDeploymentPlatformTargets([{ manifest: withCreation }])[0]).toMatchObject({ create: {
+      localId: 'create-project', actionId: 'happier.deploy.vercel/actions/create-project', purpose: 'create.manage', service,
+      fields: [{ path: 'resourceName', required: true }],
+    } });
+    expect(readDeploymentPlatformTargets([{ manifest }])[0]).not.toHaveProperty('create');
+    const missingAction = { ...withCreation, contributes: { ...withCreation.contributes, actions: manifest.contributes.actions } };
+    expect(readDeploymentPlatformTargets([{ manifest: missingAction }])[0]).not.toHaveProperty('create');
+  });
   it('derives each runtime platform target from its descriptor, inspect Action and credential purpose', () => {
     const [target, ...rest] = readDeploymentPlatformTargets([{ manifest }]);
     expect(rest).toEqual([]);
@@ -334,6 +361,20 @@ describe('platform choice disclosure', () => {
       changedIndex: 2,
     });
     expect(applyPlatformFieldPatch(fields, full, { project: 'prj-1' })).toEqual({ values: full, changedIndex: -1 });
+  });
+
+  it('seeds declared defaults for reset downstream fields while keeping the edited value authoritative', () => {
+    const createFields: EffectiveActionInputField[] = [field('account'), field('project'),
+      { ...field('sourceMethod'), defaultValue: 'upload' },
+      { ...field('providerEnvironment'), widget: 'json', defaultValue: { kind: 'production' } }];
+    const original = { account: 'team-1', project: 'old', sourceMethod: 'upload',
+      providerEnvironment: { kind: 'preview' } };
+    expect(applyPlatformFieldPatch(createFields, original, { account: 'team-2' }).values).toEqual({
+      account: 'team-2', sourceMethod: 'upload', providerEnvironment: { kind: 'production' },
+    });
+    expect(applyPlatformFieldPatch(createFields, original, { sourceMethod: undefined }).values).toEqual({
+      account: 'team-1', project: 'old', providerEnvironment: { kind: 'production' },
+    });
   });
 
   it('says one failed read once, at the sheet, and draws no choice after it', () => {

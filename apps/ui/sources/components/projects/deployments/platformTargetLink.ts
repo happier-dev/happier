@@ -1,3 +1,4 @@
+import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
@@ -10,6 +11,7 @@ import {
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
+import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
@@ -32,6 +34,14 @@ export type DeploymentPlatformTarget = Readonly<{
   service: Readonly<{ pluginId: string; localId: string }>;
   fields: readonly EffectiveActionInputField[];
   sourceMethods: readonly DeploymentSourceMethodV1[];
+  runtimeLogs?: true;
+  create?: Readonly<{
+    localId: string;
+    actionId: string;
+    purpose: string;
+    service: Readonly<{ pluginId: string; localId: string }>;
+    fields: readonly EffectiveActionInputField[];
+  }>;
 }>;
 
 type Declaration = Readonly<{ manifest: PluginPortableReleaseManifestV1 }>;
@@ -85,6 +95,16 @@ export function readDeploymentPlatformTargets(
       const credential = readPluginActionCredentialPurpose(manifest, inspect);
       if (!credential) return [];
       const { purpose, service } = credential;
+      const createId = record(target.actions) ? target.actions.create : undefined;
+      const createAction = text(createId) ? actions.find(entry => record(entry) && entry.id === createId) : undefined;
+      const createCredential = text(createId) && createAction ? readPluginActionCredentialPurpose(manifest, createId) : null;
+      const create = text(createId) && record(createAction) && createCredential ? {
+        localId: createId,
+        actionId: formatQualifiedPluginActionId({ pluginId: manifest.id, localId: createId }),
+        ...createCredential,
+        fields: (record(createAction.inputHints) && Array.isArray(createAction.inputHints.fields)
+          ? createAction.inputHints.fields : []) as EffectiveActionInputField[],
+      } : undefined;
       const hints =
         record(action.inputHints) && Array.isArray(action.inputHints.fields)
           ? action.inputHints.fields
@@ -108,6 +128,9 @@ export function readDeploymentPlatformTargets(
           service: { pluginId: service.pluginId, localId: service.localId },
           fields: hints as EffectiveActionInputField[],
           sourceMethods,
+          ...(record(target.actions) && record(target.actions.logs) && text(target.actions.logs.runtime)
+            ? { runtimeLogs: true as const } : {}),
+          ...(create ? { create } : {}),
         },
       ];
     });
@@ -126,7 +149,7 @@ export function buildPlatformTargetDraft(
     values: Readonly<Record<string, unknown>>;
     sourceMethod?: DeploymentSourceMethodV1;
   }>,
-): Record<string, unknown> {
+): Record<string, unknown> & { credentialPrincipal: DeploymentTargetCredentialPrincipalV1 } {
   return {
     v: 1,
     serverId: input.serverId,
@@ -275,5 +298,5 @@ export function applyPlatformFieldPatch(
     const value = readHappierActionInputPath(merged, field.path);
     if (value !== undefined) kept = { ...kept, ...patchHappierActionInputPath(kept, field.path, value) };
   }
-  return { values: kept, changedIndex };
+  return { values: seedInputByFieldHints({ inputHints: { fields: [...fields.slice(changedIndex + 1)] } }, kept), changedIndex };
 }

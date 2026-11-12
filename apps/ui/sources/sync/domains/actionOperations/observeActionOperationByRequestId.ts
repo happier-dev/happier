@@ -16,6 +16,8 @@ export function observeActionOperationByRequestId(input: Readonly<{
     signal?: AbortSignal;
     /** Present owner progress while this same observer joins the terminal result. */
     onUpdate?: (operation: ActionOperationSnapshotV1) => void;
+    /** A typed owner read refusal, distinct from a recoverable connection loss. */
+    onUnavailable?: (errorCode: string) => void;
 }>): Promise<ActionOperationSnapshotV1 | null> {
     return new Promise(resolve => {
         let finished = false;
@@ -74,11 +76,15 @@ export function observeActionOperationByRequestId(input: Readonly<{
                 input.onUpdate?.(read.operation);
                 finish(read.operation);
             } catch (error) {
+                if (finished) return;
                 const code = readRpcErrorCode(error);
                 // The existing connection owner supplies the wake; never replay the effect or start a timer.
                 if (!isMachineRequestReachabilityFailure(error) && !isMachineStoppedAnsweringError(error)
                     && code !== 'MACHINE_RPC_UNREACHABLE' && code !== RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE
-                    && code !== RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) finish(null);
+                    && code !== RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) {
+                    if (code) input.onUnavailable?.(code);
+                    finish(null);
+                }
             } finally {
                 reading = false;
                 if (changedWhileReading) { changedWhileReading = false; void read(); }

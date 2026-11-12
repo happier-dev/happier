@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { actionOperationStore } from './actionOperationStore';
-import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention, useManagedMachineActionOperation, useTerminalActionOperationState } from './useActionOperations';
+import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention, useManagedMachineActionOperation, useTerminalActionOperationState, useDeploymentTargetLinkOperations } from './useActionOperations';
 
 describe('useActionOperations', () => {
     let tree: renderer.ReactTestRenderer | null = null;
@@ -73,6 +73,68 @@ describe('useActionOperations', () => {
         act(() => actionOperationStore.mergeSnapshots({ serverId: 'saved-home', snapshots: [{ ...snapshot,
             operationId: 'native-intent', actionId: 'machines.managed.intent.update', createdAt: 70 }] }));
         expect(observed.at(-1)).toBe('native-intent');
+    });
+
+    it('recovers link operations for the exact Environment without waking for another Home, Account or controller', async () => {
+        const query = { serverId: 'home', accountId: 'requester', machineId: 'controller', environmentId: 'environment' };
+        const observed: Array<readonly string[]> = [];
+        const completeness: Array<true | undefined> = [];
+        function LinkObserver() {
+            const operations = useDeploymentTargetLinkOperations(query);
+            observed.push(operations.map(operation => operation.snapshot.operationId));
+            completeness.push(operations[0]?.snapshotComplete);
+            return null;
+        }
+        tree = (await renderScreen(<LinkObserver />)).tree;
+        const snapshot = { version: 1 as const, operationId: 'created-resource', revision: 1,
+            actionId: 'deployments.targets.link', state: 'failed' as const,
+            scope: { accountId: 'requester', machineId: 'controller' }, title: 'Link platform', createdAt: 1,
+            cancellation: 'unsupported' as const, domainRef: { kind: 'deploymentTargetLink' as const,
+                serverId: 'home', environmentId: 'environment', purpose: 'create' as const, requestKey: 'created-resource-request' } };
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [snapshot] }));
+        expect(observed.at(-1)).toEqual(['created-resource']);
+        const before = observed.length;
+        act(() => {
+            actionOperationStore.mergeSnapshots({ serverId: 'another-home', snapshots: [{ ...snapshot, operationId: 'wrong-home' }] });
+            actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [
+                { ...snapshot, operationId: 'wrong-account', scope: { ...snapshot.scope, accountId: 'another' } },
+                { ...snapshot, operationId: 'wrong-controller', scope: { ...snapshot.scope, machineId: 'another' } },
+                { ...snapshot, operationId: 'wrong-environment', domainRef: { ...snapshot.domainRef, environmentId: 'another' } },
+            ] });
+        });
+        expect(observed.length).toBe(before);
+        expect(completeness.at(-1)).toBeUndefined();
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [snapshot], snapshotComplete: true }));
+        expect(completeness.at(-1)).toBe(true);
+        expect(observed.length).toBe(before + 1);
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [{ ...snapshot, revision: 2,
+            result: { ok: false, error: 'deployment_link_incomplete' } }] }));
+        expect(observed.length).toBe(before + 2);
+        act(() => {
+            expect(actionOperationStore.dismissOperation({ serverId: 'home', operationId: 'created-resource' })).toBe(true);
+        });
+        expect(observed.at(-1)).toEqual(['created-resource']);
+        expect(observed.length).toBe(before + 2);
+    });
+
+    it('recovers Environment-wide link operations from their original controllers', async () => {
+        const observed: Array<readonly string[]> = [];
+        function EnvironmentLinkObserver() {
+            observed.push(useDeploymentTargetLinkOperations({ serverId: 'home', accountId: 'requester', machineId: undefined,
+                environmentId: 'environment' }).map(operation => operation.snapshot.scope.machineId));
+            return null;
+        }
+        tree = (await renderScreen(<EnvironmentLinkObserver />)).tree;
+        const snapshot = { version: 1 as const, operationId: 'created-resource', revision: 1,
+            actionId: 'deployments.targets.link', state: 'failed' as const,
+            scope: { accountId: 'requester', machineId: 'original-controller' }, title: 'Link platform', createdAt: 1,
+            cancellation: 'unsupported' as const, domainRef: { kind: 'deploymentTargetLink' as const,
+                serverId: 'home', environmentId: 'environment', purpose: 'create' as const, requestKey: 'created-resource-request' } };
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [snapshot] }));
+        expect(observed.at(-1)).toEqual(['original-controller']);
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [{ ...snapshot,
+            operationId: 'second-resource', scope: { ...snapshot.scope, machineId: 'second-controller' } }] }));
+        expect(observed.at(-1)).toEqual(['original-controller', 'second-controller']);
     });
 
     it('imperatively reads the latest canonical operation snapshot at a decision point', () => {
