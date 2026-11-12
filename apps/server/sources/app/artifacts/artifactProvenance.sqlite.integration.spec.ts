@@ -281,7 +281,13 @@ describe('Artifact private provenance (real SQLite and HTTP)', () => {
                 expect(history.json().revisions).toMatchObject([{ bodyVersion: 1, provenance: private1 }]);
             }
             expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${id}`, headers: headers(stranger.id) })).statusCode).toBe(404);
+            const strangerUpdate = await app.inject({ method: 'POST', url: `/v1/artifacts/${id}`, headers: headers(stranger.id), payload: {
+                body: await encode({ body: 'Unauthorized decision' }, contentKey), expectedBodyVersion: 2, provenance: private2,
+            } });
+            expect(strangerUpdate.statusCode, strangerUpdate.body).toBe(404);
             const stored = await db.artifact.findUniqueOrThrow({ where: { id } });
+            expect(stored.bodyVersion).toBe(2);
+
             if (mode === 'plain') expect(new TextDecoder().decode(stored.provenance!)).not.toContain(owner.id);
             if (mode === 'e2ee') expect(await openSessionDataKeyBundleV0(privacyKit.decodeBase64(private2), contentKey)).toEqual({ status: 'authentication_failed' });
             const lookupId = crypto.randomUUID();

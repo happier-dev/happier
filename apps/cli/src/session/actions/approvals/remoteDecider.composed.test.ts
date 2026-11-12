@@ -7,6 +7,9 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent,
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { createTargetActionCurrentIntentAdapter } from './targetActionCurrentIntent';
 import { buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ACTION_API_SERVER_ORIGIN, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -57,7 +60,8 @@ describe('remote person approval through credentialed CLI and registered daemon 
       HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined,
     } }, async () => {
       const serverId = configuration.activeServerId;
-      const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1, provenance: {
+      const requesterAccountId = scenario === 'target_live' && !externalActionClient ? 'guest' : 'owner';
+      const token = `fixture.${Buffer.from(JSON.stringify({ sub: requesterAccountId, tokenEpoch: 1, provenance: {
         v: 1, kind: 'account', authority: 'present_user',
       } })).toString('base64url')}.signature`;
       const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -80,17 +84,36 @@ describe('remote person approval through credentialed CLI and registered daemon 
       const executionCounts = () => ({ rpc: transport.mock.calls.length, admissions: signedAdmissions,
         deliveries: signedDeliveries, effects: effects.length });
       const issuedAuthorizations = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
-      const target = scenario === 'target_live' ? TargetActionApprovalRequestV1Schema.parse({
-        v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
-        createdBy: { surface: 'agent' }, requestedSurface: 'agent', qualifiedActionId: 'acme.alpha/actions/run',
-        input: {}, sourceCustody: { kind: 'development', registeredRootId: 'fixture-root' },
-        approvalInputCustody: 'live_only', policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64),
-        replayPlacement: { serverId, machineId: 'origin-machine' }, summary: 'Review private operation',
+      const targetLifetime = new AbortController();
+      onTestFinished(() => targetLifetime.abort());
+      let target: ReturnType<typeof TargetActionApprovalRequestV1Schema.parse> | null = null;
+      const updateTarget = async ({ request }: { request: NonNullable<typeof target> }) => {
+        if (!target) throw new Error('Missing target approval');
+        const transition = admitTargetActionApprovalTransition(target, request);
+        if (transition.ok) target = request;
+        return transition;
+      };
+      let targetReady!: () => void;
+      const targetWaiting = new Promise<void>(resolve => { targetReady = resolve; });
+      const targetAdapter = createTargetActionCurrentIntentAdapter({
+        read: async () => target,
+        update: updateTarget,
+        create: async request => { target = request; return { artifactId: 'approval', request }; },
+        subscribeChanges: () => { targetReady(); return { dispose() {} }; },
+      });
+      const targetInvocation = scenario === 'target_live' ? targetAdapter({
+        action: { qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: 'alpha',
+          sourceCustody: { kind: 'development', registeredRootId: 'fixture-root' }, dangerLevel: 'writesRemote',
+          scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: {},
+          policyFingerprint: 'a'.repeat(64), confirmation: { title: 'Review private operation' } },
+        fingerprint: 'b'.repeat(64), surface: 'cli', approvalInputCustody: 'live_only', signal: targetLifetime.signal,
+        replayPlacement: { serverId, machineId: 'origin-machine' },
         executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
           caller: { kind: 'session', sessionId: managerSessionId, starterDepth: 0, turnDepth: 0 },
-          serverId, serverIdentityId: 'srv_home', accountId: 'owner', machineId: 'origin-machine',
+          serverId, serverIdentityId: 'srv_home', accountId: requesterAccountId, machineId: 'origin-machine',
           actionId: 'action.invoke', requestId: 'target-live' },
       }) : null;
+      if (targetInvocation) await targetWaiting;
       const effects: unknown[] = [];
       const publications = new Map<string, string>();
       const publicationRequests: string[] = [];
@@ -104,6 +127,9 @@ describe('remote person approval through credentialed CLI and registered daemon 
       let waiterReady!: () => void;
       const waiting = new Promise<void>(resolve => { waiterReady = resolve; });
       const daemon = createActionExecutor({
+        ...(scenario === 'target_live' ? { targetActionApprovalReplay: createTargetActionApprovalDecision({
+          read: async () => target, update: updateTarget,
+        }) } : {}),
         ...(backgroundPluginPost ? { hostActionApprovalLifetime: { actionId: 'discussion.post' as const,
           signal: lifetime.signal, surface: 'plugin' as const, isCurrent: () => !lifetime.signal.aborted } } : {}),
         resolveSessionReference: async ({ sessionId, context }) => ({ kind: 'unique', address: { serverId: context.serverId!, sessionId: sessionId! } }),
@@ -191,7 +217,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
           target: { kind: 'session', sessionId: managerSessionId } });
         expect(request.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
       }
-      let artifact = { id: 'approval', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+      let artifact = { id: 'approval', ownerAccountId: requesterAccountId, access: 'owner', encryptionMode: 'plain',
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         header: encodePlainArtifactStoredContent(target ? buildTargetActionApprovalArtifactHeaderV1(target)
           : buildApprovalRequestArtifactHeaderV1(ApprovalRequestV2Schema.parse(stored))),
@@ -230,7 +256,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
           expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
           return { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable', effectAttempted: false };
         }
-        if (target) return { ok: true, result: { artifactId: 'approval', status: 'approved' } };
+        if (target) return { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'custodian_only' };
         const result = await rpc.handleRequest({ method: `origin-machine:${input.method}`, params: input.request,
           callerAuthority: 'present_user' });
         return result;
@@ -253,12 +279,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
             resourceMode: 'plain', accessState: 'ready' },
         } } };
         if (path === `/v2/sessions/${managerSessionId}`) return { status: 200, data: { session: managerSession } };
-        if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+        if (path === '/v1/account/profile') return { status: 200, data: { id: requesterAccountId } };
         if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
         if (path === '/v1/account/settings' || path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: settings } } };
         if (path === '/v1/artifacts/approval') {
-          if (target) return { status: 200, data: artifact };
+          if (target) return { status: 200, data: { ...artifact,
+            header: encodePlainArtifactStoredContent(buildTargetActionApprovalArtifactHeaderV1(target)),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(target) }) } };
           const request = ApprovalRequestV2Schema.parse(stored);
           return { status: 200, data: { ...artifact, header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }) } };
@@ -291,7 +319,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
           if (request.envelope.v !== 1 || !request.envelope.target) throw new Error('Expected plain decision envelope');
           const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
             token: `approval-admission-${++signedAdmissions}`, binding: {
-              serverIdentityId: 'srv_home', accountId: 'owner', custodianAccountId: 'owner',
+              serverIdentityId: 'srv_home', accountId: requesterAccountId, custodianAccountId: 'owner',
               authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
               machineId: 'origin-machine', installationId: installation.installationId,
               actionId: 'approval.request.decide', requestId: request.envelope.requestId,
@@ -324,14 +352,13 @@ describe('remote person approval through credentialed CLI and registered daemon 
             originRefusalPending = false;
             expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
             execution = { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable', effectAttempted: false };
-          } else if (target) execution = { ok: true, result: { artifactId: 'approval', status: 'approved' } };
-          else {
+          } else {
             const relayed = parseExternalActionDaemonDispatchResult(await rpc.handleRequest({
               method: `origin-machine:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
               authorization: ACTION_API_SERVER_ORIGIN,
               params: { actionId: 'approval.request.decide', envelope: request.envelope,
                 executionAuthorization: authorization,
-                principal: { accountId: 'owner', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 1 } },
+                principal: { accountId: requesterAccountId, authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 1 } },
                 placement: { machineId: 'origin-machine', target: { kind: 'machine', machineId: 'origin-machine' } } },
             }, undefined, 'authenticated_home_socket'));
             if (!relayed || relayed.kind !== 'response') throw new Error(`Invalid daemon response: ${JSON.stringify(relayed)}`);
@@ -361,6 +388,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
       });
       const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         serverId, serverIdentityId: 'srv_home', serverApiUrl: 'https://approval.test',
+        onRequesterSessionCredentialDisclosure: async () => true,
         machineId: 'controller-machine', ...(externalActionClient ? { externalActionClient: true } : {}),
       });
       const decide = () => executor.execute('approval.request.decide', { artifactId: 'approval', decision }, {
@@ -417,7 +445,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
       if (target) {
         expect(dispatchCount(), JSON.stringify(result)).toBe(1);
         expect(result).toMatchObject({ ok: true, result: { status: 'approved' } });
-        expect(effects).toEqual([]);
+        const admitted = await targetInvocation;
+        expect(admitted).toMatchObject({ status: 'approved' });
+        if (admitted?.status !== 'approved' || !admitted.settleExecution) throw new Error('Missing target receipt');
+        effects.push('nested effect on origin-machine');
+        await admitted.settleExecution({ artifactId: 'approval', execution: { ok: true, effectAttempted: true } });
+        expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(effects).toHaveLength(1);
+        expect(transport).not.toHaveBeenCalled();
         const http: Record<string, number> = {};
         return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
       }
@@ -535,8 +570,8 @@ describe('remote person approval through credentialed CLI and registered daemon 
     await approveGoal(false, 'background_plugin_refusal');
   });
 
-  it('forwards a live target approval to its captured Machine rather than the local target decision owner', async () => {
-    await approveGoal(false, 'target_live');
+  it.each([false, true])('forwards a live target approval through signed requester custody (owner=%s)', async owner => {
+    await approveGoal(owner, 'target_live');
   });
 
   // An already-executed decision needs one current resource read in this request;

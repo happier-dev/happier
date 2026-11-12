@@ -9782,7 +9782,7 @@ describe("external Action execution authorization", () => {
         } finally { await channel.close(); await app.close(); }
     });
 
-    it.each(['owned', 'shared-use', 'shared-team-use'] as const)('admits only a fresh reviewer approval root and preserves its exact decision replay with %s access', async access => {
+    it.each(['owned', 'shared-use', 'shared-team-use', 'not-granted'] as const)('admits only a fresh reviewer approval root and preserves its exact decision replay with %s access', async access => {
         vi.stubEnv('HAPPIER_FEATURE_SESSIONS__ENABLED', '1');
         vi.stubEnv('HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED', '1');
         const fixture = await createFixture({ qualifiedPat: false });
@@ -9857,6 +9857,12 @@ describe("external Action execution authorization", () => {
             url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId), headers: { authorization: `Bearer ${credential}` }, payload });
         try {
             const issued = await issue(token);
+            if (access === 'not-granted') {
+                expect(issued.statusCode, issued.body).toBe(409);
+                expect(issued.json()).toMatchObject({ code: 'target_unavailable' });
+                expect(dispatchedPrincipals).toEqual([]);
+                return;
+            }
             expect(issued.statusCode, issued.body).toBe(200);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
             expect(root.binding).toMatchObject({ actionId, accountId: fixture.account.id,
