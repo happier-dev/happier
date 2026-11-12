@@ -32,8 +32,11 @@ export const QWEN_PROVIDER_BINDING_ADAPTER = {
   prepare: () => ({ v: 1 as const, materialization: 'configFile' as const }),
   materialize(input) {
     if (input.prepared.materialization !== 'configFile') throw new Error('Qwen requires its settings file');
-    const protocol = input.binding.endpoint.protocol;
-    if (protocol !== 'openai-chat' && protocol !== 'openai-responses') throw new Error('Qwen supports OpenAI Chat or Responses providers only');
+    const endpointProtocol = input.binding.endpoint.protocol;
+    // Return the literal itself: neither a negated check nor `||` narrows the open protocol string.
+    const protocol = endpointProtocol === 'openai-chat' ? 'openai-chat' as const
+      : endpointProtocol === 'openai-responses' ? 'openai-responses' as const : null;
+    if (!protocol) throw new Error('Qwen supports OpenAI Chat or Responses providers only');
     const model = input.binding.selection.model;
     const apiKey = assertCredential(input, protocol);
     const customHeaders = input.binding.endpoint.publicHeaders;

@@ -127,7 +127,11 @@ export const OPENCODE_PLUGIN = definePlugin({
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
           agentCliSystemTool: { toolId: OPEN_CODE_SYSTEM_TOOL_ID },
         },
-        connectedAccounts: OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS,
+        connectedAccounts: OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS.map(row => ({
+          ...row,
+          materializationKinds: [...row.materializationKinds],
+          credentialKinds: [...row.credentialKinds],
+        })),
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',
             nativeRoots: {
@@ -169,7 +173,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             ],
           },
           authIsolation: {
-            suppressConnectedServiceIds: OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS,
+            suppressConnectedServiceIds: [...OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS],
             ownedEnvKeys: [...OPENCODE_PROVIDER_OWNED_ENV_KEYS],
           },
           materialization: 'configFile',

@@ -6,4 +6,4 @@ export const FX_PERMISSION_MODE_MAPPING = {
   default: null,
   'read-only': ['ask'],
   'safe-yolo': ['auto', 'code'],
-} as const satisfies AgentAcpRuntimeDefinition['permissionModeMapping'];
+} satisfies AgentAcpRuntimeDefinition['permissionModeMapping'];

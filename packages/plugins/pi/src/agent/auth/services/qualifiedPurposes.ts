@@ -18,7 +18,7 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
     purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
     native: { providerId: 'anthropic', startupModel: 'claude-opus-5', modelScope: 'anthropic/*' },
     requestAuth: {
-      materialization: { kind: 'httpHeaders', origin: 'https://api.anthropic.com', headerNames: ['authorization'] },
+      materialization: { kind: 'httpHeaders' as const, origin: 'https://api.anthropic.com', headerNames: ['authorization'] },
       ownedHeaders: ['authorization', 'x-api-key'],
     },
     service: CLAUDE_CONNECTED_ACCOUNT_SERVICE,
@@ -29,7 +29,7 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
     purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
     native: { providerId: 'openai-codex', startupModel: 'gpt-5.5', modelScope: 'openai-codex/*' },
     requestAuth: {
-      materialization: { kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'] },
+      materialization: { kind: 'httpHeaders' as const, origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'] },
       ownedHeaders: ['authorization', 'chatgpt-account-id'],
     },
     service: OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
@@ -86,10 +86,14 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
   }),
 ] as const);
 
+type PiQualifiedPurposeRow = (typeof PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES)[number];
+
 export const PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES = Object.freeze(
-  PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter((row) => !('managedProviderEndpoint' in row)),
+  PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter(
+    (row): row is Exclude<PiQualifiedPurposeRow, { managedProviderEndpoint: unknown }> => !('managedProviderEndpoint' in row)),
 );
 
 export const PI_REQUEST_AUTH_PURPOSE_ROWS = Object.freeze(
-  PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter((row) => 'requestAuth' in row),
+  PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter(
+    (row): row is Extract<PiQualifiedPurposeRow, { requestAuth: unknown }> => 'requestAuth' in row),
 );

@@ -117,6 +117,7 @@ export type OpenCodeConnectedAccountPurposeId =
 type AccountDescriptor = typeof OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS[number];
 type RequestAuthDescriptor = Extract<AccountDescriptor, { requestAuthOrigin: string }>;
 export type OpenCodeRequestAuthProvider = RequestAuthDescriptor['provider'];
+export type OpenCodeRequestAuthPurposeId = RequestAuthDescriptor['declaration']['purpose'];
 
 export function openCodeAccountProviders(row: AccountDescriptor) {
   return [row.provider, ...('additionalProviders' in row ? row.additionalProviders : [])];

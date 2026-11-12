@@ -1,7 +1,7 @@
 import { isRecord, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { OpenCodeRequestAuthProvider } from './source.js';
-import { OPEN_CODE_REQUEST_AUTH_CONSUMER, OPEN_CODE_REQUEST_AUTH_DESCRIPTORS, type OpenCodeConnectedAccountPurposeId } from '../purposes.js';
+import { OPEN_CODE_REQUEST_AUTH_CONSUMER, OPEN_CODE_REQUEST_AUTH_DESCRIPTORS, type OpenCodeRequestAuthPurposeId } from '../purposes.js';
 
 export {
   OPEN_CODE_REQUEST_AUTH_CONSUMER,
@@ -24,7 +24,7 @@ export const OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES = Object.freeze(Object.fro
   })]),
 )) as Readonly<Record<OpenCodeRequestAuthProvider, Readonly<{
   consumer: typeof OPEN_CODE_REQUEST_AUTH_CONSUMER;
-  purpose: OpenCodeConnectedAccountPurposeId;
+  purpose: OpenCodeRequestAuthPurposeId;
 }>>>;
 
 export function isDeclaredOpenCodeRequestAuthPurpose(
