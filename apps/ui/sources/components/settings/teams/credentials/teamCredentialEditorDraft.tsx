@@ -337,9 +337,9 @@ export function useTeamCredentialResourceDraft(input: Readonly<{
             || disclosureFingerprint === baselineDisclosureFingerprint
             || disclosureFingerprint === acceptedDisclosureFingerprint,
         disclosureFingerprint,
+        // Existing disclosure is accepted content, not confirmation given in this edit.
         disclosureReviewCompleted: disclosureFingerprint !== null
-            && (disclosureFingerprint === baselineDisclosureFingerprint
-                || disclosureFingerprint === acceptedDisclosureFingerprint),
+            && disclosureFingerprint === acceptedDisclosureFingerprint,
         isDisclosureAcceptedForDraft: React.useCallback((next: TeamCredentialResourceDraft) => {
             const fingerprint = teamCredentialDisclosureConsequenceFingerprint(input.targetKey, next);
             return fingerprint === null

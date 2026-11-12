@@ -326,10 +326,11 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                         onSelect={(candidate) => {
                             const nextDraft = { ...resourceDraft.draft, source: candidate.candidate.source };
                             void (async () => {
-                                if (!resourceDraft.isDisclosureAcceptedForDraft(nextDraft)
-                                    && !await confirmTeamCredentialDisclosure(nextDraft)) return;
+                                if (!resourceDraft.isDisclosureAcceptedForDraft(nextDraft)) {
+                                    if (!await confirmTeamCredentialDisclosure(nextDraft)) return;
+                                    resourceDraft.acceptDisclosureForDraft(nextDraft);
+                                }
                                 resourceDraft.setDraft(nextDraft);
-                                resourceDraft.acceptDisclosureForDraft(nextDraft);
                                 setNotice(null);
                             })();
                         }}

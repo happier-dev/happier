@@ -192,7 +192,7 @@ describe('useTeamCredentialResourceDraft', () => {
         };
         const hook = await renderHook(() => useTeamCredentialResourceDraft({ targetKey: 'home:account:team:resource', initial }));
         expect(hook.getCurrent().disclosureAccepted).toBe(true);
-        expect(hook.getCurrent().disclosureReviewCompleted).toBe(true);
+        expect(hook.getCurrent().disclosureReviewCompleted).toBe(false);
         act(() => hook.getCurrent().setDraft(current => ({ ...current,
             source: current.source?.kind === 'provider_connection'
                 ? { ...current.source, connectionId: ProviderConnectionIdSchema.parse('connection-b') }
@@ -205,6 +205,7 @@ describe('useTeamCredentialResourceDraft', () => {
             name: 'Renamed', deliveryPolicy: { preferredAllowedModes: ['brokered', 'vendor-native'] },
         })));
         expect(hook.getCurrent().disclosureAccepted).toBe(true);
+        expect(hook.getCurrent().disclosureReviewCompleted).toBe(true);
     });
 
     it('keys disclosure acknowledgement to the exact source and direct audience consequence', async () => {

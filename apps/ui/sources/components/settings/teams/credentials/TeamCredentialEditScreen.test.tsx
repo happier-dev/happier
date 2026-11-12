@@ -721,6 +721,56 @@ describe('TeamCredentialEditScreen broker placement', () => {
         expect(actionArgs.replacement).not.toHaveProperty('memberGrants');
     });
 
+    it.each([false, true])('asks before renaming an unchanged native disclosure and preserves a declined draft (reselect=%s)', async (reselect) => {
+        const { screen, serverId, resource } = await renderEditor({
+            approvalRequired: true,
+            sourceReadFails: reselect,
+            resourceOverrides: {
+                deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] },
+                allMembersAllowedRoutes: ['vendor-native', 'brokered'],
+            },
+        });
+        if (reselect) {
+            if (resource.source === null) throw new Error('source_fixture_required');
+            const candidate = teamCredentialSourceCandidateFixture({
+                label: 'Current native source', source: resource.source, offeredByResourceId: resource.id,
+            });
+            harness.answer(serverId, '/v1/teams/credential-resources/sources/list', {
+                body: { candidates: [candidate], supportedKinds: [candidate.source.kind], brokerPresentation: resource.brokerPresentation },
+            });
+            await screen.pressByTestIdAsync('team-credential-edit-source-retry');
+            await vi.waitFor(() => expect(findDeclaredRow(screen, 'team-credential-create-source')?.props.disabled).toBe(false));
+            await screen.pressByTestIdAsync('team-credential-create-source');
+            const { Modal } = await import('@/modal');
+            const picker = vi.mocked(Modal.show).mock.calls.at(-1)?.[0] as unknown as Readonly<{
+                props: { rootStep: { sections: readonly { options: readonly { id: string }[] }[] }; onSelect: (id: string) => void };
+            }>;
+            const option = picker.props.rootStep.sections.flatMap(section => section.options)[0];
+            expect(option).toBeDefined();
+            await act(async () => picker.props.onSelect(option!.id));
+            expect(modalConfirm).not.toHaveBeenCalled();
+        }
+        act(() => screen.changeTextByTestId('team-credential-edit-name', 'Renamed native credential'));
+        modalConfirm.mockClear().mockResolvedValueOnce(false);
+        await screen.pressByTestIdAsync('team-credential-edit-save');
+        await waitForHomeGovernance(() => {
+            expect(modalConfirm).toHaveBeenCalledOnce();
+            expect(screen.findByTestId('team-credential-edit-save')?.props.disabled).toBe(false);
+        });
+        expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(0);
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+        expect(screen.findByTestId('team-credential-edit-name')?.props.value).toBe('Renamed native credential');
+        expect(routerBack).not.toHaveBeenCalled();
+
+        modalConfirm.mockResolvedValueOnce(true);
+        await screen.pressByTestIdAsync('team-credential-edit-save');
+        await waitForHomeGovernance(() => expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(1));
+        expect(lastCredentialUpdateInput().replacement).toMatchObject({ displayName: 'Renamed native credential' });
+        expect(lastCredentialUpdateInput().replacement).not.toHaveProperty('custodian');
+        expect(modalConfirm).toHaveBeenCalledTimes(2);
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+    });
+
     it('preserves native policy order and audience allowance when saving an existing resource', async () => {
         const { screen, resource } = await renderEditor({
             approvalRequired: true,
