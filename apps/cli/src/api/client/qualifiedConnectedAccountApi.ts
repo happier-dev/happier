@@ -91,8 +91,13 @@ export class QualifiedConnectedAccountCredentialConflictError extends HttpStatus
     readonly resources: readonly ManagedResourceDependencyV1[] | undefined;
     readonly reason?: Extract<ReturnType<typeof QualifiedConnectedAccountCredentialErrorV4Schema.parse>, { error: 'connect_credential_mutation_superseded' }>['reason'];
 
+    /** Only closed response discriminators; never response text or identity fields. */
+    get diagnosticCode(): QualifiedConnectedAccountCredentialConflictCode | `${QualifiedConnectedAccountCredentialConflictCode}:${NonNullable<QualifiedConnectedAccountCredentialConflictError['reason']>}` {
+        return this.reason ? `${this.code}:${this.reason}` : this.code;
+    }
+
     constructor(code: QualifiedConnectedAccountCredentialConflictCode, resources?: readonly ManagedResourceDependencyV1[], reason?: QualifiedConnectedAccountCredentialConflictError['reason']) {
-        super(409, code);
+        super(409, reason ? `${code}:${reason}` : code);
         this.name = "QualifiedConnectedAccountCredentialConflictError";
         this.code = code;
         this.resources = resources;
@@ -773,8 +778,10 @@ export async function mutateQualifiedConnectedAccountCredentialHealthV4(
             ...(params.signal ? { signal: params.signal } : {}),
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: status => status === 200 || status === 409,
         },
     );
+    if (response.status === 409) throwQualifiedConnectedAccountCredentialConflict(response.data);
     if (response.status !== 200) {
         throw new Error(
             `Qualified Connected Account health mutation returned ${response.status}`,

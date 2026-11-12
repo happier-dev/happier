@@ -1,3 +1,7 @@
+import { mutateQualifiedConnectedAccountCredentialHealthV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import axios from 'axios';
+import { ConnectedServiceSpawnCredentialRefreshError } from '../resolveConnectedServiceAuthForSpawn';
+import { buildConnectedServiceCredentialRefreshSpawnErrorResult } from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,6 +96,38 @@ afterEach(async () => {
 });
 
 describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () => {
+  it('retains the safe HTTP409 health cause through status acquisition, spawn refusal and daemon log', async () => {
+    const harness = await createBuiltInQualifiedRefreshHarness();
+    createdRegistries.push(harness);
+    const warn = vi.spyOn(logger, 'warn');
+    // Use the real HTTP health adapter instead of fixture-local persistence. Only HTTP is mocked.
+    harness.mutateCredentialHealth.mockImplementationOnce(async input => {
+      await mutateQualifiedConnectedAccountCredentialHealthV4(input);
+      return { success: true, credentialRevision: harness.firstRevision, configurationRevision: null };
+    });
+    vi.spyOn(axios, 'patch').mockResolvedValueOnce({ status: 409, data: {
+      error: 'connect_credential_mutation_superseded', reason: 'credential_revision_mismatch',
+      credentialRevision: null, configurationRevision: null,
+    } });
+    const result = await harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({
+      profile: { ref: harness.account, status: 'connected', authenticationModeId: 'oauth',
+        revisionSemantics: 'revisioned', credentialRevision: harness.firstRevision,
+        configurationRevision: null, configurationReady: true, kind: 'oauth',
+        expiresAt: null, displayName: 'work', scopes: ['openid'] },
+    });
+    const reason = 'connect_credential_mutation_superseded:credential_revision_mismatch';
+    expect(result).toMatchObject({ status: 'refresh_failed', reason });
+    if (result.status === 'ready') throw new Error('Expected status acquisition refusal');
+    const refusal = buildConnectedServiceCredentialRefreshSpawnErrorResult({ agentId: 'opencode',
+      error: new ConnectedServiceSpawnCredentialRefreshError({ kind: 'transient_refresh_failed',
+        serviceId: 'happier.agent.codex/openai-codex', profileId: harness.account.accountId, reason: result.reason }),
+    });
+    expect(refusal).toMatchObject({ errorDetail: { uxDiagnostic: {
+      code: 'connected_service_credential_refresh_unavailable', retryable: true, diagnostics: { reason },
+    } } });
+    expect(JSON.stringify(warn.mock.calls)).toContain(reason);
+  });
+
   it.each(['request_auth', 'spawn', 'configuration'] as const)(
     'publishes committed refresh after registry retirement through %s', async entryPoint => {
       const onCredentialUpdated = vi.fn();

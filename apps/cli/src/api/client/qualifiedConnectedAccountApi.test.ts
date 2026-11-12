@@ -57,8 +57,8 @@ const service = {
  * endpoint could stop accepting 409 and every assertion below would still pass
  * while production went back to discarding the conflict body.
  */
-function mockAxiosPostOnce(response: Readonly<{ status: number; data: unknown }>): void {
-    vi.mocked(axios.post).mockImplementationOnce(async (
+function mockAxiosMutationOnce(response: Readonly<{ status: number; data: unknown }>, method: "post" | "patch" = "post"): void {
+    vi.mocked(axios[method]).mockImplementationOnce(async (
         _url: unknown,
         _body: unknown,
         config?: { validateStatus?: ((status: number) => boolean) | null },
@@ -607,7 +607,7 @@ describe("qualified Connected Account V4 API", () => {
             { error: 'connect_credential_mutation_superseded', reason: 'credential_revision_mismatch',
                 credentialRevision: null, configurationRevision: null },
         ] as const) {
-            mockAxiosPostOnce({ status: 409, data: body });
+            mockAxiosMutationOnce({ status: 409, data: body });
             await expect(mutateQualifiedConnectedAccountCredentialV4({
                 token: "token",
                 mutation,
@@ -623,7 +623,7 @@ describe("qualified Connected Account V4 API", () => {
             } satisfies Partial<QualifiedConnectedAccountCredentialConflictError>);
         }
 
-        mockAxiosPostOnce({ status: 409, data: { error: "not-a-known-code" } });
+        mockAxiosMutationOnce({ status: 409, data: { error: "not-a-known-code" } });
         await expect(mutateQualifiedConnectedAccountCredentialV4({
             token: "token",
             mutation,
@@ -632,6 +632,25 @@ describe("qualified Connected Account V4 API", () => {
             status: 409,
             code: "connected_account_credential_conflict_response_invalid",
         });
+    });
+
+    it.each([
+        { body: { error: 'connect_credential_mutation_superseded', reason: 'credential_revision_mismatch',
+            credentialRevision: null, configurationRevision: null },
+          diagnostic: 'connect_credential_mutation_superseded:credential_revision_mismatch' },
+        { body: { error: 'connect_credential_unsupported_format' }, diagnostic: 'connect_credential_unsupported_format' },
+        { body: { error: 'private-secret', reason: 'private-account', token: 'private-token' },
+          diagnostic: 'connected_account_credential_conflict_response_invalid' },
+    ])('preserves only the closed health HTTP409 cause: $diagnostic', async ({ body, diagnostic }) => {
+        mockAxiosMutationOnce({ status: 409, data: body }, "patch");
+        const error = await mutateQualifiedConnectedAccountCredentialHealthV4({
+            token: 'fixture-token', patch: { ref: { service, accountId: 'fixture-account' },
+                expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', expectedConfigurationRevision: null,
+                health: { v: 1, status: 'connected', reconnectRequired: false } },
+        }).catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(QualifiedConnectedAccountCredentialConflictError);
+        expect(error).toMatchObject({ diagnosticCode: diagnostic, message: diagnostic });
+        expect(JSON.stringify(error)).not.toMatch(/private-secret|private-account|private-token|fixture-token|fixture-account/);
     });
 
     it("reads exact credential and configuration snapshots and applies configuration CAS", async () => {

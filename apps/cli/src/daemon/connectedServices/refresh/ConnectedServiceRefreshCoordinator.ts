@@ -22,7 +22,7 @@ import type {
   QualifiedConnectedAccountPeerOperationTransport,
   readQualifiedConnectedAccountCredentialV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
-import { QualifiedConnectedAccountCompatibilityError } from '@/api/client/qualifiedConnectedAccountApi';
+import { QualifiedConnectedAccountCompatibilityError, QualifiedConnectedAccountCredentialConflictError } from '@/api/client/qualifiedConnectedAccountApi';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { readCurrentCatalogHook } from '@/agent/catalog/runtimeEntry';
 import type { StoredCredentials } from '@/persistence';
@@ -265,7 +265,8 @@ export type QualifiedConnectedAccountSpawnPreflightResult = Readonly<{
   reason?: never;
 }> | Readonly<{
   status: 'reconnect_required' | 'refresh_failed';
-  reason?: QualifiedConnectedAccountRefreshLeaseError['code'] | 'project_requester_home_unavailable';
+  reason?: QualifiedConnectedAccountRefreshLeaseError['code'] | 'project_requester_home_unavailable'
+    | QualifiedConnectedAccountCredentialConflictError['diagnosticCode'];
   reconnectCause?: ConnectedServiceCredentialReconnectCauseV1;
 }>;
 
@@ -1679,8 +1680,10 @@ export class ConnectedServiceRefreshCoordinator {
           error: sanitizeConnectedServiceDiagnosticError(error, { redactedValues: [profile.ref.accountId] }),
         });
         return { status: 'refresh_failed',
-          ...(isPluginError(error) && error.code === 'project_requester_home_unavailable'
-            ? { reason: error.code } : {}),
+          ...(error instanceof QualifiedConnectedAccountCredentialConflictError
+            ? { reason: error.diagnosticCode }
+            : isPluginError(error) && error.code === 'project_requester_home_unavailable'
+              ? { reason: error.code } : {}),
         };
       }
     }
