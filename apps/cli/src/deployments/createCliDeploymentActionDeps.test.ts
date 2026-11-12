@@ -1,4 +1,5 @@
 import axios from 'axios';
+import * as persistence from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
@@ -579,6 +580,14 @@ it('uses the exact Home identity for saved observer access and Environment reads
                 { serverId: profile.id, environmentId: detail.environment.id }, context))
                 .toMatchObject({ ok: true, environment: { id: detail.environment.id, serverId: homeId } });
             expect(requests).toEqual([homeId, homeId]);
+            const profileReads = vi.spyOn(persistence, 'readSettings').mockRejectedValue(new Error('Admitted Home must not re-read profiles'));
+            const admitted = { ...context, serverId: profile.id, serverIdentityId: homeId };
+            expect(await deps.readEnvironmentAccess({ serverId: homeId, environmentIds: [detail.environment.id] },
+                admitted, 'machines.services.detail')).toMatchObject({ ok: true });
+            expect(await deps.deploymentAction!('deployments.environments.get',
+                { serverId: homeId, environmentId: detail.environment.id }, admitted)).toMatchObject({ ok: true });
+            expect(requests).toEqual([homeId, homeId, homeId, homeId]);
+            expect(profileReads).not.toHaveBeenCalled();
         });
     } finally { env.restore(); reloadConfiguration(); }
 });

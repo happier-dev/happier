@@ -6,7 +6,6 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import { admitUseDeploymentDefinition, resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import * as persistence from '@/persistence';
-import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol';
 
 describe('deployment definition authority provenance', () => {
     afterEach(() => vi.restoreAllMocks());
@@ -55,16 +54,10 @@ describe('deployment definition authority provenance', () => {
             await expect(resolveDeploymentDefinitionRoleForHost({ ...context, externalActionExecutionAuthorization: signed }, host))
                 .resolves.toBe(role);
         }
-        const settings = await persistence.readSettings();
-        // Saved profiles are an OS persistence boundary; use the real Home
-        // identity resolver rather than assuming a local profile id is signed.
-        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { 'local-home': {
-            id: 'local-home', name: 'Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
-            homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_fixture_home',
-                canonicalServerUrl: 'https://home.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.test' }] }),
-        } } });
+        // OS persistence must not re-decide the already admitted Home.
+        vi.spyOn(persistence, 'readSettings').mockRejectedValue(new Error('Admitted Home must not re-read profiles'));
         await expect(resolveDeploymentDefinitionRoleForHost({ ...context,
+            serverId: 'local-home', serverIdentityId: 'srv_fixture_home',
             externalActionExecutionAuthorization: { ...authorization, binding: { ...authorization.binding,
                 serverIdentityId: 'srv_fixture_home', admittedMachineRole: 'use' } } },
         { ...host, serverId: 'local-home' })).resolves.toBe('use');

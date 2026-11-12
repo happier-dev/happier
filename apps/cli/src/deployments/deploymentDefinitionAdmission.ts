@@ -6,7 +6,7 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import type { DeploymentSourceRequesterIdentityResolver } from './readDeploymentSourceIntentForHost';
 import { readHostReviewedChildReceivingAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { normalizeAdmittedHomeServerIdV1 } from '@happier-dev/protocol/actions/executor/deploymentHomeAdmission';
 import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 
 const refuse = (): never => { throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); };
@@ -33,7 +33,7 @@ export async function resolveDeploymentDefinitionRoleForHost(context: ActionExec
 }>): Promise<'use' | 'manage'> {
     const binding = context.externalActionExecutionAuthorization?.binding;
     if (binding) {
-        if (!await isServerProfileHomeIdentity(host.serverId, binding.serverIdentityId)) return refuse();
+        if (normalizeAdmittedHomeServerIdV1(host.serverId, context) !== binding.serverIdentityId) return refuse();
         const ingress = context as RpcActionExecutorContext;
         const packet = ingress.workspaceSyncSourceExecution;
         const admission = ingress.machineAdmission;

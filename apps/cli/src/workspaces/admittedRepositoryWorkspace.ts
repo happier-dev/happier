@@ -3,7 +3,8 @@ import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { normalizeAdmittedHomeServerIdV1 } from '@happier-dev/protocol/actions/executor/deploymentHomeAdmission';
+import { resolveWorkspaceRefById } from './workspaceRefsV1';
 import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
@@ -24,9 +25,10 @@ export async function resolveAdmittedRepositoryWorkspace(input: Readonly<{
 }>): Promise<Readonly<{ kind: 'resolved'; workspace: WorkspaceRefV1 }> | RepositoryWorkspaceRefusal | ActionExecuteFailure> {
   const rows = await input.readWorkspaceRows({ key: input.workspace }, input.context.signal, input.context, input.fallbackActionId);
   if (!rows) return { ok: false, errorCode: 'project_requester_authority_unavailable', error: 'project_requester_authority_unavailable' };
-  const resolved = resolveWorkspaceRefV1(rows.workspaceRefs, { serverId: input.workspace.serverId, id: input.workspace.id });
-  if (resolved.kind !== 'resolved') return { kind: 'refused', reason: 'workspace_unavailable' };
-  const workspace = resolved.ref;
+  const normalizeServerId = (id: string) => normalizeAdmittedHomeServerIdV1(id, input.context);
+  const resolved = resolveWorkspaceRefById(rows.workspaceRefs, input.workspace.id, input.workspace.serverId, { normalizeServerId });
+  if (!resolved) return { kind: 'refused', reason: 'workspace_unavailable' };
+  const workspace = { ...resolved, serverId: normalizeServerId(resolved.serverId) };
   if (input.expected && (workspace.source?.sourceId !== input.expected.projectSourceId || workspace.source.revision !== input.expected.sourceRevision
     || !sameScmHostingRepositoryIdentity(workspace.repositoryIdentity, input.expected.repository))) return { kind: 'conflict', reason: 'source_changed' };
   return { kind: 'resolved', workspace };

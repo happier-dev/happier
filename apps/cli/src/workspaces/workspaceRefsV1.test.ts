@@ -5,6 +5,14 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from './workspaceRefsV1';
 
 describe('workspace ref resolution', () => {
+    it('uses the admitted Home mapping for stored and target refs without crossing Homes or ambiguity', () => {
+        const ref = { id: 'same', serverId: 'alias', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const context = { normalizeServerId: (id: string) => id === 'alias' ? 'canonical-home' : id };
+        expect(resolveWorkspaceRefById([ref], 'same', 'canonical-home', context)).toEqual(ref);
+        expect(resolveWorkspaceRefForMachineRoot([ref], { serverId: 'canonical-home', machineId: 'machine', rootPath: '/repo' }, context)).toEqual(ref);
+        expect(resolveWorkspaceRefById([ref], 'same', 'foreign', context)).toBeNull();
+        expect(resolveWorkspaceRefById([ref, { ...ref, serverId: 'canonical-home' }], 'same', 'canonical-home', context)).toBeNull();
+    });
     it('selects the explicitly qualified Home rather than dropping both same-root candidates', () => {
         const refs = ['one', 'two'].map(serverId => ({ id: 'same-id', serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }));
         expect(resolveWorkspaceRefById(refs, 'same-id', 'two')).toEqual(refs[1]);

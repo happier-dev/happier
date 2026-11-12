@@ -1,3 +1,4 @@
+import type { WorkspaceRefResolutionContextV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { WorkspaceRefV1WriteSchema, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
@@ -10,16 +11,18 @@ export function resolveWorkspaceRefById(
     workspaceRefs: readonly WorkspaceRefV1[],
     workspaceRefId: string,
     serverId?: string,
+    context: WorkspaceRefResolutionContextV1 = {},
 ): WorkspaceRefV1 | null {
-    const result = resolveWorkspaceRefV1(workspaceRefs, { id: workspaceRefId, ...(serverId !== undefined ? { serverId } : {}) });
+    const result = resolveWorkspaceRefV1(workspaceRefs, { id: workspaceRefId, ...(serverId !== undefined ? { serverId } : {}) }, context);
     return result.kind === 'resolved' ? result.ref : null;
 }
 
 export function resolveWorkspaceRefForMachineRoot(
     workspaceRefs: readonly WorkspaceRefV1[],
     scope: Readonly<{ serverId?: string; machineId: string; rootPath: string }>,
+    context: WorkspaceRefResolutionContextV1 = {},
 ): WorkspaceRefV1 | null {
-    const result = resolveWorkspaceRefV1(workspaceRefs, { ...scope, serverId: scope.serverId ?? '' });
+    const result = resolveWorkspaceRefV1(workspaceRefs, { ...scope, serverId: scope.serverId ?? '' }, context);
     return result.kind === 'resolved' ? result.ref : null;
 }
 

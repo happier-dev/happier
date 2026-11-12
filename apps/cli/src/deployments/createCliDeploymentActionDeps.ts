@@ -153,7 +153,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (!input.environmentIds.length) return { ok: true, items: [] };
       const parsedInput = DeploymentEnvironmentAccessInputV1Schema.safeParse({ ...input,
         serverId: context.externalActionExecutionAuthorization?.binding.serverIdentityId
-          ?? await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId,
+          ?? (input.serverId === context.serverIdentityId ? input.serverId
+            : await resolveServerProfileHomeIdentityId(input.serverId)) ?? input.serverId,
         environmentIds: [...new Set(input.environmentIds)] });
       if (!parsedInput.success) return failure('invalid_parameters');
       const body = parsedInput.data;
@@ -294,7 +295,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       const spec = getActionSpec(actionId);
       if (!spec.serverTransport) throw new TypeError(`Missing deployment storage transport: ${actionId}`);
       const homeId = context.externalActionExecutionAuthorization?.binding.serverIdentityId
-        ?? await resolveServerProfileHomeIdentityId(input.serverId);
+        ?? (input.serverId === context.serverIdentityId ? input.serverId
+          : await resolveServerProfileHomeIdentityId(input.serverId));
       const targetedInput = homeId ? { ...input, serverId: homeId } : input;
       const transportInput = actionId === 'deployments.environments.create' ? (() => {
         const { copyFrom, copyPlan: _privatePlan, ...prepared } = DeploymentEnvironmentCreateInputV1Schema.parse(targetedInput);
