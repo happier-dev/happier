@@ -98,7 +98,7 @@ async function fixture() {
   });
   const f = await createNativeCredentialComposerFixture({
     machine: { resource: reference(resource), launch: { provider: reference(resource).contributionRef, schemaVersion: 1,
-      name: resource.name, choices: {}, credentials: [{ purpose: { consumer: { pluginId: manifest.id, localId: 'acquire' },
+      name: resource.name, choices: {}, credentials: [{ purpose: { consumer: reference(resource).contributionRef,
         purpose: 'cloud-api' }, account, configurationRevision: null }] } },
     purposeBindingOwner: owner,
     nativeOptions: { fixtureManifest: manifest, actionHandlers: handlers, credentialOwner: owner,
@@ -280,7 +280,10 @@ describe('source-composed authored Vercel native credential delivery', () => {
           cleanup: async () => {} },
       });
       try {
-        expect(agent.environmentOverlay).toEqual([{ name: 'RUN_PROVIDER_TOKEN', value: 'random-placeholder-a', source: 'provider' }]);
+        expect(agent.environmentOverlay).toEqual([
+          { name: 'RUN_PROVIDER_TOKEN', value: 'random-placeholder-a', source: 'provider' },
+          { name: 'RUN_PROVIDER_URL', value: f.binding.delivery.endpoint.normalizedUrl, source: 'provider' },
+        ]);
         expect(agent.providerBinding.upstream?.normalizedUrl).toBe(f.binding.delivery.endpoint.normalizedUrl);
         expect(f.binding.delivery.endpoint.publicHeaders).toEqual({});
         expect(JSON.stringify({ agent, calls: f.calls, binding: f.binding })).not.toContain('native-source-secret');
