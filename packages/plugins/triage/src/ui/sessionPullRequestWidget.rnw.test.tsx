@@ -3,10 +3,10 @@ import { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import {
-  createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkit,
 } from '@happier-dev/plugin-sdk/testing';
+import { createTaskActionControlTestkit as createPluginUiTestkit } from './detail/taskActionControl.test-support.js';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { SessionPullRequestStatusResourceResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';

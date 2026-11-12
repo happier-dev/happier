@@ -3,7 +3,9 @@ import * as React from 'react';
 import { act } from 'react';
 import { matchWorkspaceRoutePatterns } from '../../../../../apps/ui/sources/components/appShell/workspace/workspaceRouteMatch.js';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginClientTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createTaskActionControlTestkit as createPluginUiTestkit } from './detail/taskActionControl.test-support.js';
+import { invokeSourcePanelFixtureAction } from './sourcePanelActions.test-support.js';
 import type { PluginUiTestkit, PluginUiTestkitExecuteActionInput } from '@happier-dev/plugin-sdk/testing';
 import type { PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
@@ -526,12 +528,14 @@ function createHarness(options: Readonly<{
     taskEdit?: boolean;
     uninstalledSource?: boolean;
     noActiveSource?: boolean;
+    unavailableSourceCode?: string;
     absentEntryIds?: readonly string[];
     exactReadFailure?: TriageSourceFailureV1;
     partialScan?: boolean;
     revokedEntryIds?: readonly string[];
 }> = {}) {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
+    const accountKv = createTestkitAccountKv();
     control.sourceInstances.seed(toCorpusStoredValue({ ...instanceRow(),
         ...(options.noActiveSource ? { lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired, retiredReason: 'userRemoved' as const } : {}),
     }));
@@ -642,6 +646,12 @@ function createHarness(options: Readonly<{
 
     async function executeAction(request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> {
         const action = String(request.action);
+        if (action === 'actions/read-v1') return await readTriageActionsForSurface(TriageReadActionsInputV1Schema.parse(request.input), {
+            catalog: accountKv.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), signal: request.signal,
+        });
+        if (action === 'views/read-v1') return await readTriageSavedViewsForSurface(TriageReadSavedViewsInputV1Schema.parse(request.input), {
+            catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1), mintViewId: () => 'unused', signal: request.signal,
+        });
         if (action === TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1) {
             return await setTriageEntryPinned(TriageSetEntryPinnedInputV1Schema.parse(request.input), {
                 collections, nowMs: () => 2_000,
@@ -720,7 +730,7 @@ function createHarness(options: Readonly<{
                     const row = await findConfiguredSourceInstanceRow(collections.sourceInstances, id, cancellation);
                     return row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
                 },
-                readAdmittedSources: async () => admitted,
+                readSourceSnapshot: async () => ({ contributions: admitted }),
                 nowMs: () => observationRevision.current,
                 // The fixture source is the external provider boundary; admission and qualification stay real.
                 executeGet: async (_operation, request) => {
@@ -763,13 +773,16 @@ function createHarness(options: Readonly<{
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => admitted,
+            readSourceSnapshot: async () => options.unavailableSourceCode === undefined
+                ? { contributions: admitted }
+                : { contributions: [], unavailablePlugins: [{ pluginId: SOURCE.pluginId, code: options.unavailableSourceCode }] },
             executeScan,
             nowMs: () => Date.now(),
         });
     }
 
     return {
+        accountKv,
         collections,
         executeAction,
         observes,
@@ -915,6 +928,7 @@ async function mountShell(
         pinnedEntryIds?: readonly string[];
         noScannedEntries?: boolean;
         noActiveSource?: boolean;
+    unavailableSourceCode?: string;
         otherSourceEntry?: boolean;
         deferLinkedEntry?: boolean;
         linkedSessionCount?: number;
@@ -934,6 +948,7 @@ async function mountShell(
         refusedHostReads?: Set<string>;
         detailFailure?: PluginError;
         mountedActionFailure?: 'reject' | 'unavailable';
+        onMountedOperation?: (operation: ReturnType<typeof TriageMountedUiInputV1Schema.parse>['operation']) => void;
         onNotification?: (notification: Readonly<{ message: string; severity?: string }>) => void;
         onDiagnostic?: (data: Readonly<{ code: string }>) => void;
         fixPullRequestState?: 'unprojected' | 'unreachable';
@@ -965,6 +980,7 @@ async function mountShell(
         ...(options.taskEdit === undefined ? {} : { taskEdit: options.taskEdit }),
         ...(options.uninstalledSource === undefined ? {} : { uninstalledSource: options.uninstalledSource }),
         ...(options.noActiveSource === undefined ? {} : { noActiveSource: options.noActiveSource }),
+        ...(options.unavailableSourceCode === undefined ? {} : { unavailableSourceCode: options.unavailableSourceCode }),
         ...(options.absentEntryIds === undefined ? {} : { absentEntryIds: options.absentEntryIds }),
         ...(options.exactReadFailure === undefined ? {} : { exactReadFailure: options.exactReadFailure }),
         ...(options.partialScan === undefined ? {} : { partialScan: options.partialScan }),
@@ -1127,13 +1143,14 @@ async function mountShell(
                         });
                     }
                     if (action === 'ui/mounted-v1') {
-                        if (options.mountedActionFailure === 'reject') throw new PluginError({
+                        const parsed = TriageMountedUiInputV1Schema.parse(input);
+                        options.onMountedOperation?.(parsed.operation);
+                        if (parsed.operation.kind === 'selectLinkedSession' && options.mountedActionFailure === 'reject') throw new PluginError({
                             code: 'unavailable', diagnostics: [{ code: 'plugin_surface_client_action_unavailable', severity: 'error' }],
                         });
-                        if (options.mountedActionFailure === 'unavailable') return { status: 'unavailable' };
-                        const parsed = TriageMountedUiInputV1Schema.parse(input);
-                        return await invokeTriageMountedUiAction(harness.ephemeralSharedScope, parsed.mountId,
-                            parsed.operation, new AbortController().signal);
+                        if (parsed.operation.kind === 'selectLinkedSession' && options.mountedActionFailure === 'unavailable') return { status: 'unavailable' };
+                        return await invokeSourcePanelFixtureAction(harness.ephemeralSharedScope, action,
+                            input, fixture.context, request.signal);
                     }
                     if (action === 'marks/read-fix-pull-requests-v1' && options.fixPullRequestState !== undefined) {
                         if (failFixRead) { failFixRead = false; throw new Error('Account transport unavailable'); }
@@ -1213,7 +1230,7 @@ function harnessDataClient(harness: NonNullable<typeof currentHarness>): PluginU
             return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
         },
         async watchAccountData() { return { dispose() {} }; },
-        accountKv: createTestkitAccountKv().kv,
+        accountKv: harness.accountKv.kv,
         openCollectionQuery: async () => { throw new Error('This mount opens no UI query'); },
     };
 }
@@ -1397,7 +1414,8 @@ it.each(['current', 'uninstalled', 'aged'] as const)('edits the selected task de
     }
     await openTheRow(shell);
     // A whole-body task opens its title-and-notes editor from its Notes chapter, in that chapter's place (lab t1).
-    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Edit title and notes' })); });
+    const edit = await shell.findByRole('button', { name: 'Edit title and notes' });
+    await act(async () => { await shell.press(edit); });
     const notes = document.querySelector<HTMLTextAreaElement>(`[data-testid="${TRIAGE_TASK_STORY_TEST_ID_V1}"] [data-testid="${TRIAGE_TASK_TEXT_EDITOR_TEST_ID_V1}"] textarea[aria-label="Notes"]`);
     expect(notes?.value).toBe('Complete source notes\n\nPreserve Markdown.  \n');
     await act(async () => {
@@ -1588,6 +1606,19 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByRole('heading', { name: 'Pinned change 657' })).resolves.toBeDefined();
         await expect(shell.queryByRole('heading', { name: 'These details could not be read' })).resolves.toBeUndefined();
     });
+
+    it.each(['plugin_manifest_invalid', 'plugin_disabled'])(
+        'discloses %s when an unavailable source cannot open a pin', async (code) => {
+            const shell = await mountShell({ pinnedEntryIds: ['657'], noScannedEntries: true, unavailableSourceCode: code });
+            await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Pinned change 657' })); });
+            await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
+            await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+            await expect(shell.getByText(code)).resolves.toBeDefined();
+            await expect(shell.getByText(SOURCE.pluginId)).resolves.toBeDefined();
+            await expect(shell.queryByText('Request ID')).resolves.toBeUndefined();
+            expect(currentHarness!.exactReads).toEqual([]);
+        },
+    );
 
     it('explains unavailable source admission without reading an unsynchronized pin', async () => {
         const shell = await mountShell({ pinnedEntryIds: ['657'], noScannedEntries: true, noActiveSource: true });
@@ -2453,16 +2484,20 @@ describe('opening a row into the source detail', () => {
     it.each(['reject', 'unavailable'] as const)('reports a typed failure when the linked Session picker cannot apply: %s', async (mountedActionFailure) => {
         const notices: Readonly<{ message: string; severity?: string }>[] = [];
         const diagnostics: Readonly<{ code: string }>[] = [];
+        const operations: ReturnType<typeof TriageMountedUiInputV1Schema.parse>['operation'][] = [];
         const shell = await mountShell({ linkedSessionCount: 2, activeSurface: true, mountedActionFailure,
+            onMountedOperation: operation => { operations.push(operation); },
             onNotification: (notice) => { notices.push(notice); }, onDiagnostic: (data) => { diagnostics.push(data); } });
         await openTheRow(shell);
         await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Session' })); });
+        expect(notices).toEqual([]);
         const picker = (await shell.getAllByRole('button')).find(button => button.name?.startsWith('Linked session:'));
         if (!picker) throw new Error('Missing linked Session picker');
         await act(async () => { await shell.press(picker); });
         const choices = await shell.getAllByRole('menuitemradio');
         expect(choices).toHaveLength(2);
         await act(async () => { await shell.press(await shell.getByRole('menuitemradio', { name: 'Linked session-linked-002' })); });
+        expect(operations).toEqual([{ kind: 'selectLinkedSession', sessionId: 'session-linked-002' }]);
         await vi.waitFor(() => expect(notices).toEqual([expect.objectContaining({ severity: 'error' })]));
         expect(diagnostics).toContainEqual(expect.objectContaining({ code: mountedActionFailure === 'reject'
             ? 'plugin_surface_client_action_unavailable' : 'triage_mounted_ui_unavailable' }));

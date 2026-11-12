@@ -5,9 +5,9 @@ import { expect, it } from 'vitest';
 // Reuse the UI testkit's async boundary without importing host runtime into this plugin test.
 import { createDeferred } from '../../../../../apps/ui/sources/dev/testkit/hooks/createDeferred.js';
 import {
-  createPluginUiTestkit,
   createSurfaceContextFixture,
 } from '@happier-dev/plugin-sdk/testing';
+import { createTaskActionControlTestkit as createPluginUiTestkit } from './detail/taskActionControl.test-support.js';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type {
@@ -175,7 +175,7 @@ it.each([
                 TriageListEntriesInputV1Schema.parse(input),
                 {
                   sourceInstances: collections.sourceInstances,
-                  readAdmittedSources: async () => [],
+                  readSourceSnapshot: async () => ({ contributions: [] }),
                   executeScan: async () => {
                     throw new Error('No source has been configured');
                   },

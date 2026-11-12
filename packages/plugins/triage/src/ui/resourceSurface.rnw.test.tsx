@@ -26,7 +26,7 @@ it.each(['session', 'app'] as const)('restores the exact %s resource without eph
     });
   });
   mounted.push(fixture);
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'On GitHub' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open on GitHub' })); });
   expect(opened).toEqual([resource.url]);
 });
 
@@ -53,7 +53,7 @@ it('settles an unavailable resource and offers its exact external URL', async ()
     });
   });
   mounted.push(fixture);
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'On GitHub' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open on GitHub' })); });
   expect(opened).toEqual([url]);
   expect(resolutions).toEqual([{ v: 1, resource: { kind: 'pullRequest', url } }]);
   expect(locations).toEqual([`resource/${encodeURIComponent(JSON.stringify({ kind: 'pullRequest', url }))}`]);
