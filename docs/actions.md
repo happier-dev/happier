@@ -10,6 +10,14 @@ This page describes the platform's owners and its admission vocabulary. The publ
 contract lives in [api.md](api.md#external-action-api-developer-preview-source-contract); the CLI
 host is in [cli-architecture.md](cli-architecture.md#action-derived-command-arguments).
 
+In unreleased 0.3 source, plugin-provenance-only Actions are excluded from
+standalone CLI invocation by the canonical Action spec exposure normalizer.
+`actions get`, generated help and Action context descriptions direct callers to
+the host-mounted import, which supplies the mounted plugin caller. An explicit
+Machine does not supply that provenance. This includes external-session
+materialization and plugin self-revocation; their execution provenance checks
+remain enforced.
+
 In unreleased 0.3, a server-to-daemon transport refusal retains its closed RPC
 code and validated `failureCause` through the existing Action failure projection.
 The request envelope supplies the correlation ID. Plain requests return the

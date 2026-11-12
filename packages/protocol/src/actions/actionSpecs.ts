@@ -1051,7 +1051,7 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
   const isPluginSurfaceExcluded = isPluginSurfaceExcludedActionId(spec.id);
   const executionPlacement = resolveActionExecutionPlacement(spec);
   const requiredAuthority = resolveActionRequiredAuthority(spec);
-  const canExposeCli = executionPlacement !== 'client' || spec.cli !== undefined;
+  const canExposeCli = !isPluginProvenanceOnly && (executionPlacement !== 'client' || spec.cli !== undefined);
   const clientRouted = executionPlacement === 'client' || spec.executionPlacements?.includes('client');
   const routeSurface = <T extends { inputSchema?: z.ZodMiniType; bindInput?: ActionSurfaceBindingTransform }>(binding: T): T => {
     const bind = binding.bindInput;
@@ -1069,6 +1069,11 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
     });
   return {
     ...spec,
+    ...(isPluginProvenanceOnly ? {
+      description: [spec.description,
+        'Requires a mounted plugin caller. Use the host-mounted import; standalone CLI invocation and an explicit Machine do not supply plugin provenance.',
+      ].filter(Boolean).join(' '),
+    } : {}),
     requiredAuthority,
     executionPlacement,
     ...(clientRouted ? {

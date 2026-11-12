@@ -65,6 +65,7 @@ export type ActionSurfaceAvailabilityContext = Readonly<{
   /** Admitted contributed declarations use the same policy as built-in specs. */
   definition?: Readonly<{
     id: string;
+    description?: string | null;
     surfaces: ActionSurfaces;
     toolExposure?: ActionSpec['toolExposure'];
     bindings?: ActionSpec['bindings'] | null;
@@ -191,6 +192,7 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
       actionId,
       surface: params.surface,
       availableSurfaces,
+      ...(spec.description ? { remedy: spec.description } : {}),
       ...toolExposure,
     };
   }
