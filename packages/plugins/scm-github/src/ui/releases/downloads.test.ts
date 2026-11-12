@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
 import { createForgeReleaseV1Fixture } from '@happier-dev/triage-protocol/releases/testing/v1';
 import { createReleaseAssetDownloadsV1 } from './downloads.js';
 import { GITHUB_RELEASE_ACTION_REFS_V1 } from './model.js';
+
+const feedback = { version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }),
+  notify: async () => undefined } satisfies Pick<PluginUiHostApi, 'version' | 'notify'>;
 
 describe('one release asset download result binding', () => {
   it.each([
@@ -14,7 +19,7 @@ describe('one release asset download result binding', () => {
     const release = createForgeReleaseV1Fixture();
     const asset = { assetId: '17', name: 'asset', label: null, contentType: 'application/octet-stream', size: 4, state: 'uploaded' };
     const requests: unknown[] = [];
-    const downloads = createReleaseAssetDownloadsV1({ downloadFile: async request => { requests.push(request); return result; } });
+    const downloads = createReleaseAssetDownloadsV1({ ...feedback, downloadFile: async request => { requests.push(request); return result; } });
     let notifications = 0;
     downloads.subscribe(() => { notifications++; });
     expect(requests).toHaveLength(0);
@@ -44,7 +49,7 @@ describe('one release asset download result binding', () => {
     } };
     let settle!: (result: FileDownloadResultV1) => void;
     let calls = 0;
-    const downloads = createReleaseAssetDownloadsV1({ downloadFile: () => { calls++; return new Promise(resolve => { settle = resolve; }); } });
+    const downloads = createReleaseAssetDownloadsV1({ ...feedback, downloadFile: () => { calls++; return new Promise(resolve => { settle = resolve; }); } });
     const pending = downloads.download(release, asset);
     await downloads.download(release, asset);
     expect(calls).toBe(1);
@@ -64,10 +69,35 @@ describe('one release asset download result binding', () => {
     expect(calls).toBe(2);
   });
 
+  it.each(['returned', 'thrown'] as const)('presents the original download failure from %s without replaying or replacing its result', async mode => {
+    const release = createForgeReleaseV1Fixture();
+    const asset = { assetId: '17', name: 'asset', label: null, contentType: 'application/octet-stream', size: 4, state: 'uploaded' };
+    const result = { success: false, status: 'failed', error: 'Destination read-only', errorCode: 'EACCES' } as const;
+    const notices: string[] = [];
+    let calls = 0;
+    const downloads = createReleaseAssetDownloadsV1({ ...feedback, downloadFile: async () => {
+      calls++;
+      if (mode === 'thrown') throw new PluginError({ code: 'download_refused', details: { requestId: 'download-45' } });
+      return result;
+    }, version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }),
+      notify: async message => { notices.push(message); } });
+    await downloads.download(release, asset);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('Code: ' + (mode === 'returned' ? 'EACCES' : 'download_refused'));
+    if (mode === 'returned') expect(downloads.getSnapshot().get('17')?.result).toBe(result);
+    else {
+      expect(notices[0]).toContain('Request ID: download-45');
+      expect(downloads.getSnapshot().get('17')?.result).toMatchObject({ status: 'unknown', errorCode: 'download_refused' });
+      await downloads.download(release, asset);
+    }
+    expect(calls).toBe(1);
+    downloads.dispose();
+  });
+
   it('retains thrown host uncertainty without replaying or changing another asset', async () => {
     const release = createForgeReleaseV1Fixture();
     const asset = { assetId: '17', name: 'asset', label: null, contentType: 'application/octet-stream', size: 4, state: 'uploaded' };
-    const downloads = createReleaseAssetDownloadsV1({ downloadFile: async () => { throw new Error('Receiver disconnected'); } });
+    const downloads = createReleaseAssetDownloadsV1({ ...feedback, downloadFile: async () => { throw new Error('Receiver disconnected'); } });
     await downloads.download(release, asset);
     const first = downloads.getSnapshot().get('17');
     expect(first?.result).toMatchObject({ success: false, status: 'unknown', error: 'Receiver disconnected' });

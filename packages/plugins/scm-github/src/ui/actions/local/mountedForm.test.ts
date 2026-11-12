@@ -31,7 +31,7 @@ describe('local form safe mounted intent', () => {
     const requestedSeed = intent.operation.seed;
     const scope = scopeBoundary();
     let effects = 0;
-    const host = { executeAction: (async () => { effects++; throw new Error('No execution during form intents'); }) as PluginUiHostApi['executeAction'] };
+    const host = { version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }), notify: async () => undefined, executeAction: (async () => { effects++; throw new Error('No execution during form intents'); }) as PluginUiHostApi['executeAction'] };
     const controller = createLocalRunControllerV1({ accountId: 'account', host, seed: requestedSeed });
     let unbind = () => {};
     const result = await executeLocalActFormIntentV1(intent, {
@@ -62,7 +62,7 @@ describe('local form safe mounted intent', () => {
   });
   it('does not acknowledge a different Session mount for an identical checkout and workflow', async () => {
     const scope = scopeBoundary();
-    const host = { executeAction: (async () => { throw new Error('No launch'); }) as PluginUiHostApi['executeAction'] };
+    const host = { version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }), notify: async () => undefined, executeAction: (async () => { throw new Error('No launch'); }) as PluginUiHostApi['executeAction'] };
     const controller = createLocalRunControllerV1({ accountId: 'account', host, seed });
     const otherSeed: LocalActRunSeedV1 = { ...seed, target: { kind: 'session', sessionId: 'session-c3' } };
     const unbindOther = bindLocalActFormV1(scope, 'other-session-mount', otherSeed, controller);

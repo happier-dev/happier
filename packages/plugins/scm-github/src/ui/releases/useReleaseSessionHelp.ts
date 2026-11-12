@@ -1,4 +1,6 @@
 import { useCallback } from 'react';
+import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { presentActionFailure } from '@happier-dev/plugin-sdk/ui';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { usePluginTranslation } from '@happier-dev/plugin-ui';
@@ -15,22 +17,26 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
 }
 
 /** Presentation only: the Action retains selection, delivery and refusal authority. */
-function refusalCode(result: unknown): string | null {
+function refusal(result: unknown): Readonly<{ code: string; requestId?: string }> | null {
     const outer = record(result);
-    if (outer?.ok === false) return typeof outer.errorCode === 'string' ? outer.errorCode : 'plugin_action_refused';
+    if (outer?.ok === false) return {
+        code: typeof outer.errorCode === 'string' ? outer.errorCode : 'plugin_action_refused',
+        requestId: typeof outer.requestId === 'string' ? outer.requestId : readPluginErrorRequestIdV1(outer),
+    };
     const value = record(outer?.ok === true ? outer.result : result);
     if (isPluginActionApprovalRequestCreated(value)) return null;
     const handoff = record(value?.handoff) ?? value;
     if (handoff?.kind === 'composed' || handoff?.kind === 'sendResult' || handoff?.kind === 'cancelled') return null;
     if (readReleaseSessionChoicesV1(result) !== null) return null; // The person is choosing; nothing was sent.
-    if (handoff?.kind === 'uncertain') return 'uncertain';
-    if (handoff?.kind === 'selectionRequired') return 'selection_required';
+    if (handoff?.kind === 'uncertain') return { code: 'uncertain' };
+    if (handoff?.kind === 'selectionRequired') return { code: 'selection_required' };
     if (handoff?.kind === 'unavailable') {
-        if (typeof handoff.reason === 'string') return handoff.reason;
+        if (typeof handoff.reason === 'string') return { code: handoff.reason };
         const failure = record(handoff.failure);
-        if (typeof failure?.code === 'string') return failure.code;
+        if (typeof failure?.code === 'string') return { code: failure.code,
+            ...(typeof failure.requestId === 'string' ? { requestId: failure.requestId } : {}) };
     }
-    return 'release_session_help_outcome_unavailable';
+    return { code: 'release_session_help_outcome_unavailable' };
 }
 
 /**
@@ -74,8 +80,15 @@ export function useReleaseSessionHelpV1(context: RenderContext): ReleaseSessionH
     return useCallback<ReleaseSessionHelpV1>(async (...args) => {
         // Feedback uses the existing host notice owner, not a second composer,
         // navigation path or retry. Its failure cannot replace delivery custody.
-        const notify = async (message: string) => {
-            if (!signal.aborted) await host.notify(message, { severity: 'warning', signal }).catch(() => undefined);
+        const notify = async (message: string, code: string, requestId?: string) => {
+            if (signal.aborted) return;
+            try {
+                const presentation = await presentActionFailure(host, { ok: false, errorCode: code, message,
+                    ...(requestId === undefined ? {} : { requestId }) }, { signal });
+                if (!signal.aborted) await host.notify([presentation.reason, presentation.nextStep,
+                    ...presentation.technicalDetails.map(detail => `${detail.label}: ${detail.value}`)]
+                    .filter(Boolean).join('\n'), { severity: 'warning', signal });
+            } catch { /* Feedback cannot replace the original delivery outcome. */ }
         };
         let result: unknown;
         try { result = await request(...args); }
@@ -84,16 +97,19 @@ export function useReleaseSessionHelpV1(context: RenderContext): ReleaseSessionH
             if (settled.status === 'error' || settled.status === 'outcomeUnknown') {
                 await notify(t('plugins.github.releases.session.failed', 'Session help: {message} ({code})', {
                     message: settled.message, code: settled.code,
-                }));
+                }), settled.code, settled.requestId);
             }
             throw error;
         }
-        const code = refusalCode(result);
-        if (code !== null) await notify(code === 'uncertain'
+        const failure = refusal(result);
+        if (failure !== null) {
+            const { code, requestId } = failure;
+            await notify(code === 'uncertain'
             ? t('plugins.github.releases.session.uncertain', 'Session help may still finish. Check its outcome before trying again. ({code})', { code })
             : code === 'selection_required'
                 ? t('plugins.github.releases.session.selectionRequired', 'Session help needs a selection before it can continue. ({code})', { code })
-                : t('plugins.github.releases.session.unavailable', 'Session help needs attention. ({code})', { code }));
+                : t('plugins.github.releases.session.unavailable', 'Session help needs attention. ({code})', { code }), code, requestId);
+        }
         return result;
     }, [request, host, signal, t]);
 }

@@ -6,7 +6,7 @@ import { createGithubReleaseReadsV1, releaseReadQueryKeyV1, type GithubReleaseRe
 import { createReleaseEditorV1, type ReleaseEditorV1 } from './editor.js';
 import type { ForgeReleaseV1 } from '@happier-dev/triage-protocol/releases/v1';
 import { GITHUB_RELEASE_ACTION_REFS_V1 } from './model.js';
-import type { PluginUiHostApi, RenderContext } from '@happier-dev/plugin-sdk/ui';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { createReleaseAssetDownloadsV1, type ReleaseAssetDownloadsV1 } from './downloads.js';
 
 const noSubscription = () => () => {};
@@ -164,7 +164,7 @@ export function useReleaseEditorLifetimeV1(options: Readonly<{
 }
 
 /** Both the page and its editor consume this one authority-scoped canonical-result binding. */
-export function useReleaseAssetDownloadsV1(host: Pick<PluginUiHostApi, 'downloadFile'>, authorityKey: string): ReleaseAssetDownloadsV1 {
+export function useReleaseAssetDownloadsV1(host: Parameters<typeof createReleaseAssetDownloadsV1>[0], authorityKey: string): ReleaseAssetDownloadsV1 {
     const [held, setHeld] = useState<Readonly<{ host: typeof host; key: string; controller: ReturnType<typeof createReleaseAssetDownloadsV1> }> | null>(null);
     useEffect(() => {
         const controller = createReleaseAssetDownloadsV1(host);

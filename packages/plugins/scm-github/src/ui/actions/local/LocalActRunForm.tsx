@@ -25,6 +25,9 @@ function LocalActRunOperationBinding(props: Readonly<{ controller: LocalRunContr
   const observed = useLivePluginResourceProjection({ hostRead: 'action.operations.get', input: props.operationRef },
     operationProjection, selectOperation).value;
   React.useEffect(() => {
+    if (observed.error !== undefined) void props.controller.reportFailure(observed.error);
+  }, [props.controller, observed.error]);
+  React.useEffect(() => {
     const unavailable = observed.error !== undefined || observed.freshness !== 'fresh' || observed.subscription === 'ended';
     const observation = observed.subscription === 'reconnecting' ? 'reconnecting'
       : unavailable ? 'unavailable' : observed.value?.observation ?? 'unavailable';
@@ -39,7 +42,7 @@ function LocalActRunOperationBinding(props: Readonly<{ controller: LocalRunContr
 /** Data/lifetime wiring only. The UI lane owns every rendered element. */
 export function useLocalActRunFormV1(options: Readonly<{
   accountId: string; mountId: string; seed: LocalActRunSeedV1; signal: AbortSignal;
-  host: Pick<PluginUiHostApi, 'executeAction' | 'readMachineDisplayName'>; sharedScope: PluginEphemeralSharedScope;
+  host: Parameters<typeof createLocalRunControllerV1>[0]['host'] & Pick<PluginUiHostApi, 'readMachineDisplayName'>; sharedScope: PluginEphemeralSharedScope;
 }>) {
   const surface = useSurfaceContext();
   const [controller, setController] = React.useState<LocalRunController | null>(null);

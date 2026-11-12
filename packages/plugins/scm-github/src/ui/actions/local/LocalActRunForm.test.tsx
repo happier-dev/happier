@@ -5,7 +5,7 @@ import { act } from 'react';
 import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createPluginUiTestkit, createPluginUiActionControlTestHost, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PluginUiHostApi, PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { PluginUiActionOperationHostReadResultV1ProtocolSchema,
@@ -373,6 +373,8 @@ describe('mounted local form ordinary compute hook', () => {
       domainRef: { kind: 'projectCommand' as const, purpose: 'exec' as const, serverId: 'home',
         machineId: 'primary', workspaceRefId: 'checkout', cwd: '/repo' } };
     let observed: PluginUiActionOperationHostReadResultV1 = { operation, observation: 'available' };
+    let operationReadFailure: PluginError | null = null;
+    const notices: string[] = [];
     const content = () => {
       // The genuine host transport emits the owner's admitted receipt, not a type-only operation approximation.
       const bytes = new TextEncoder().encode(JSON.stringify(PluginUiActionOperationHostReadResultV1ProtocolSchema.parse(observed)));
@@ -401,7 +403,8 @@ describe('mounted local form ordinary compute hook', () => {
       surface: defineUiSurface(() => <Probe />), surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { actionControl: controls.handler, readMachineDisplayName: async () => ({ status: 'ready', displayName: 'Build box' }),
-        readResource: async ({ resource }) => { reads.push(resource); return content(); },
+        readResource: async ({ resource }) => { reads.push(resource); if (operationReadFailure) throw operationReadFailure; return content(); },
+        notify: async ({ message }) => { notices.push(message); },
         watchResource: async () => ({ digest: content().digest }),
         executeAction: async ({ action, input }): Promise<JsonValue> => {
           calls.push({ action, input });
@@ -448,6 +451,15 @@ describe('mounted local form ordinary compute hook', () => {
     expect.soft(await fixture.queryByText('Running on Build box')).toBeUndefined();
     expect(current.controller!.canRun()).toBe(false);
     expect(controls.presentation('Run again').disabled).toBe(true);
+    operationReadFailure = new PluginError({ code: 'operation_read_refused', retryable: false, details: { requestId: 'operation-47' } });
+    await act(async () => { fixture.invalidateResource(resource, `sha256:${'f'.repeat(64)}`); });
+    expect(current.snapshot?.operationObservation).toBe('unavailable');
+    expect(current.snapshot?.operation?.operationId).toBe('accepted-a');
+    await expect.poll(() => notices.join('\n')).toContain('Code: operation_read_refused');
+    expect(notices.join('\n')).toContain('Request ID: operation-47');
+    operationReadFailure = null;
+    await act(async () => { fixture.invalidateResource(resource, content().digest); });
+    expect(current.snapshot?.operationObservation).toBe('available');
     observed = { operation: { ...operation, state: 'running', revision: 2, startedAt: 2 }, observation: 'available' };
     await act(async () => { fixture.invalidateResource(resource, content().digest); });
     expect.soft(current.operationStatus).toBe('running');

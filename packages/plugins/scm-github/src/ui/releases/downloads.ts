@@ -1,5 +1,6 @@
 import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { presentActionFailure, type PluginUiActionFailureV1, type PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { projectPluginActionRejectionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { readForgeOperationStateV1, type ForgeOperationStateV1 } from '@happier-dev/forge-ci/ui';
 import type { ForgeReleaseAssetV1, ForgeReleaseV1 } from '@happier-dev/triage-protocol/releases/v1';
 import { GITHUB_RELEASE_ACTION_REFS_V1 } from './model.js';
@@ -11,7 +12,7 @@ export type ReleaseAssetDownloadV1 = Readonly<{
 }>;
 
 /** Mount-local presentation of the canonical receiver result, never a transfer/progress owner. */
-export function createReleaseAssetDownloadsV1(host: Pick<PluginUiHostApi, 'downloadFile'>) {
+export function createReleaseAssetDownloadsV1(host: Pick<PluginUiHostApi, 'downloadFile' | 'version' | 'notify' | 'presentActionFailure'>) {
     let state: ReadonlyMap<string, ReleaseAssetDownloadV1> = new Map();
     let retired = false;
     const listeners = new Set<() => void>();
@@ -28,16 +29,32 @@ export function createReleaseAssetDownloadsV1(host: Pick<PluginUiHostApi, 'downl
             if (retired || previous?.pending || previous?.result?.status === 'unknown' || previous?.result?.status === 'accepted') return;
             publish(asset.assetId, { pending: true, result: previous?.result ?? null, operation: previous?.operation ?? { kind: 'ready' } });
             let result: FileDownloadResultV1;
+            let failure: PluginUiActionFailureV1 | null = null;
             try {
                 result = await host.downloadFile({ action: GITHUB_RELEASE_ACTION_REFS_V1.downloadAsset, input: {
                     repository: release.repository, repositoryId: release.repositoryId, releaseId: release.releaseId, assetId: asset.assetId,
                 } });
+                if (!result.success && result.status !== 'cancelled')
+                    failure = { ok: false, errorCode: result.errorCode ?? 'plugin_action_failed', error: result.error };
             } catch (error) {
                 // A thrown host call proves neither failure nor cancellation. Never replay it.
-                result = { success: false, status: 'unknown', error: error instanceof Error ? error.message : String(error) };
+                const projected = projectPluginActionRejectionV1(error, (key, fallback) => fallback ?? key);
+                if (projected.status === 'error' || projected.status === 'outcomeUnknown') {
+                    result = { success: false, status: 'unknown', error: projected.message, errorCode: projected.code };
+                    failure = { ok: false, errorCode: projected.code, message: projected.message,
+                        ...(projected.requestId === undefined ? {} : { requestId: projected.requestId }) };
+                } else result = { success: false, status: 'unknown', error: error instanceof Error ? error.message : String(error) };
             }
             publish(asset.assetId, { pending: false, result,
                 operation: readForgeOperationStateV1({ download: result, hasRetainedValue: true, targetUrl: release.webUrl }) });
+            if (failure && !retired) {
+                try {
+                    const presentation = await presentActionFailure(host, failure);
+                    if (!retired) await host.notify([presentation.reason, presentation.nextStep,
+                        ...presentation.technicalDetails.map(detail => `${detail.label}: ${detail.value}`)]
+                        .filter(Boolean).join('\n'), { severity: 'warning' });
+                } catch { /* Feedback cannot replace the receiver's original result. */ }
+            }
         },
         dispose() { retired = true; state = new Map(); listeners.clear(); },
     };

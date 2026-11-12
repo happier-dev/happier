@@ -1,4 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { presentActionFailure } from '@happier-dev/plugin-sdk/ui';
+import { projectPluginActionRejectionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { isPluginActionApprovalRequestCreated, type PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiActionControlController, PluginUiActionControlExecution, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { pluginJsonValuesEqual, ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema,
@@ -31,7 +33,11 @@ function actionValue(response: unknown): unknown {
   if (response !== null && typeof response === 'object' && 'ok' in response) {
     if (response.ok === false) {
       const code = 'errorCode' in response && typeof response.errorCode === 'string' ? response.errorCode : 'local_act_action_failed';
-      throw new PluginError({ code });
+      const requestId = 'requestId' in response && typeof response.requestId === 'string' ? response.requestId : undefined;
+      throw { ...response, code, message: 'error' in response && typeof response.error === 'string' ? response.error : code,
+        ...(requestId === undefined ? {} : { details: {
+          ...('details' in response && response.details !== null && typeof response.details === 'object' ? response.details : {}), requestId,
+        } }) };
     }
     if (response.ok === true && 'result' in response) return response.result;
   }
@@ -76,7 +82,7 @@ export function reconcileLocalActInspectionV1(previous: LocalActInspection | nul
 
 /** A mounted Account lifetime only; no watcher, cache, output subscription or timer. */
 export function createLocalRunControllerV1(options: Readonly<{
-  accountId: string; seed: LocalActRunSeedV1; host: Pick<PluginUiHostApi, 'executeAction'>;
+  accountId: string; seed: LocalActRunSeedV1; host: Pick<PluginUiHostApi, 'executeAction' | 'version' | 'notify' | 'presentActionFailure'>;
 }>) {
   let lifetime = new AbortController();
   let inspectionRequest: AbortController | null = null;
@@ -107,9 +113,19 @@ export function createLocalRunControllerV1(options: Readonly<{
   const installPreference = (preference: Preference) => {
     if (state.inspection) publish({ inspection: reconcileLocalActInspectionV1(state.inspection, { ...state.inspection, preference }) });
   };
-  const observeRunPermission = async (signal: AbortSignal): Promise<void> => {
-    try { await controller.observePermission(); }
-    catch { if (!signal.aborted) publish({ permissionNeedsObservation: true }); }
+  const reportFailure = async (error: unknown, signal: AbortSignal = lifetime.signal): Promise<string | null> => {
+    const failure = projectPluginActionRejectionV1(error, (key, fallback) => fallback ?? key);
+    if (failure.status !== 'error' && failure.status !== 'outcomeUnknown') return null;
+    if (!retired && !signal.aborted) {
+      try {
+        const presentation = await presentActionFailure(options.host, { ok: false, errorCode: failure.code,
+          message: failure.message, ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }) }, { signal });
+        if (!retired && !signal.aborted) await options.host.notify([presentation.reason, presentation.nextStep,
+          ...presentation.technicalDetails.map(detail => `${detail.label}: ${detail.value}`)]
+          .filter(Boolean).join('\n'), { severity: 'warning', signal });
+      } catch { /* Feedback cannot replace the original operation outcome. */ }
+    }
+    return failure.code;
   };
   const allowControl = {
     async prepare({ signal: hostSignal }: Readonly<{ signal: AbortSignal }>): Promise<Readonly<{ input: PluginActionInputById['projects.worker.preferences.set'] }> | null> {
@@ -125,7 +141,7 @@ export function createLocalRunControllerV1(options: Readonly<{
       publish({ permissionPending: true, error: null });
       return { input };
     },
-    onSettled(execution: PluginUiActionControlExecution): void {
+    async onSettled(execution: PluginUiActionControlExecution): Promise<void> {
       const submitted = preparedPermission;
       preparedPermission = null;
       if (!submitted || submitted.signal.aborted || retired) return;
@@ -142,7 +158,8 @@ export function createLocalRunControllerV1(options: Readonly<{
           revision: result.revision, provenance: result.provenance });
         else if (result.status === 'locked' || result.status === 'invalid' || result.status === 'unavailable') installPreference({ status: result.status });
       } catch (error) {
-        publish({ error: error instanceof PluginError ? error.code : 'local_act_permission_unknown', permissionNeedsObservation: true });
+        const code = await reportFailure(error, submitted.signal);
+        if (!submitted.signal.aborted) publish({ error: code, permissionNeedsObservation: true });
       } finally { publish({ permissionPending: false }); }
     },
   } satisfies PluginUiActionControlController;
@@ -170,9 +187,9 @@ export function createLocalRunControllerV1(options: Readonly<{
         return { input: command };
       } catch (error) {
         if (!signal.aborted) {
-          const code = error instanceof PluginError ? error.code : 'local_act_preparation_unavailable';
-          publish({ error: code, runState: 'idle' });
-          if (code === 'ad_hoc_disabled' && !hostSignal.aborted) await observeRunPermission(signal);
+          const code = await reportFailure(error, signal);
+          if (!signal.aborted) publish({ error: code, runState: 'idle' });
+          if (code === 'ad_hoc_disabled' && !hostSignal.aborted) await controller.observePermission();
         }
         return null;
       } finally { if (runPreflightSignal === signal) runPreflightSignal = null; }
@@ -186,7 +203,7 @@ export function createLocalRunControllerV1(options: Readonly<{
       if (!execution.ok) {
         const code = execution.errorCode;
         publish({ error: code, runState: code === 'action_not_admitted' || code === 'ad_hoc_disabled' || code === 'preferences_unavailable' ? 'idle' : 'uncertain' });
-        if (code === 'ad_hoc_disabled' && !signal.aborted) await observeRunPermission(signal);
+        if (code === 'ad_hoc_disabled' && !signal.aborted) await controller.observePermission();
         return;
       }
       try {
@@ -203,17 +220,15 @@ export function createLocalRunControllerV1(options: Readonly<{
           };
           publish({ runState: 'accepted', operationRef, operationWorkspace: selected.workspace,
             operation: value.operation, operationObservation: 'available' });
-          if (!signal.aborted) {
-            try { await options.host.executeAction('projects.execution.output.open', operationRef); }
-            catch { publish({ error: 'local_act_output_open_unavailable' }); }
-          }
+          if (!signal.aborted) await controller.openOutput();
         } else publish({ runState: 'idle' });
       } catch (error) {
-        publish({ error: error instanceof PluginError ? error.code : 'local_act_acceptance_unknown', runState: 'uncertain' });
+        publish({ error: await reportFailure(error, signal), runState: 'uncertain' });
       }
     },
   } satisfies PluginUiActionControlController;
   const controller = {
+    reportFailure,
     accountId: options.accountId,
     allowControl,
     runControl,
@@ -254,8 +269,8 @@ export function createLocalRunControllerV1(options: Readonly<{
         return inspection;
       } catch (error) {
         if (!request.signal.aborted) {
-          const code = error instanceof PluginError ? error.code : 'local_act_inspection_unavailable';
-          publish({ error: code, inspectionError: code });
+          const code = await reportFailure(error, request.signal);
+          if (!request.signal.aborted) publish({ error: code, inspectionError: code });
         }
       } finally {
         scope.removeEventListener('abort', cancel);
@@ -284,11 +299,18 @@ export function createLocalRunControllerV1(options: Readonly<{
       if (retired) return;
       const signal = lifetime.signal;
       const workspace = { serverId: state.selection.workspace.serverId, refId: state.selection.workspace.workspaceId };
-      const value = actionValue(await options.host.executeAction('projects.worker.preferences.get', { workspace }, { signal }));
-      if (signal.aborted || retired) return;
-      if (isPluginActionApprovalRequestCreated(value)) { publish({ lastResult: value }); return; }
-      installPreference(ProtocolWorkspaceWorkerPreferenceReadResultV1Schema.parse(value));
-      publish({ permissionNeedsObservation: false, permissionResult: null });
+      try {
+        const value = actionValue(await options.host.executeAction('projects.worker.preferences.get', { workspace }, { signal }));
+        if (signal.aborted || retired) return;
+        if (isPluginActionApprovalRequestCreated(value)) { publish({ lastResult: value }); return; }
+        installPreference(ProtocolWorkspaceWorkerPreferenceReadResultV1Schema.parse(value));
+        publish({ permissionNeedsObservation: false, permissionResult: null });
+      } catch (error) {
+        if (!signal.aborted) {
+          publish({ permissionNeedsObservation: true });
+          await reportFailure(error, signal);
+        }
+      }
     },
     canRun() {
       const inspection = state.inspection;
@@ -303,7 +325,16 @@ export function createLocalRunControllerV1(options: Readonly<{
     },
     async openOutput() {
       const ref = state.operationRef;
-      if (ref && !retired) return await options.host.executeAction('projects.execution.output.open', ref);
+      if (!ref || retired) return;
+      const signal = lifetime.signal;
+      try {
+        const result = await options.host.executeAction('projects.execution.output.open', ref);
+        actionValue(result);
+        return result;
+      } catch (error) {
+        const code = await reportFailure(error, signal);
+        if (!signal.aborted) publish({ error: code });
+      }
     },
     stopControl: {
       prepare({ signal }) {

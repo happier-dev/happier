@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginUiActionControlExecution, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { PluginUiActionOperationHostReadResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { LocalActInspection } from '../../../actions/local/contracts.js';
@@ -34,7 +35,9 @@ function fixture(options: { mutationResult?: unknown; allowExecution?: PluginUiA
     throw new Error(`Unexpected Action ${String(action)}`);
   });
   // Real controller; only host Action transport is substituted.
-  const host = { executeAction: execute as PluginUiHostApi['executeAction'] };
+  const notify = vi.fn<PluginUiHostApi['notify']>(async () => undefined);
+  const host = { executeAction: execute as PluginUiHostApi['executeAction'], notify,
+    version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }) };
   const controller = createLocalRunControllerV1({ accountId: 'account', host,
     seed: { target: { kind: 'session', sessionId: 'session-a6' }, workspace, workflowPath: '.github/workflows/ci.yml', event: 'push' } });
   // Simulate the host boundary: preparation supplies operands; only the host invokes compute and returns its original envelope.
@@ -56,7 +59,7 @@ function fixture(options: { mutationResult?: unknown; allowExecution?: PluginUiA
     await execute('action.operations.cancel', prepared.input);
     controller.stopControl.onSettled({ ok: true, result: null });
   };
-  return { controller, run, allow, stop, execute, observed: () => observed, setObservation(next: LocalActInspection) { observed = next; } };
+  return { controller, run, allow, stop, execute, notify, observed: () => observed, setObservation(next: LocalActInspection) { observed = next; } };
 }
 describe('local form scoped producer', () => {
   it('prepares the exact existing preference change for a host Allow control without writing or starting a command', async () => {
@@ -208,6 +211,68 @@ describe('local form scoped producer', () => {
     expect(h.controller.getSnapshot()).toMatchObject({ inspectionError: null, loading: false, inspection: { workspace } });
     expect(h.controller.getSnapshot().selection).toBe(draft);
     expect(h.execute.mock.calls.filter(([action]) => action === 'projects.compute.exec')).toHaveLength(0);
+    h.controller.dispose();
+  });
+  it.each(['outer', 'rejection'] as const)('presents the original inspection failure code and request ID from %s', async mode => {
+    const h = fixture();
+    h.execute.mockImplementationOnce(async () => {
+      if (mode === 'outer') return { ok: false, errorCode: 'machine_offline', error: 'Machine offline', requestId: 'inspect-42' };
+      throw { code: 'machine_offline', message: 'Machine offline', details: { requestId: 'inspect-42' } };
+    });
+    await h.controller.inspect();
+    expect(h.controller.getSnapshot()).toMatchObject({ inspectionError: 'machine_offline', loading: false });
+    expect(h.notify).toHaveBeenCalledWith(expect.stringContaining('Code: machine_offline'), expect.anything());
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Request ID: inspect-42');
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    h.controller.dispose();
+  });
+  it('presents a refused Run preflight without sending compute again', async () => {
+    const h = fixture();
+    await h.controller.inspect(); await h.allow();
+    h.controller.setSelection({ ...h.controller.getSnapshot().selection, architecture: 'linux/arm64',
+      platforms: [{ label: 'ubuntu-latest', image: 'ghcr.io/example/runner:reviewed' }] });
+    h.execute.mockImplementationOnce(async () => { throw new PluginError({ code: 'preflight_refused', details: { requestId: 'preflight-43' } }); });
+    await h.run();
+    expect(h.controller.getSnapshot()).toMatchObject({ runState: 'idle', inspectionError: 'preflight_refused' });
+    expect(h.notify).toHaveBeenCalledTimes(1);
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Code: preflight_refused');
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Request ID: preflight-43');
+    expect(h.execute.mock.calls.filter(([action]) => action === 'projects.compute.exec')).toHaveLength(0);
+    h.controller.dispose();
+  });
+  it('presents a permission read refusal without losing the existing run decision or replaying work', async () => {
+    const h = fixture();
+    await h.controller.inspect();
+    h.execute.mockImplementationOnce(async () => { throw new PluginError({ code: 'permission_read_refused', details: { requestId: 'permission-46' } }); });
+    await expect(h.controller.observePermission()).resolves.toBeUndefined();
+    expect(h.controller.getSnapshot().permissionNeedsObservation).toBe(true);
+    expect(h.notify).toHaveBeenCalledTimes(1);
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Code: permission_read_refused');
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Request ID: permission-46');
+    expect(h.execute.mock.calls.filter(([action]) => action === 'projects.compute.exec')).toHaveLength(0);
+    h.controller.dispose();
+  });
+  it('presents output-open failure without losing the accepted operation or replaying compute', async () => {
+    const operation = { version: 1, operationId: 'accepted-a', revision: 1, actionId: 'projects.compute.exec', state: 'accepted',
+      scope: { accountId: 'account', machineId: 'primary' }, title: 'Local command', createdAt: 1, cancellation: 'supported',
+      domainRef: { kind: 'projectCommand', purpose: 'exec', serverId: 'home', machineId: 'primary', workspaceRefId: 'checkout', cwd: '/repo' } };
+    const h = fixture({ runResult: { operation } });
+    await h.controller.inspect(); await h.allow();
+    h.controller.setSelection({ ...h.controller.getSnapshot().selection, architecture: 'linux/arm64',
+      platforms: [{ label: 'ubuntu-latest', image: 'ghcr.io/example/runner:reviewed' }] });
+    const execute = h.execute.getMockImplementation()!;
+    h.execute.mockImplementation(async (action, input, options) => {
+      if (action === 'projects.execution.output.open') throw new PluginError({ code: 'output_refused', details: { requestId: 'output-44' } });
+      return execute(action, input, options);
+    });
+    await h.run();
+    expect(h.controller.getSnapshot()).toMatchObject({ runState: 'accepted', error: 'output_refused', operationRef: { operationId: 'accepted-a' } });
+    expect(h.notify).toHaveBeenCalledTimes(1);
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Code: output_refused');
+    expect(h.notify.mock.calls[0]?.[0]).toContain('Request ID: output-44');
+    await expect(h.controller.openOutput()).resolves.toBeUndefined();
+    expect(h.notify).toHaveBeenCalledTimes(2);
+    expect(h.execute.mock.calls.filter(([action]) => action === 'projects.compute.exec')).toHaveLength(1);
     h.controller.dispose();
   });
   it('projects only the bound Home/Machine name and preserves unrelated form identity', async () => {

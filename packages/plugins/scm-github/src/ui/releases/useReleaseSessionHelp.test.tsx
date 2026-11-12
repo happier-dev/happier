@@ -65,7 +65,7 @@ describe('release session-help consumer', () => {
   });
 
   it('keeps an uncertain transport rejection visible and never retries configured delivery', async () => {
-    const failure = new PluginError({ code: 'timeout' });
+    const failure = new PluginError({ code: 'timeout', details: { requestId: 'help-request-42' } });
     const notices: Array<{ message: string; severity?: string }> = [];
     const calls: string[] = [];
     const fixture = await mount(async request => {
@@ -80,7 +80,32 @@ describe('release session-help consumer', () => {
       expect(notices).toHaveLength(1);
       expect(notices[0]?.severity).toBe('warning');
       expect(notices[0]?.message).toContain('timeout');
+      expect(notices[0]?.message).toContain('Request ID: help-request-42');
       expect(calls).toEqual(['github/releases/notes-context-read', 'sessions/run-configured-v1']);
+    } finally { await fixture.dispose(); }
+  });
+
+  it('retains the provider failure and request ID when release evidence is unavailable', async () => {
+    const outcome = { kind: 'unavailable', failure: { class: 'transient', code: 'github_rate_limited', requestId: 'github-help-17' } } satisfies JsonValue;
+    const notices: string[] = [];
+    const fixture = await mount(async () => outcome, async notice => { notices.push(notice.message); });
+    try {
+      expect(await fixture.help({ kind: 'notes', releaseId: null }, evidence, selection)).toEqual(outcome);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain('Code: github_rate_limited');
+      expect(notices[0]).toContain('Request ID: github-help-17');
+    } finally { await fixture.dispose(); }
+  });
+
+  it('retains a refused Action request ID in its existing warning', async () => {
+    const outcome = { ok: false, errorCode: 'help_refused', error: 'Refused', requestId: 'help-action-18' } satisfies JsonValue;
+    const notices: string[] = [];
+    const fixture = await mount(async () => outcome, async notice => { notices.push(notice.message); });
+    try {
+      expect(await fixture.help({ kind: 'notes', releaseId: null }, evidence, selection)).toEqual(outcome);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain('Code: help_refused');
+      expect(notices[0]).toContain('Request ID: help-action-18');
     } finally { await fixture.dispose(); }
   });
 
