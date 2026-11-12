@@ -1,6 +1,7 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { logger } from '@/ui/logger';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -2415,6 +2416,7 @@ describe('target action invocation registry', () => {
     });
 
     it('reports local generation retirement when refresh replaces the handler while intent is pending', async () => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile');
         const oldHandler = vi.fn(async () => ({ echoed: 'old' }));
         const newHandler = vi.fn(async () => ({ echoed: 'new' }));
         let actions: Parameters<typeof createTargetActionInvocationRegistry>[0]['actions'] = [
@@ -2423,6 +2425,7 @@ describe('target action invocation registry', () => {
         const registry = createRegistry({ actions, readActions: () => actions });
 
         const result = await registry.invoke({
+            requestId: 'retirement-request',
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
             requestCurrentIntent: async ({ fingerprint }) => {
                 actions = [{ ...action({ dangerLevel: 'writesRemote' }), occurrenceId: '8' as PluginRuntimeOccurrenceId, handler: newHandler }];
@@ -2434,6 +2437,11 @@ describe('target action invocation registry', () => {
         expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_action_generation_retired' });
         expect(oldHandler).not.toHaveBeenCalled();
         expect(newHandler).not.toHaveBeenCalled();
+        expect(diagnostic).toHaveBeenCalledWith('Plugin Action generation refused', expect.objectContaining({
+            pluginId: 'acme.alpha', localId: 'run', reason: 'prepared_invocation_replaced',
+            occurrenceId: '7', currentOccurrenceId: '8', requestId: 'retirement-request',
+        }));
+        diagnostic.mockRestore();
     });
 
     it('validates input and result and invokes a valid handler exactly once', async () => {

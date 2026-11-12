@@ -918,21 +918,31 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 kind: 'settled' as const,
                 result: unavailable('plugin_action_handler_missing', 'No committed target action registration exists'),
             });
+            let correlationId: string = randomUUID();
+            const generationUnavailable = (reason: string) => {
+                logger.warnLocalFile('Plugin Action generation refused', {
+                    pluginId: invocation.pluginId, localId: invocation.localId,
+                    code: 'plugin_action_generation_retired', requestId: invocation.requestId ?? correlationId,
+                    reason, occurrenceId: indexed.registration.occurrenceId,
+                    currentOccurrenceId: actionsByKey.get(key)?.registration.occurrenceId ?? null,
+                    registryRetired: registryController.signal.aborted,
+                });
+                return unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current');
+            };
             if (registryController.signal.aborted) {
                 return Object.freeze({
                     kind: 'settled' as const,
-                    result: unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current'),
+                    result: generationUnavailable('registry_disposed'),
                 });
             }
             if (!indexed.isCurrent()) return Object.freeze({
                 kind: 'settled' as const,
-                result: unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current'),
+                result: generationUnavailable('occurrence_not_current'),
             });
             let operationProgress = invocation.operationProgress;
             let operationAcceptance = invocation.operationAcceptance;
             let operationOwnerUpdate = invocation.operationOwnerUpdate;
             let sharedSaveAdmission: PluginSharedSaveAdmission | undefined;
-            let correlationId: string = randomUUID();
             const lifetime = createPluginInvocationLifetime(AbortSignal.any([
                 registryController.signal,
                 ...(invocation.signal ? [invocation.signal] : []),
@@ -1121,7 +1131,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 invoke: async (action, args, serviceBinding) => {
                     const current = actionsByKey.get(key);
                     if (!current || !indexed.isCurrent() || current.invocation !== indexed.invocation) {
-                        return unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current');
+                        return generationUnavailable(!current ? 'registration_withdrawn'
+                            : current.invocation !== indexed.invocation ? 'prepared_invocation_replaced'
+                                : 'occurrence_not_current');
                     }
                     if (invocation.isMountedCallerCurrent) {
                         let mountedCallerCurrent = false;
