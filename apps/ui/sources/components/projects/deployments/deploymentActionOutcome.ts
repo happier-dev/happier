@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import type { DeploymentFailureRecoveryDestinationV1, DeploymentRefusalRequestV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentTemplateInstantiationPartialV1 as readDeploymentPartialResult } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 export { readDeploymentPartialResult };
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -48,6 +48,8 @@ export type DeploymentActionOutcome =
       code: string;
       progress?: DeploymentPartialResult;
       failure?: ActionExecuteFailure;
+      /** What the press asked for (an exact pull-request head), from the caller that made it: the remedy speaks to it. */
+      request?: DeploymentRefusalRequestV1;
     }>;
 
 export type DeploymentPartialResult = NonNullable<ReturnType<typeof readDeploymentPartialResult>>;
@@ -157,10 +159,10 @@ export function useDeploymentPress(
   const busy = React.useRef(false);
   const { request } = review;
   const lastPress = React.useRef<(() => Promise<ReceiptResult>) | null>(null);
-  const lastOptions = React.useRef<Readonly<{ openReceipt?: boolean }> | undefined>(undefined);
+  const lastOptions = React.useRef<Readonly<{ openReceipt?: boolean; request?: DeploymentRefusalRequestV1 }> | undefined>(undefined);
   const press = React.useCallback(async (
     run: () => Promise<ReceiptResult>,
-    options?: Readonly<{ openReceipt?: boolean }>,
+    options?: Readonly<{ openReceipt?: boolean; request?: DeploymentRefusalRequestV1 }>,
   ) => {
     if (busy.current) return;
     lastPress.current = run;
@@ -176,7 +178,7 @@ export function useDeploymentPress(
       return;
     }
     if (result.kind === 'approval') request(result.artifactId);
-    setOutcome(result);
+    setOutcome(result.kind === 'refused' && options?.request ? { ...result, request: options.request } : result);
   }, [onOpenReceipt, request]);
   const retry = React.useCallback(async () => {
     if (lastPress.current) await press(lastPress.current, lastOptions.current);

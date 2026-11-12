@@ -212,6 +212,11 @@ function sourceFileRecovery(details: Record<string, unknown>) {
         : recovery(`Happier could not read ${details.path} in this revision. Check the file in the repository, or choose another revision.`, 'source', 'Choose a revision');
 }
 
+/** What the press asked for, supplied by the caller that made the request; never inferred from the refusal. */
+export type DeploymentRefusalRequestV1 = Readonly<{ pullRequestHead?: boolean }>;
+// An exact pull-request head the Source can't supply is that head's problem, not the Source's setup.
+const pullRequestHeadRecovery = recovery('This pull request head could not be fetched for deploy. The pull request may be merged, closed or from a fork. Read its latest head again, or deploy its branch.', 'source', 'Open Source details');
+
 function recoveryDetails(details: Record<string, unknown>): Record<string, unknown> {
     // Store keeps completed steps alongside the Domain owner's failure. Its
     // retained wrapper recovery must not replace that more specific cause.
@@ -219,7 +224,7 @@ function recoveryDetails(details: Record<string, unknown>): Record<string, unkno
         ? details.failure : details;
 }
 
-function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
+function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
     // The transport sets this fact only after consuming Home's confirmed rollback.
     if (details.requiredFact === 'transaction_commit') return transactionRollbackRecovery;
@@ -237,6 +242,7 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
         || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
     const sourceFile = code === 'deployment_source_unavailable' ? sourceFileRecovery(failure ?? details) : null;
     if (sourceFile) return sourceFile;
+    if (code === 'deployment_source_unavailable' && request?.pullRequestHead) return pullRequestHeadRecovery;
     const fact = failure?.requiredFact ?? details.requiredFact;
     if (code === 'required_fact_unavailable' && typeof fact === 'string' && Object.hasOwn(missingFacts, fact)) {
         return missingFacts[fact as keyof typeof missingFacts];
@@ -276,17 +282,19 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
 }
 
 /** Receipt, review and Store render this result; callers supply their existing navigation context. */
-export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unknown): DeploymentFailureRecoveryPresentationV1 {
+export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unknown,
+    request?: DeploymentRefusalRequestV1): DeploymentFailureRecoveryPresentationV1 {
     const record = isRecord(details) ? details : {};
     const projected = projectDeploymentFailureRecoveryV1(record, errorCode);
-    const selected = recoveryFor(record, errorCode);
+    const selected = recoveryFor(record, errorCode, request);
     const authored = projected.remedy;
     return { requiredFact: projected.requiredFact,
         remedy: authored === 'retry_original_request' ? 'The requester could not be confirmed. Reconnect the original session and submit the request again.'
             : authored === 'run_from_authorized_host' ? 'This source is on a machine you cannot use for this request. Choose an authorized source machine.'
                 // The Machine's missing-tool resolution names its remedy as a code; the person reads this owner's sentence.
                 : authored === 'install_on_machine_and_add_to_daemon_path' ? recoveries.plugin_exec_system_tool_unavailable.remedy
-                : supersededRemedies.has(authored) || authored === fallback.remedy ? selected.remedy : authored,
+                // The press's own request mode outranks the generic Source sentence a refusal may have stored.
+                : supersededRemedies.has(authored) || authored === fallback.remedy || selected === pullRequestHeadRecovery ? selected.remedy : authored,
         nextAction: selected.nextAction };
 }
 
@@ -294,6 +302,8 @@ export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unk
  * A refused press's typed recovery: the remedy and the one route to fix it (the Environment's Deploy banner, the
  * platform target sheet). Null when this owner has no recovery for the code, so the caller keeps its own sentence.
  */
-export function readDeploymentRefusalRecoveryV1(errorCode: string, details?: unknown): DeploymentFailureRecoveryPresentationV1 | null {
-    return recoveryFor(isRecord(details) ? details : {}, errorCode) === fallback ? null : readDeploymentFailureRecoveryV1(errorCode, details);
+export function readDeploymentRefusalRecoveryV1(errorCode: string, details?: unknown,
+    request?: DeploymentRefusalRequestV1): DeploymentFailureRecoveryPresentationV1 | null {
+    return recoveryFor(isRecord(details) ? details : {}, errorCode, request) === fallback ? null
+        : readDeploymentFailureRecoveryV1(errorCode, details, request);
 }

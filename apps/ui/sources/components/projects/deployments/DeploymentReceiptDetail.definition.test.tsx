@@ -347,6 +347,60 @@ describe('retained stored deployment source', () => {
     expect(readSignal?.aborted).toBe(true);
   });
 
+  it('says what the exact pull request head needs when its deploy is refused, not the generic Source setup', async () => {
+    const homeId = `srv_${'9'.repeat(32)}`;
+    const serverId = await homes.addHome({ name: 'PR refusal', serverUrl: 'https://pr-refusal.test',
+      serverIdentityId: homeId, accountId: 'account-owner', currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const receipt = createDeploymentReceiptDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner', projectSourceId: environment.environment.projectSourceId }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    homes.answer(serverId, `GET /v1/deployments/environments/${environment.environment.id}`, { body: { ok: true,
+      environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } });
+    const observed: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.environment.controllerMachineId,
+      actionId: 'deployments.deploy', tokenEpoch: 0, deploymentSource: { id: environment.environment.projectSourceId, revision: 1 },
+      execute: input => { observed.push(input); return { refused: true }; },
+      // The Action's typed refusal: the Source can't supply the requested commit.
+      failure: () => ({ errorCode: 'deployment_source_unavailable', error: 'deployment_source_unavailable' }) });
+    const lifetime = { scope: { serverId, accountId: 'account-owner' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const actions = createDeploymentActions(lifetime, environment.environment.projectSourceId);
+    let head = 'b'.repeat(40);
+    rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.SCM_PULL_REQUEST_GET
+      ? { success: true, pullRequest: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        number: 42, title: 'Ship preview', url: 'https://github.com/example/app/pull/42', baseBranch: 'main', headBranch: 'preview',
+        headSha: head, state: 'open', checks: { state: 'pending' } } }
+      : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No status available' });
+    const screen = await renderAccountScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={environment.environment.id}
+      demand={{ mounted: true, visible: true, focused: true }} accountId="account-owner" serverId={serverId}
+      workspaceRef={{ id: 'checkout-a', serverId, machineId: 'source-machine', rootPath: '/source', label: null,
+        createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId: environment.environment.projectSourceId, revision: 1 } }}
+      deploy={actions.deploy} phone={false} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.findByTestId('project-deployments.environment.header'), screen.getTextContent()).not.toBeNull();
+    });
+    expect(screen.findByTestId('project-deployments.pr.number')).not.toBeNull();
+    await act(async () => { screen.changeTextByTestId('project-deployments.pr.number', '42'); });
+    await screen.pressByTestIdAsync('project-deployments.pr.load');
+    head = 'c'.repeat(40);
+    await screen.pressByTestIdAsync('project-deployments.pr.deploy');
+    // The press asked for this exact head, so the refusal speaks to the head, not to setting up the Source.
+    const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    const generic = readDeploymentRefusalRecoveryV1('deployment_source_unavailable')!.remedy;
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(observed.length, screen.getTextContent()).toBe(1);
+      expect(screen.getTextContent()).toContain('This pull request head could not be fetched');
+    });
+    expect(screen.getTextContent()).not.toContain(generic);
+    await act(async () => { screen.unmount(); });
+  });
+
   it('preserves the typed pull-request read failure instead of showing the empty state', async () => {
     const serverId = await homes.addHome({ name: 'PR read failure', serverUrl: 'https://pr-read-failure.test',
       serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });

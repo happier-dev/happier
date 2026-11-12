@@ -294,6 +294,21 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
         expect(unreadable?.remedy).not.toBe(recovery?.remedy);
     });
 
+    it('says what an exact pull-request-head deploy needs when the press asked for one, not the generic Source setup', () => {
+        // The UI made the request, so the press names its mode; the refusal's own details stay what the Action sent.
+        const generic = readDeploymentRefusalRecoveryV1('deployment_source_unavailable');
+        const head = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', undefined, { pullRequestHead: true });
+        expect(head?.remedy).not.toBe(generic?.remedy);
+        expect(head?.remedy).toMatch(/pull request/i);
+        // A typed file cause still names its file, whatever the press asked for.
+        const file = readDeploymentRefusalRecoveryV1('deployment_source_unavailable',
+            { kind: 'deploymentSourceFileUnavailable', path: 'deploy/compose.yaml', reason: 'absent' }, { pullRequestHead: true });
+        expect(file?.remedy).toContain('deploy/compose.yaml');
+        // Other codes keep their own recovery.
+        expect(readDeploymentRefusalRecoveryV1('native_failed', undefined, { pullRequestHead: true })?.remedy)
+            .toBe(readDeploymentRefusalRecoveryV1('native_failed')?.remedy);
+    });
+
     it('never promises a failed step the receipt may not record', () => {
         const recovery = readDeploymentFailureRecoveryV1('native_failed');
         expect(recovery.nextAction.destination).toBe('logs');

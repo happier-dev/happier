@@ -1020,7 +1020,9 @@ export const DeploymentEnvironmentDetail = React.memo(
                 compose={detail.content.definition.compose} serverId={props.serverId} accountId={props.accountId}
                 disabled={!ready || deployBlocked} onDeploy={async sourceIntent => {
                   if (!deploy || availability.kind !== 'ready') return;
-                  await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), sourceIntent, requestKey: randomUUID() }));
+                  // This press asked for an exact pull-request head; its refusal's remedy speaks to that head.
+                  await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), sourceIntent, requestKey: randomUUID() }),
+                    sourceIntent.pullRequestHead ? { request: { pullRequestHead: true } } : undefined);
                 }} /> : null}
               {runtime && runtime.members.length > 1 ? (
                 <EnvironmentServersSection
@@ -1346,14 +1348,17 @@ export function DeployOutcomeBanner(
   const unsupported = outcome.reason === 'unsupported' && !cancel && !domain;
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;
   // The recovery owner's remedy and route for this refusal (E4): a stored generic remedy never hides a typed cause.
-  const typedRecovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details);
+  const typedRecovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details, outcome.request);
+  // The press's own request (an exact pull-request head) chose a more specific remedy than the refusal's stored one.
+  const requestSpecific = outcome.request !== undefined
+    && typedRecovery?.remedy !== readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details)?.remedy;
   // A failed step's logs are on the receipt the refusal names. Without one, this attempt left no step to inspect:
   // no action, and the sentence says why instead.
   const failedDeploymentId = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data?.deploymentId;
   const leadsNowhere = typedRecovery?.nextAction.destination === 'logs' && !failedDeploymentId;
   const recovery = leadsNowhere ? null : typedRecovery;
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
-  const canonicalReason = failure && failure.reason !== storedRemedy ? failure.reason : null;
+  const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific ? failure.reason : null;
   const { openRecovery } = controller;
   // A refusal whose way forward is a review needs the person, not a retry of a failure: amber, paired with that review.
   const needsReview = recovery?.nextAction.destination === 'review';
