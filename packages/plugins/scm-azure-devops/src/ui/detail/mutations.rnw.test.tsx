@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
+import { TriageActivityAgentProvider, TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
@@ -181,6 +182,14 @@ const REVIEW_INPUT = {
   linkedSessions: [{ sessionId: 'session-azure-review', displayTitle: 'Review this pull request' }],
 } as unknown as JsonValue;
 
+function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+  return <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration }}>
+    <Button title="Refresh page" onPress={() => setRefreshGeneration(value => value + 1)} />
+    {children}
+  </TriageActivityAgentProvider>;
+}
+
 async function mountDetail(
   launchInput: JsonValue = FIXTURE.detailInput as unknown as JsonValue,
   navigation?: Array<PluginUiPageNavigationV1 | null>,
@@ -196,16 +205,16 @@ async function mountDetail(
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-160', mountNonce: 'fixture-mount-160' },
       authorPlugin: { id: AZURE_DEVOPS_PLUGIN_ID, version: '0.0.0' },
-      surface: (context) => {
+      surface: defineUiSurface((context) => {
         const body = renderSurface(context);
         // The SDK element is opaque across its boundary; this RNW host requires a React element.
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected a native Azure DevOps surface');
         return <TriagePostMutationCompletionProvider
           onComplete={async () => { completedMutations += 1; }}
         >
-          {body}
+          <PageFrame>{body}</PageFrame>
         </TriagePostMutationCompletionProvider>;
-      },
+      }),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
@@ -788,7 +797,7 @@ describe('the mounted Azure DevOps detail read presentation', () => {
     await expect(detail.queryByText('Current change')).resolves.toBeDefined();
 
     await detail.press(await detail.getByRole('button', {
-      name: 'Re-read this activity from Azure DevOps',
+      name: 'Refresh page',
     }));
 
     const reads = recorded.map(({ action }) => (
@@ -800,7 +809,8 @@ describe('the mounted Azure DevOps detail read presentation', () => {
       .toHaveLength(2);
     expect(reads.filter((id) => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads))
       .toHaveLength(2);
-    // One re-read for the whole stream: no per-collection Refresh is left in the panel.
+    // The page owns the one refresh; Activity leaves no second refresh beside its collections.
+    await expect(detail.queryByRole('button', { name: 'Re-read this activity from Azure DevOps' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('button', { name: 'Re-read the threads from Azure DevOps' })).resolves.toBeUndefined();
   });
 

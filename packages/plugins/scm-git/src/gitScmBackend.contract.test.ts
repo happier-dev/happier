@@ -74,7 +74,7 @@ describe('git SCM backend runtime registration', () => {
 
     it('declares the strict target backend and exact executable access', () => {
         expect(PLUGIN_MANIFEST).toMatchObject({
-            entrypoints: { daemon: './.happier-plugin/daemon.js' },
+            entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
             hostAccess: { required: [{ capability: 'process', scope: { executables: [{ kind: 'managedDependency', id: 'git-cli' }] } }], optional: [] },
             contributes: {
                 scmBackends: [{ id: 'git', title: 'Git', kind: 'git', capabilities: expect.arrayContaining(['detect', 'status', 'diff', 'commit']) }],
