@@ -582,15 +582,16 @@ minimum worker defaults for new payloads; fixed CPU enforcement requires a
 successor broker. The launcher does not restart a live broker, stack or daemon.
 
 Only a waiter whose minimum demand fits the broker's achievable memory and
-fixed CPU capacity can reserve as head. Larger
-waiters keep their arrival order and regain their reservation when achievable
-memory recovers; non-admitted pressure must not block smaller fitting work.
-While the eligible head waits,
-younger fitting requests may use memory beyond its reservation, in arrival order.
-The reserved part of the head's minimum floor excludes floors held by older jobs;
-as those jobs release, their capacity stays reserved for the head. Younger
-backfill jobs never count toward those older floors. The head is offered capacity
-first as soon as it fits, without runtime estimates, aging or new tunables.
+fixed CPU capacity can reserve as head. Larger waiters keep their arrival order
+and become eligible when achievable memory recovers; non-admitted pressure must
+not block smaller fitting work. When a request becomes head, capacity already
+free remains available to fitting younger requests, in arrival order. Memory
+and CPU released by this broker's slots afterward are pledged to the head up to
+its minimum floor. Recovered slots do not contribute releases to that pledge.
+The head is offered capacity first as soon as it fits, without runtime estimates,
+aging or new tunables. Its pledge clears on admission, refusal, withdrawal or
+replacement by another head. Status and read-only admission checks deduct the
+same pledge from unreserved memory and CPU.
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation.
 Waiting clients block on their control sockets without polling or process walks.
@@ -1036,15 +1037,14 @@ Remote Stack retirement in current 0.3 development uses the canonical trusted-pr
 In current 0.3 development, runtime builds use native AUTO to select and synchronize an eligible worker from the command pool. Daemon builds prefer eligible native OS/architecture workers over supported cross builders; server/web placement keeps load-based ranking. A capacity wait retains the selected worker's native queue position without spawning alternative launchers. The launcher forwards `--control-stdin` directly: the admitted worker emits READY before the controller sends its build request, and a started worker's result never triggers payload replay. Explicit local placement and unavailable-target local fallback use the same native admission owner.
 
 In current 0.3 development, `admission_broker.mjs` is the Linux queue owner.
-It considers requests from oldest to newest, reserving the oldest eligible memory
-waiter's minimum supported floor before offering spare memory to later requests.
-Eligibility requires that minimum to fit the current achievable memory; an
-unachievable waiter retains its age and regains its reservation on recovery. New
-arrivals cannot consume the capacity needed by that waiter as holders release;
-once its floor is covered, younger requests can use the remainder even before
-its payload starts. The broker's published `unreservedMemoryKiB` deducts that
-head floor too, so AUTO ranks a fitting peer ahead of a head-reserved host using
-the existing memory input. No aging deadline or cumulative backfill accounting is used. Workspace-busy
+It considers requests from oldest to newest. The oldest eligible waiter's
+pledge holds capacity released after it became head; capacity already free can
+backfill younger fitting requests. Eligibility requires the minimum floor to fit
+current achievable memory; an unachievable waiter retains its age and becomes
+eligible on recovery. Once its floor fits, the head receives capacity first.
+The broker's published `unreservedMemoryKiB` deducts the same pledge, so AUTO
+uses the owner's remaining capacity rather than recomputing head reservations.
+No aging deadline or cumulative backfill allowance is used. Workspace-busy
 requests release their offered capacity and partial leases, then wait for their
 own resource changes. A head blocked by an active publication also waits without
 reserving its floor before its first offer. A physically fitting request can wait without an admission

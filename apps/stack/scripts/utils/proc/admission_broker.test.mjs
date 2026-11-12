@@ -245,6 +245,91 @@ async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, total
   return { root, broker, sampleResources };
 }
 
+for (const resource of ['memory', 'CPU']) test(`${resource} backfills current free capacity and pledges later releases to the head`, linux, async t => {
+  const reservations = [];
+  const positions = [];
+  const nativeWrite = Socket.prototype.write;
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('{')) {
+      const response = JSON.parse(chunk);
+      if (response.kind === 'reserved') reservations.push(response.slotAddress);
+      if (response.kind === 'queued') positions.push(response.queuePosition);
+    }
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  const gibKiB = 1024 * 1024;
+  const memory = resource === 'memory';
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 20 * gibKiB, totalMemoryKiB: 20 * gibKiB }), cpuCores: 20,
+  });
+  const job = (units, extra = {}) => acquire(root, memory ? units * gibKiB : 1, t,
+    { cpuCost: memory ? 'host' : units, ...extra });
+  const barrier = async () => {
+    const client = await request(root, { kind: 'sample' });
+    const value = await client.next(); client.socket.destroy(); return value;
+  };
+  const held = await (await job(10)).admit();
+  const head = await job(17);
+  const followers = [];
+  for (let id = 0; id < 3; id++) followers.push({ id, client: await job(2) });
+  const initial = await barrier();
+  assert.equal(initial.activeCount, 4, 'all three small jobs fit in capacity free when the head arrived');
+  assert.equal(initial.waitingCount, 1);
+  assert.equal(initial.head.reservationKiB, 0);
+  const small = [];
+  for (const { client } of followers) small.push(await client.admit());
+  const admittedIds = reservations.slice(1).map(address => followers[small.findIndex(slot => slot.slotAddress === address)].id);
+  assert.deepEqual(admittedIds, [0, 1, 2], 'socket offers preserve arrival order among backfills');
+  await held.release();
+  const later = await job(5);
+  const released = await barrier();
+  assert.equal(released.activeCount, 3, 'later jobs cannot take the released holder capacity');
+  assert.equal(released.waitingCount, 2);
+  assert.deepEqual(positions, [1, 2], 'the head stays first and the late job queues second');
+  assert.equal(memory ? released.unreservedMemoryKiB : released.unreservedCpuCores, memory ? 4 * gibKiB : 4);
+  const check = await request(root, { kind: 'check', floorKiB: memory ? 5 * gibKiB : 1, cpuCost: memory ? 'host' : 5 });
+  assert.equal((await check.next()).kind, 'refused', 'read-only checks use the same pledge'); check.socket.destroy();
+  await small[0].release();
+  await small[1].release();
+  const runningHead = await head.admit();
+  assert.equal((await barrier()).waitingCount, 1, 'head runs as soon as its floor fits');
+  await runningHead.release();
+  await later.admit();
+});
+
+test('closing the waiting head clears its released-memory pledge', linux, async t => {
+  let headSocket;
+  const nativeWrite = Socket.prototype.write;
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('{')) {
+      const response = JSON.parse(chunk);
+      if (response.kind === 'queued' && response.queuePosition === 1 && !headSocket) headSocket = this;
+    }
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 20, totalMemoryKiB: 20 }) });
+  const held = await (await acquire(root, 10, t)).admit();
+  await acquire(root, 17, t);
+  const small = [];
+  for (let i = 0; i < 3; i++) small.push(await acquire(root, 2, t));
+  const barrier = await request(root, { kind: 'sample' });
+  assert.equal((await barrier.next()).activeCount, 4); barrier.socket.destroy();
+  for (const client of small) await client.admit();
+  await held.release();
+  const later = await acquire(root, 5, t);
+  const check = await request(root, { kind: 'sample' });
+  const pledged = await check.next(); check.socket.destroy();
+  assert.equal(pledged.head.reservationKiB, 10);
+  assert.equal(pledged.waitingCount, 2);
+  const closed = once(headSocket, 'close'); headSocket.destroy(); await closed;
+  await later.admit();
+  const cleared = await request(root, { kind: 'sample' });
+  const value = await cleared.next(); cleared.socket.destroy();
+  assert.equal(value.waitingCount, 0);
+  assert.equal(value.head, null);
+  assert.equal(value.unreservedMemoryKiB, 9);
+});
+
 test('status exposes symbolic reservation head and exact queue floor buckets', linux, async t => {
   let reads = 0;
   const { root, broker } = await fixture(t, { readMemory: () => {
@@ -256,19 +341,23 @@ test('status exposes symbolic reservation head and exact queue floor buckets', l
   const arrivedAt = Date.now() - 5000;
   await acquire(root, 90, t, { className: 'compilation', arrivedAt,
     floorOptions: [{ floorKiB: 90, workers: 2 }, { floorKiB: 80, workers: 1 }] });
-  for (let index = 0; index < 3; index += 1) await acquire(root, 30, t);
+  // Owner backfill ruling (2026-11-12): consume the 60 units free at head arrival.
+  const small = [];
+  for (let index = 0; index < 3; index += 1) small.push(await acquire(root, 30, t));
   const barrier = await request(root, { kind: 'sample' });
   const snapshot = await barrier.next(); barrier.socket.destroy();
   assert.equal(snapshot.head.className, 'compilation');
   assert.equal(snapshot.head.minimumFloorKiB, 80);
   assert.ok(snapshot.head.ageMs >= 5000);
-  assert.equal(snapshot.head.reservationKiB, 40);
-  assert.equal(snapshot.waitingByClassAndFloor.reduce((n, bucket) => n + bucket.count, 0), 4);
+  assert.equal(snapshot.head.reservationKiB, 0);
+  assert.equal(snapshot.waitingByClassAndFloor.reduce((n, bucket) => n + bucket.count, 0), 2);
   assert.deepEqual(snapshot.waitingByClassAndFloor.find(bucket => bucket.className === 'compilation'), {
     className: 'compilation', floorKiB: 90, minimumFloorKiB: 80,
     floorOptions: [{ floorKiB: 90, workers: 2 }, { floorKiB: 80, workers: 1 }], count: 1,
   });
-  assert.equal(broker.status().waitingByClassAndFloor.find(bucket => bucket.className === 'validation').count, 3);
+  assert.equal(broker.status().waitingByClassAndFloor.find(bucket => bucket.className === 'validation').count, 1);
+  await small[0].admit();
+  await small[1].admit();
   const before = reads;
   broker.status(); broker.status();
   assert.equal(reads, before, 'diagnostic projection never samples processes or memory');
@@ -399,16 +488,16 @@ test('broker replacement orders reconnecting waiters by their original arrival',
   assert.equal(first.waiter, 'older');
 });
 
-test('a late reconnect keeps younger admitted backfills out of its head reservation', linux, async t => {
+test('a late reconnect permits backfill from capacity free when it becomes head', linux, async t => {
   const { root } = await fixture(t);
   const younger = await acquire(root, 40, t, { arrivedAt: 20 });
   await younger.admit();
   await acquire(root, 70, t, { arrivedAt: 10 });
   const sample = await request(root, { kind: 'sample' });
-  assert.equal((await sample.next()).unreservedMemoryKiB, 0);
+  assert.equal((await sample.next()).unreservedMemoryKiB, 60);
   sample.socket.destroy();
   const backfill = await acquire(root, 20, t, { arrivedAt: 30, noWait: true });
-  assert.equal((await backfill.next()).reason, 'HSTACK_MEMORY_BUSY');
+  await backfill.admit();
 });
 
 test('queue positions advance on existing passes and unchanged waiters stay silent', linux, async t => {
@@ -1133,7 +1222,7 @@ test('impossible physical capacity settles with a typed refusal instead of an un
   assert.equal(admitted.admitted.floorKiB, 3 * gibKiB);
 });
 
-for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adaptive' : 'fixed'} head yields spare memory and regains its reservation on recovery`, linux, async t => {
+for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adaptive' : 'fixed'} head yields spare memory and pledges subsequent releases after recovery`, linux, async t => {
   const clock = captureRecoveryClock(t);
   let availableMemoryKiB = 60;
   const { root, broker } = await fixture(t, {
@@ -1158,25 +1247,26 @@ for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adapti
   assert.equal(broker.status().activeCount, 5, 'all four small waiters backfill the unachievable head');
   assert.equal(broker.status().waitingCount, 1, 'the unachievable head stays queued with its original arrival');
 
-  // Recovery to the minimum floor restores the head reservation even while
-  // a younger backfill is active. That backfill cannot count as older supply.
+  // Owner backfill ruling (2026-11-12): recovery makes this request head;
+  // capacity already free at that moment remains available to backfill.
   availableMemoryKiB = 80;
   const samples = broker.status().sampleCount;
   await clock.tick();
   assert.equal(broker.status().sampleCount, samples + 1, 'one existing recovery observation serves the queue');
-  assert.equal(broker.status().unreservedMemoryKiB, 0);
+  assert.equal(broker.status().unreservedMemoryKiB, 20);
   const younger = await acquire(root, 5, t);
+  const alsoHeld = await younger.admit();
   const barrier = await request(root, { kind: 'sample' });
   await barrier.next();
   barrier.socket.destroy();
-  assert.equal(broker.status().waitingCount, 2, 'younger arrivals cannot displace the recovered head');
+  assert.equal(broker.status().waitingCount, 1, 'only the recovered head waits');
   await held.release();
   for (const backfill of backfills) await backfill.release();
+  await alsoHeld.release();
   const resumed = await head.admit();
   assert.equal(resumed.admitted.floorKiB, 80);
-  assert.equal(broker.status().waitingCount, 1);
+  assert.equal(broker.status().waitingCount, 0);
   await resumed.release();
-  await younger.admit();
 });
 
 test('temporary memory pressure without broker slots is busy, not impossible physical capacity', linux, async t => {

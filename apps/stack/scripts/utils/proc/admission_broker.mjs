@@ -117,6 +117,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   let totalCpuCores;
   let sampleCount = 0;
   let arrivalOrder = 0;
+  let headPledge;
   let serial = Promise.resolve();
   let closing = false;
   let server;
@@ -159,24 +160,15 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   function minimumCpuCores(item) {
     return item.floorOptions ? Math.min(...item.floorOptions.map(option => accountedCpuCores(item, option.workers))) : accountedCpuCores(item);
   }
-  function headReservationCpuCores(head) {
-    if (!head) return 0;
-    let precedingCpuCores = 0;
-    for (const slot of slots.values()) {
-      if (slot.arrivalOrder === undefined || compareArrival(slot, head) < 0) precedingCpuCores += slot.cpuCores ?? 0;
-    }
-    return Math.max(0, minimumCpuCores(head) - precedingCpuCores);
+  function reserveHead(head) {
+    if (headPledge?.item !== head) headPledge = head ? { item: head, memoryKiB: 0, cpuCores: 0 } : undefined;
   }
-  function headReservationKiB(head) {
-    if (!head) return 0;
-    const floorKiB = head.floorOptions?.at(-1).floorKiB ?? head.floorKiB;
-    let precedingFloorKiB = 0;
-    for (const slot of slots.values()) {
-      // Recovered slots predate every request in this broker. Younger
-      // backfills must never count as releases that can make room for the head.
-      if (slot.arrivalOrder === undefined || compareArrival(slot, head) < 0) precedingFloorKiB += slot.floorKiB;
-    }
-    return Math.max(0, floorKiB - precedingFloorKiB);
+  function headReservation(head) {
+    const pledged = head && headPledge?.item === head;
+    return {
+      memoryKiB: pledged ? Math.min(head.floorOptions?.at(-1).floorKiB ?? head.floorKiB, headPledge.memoryKiB) : 0,
+      cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
+    };
   }
   function canReserveHead(item) {
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
@@ -188,6 +180,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   function status() {
     const budget = slotResourceBudget();
     const head = waiting.find(canReserveHead);
+    const reservation = headReservation(head);
     // Only catalog symbols and numeric resource facts leave this private queue.
     // Never expose request env, paths, PIDs or an arbitrary caller label.
     const symbolicClass = item => Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, item.className) ? item.className : 'unknown';
@@ -207,11 +200,11 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     // Publication-blocked demand has no memory reservation.
     return { ...sample, ...budget,
       head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
-        ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: headReservationKiB(head) } : null,
+        ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB } : null,
       waitingByClassAndFloor: [...buckets.values()],
-      unreservedCpuCores: Math.max(0, budget.unreservedCpuCores - headReservationCpuCores(head)),
+      unreservedCpuCores: Math.max(0, budget.unreservedCpuCores - reservation.cpuCores),
       queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : accountedCpuCores(item, item.floorOptions?.[0]?.workers)), 0),
-      unreservedMemoryKiB: Math.max(0, budget.unreservedMemoryKiB - headReservationKiB(head)),
+      unreservedMemoryKiB: Math.max(0, budget.unreservedMemoryKiB - reservation.memoryKiB),
       queuedMemoryKiB: waiting.reduce((sum, item) => sum + (item.slot ? 0 : item.floorKiB), 0),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
@@ -269,11 +262,12 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   function removeWaiting(item) {
     const index = waiting.indexOf(item);
     if (index !== -1) waiting.splice(index, 1);
+    if (headPledge?.item === item) reserveHead();
   }
   function refuse(item, reason, cause) {
     removeWaiting(item);
     if (item.slot && !item.settled) {
-      slots.delete(item.slot.address);
+      releaseReservation(item.slot);
       item.slot.peer?.destroy();
     }
     item.settled = true;
@@ -379,8 +373,18 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     item.resourceSnapshot = resources.snapshot;
     return true;
   }
+  function releaseReservation(slot) {
+    if (!slots.delete(slot.address)) return false;
+    // Only releases observed during this head's tenure are pledged. Recovered
+    // slots have no arrival order and do not establish a release entitlement.
+    if (headPledge && slot.arrivalOrder !== undefined) {
+      headPledge.memoryKiB += slot.floorKiB;
+      headPledge.cpuCores += slot.cpuCores ?? 0;
+    }
+    return true;
+  }
   async function release(slot) {
-    if (!slots.delete(slot.address)) return;
+    if (!releaseReservation(slot)) return;
     slot.peer?.destroy();
     // Reuse event/catch-up observations only. These are sampled lower bounds,
     // not kernel lifetime peaks or proof that the payload succeeded. Recovered
@@ -402,8 +406,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     await drain();
   }
   async function drain() {
-    // Reserve only what older holders cannot supply to the head. Their releases
-    // increase that reservation, while backfills can reuse only the remainder.
+    // Capacity already free when a request becomes head remains available to
+    // backfill; subsequent slot releases are held for that head.
     const budget = slotResourceBudget();
     let availableMemoryKiB = budget.unreservedMemoryKiB;
     let availableCpuCores = budget.unreservedCpuCores;
@@ -438,8 +442,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
             item.resourceSnapshot = resources.snapshot;
           } else if (!head && canReserveHead(item)) {
             head = item;
-            availableMemoryKiB = Math.max(0, availableMemoryKiB - headReservationKiB(head));
-            availableCpuCores = Math.max(0, availableCpuCores - headReservationCpuCores(head));
+            reserveHead(head);
+            const reservation = headReservation(head);
+            availableMemoryKiB = Math.max(0, availableMemoryKiB - reservation.memoryKiB);
+            availableCpuCores = Math.max(0, availableCpuCores - reservation.cpuCores);
           }
         }
         continue;
@@ -460,9 +466,11 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       availableMemoryKiB -= floorKiB;
       availableCpuCores -= cpuCores;
       item.slot = slot;
+      if (headPledge?.item === item) reserveHead();
       item.resourceSnapshot = resources.snapshot;
       send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores: clientCpuCores, workers: slot.workers });
     }
+    reserveHead(head);
     refreshWatchers();
   }
   async function connectSlot(slot) {
@@ -513,7 +521,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         return;
       }
       if (request.kind === 'resources-busy' && item?.slot && !item.settled) {
-        slots.delete(item.slot.address);
+        releaseReservation(item.slot);
         item.slot = null;
         item.blocked = true;
         if (item.noWait) refuse(item, 'HSTACK_WORKSPACE_RESOURCE_BUSY');
