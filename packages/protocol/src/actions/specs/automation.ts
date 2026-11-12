@@ -14,9 +14,9 @@ export function createAutomationEventActionSpec(actionId: AutomationEventActionI
     id: actionId, executionPlacement: 'account', approval: { result: 'none' },
     title: AUTOMATION_EVENT_ACTION_TITLES[actionId],
     description: 'Read or update Event Automation state through the canonical Automation owner.',
-    // Source telemetry records the admitted runtime's health, not a user
-    // effect. Event admission retains its ordinary configurable confirmation.
-    safety: readOnly || actionId === 'automation.event.source.status.report' ? 'safe' : 'danger',
+    // Occurrences inherit the persisted trigger's approval; source telemetry
+    // records that admitted runtime's health. Explicit Action policy still applies.
+    safety: 'safe',
     placements: [],
     surfaces: {
       ui: false,
@@ -55,7 +55,8 @@ export function createAutomationConversationActionSpec(
     id: actionId, executionPlacement: 'account', approval: { result: 'none' },
     title: AUTOMATION_CONVERSATION_ACTION_TITLES[actionId],
     description,
-    safety: readOnly ? 'safe' : 'danger',
+    // The persisted conversation trigger owns approval, not each occurrence.
+    safety: 'safe',
     placements: [],
     surfaces: {
       ui: false,

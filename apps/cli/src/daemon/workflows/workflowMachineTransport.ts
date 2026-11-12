@@ -1,5 +1,6 @@
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import type { RpcLocalActionContext } from '../../api/rpc/types';
 import type { StoredCredentials } from '../../persistence';
 import type { MachineActionDirectTargetTransport } from '../../session/actions/createCliActionDeps';
@@ -21,8 +22,10 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   isCurrent(): Promise<boolean>;
   signal?: AbortSignal;
   transport: MachineActionDirectTargetTransport;
+  runActionOperation?: ActionExecutorDeps['runActionOperation'];
 }>): Readonly<{
   transport: MachineActionDirectTargetTransport;
+  runActionOperation?: ActionExecutorDeps['runActionOperation'];
   resolveSavedSecretOperationContext(): Promise<import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 | null>;
   dispose(): Promise<void>;
 }> {
@@ -46,6 +49,14 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
     return prepared && await prepared.admitted.isCurrent() ? prepared : null;
   };
   return {
+    ...(input.runActionOperation ? { runActionOperation: async (request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]) => {
+      const prepared = await prepare(request.context);
+      if (!prepared) return { ok: false as const, errorCode: 'project_requester_credentials_unavailable' as const,
+        error: 'Workflow requester authority unavailable' };
+      const context = { ...request.context, requesterSessionBootstrap: prepared.admitted,
+        verifyMachineAdmissionCurrent: input.isCurrent };
+      return await input.runActionOperation!({ ...request, context });
+    } } : {}),
     resolveSavedSecretOperationContext: async () => {
       const prepared = await prepare({ executionRunWorkflowRunId: input.runId,
         requesterWorkAttributionV1: input.requesterWorkAttributionV1 });

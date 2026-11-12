@@ -41,6 +41,13 @@ import {
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
+import { AutomationObservationOnlyDefinitionV1Schema } from "@happier-dev/protocol/automations/automationWorkflowRecipeV2";
+import { HEALTH_CHECK_EVENT_REFS_V1 } from "@happier-dev/protocol/deployments/healthCheckV1";
+import {
+    HealthCheckSourceConfigV1ProtocolSchema,
+    HealthCheckTransitionV1ProtocolSchema,
+} from "@happier-dev/protocol/deployments/healthCheckSourceV1";
+import { createHealthCheckSourceInstanceIdV1 } from "@happier-dev/protocol/deployments/healthCheckSubjectV1";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import { registerAutomationEventRoutes } from "@/app/api/routes/automations/registerAutomationEventRoutes";
@@ -407,6 +414,7 @@ function createSignedPublisherHeader(params: Readonly<{
 
 function releaseFacts(params: Readonly<{
     archiveDigestSha256?: string;
+    healthObservation?: boolean;
     payloadSchema?: PluginJsonSchemaV2;
     sourceContractVersion?: number;
     supportedObservationTransports?: readonly ("checkpointedPull" | "durablePush")[];
@@ -417,13 +425,18 @@ function releaseFacts(params: Readonly<{
     const supportedObservationTransports = params.supportedObservationTransports
         ?? ["checkpointedPull"];
     const supportsDurablePush = supportedObservationTransports.includes("durablePush");
-    const sourceConfigSchema = { type: "object", additionalProperties: false } as const;
+    const eventRef = params.healthObservation
+        ? HEALTH_CHECK_EVENT_REFS_V1.failed
+        : { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID };
+    const sourceConfigSchema = params.healthObservation
+        ? HealthCheckSourceConfigV1ProtocolSchema.jsonSchema
+        : { type: "object", additionalProperties: false } as const;
     return normalizePluginReleaseFactsV1({
-        ref: { pluginId: PLUGIN_ID, version },
+        ref: { pluginId: eventRef.pluginId, version },
         archiveDigestSha256: params.archiveDigestSha256 ?? `sha256:${"a".repeat(64)}`,
         normalizedManifest: {
             schemaVersion: 2,
-            id: PLUGIN_ID,
+            id: eventRef.pluginId,
             version,
             displayName: "Automation Event admission fixture",
             engines: { happier: "^1.0.0" },
@@ -451,15 +464,18 @@ function releaseFacts(params: Readonly<{
                     execution: { target: "daemon" },
                 }] : [])],
                 events: [{
-                    id: EVENT_LOCAL_ID,
+                    id: eventRef.localId,
                     kind: "event",
                     title: "Repository event",
-                    payloadSchema: params.payloadSchema ?? EVENT_PAYLOAD_SCHEMA,
+                    payloadSchema: params.payloadSchema ?? (params.healthObservation
+                        ? HealthCheckTransitionV1ProtocolSchema.jsonSchema
+                        : EVENT_PAYLOAD_SCHEMA),
                     automation: {
                         v: 1,
                         eligible: true,
                         source: {
                             sourceContractVersion,
+                            ...(params.healthObservation ? { observationOnly: { kind: "observationOnly" } } : {}),
                             supportedObservationTransports,
                             ...(supportsDurablePush ? {
                                 webhookContributionRef: {
@@ -468,7 +484,7 @@ function releaseFacts(params: Readonly<{
                                 },
                             } : {}),
                             sourceConfigSchema,
-                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
+                            setupActionRef: { pluginId: eventRef.pluginId, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -977,6 +993,7 @@ async function configureE2eeAccount() {
 
 function encryptedHostEvidence(params: Readonly<{
     adoptedRevision?: string;
+    sourceInstanceId?: string;
     eventDeclarationRelease?: AutomationEventDeclarationReleaseV1;
     event: unknown;
     snapshot: ReturnType<typeof createAccountScopedCryptoMaterialSnapshotV1>;
@@ -1038,7 +1055,7 @@ function encryptedHostEvidence(params: Readonly<{
                 material: params.snapshot.material,
                 evidence: {
                     ...evidence,
-                    sourceInstanceId: "repository-happier-example",
+                    sourceInstanceId: params.sourceInstanceId ?? "repository-happier-example",
                     sourceContractVersion: 1,
                     observationReceivedAt: event.observationReceivedAt,
                     filter: { version: null, result: "matched" as const },
@@ -1093,12 +1110,17 @@ describe("Automation Event admission", () => {
 
     async function seed(params: Readonly<{
         filter?: PluginJsonValueV2;
+        healthObservation?: boolean;
         maximumObservationAgeMs?: number | null;
         supportedObservationTransports?: readonly ("checkpointedPull" | "durablePush")[];
     }> = {}): Promise<void> {
         const release = releaseFacts({
+            healthObservation: params.healthObservation,
             supportedObservationTransports: params.supportedObservationTransports,
         });
+        const eventRef = params.healthObservation
+            ? HEALTH_CHECK_EVENT_REFS_V1.failed
+            : { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID };
         await db.account.create({
             data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" },
         });
@@ -1117,7 +1139,7 @@ describe("Automation Event admission", () => {
         await db.accountPluginIntent.create({
             data: {
                 accountId: ACCOUNT_ID,
-                pluginId: PLUGIN_ID,
+                pluginId: eventRef.pluginId,
                 desiredVersion: PLUGIN_VERSION,
                 enabled: true,
                 writableCollections: [],
@@ -1126,7 +1148,7 @@ describe("Automation Event admission", () => {
         await db.accountPluginRelease.create({
             data: {
                 accountId: ACCOUNT_ID,
-                pluginId: PLUGIN_ID,
+                pluginId: eventRef.pluginId,
                 version: PLUGIN_VERSION,
                 archiveDigestSha256: release.archiveDigestSha256,
                 normalizedManifest: release.normalizedManifest,
@@ -1141,7 +1163,7 @@ describe("Automation Event admission", () => {
                 serverIdentityId: SERVER_IDENTITY_ID,
                 machineId: MACHINE_ID,
                 materializationId: MATERIALIZATION_ID,
-                pluginId: PLUGIN_ID,
+                pluginId: eventRef.pluginId,
                 version: PLUGIN_VERSION,
                 sourceClass: "registryPackage",
                 portableRelease: true,
@@ -1167,14 +1189,14 @@ describe("Automation Event admission", () => {
                         kind: "pluginEvent",
                         enabled: true,
                         revision: 1,
-                        eventPluginId: PLUGIN_ID,
-                        eventLocalId: EVENT_LOCAL_ID,
+                        eventPluginId: eventRef.pluginId,
+                        eventLocalId: eventRef.localId,
                         sourceSelectorId: SOURCE_SELECTOR_ID,
                         sourceContractVersion: 1,
                         observationTransport: "checkpointedPull",
                         watcherMachineId: MACHINE_ID,
                         watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
-                        watcherPluginId: PLUGIN_ID,
+                        watcherPluginId: eventRef.pluginId,
                         watcherMaterializationId: MATERIALIZATION_ID,
                         definitionEnvelope: triggerDefinitionEnvelope(params),
                     },
@@ -3432,6 +3454,110 @@ describe("Automation Event admission", () => {
         ]);
         await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } }))
             .resolves.toBe(2);
+    });
+
+    it.each(["plain", "e2ee"] as const)("settles a valid %s health observation without a recipe, assignment, or Run", async (mode) => {
+        await seed({ healthObservation: true });
+        const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
+        const subject = { kind: "machineService" as const, machineId: MACHINE_ID, serviceId: "health-service" };
+        const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
+        const sourceConfig = HealthCheckSourceConfigV1ProtocolSchema.parse({
+            v: 1,
+            subject,
+            checks: [{
+                checkId: "http",
+                kind: { pluginId: eventRef.pluginId, localId: "http" },
+                binding: { kind: "healthCheck" },
+                config: { endpoint: "http://127.0.0.1:8080/health", expectStatus: 200 },
+                periodMs: 300_000,
+                consecutiveFailuresBeforeAlerting: 1,
+            }],
+        });
+        const e2ee = mode === "e2ee" ? await configureE2eeAccount() : null;
+        const definition = {
+            binding: {
+                v: 1 as const,
+                automationId: AUTOMATION_ID,
+                triggerId: TRIGGER_ID,
+                triggerRevision: 1,
+                triggerKind: "pluginEvent" as const,
+                eventRef,
+                sourceSelectorId: SOURCE_SELECTOR_ID,
+            },
+            definition: {
+                v: 1 as const,
+                sourceInstanceId,
+                sourceConfig,
+                displayLabel: "Saved health check",
+                filter: null,
+                maximumObservationAgeMs: null,
+            },
+        };
+        const envelope = e2ee
+            ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                ...definition,
+                mode: "e2ee",
+                material: e2ee.snapshot.material,
+                randomBytes: (length) => new Uint8Array(length).fill(3),
+            })
+            : sealAutomationTriggerDefinitionStoredEnvelopeV1({ ...definition, mode: "plain" });
+        await db.automation.update({
+            where: { id: AUTOMATION_ID },
+            data: { templateCiphertext: JSON.stringify(AutomationObservationOnlyDefinitionV1Schema.parse({
+                kind: "observationOnly", templateVersion: 1,
+            })) },
+        });
+        await db.automationAssignment.deleteMany({ where: { automationId: AUTOMATION_ID } });
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: { definitionEnvelope: JSON.stringify(envelope) },
+        });
+        // Raw producer shape from QA-M-NATIVE/r137-health-occurrence-approved.json;
+        // watched identities and their source id are rebuilt for this fixture.
+        const payload = { sourceInstanceId, subject, checkId: "http", transition: "failed", observedAt: 1_794_503_173_573 };
+        const event = {
+            ...input({
+                occurrenceId: "2uoK1M72jwdUJTamycKdbd8LXdao9vh0kM5n9QDrd9s",
+                occurredAt: 1_794_503_173_573,
+                payload,
+            }),
+            eventRef,
+            observationReceivedAt: 1_794_503_173_381,
+        };
+        const healthCaller = { ...caller, pluginId: eventRef.pluginId };
+        const hostEvidence = e2ee
+            ? encryptedHostEvidence({ ...e2ee, event, sourceInstanceId })
+            : undefined;
+        await expect(admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller: healthCaller,
+            input: event,
+            hostEvidence,
+        })).resolves.toEqual({ results: [{ kind: "observed", checkpointSafe: true }] });
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
+
+        const invalidEvent = {
+            ...event,
+            occurrenceId: "health-invalid-payload",
+            payload: { ...payload, transition: "invalid" },
+        };
+        const invalidHostEvidence = e2ee
+            ? encryptedHostEvidence({ ...e2ee, event: invalidEvent, sourceInstanceId })
+            : undefined;
+        // The trusted host owns private payload validation for E2EE Accounts.
+        await expect(admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller: healthCaller,
+            input: invalidEvent,
+            hostEvidence: invalidHostEvidence === undefined ? undefined : {
+                ...invalidHostEvidence,
+                definitions: invalidHostEvidence.definitions.map(item => ({
+                    ...item,
+                    outcome: { kind: "skipped", reason: "occurrenceRejected" },
+                })),
+            },
+        })).resolves.toEqual({ results: [{ kind: "skipped", reason: "occurrenceRejected", checkpointSafe: true }] });
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
     });
 
     it("rejects a payload outside the current Event schema before creating a Run", async () => {

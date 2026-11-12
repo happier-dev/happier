@@ -170,6 +170,9 @@ export type AutomationEventsActionResultById = {
             reason: 'capacity' | 'noEnabledAssignment' | 'occurrenceConflict' | 'temporarilyUnavailable';
             checkpointSafe: false;
         } | {
+            kind: 'observed';
+            checkpointSafe: true;
+        } | {
             kind: 'refreshDefinition';
             reason: 'definitionStale' | 'observationTargetChanged';
             checkpointSafe: false;

@@ -290,6 +290,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       savedSecretOperationContext?: Parameters<typeof createCredentialedWorkflowMaterializationHostV1>[0]['savedSecretOperationContext'];
       machineAdmissionTransport: MachineAdmissionTransport;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
+      runActionOperation?: import('@happier-dev/protocol').ActionExecutorDeps['runActionOperation'];
       managedMachineAction?: import('@happier-dev/protocol').ActionExecutorDeps['managedMachineAction'];
       sessionActionRpcTransport?: import('@/session/actions/createCliActionDeps').SessionActionRpcTransport;
       installationIdentity?: Readonly<{ installationId: string; privateKey: import('@/api/externalActionExecutionAuthorization').ExternalActionMachineRequestSigningKey }>;
@@ -329,6 +330,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         }) } : {}),
         machineAdmissionTransport: input.machineAdmissionTransport,
         machineActionDirectTargetTransport: input.machineActionDirectTargetTransport,
+        ...(input.runActionOperation ? { runActionOperation: input.runActionOperation } : {}),
         ...(input.sessionActionRpcTransport ? { sessionActionRpcTransport: input.sessionActionRpcTransport } : {}),
         ...(input.installationIdentity ? { externalActionMachineInstallationId: input.installationIdentity.installationId,
           externalActionMachineRequestPrivateKey: input.installationIdentity.privateKey } : {}),

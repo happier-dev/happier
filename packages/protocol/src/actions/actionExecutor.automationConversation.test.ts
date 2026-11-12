@@ -25,7 +25,7 @@ const callerMaterialization = {
 } as const;
 
 describe('createActionExecutor (Automation conversation admission)', () => {
-  it('routes the strict input with host-stamped plugin provenance and cancellation', async () => {
+  it('admits the persisted conversation trigger without another approval, retaining host provenance and cancellation', async () => {
     const controller = new AbortController();
     const automationConversationAction = vi.fn(async () => ({
       kind: 'admitted' as const,
@@ -34,7 +34,6 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     }));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.conversation.admit', conversationAdmitInput, {
@@ -164,7 +163,6 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     const automationConversationAction = vi.fn(async () => ({}));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.conversation.admit', {

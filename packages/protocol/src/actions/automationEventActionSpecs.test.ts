@@ -36,7 +36,7 @@ import {
 type AutomationActionIdV1 = Extract<ActionId, `automation.event.${string}` | `automation.conversation.${string}`>;
 
 describe('Event Automation ActionSpecs', () => {
-  it('admits source telemetry by default while preserving explicit approval policy and event-admission confirmation', () => {
+  it('admits source telemetry by default while preserving explicit approval policy', () => {
     const actionId = 'automation.event.source.status.report';
     const spec = getActionSpec(actionId);
     const context = { surface: 'plugin', authority: 'account_automation' } as const;
@@ -45,9 +45,21 @@ describe('Event Automation ActionSpecs', () => {
       settings: { v: 1, actions: {} } }).required).toBe(false);
     expect(resolveActionApprovalRouting({ actionId, spec, context,
       settings: { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['plugin'] } } } }).required).toBe(true);
-    expect(resolveActionApprovalRouting({ actionId: 'automation.event.admit',
-      spec: getActionSpec('automation.event.admit'), context }).required).toBe(true);
   });
+
+  // O-DEPLOY and HANDOFF-OTHER-PROGRAMS, 2026-11-12 16:48:
+  // occurrence admission inherits the persisted trigger's approval.
+  it.each(['automation.event.admit', 'automation.conversation.admit'] as const)(
+    'inherits persisted trigger approval for %s without overriding explicit policy', actionId => {
+      const spec = getActionSpec(actionId);
+      const context = { surface: 'plugin', authority: 'account_automation' } as const;
+      expect(resolveActionApprovalRouting({ actionId, spec, context }).required).toBe(false);
+      expect(resolveActionApprovalRouting({ actionId, spec, context,
+        settings: { v: 1, actions: {} } }).required).toBe(false);
+      expect(resolveActionApprovalRouting({ actionId, spec, context,
+        settings: { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['plugin'] } } } }).required).toBe(true);
+    },
+  );
 
   it('keeps the legacy Automation exports on the exact browser-safe Action packet', () => {
     expect(legacyAutomationEventActionIds).toBe(AUTOMATION_EVENT_ACTION_IDS_V1);

@@ -49,13 +49,15 @@ function httpResponse<T>(data: T): AxiosResponse<T> {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('trigger-started Event admission under a required approval', () => {
+describe('trigger-started Event admission approval', () => {
     // A checkpointed observer replays one unsettled occurrence with the same
     // admission input on every eligible cycle (P03 QA: 1,691 Asks for 2 occurrences).
     it.each([
-        { title: 'completes an approved observation-only health occurrence', retries: 1 },
-        { title: 'keeps one pending Ask per occurrence across retries', retries: 6 },
-    ])('$title', ({ retries }) => withConfiguredDaemonTestHome({
+        { title: 'admits ongoing observations under persisted trigger approval by default', retries: 1, requireApproval: false, rejected: false },
+        { title: 'completes an explicitly approved observation-only health occurrence', retries: 1, requireApproval: true, rejected: false },
+        { title: 'publishes no health notice when an observation-only occurrence is rejected', retries: 1, requireApproval: true, rejected: true },
+        { title: 'keeps one pending Ask per occurrence across explicitly required approval retries', retries: 6, requireApproval: true, rejected: false },
+    ])('$title', ({ retries, requireApproval, rejected }) => withConfiguredDaemonTestHome({
         prefix: 'event-admission-approval-', env: { HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined },
     }, async () => {
         const socket = await createRequesterCurrentnessSocketHarness();
@@ -68,6 +70,9 @@ describe('trigger-started Event admission under a required approval', () => {
             subject: { kind: 'machineService', machineId, serviceId: 'web' },
             checks: [{ checkId: 'http', kind: { pluginId: 'happier.machine.services', localId: 'http' },
                 binding: { kind: 'healthCheck' }, config: { endpoint: 'https://example.test/health', expectStatus: 200 },
+                periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 },
+            { checkId: 'http-secondary', kind: { pluginId: 'happier.machine.services', localId: 'http' },
+                binding: { kind: 'healthCheck' }, config: { endpoint: 'https://example.test/health/secondary', expectStatus: 200 },
                 periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
         const detail = MachineServicesDetailResultV1Schema.parse({ kind: 'service', service: {
             serviceId: 'web', name: 'Web', authority: 'machine', lifecyclePurpose: 'deployment', generation: 'native-generation',
@@ -117,6 +122,9 @@ describe('trigger-started Event admission under a required approval', () => {
             throw new Error(`Unexpected GET ${path}`);
         });
         let admissionPosts = 0;
+        const settlement = rejected
+            ? { kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true } as const
+            : { kind: 'observed', checkpointSafe: true } as const;
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const path = new URL(String(url)).pathname;
             if (path === AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1) {
@@ -163,7 +171,7 @@ describe('trigger-started Event admission under a required approval', () => {
             }
             if (path.includes('/automations/events/admit')) {
                 admissionPosts += 1;
-                return httpResponse({ results: [{ kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }],
+                return httpResponse({ results: [settlement],
                     continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } });
             }
             throw new Error(`Unexpected POST ${path}`);
@@ -187,7 +195,8 @@ describe('trigger-started Event admission under a required approval', () => {
                 admit = occurrenceId => context.services.actions.execute('automation.event.admit', {
                     eventRef: { pluginId, localId: 'changed' }, occurrenceId, occurredAt: 1_700_000_000_000,
                     observationReceivedAt: 1_700_000_000_100, payload: { sourceInstanceId: 'source:approval', subject: sourceConfig.subject,
-                        checkId: 'http', transition: 'failed', observedAt: 1_700_000_000_000 },
+                        checkId: occurrenceId === 'occurrence-b' ? 'http-secondary' : 'http',
+                        transition: 'failed', observedAt: 1_700_000_000_000 },
                     definitions: [{ automationId: 'cmautomation00000000000001', triggerId: 'trigger-1', triggerRevision: 1,
                         sourceSelectorId: '3f1c2a4e-8b7d-4c3e-9f2a-1b2c3d4e5f60' }],
                 }, { signal: context.signal });
@@ -203,7 +212,8 @@ describe('trigger-started Event admission under a required approval', () => {
                 loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })); },
             runtimeOptions: { scopedActionRuntime: { credentials,
                 actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettingsParse({
-                    actionsSettingsV1: { v: 1, actions: { 'automation.event.admit': { approvalRequiredSurfaces: ['plugin'] } } },
+                    actionsSettingsV1: { v: 1, actions: requireApproval
+                        ? { 'automation.event.admit': { approvalRequiredSurfaces: ['plugin'] } } : {} },
                 }), allowEnvironmentOverride: false }) }, resolveCurrentMachineId: () => machineId,
                 resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }) },
         });
@@ -230,6 +240,10 @@ describe('trigger-started Event admission under a required approval', () => {
                 (error: unknown) => { outcomes.push(`error:${(error as { code?: string }).code ?? String(error)}`); })
                 .finally(() => { settled = true; });
             attempts.push(attempt);
+            if (!requireApproval) {
+                await attempt;
+                return;
+            }
             // A retry either settles (a deferred receipt or a failure) or joins an open Ask's live waiter.
             await vi.waitFor(() => expect(settled || liveWaiters() === waiting + 1).toBe(true));
             if (!settled) waiting += 1;
@@ -240,6 +254,16 @@ describe('trigger-started Event admission under a required approval', () => {
             for (let index = 0; index < retries; index++) await retry('occurrence-a');
             const asksForOneOccurrence = artifacts.size;
             await retry('occurrence-b');
+            if (!requireApproval) {
+                expect({ asksForOneOccurrence, asksAfterNewOccurrence: artifacts.size })
+                    .toEqual({ asksForOneOccurrence: 0, asksAfterNewOccurrence: 0 });
+                await Promise.all(attempts);
+                expect({ admissionPosts, notices: notices.size, unmatched })
+                    .toEqual({ admissionPosts: 2, notices: 2, unmatched: [] });
+                expect(outcomes).toEqual(Array.from({ length: 2 }, () =>
+                    JSON.stringify({ results: [settlement] }).slice(0, 80)));
+                return;
+            }
             expect({ asksForOneOccurrence, asksAfterNewOccurrence: artifacts.size, admissionPosts, outcomes: outcomes.slice(0, 2), unmatched: unmatched.slice(0, 4) })
                 .toEqual({ asksForOneOccurrence: 1, asksAfterNewOccurrence: 2, admissionPosts: 0, outcomes: [], unmatched: [] });
             const [first] = artifacts.keys();
@@ -258,11 +282,12 @@ describe('trigger-started Event admission under a required approval', () => {
             expect(approved, JSON.stringify({ execution: 'execution' in approved ? approved.execution : approved, serviceReads, outcomes }))
                 .toMatchObject({ status: 'executed', execution: { ok: true } });
             expect(outcomes.slice(0, retries)).toEqual(Array.from({ length: retries }, () =>
-                JSON.stringify({ results: [{ kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }] }).slice(0, 80)));
-            expect(serviceReads).toContainEqual({
+                JSON.stringify({ results: [settlement] }).slice(0, 80)));
+            if (rejected) expect(serviceReads).toEqual([]);
+            else expect(serviceReads).toContainEqual({
                 input: { serverId: configuration.activeServerId, machineId, serviceId: 'web' }, result: { ok: true, result: detail },
             });
-            expect(notices.size).toBe(1);
+            expect(notices.size).toBe(rejected ? 0 : 1);
         } finally {
             for (const artifactId of artifacts.keys()) coordinator.cancelApproval(artifactId);
             await fixture.lease.release();

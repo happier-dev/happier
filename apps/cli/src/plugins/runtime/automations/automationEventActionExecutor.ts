@@ -60,7 +60,7 @@ export type AutomationEventActionTransport = Readonly<{
 }>;
 
 export type CommittedAutomationEventObservationV1 = Readonly<{
-  /** Canonical E2 result; observation-only rejected occurrences may still publish notices. */
+  /** Whether the committed occurrence created or rejoined an executable Run. */
   admitted: boolean;
   caller: PluginMachineMaterializationRefV1;
   definition: AutomationEventSourceDefinitionV1;
@@ -570,8 +570,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
             const outcome = mergedResults[index];
             if (!outcome?.checkpointSafe) continue;
             const definition = definitionsBySelector.get(automationEventAdmissionSelectorKey(selector));
-            if (!definition || outcome.kind === 'skipped'
-              && !(outcome.reason === 'occurrenceRejected' && definition.observationOnly?.kind === 'observationOnly')) continue;
+            if (!definition || outcome.kind === 'skipped') continue;
             const sourceKey = createCanonicalJsonSigningInput({ eventRef: definition.eventRef,
               sourceInstanceId: definition.sourceInstanceId, sourceContractVersion: definition.sourceContractVersion,
               sourceConfig: definition.sourceConfig, observationTransport: definition.observationTransport });

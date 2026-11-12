@@ -3,7 +3,7 @@ import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 type AutomationEventAdmitItemResultV1 = PluginActionResultById['automation.event.admit']['results'][number];
 
 export type GithubAutomationAdmissionTelemetryV1 = Readonly<{
-  kind: 'admitted' | 'skipped' | 'rejoined' | 'unsettled';
+  kind: 'admitted' | 'skipped' | 'rejoined' | 'observed' | 'unsettled';
   admittedDelta: 0 | 1;
   skippedDelta: 0 | 1;
 }>;
@@ -27,6 +27,9 @@ export function classifyGithubAutomationAdmissionTelemetry(
   }
   if (result.kind === 'rejoined') {
     return { kind: 'rejoined', admittedDelta: 0, skippedDelta: 0 };
+  }
+  if (result.kind === 'observed') {
+    return { kind: 'observed', admittedDelta: 0, skippedDelta: 0 };
   }
   return { kind: 'unsettled', admittedDelta: 0, skippedDelta: 0 };
 }

@@ -195,7 +195,7 @@ function ineligibleAdmissionResult(
     if (reason === "triggerKindMismatch") return refresh("observationTargetChanged");
     if (reason === "noEnabledAssignment") return blocked("noEnabledAssignment");
     if (reason === "definitionInvalid") return skipped("occurrenceRejected");
-    if (reason === "observationOnly") return skipped("occurrenceRejected");
+    if (reason === "observationOnly") return { kind: "observed", checkpointSafe: true };
     // Missing or disabled definitions are terminal for this observation and
     // checkpoint-safe. Assignment liveness is handled above as retryable: a
     // repaired definition must still be able to admit this exact occurrence.

@@ -323,6 +323,7 @@ export {
 export const AutomationEventAdmitItemResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('admitted'), runId: asProtocolZod(HostIdentifierV1Schema), checkpointSafe: z.literal(true) }),
   z.strictObject({ kind: z.literal('rejoined'), runId: asProtocolZod(HostIdentifierV1Schema), checkpointSafe: z.literal(true) }),
+  z.strictObject({ kind: z.literal('observed'), checkpointSafe: z.literal(true) }),
   z.strictObject({
     kind: z.literal('skipped'),
     reason: z.enum(['filtered', 'beforeObservationStart', 'outsideFreshness', 'definitionRetired', 'occurrenceRejected']),

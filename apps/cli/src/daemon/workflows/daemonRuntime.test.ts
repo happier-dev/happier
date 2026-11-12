@@ -41,7 +41,7 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { publishSessionControlsMetadataBestEffort } from '@/agent/runtime/controls/publishSessionControlsMetadataBestEffort';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -55,6 +55,7 @@ import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLe
   readWorkflowRunLeafStartRequestV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readFile, writeFile } from 'node:fs/promises';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createServer } from 'node:http';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { invalidateCliSnapshots } from '@/capabilities/snapshots/cliSnapshot';
@@ -84,6 +85,12 @@ import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artif
 import { createWorkflowActionContextResolver } from './workflowActionContext';
 import { createCredentialedWorkflowMaterializationHostV1 } from '@/session/actions/workflowMaterializationHost';
 import { admitActionAgentStartV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { prepareWorkflowApprovedOperation } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { AutomationDefinitionDetailSchema, AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { ListAccountSessionFollowsResponseV1Schema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 
 // Physical daemon HTTP binding is an OS boundary; the startup/ingress composition stays real.
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44322, stop: async () => {} }) }));
@@ -1266,6 +1273,231 @@ describe('production FIN managed Action composition', () => {
     const settled = await operations.handlers.getV2({ operationId: 'fin-native', waitForTerminal: true });
     expect(settled, JSON.stringify(settled)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
     expect(effects).toContain('power');
+  });
+});
+
+describe('production daemon scheduled service command operation', () => {
+  let releaseHome = () => {};
+  afterEach(() => { releaseHome(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it.each(['automatic', 'ask', 'foreign', 'approved-trigger', 'changed-trigger'] as const)('keeps unattended service execution under the installed operation owner (%s)', async policy => {
+    const accountId = 'scheduled-service-owner', machineId = 'scheduled-worker';
+    const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
+    const home = 'http://127.0.0.1:43187', homeId = 'srv_scheduled_service';
+    const serverId = configuration.activeServerId;
+    releaseHome = publishServerHttpRuntimeOrigin(home, 'https');
+    const root = await createTempDir('workflow-service-operation-');
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' as const };
+    const accountSettings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {},
+      ...(policy === 'automatic' || policy === 'foreign' ? { approvalWaivedSurfaces: { 'machines.services.exec': ['agent'] } } : {}) } });
+    await seedTestServerProfile({ id: serverId, serverUrl: home, homeId });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: homeId } } })), { status: 200 }));
+    mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    const runtimeFixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+    let launches = 0;
+    let releaseNative!: () => void;
+    let nativeOpened!: () => void;
+    const opened = new Promise<void>(resolve => { nativeOpened = resolve; });
+    const settle = new Promise<void>(resolve => { releaseNative = resolve; });
+    const redaction = createProviderRedactionLease({ values: [] });
+    onTestFinished(async () => {
+      releaseNative();
+      await runtimeFixture.registry.projectManagedServices.retireMachineServices({ serverId, machineId });
+      await runtimeFixture.dispose();
+      redaction.close(); await removeTempDir(root);
+    });
+    const service = await runtimeFixture.registry.projectManagedServices.superviseMachine({ serverId, machineId,
+      watch: { v: 1, watchId: 'scheduled-service', name: 'Scheduled service', adapter: { pluginId: 'example.native', localId: 'service' },
+        nativeResourceId: 'scheduled-service', lifecyclePurpose: 'deployment' },
+      isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
+        async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+        async stop() { return { status: 'stopped' }; },
+      },
+      // Native launch is the system boundary. Service selection, operation/native
+      // admission, redaction and physical process settlement remain real.
+      launchServiceExec: async request => {
+        expect(request).toEqual({ kind: 'command', argv: ['fixture-command'] });
+        launches++; nativeOpened(); await settle;
+        return { command: process.execPath, args: ['-e', 'process.stdout.write("scheduled service output")'],
+          cwd: root, env: {}, secretRedactionLease: redaction, release() {} };
+      },
+    });
+    const input = { serverId: homeId, machineId, target: { kind: 'current', serviceId: service.serviceId,
+      expectedGeneration: service.instanceId }, mode: 'exec', argv: ['fixture-command'] };
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'job',
+      actionId: 'machines.services.exec', input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal', value }])) }] };
+    const spec = getActionSpec('machines.services.exec');
+    const occurredAt = Date.parse('2026-11-12T15:54:00.000Z');
+    const triggerId = 'every-two-minutes';
+    const cause = {
+      kind: 'trigger' as const, triggerId, triggerRevision: 1, triggerKind: 'schedule' as const,
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor: occurredAt } }),
+      occurredAt, evidence: { scheduledFor: occurredAt } };
+    AutomationRunCauseSchema.parse(cause);
+    const origin = { kind: 'automation' as const, automationId: 'scheduled-service-automation', cause };
+    const approvedOperation = policy === 'approved-trigger' || policy === 'changed-trigger'
+      ? await prepareWorkflowApprovedOperation({ parent: { actionId: 'workflow.trigger.add', input: {
+        target: { kind: 'inline', definition }, project: { machineId, directory: root },
+        trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'interval', everyMs: 120_000, scheduleExpr: null, timezone: null } },
+        actionApproval: 'automatic',
+      } }, steps: [{ actionId: 'machines.services.exec', input }],
+      context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
+        serverId, actionRequestId: 'save-service-schedule' }, nativeAccount: { accountId, serverId, isCurrent: async () => true } })
+      : undefined;
+    // These are persisted HTTP boundary records. The real saved-consent reader
+    // must match the current trigger before default Ask can be inherited.
+    const savedTrigger = AutomationDefinitionDetailSchema.parse({ id: origin.automationId, name: 'Scheduled service', description: null,
+      enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+      assignments: [{ machineId, enabled: true, priority: 0, updatedAt: 1 }],
+      triggers: [{ id: origin.cause.triggerId, revision: 1, kind: 'schedule', enabled: true, createdAt: 1, updatedAt: 1,
+        schedule: { kind: 'interval', everyMs: 120_000, scheduleExpr: null, timezone: null }, nextRunAt: 2, triggerDefinitionEnvelope: null }],
+      executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+        workspace: { directory: root }, executionTarget: { kind: 'detached_run' },
+        inlineDefinition: policy === 'changed-trigger' ? { ...definition, blocks: [{ kind: 'action', id: 'job',
+          actionId: 'machines.services.exec', input: Object.fromEntries(Object.entries({ ...input, argv: ['changed-command'] })
+            .map(([key, value]) => [key, { kind: 'literal', value }])) }] } : definition,
+        // The trigger update owner clears saved consent when the command changes.
+        ...(approvedOperation && policy !== 'changed-trigger'
+          ? { actionApprovals: [{ triggerId: origin.cause.triggerId, operation: approvedOperation }] } : {}),
+      } } },
+    });
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: WorkflowAcceptedSnapshotV1Schema.parse({ startedBy: 'user', definition,
+        ...(approvedOperation ? { approvedOperation } : {}),
+        authoredDefinition: definition, workDepth: 0, metadata: null, frozenChildren: {}, inputs: {}, machineId,
+        materializedLeaves: [{ sourceKey: '$root', blockId: 'job', kind: 'action', actionId: 'machines.services.exec', selection: {},
+          executionTarget: { kind: 'detached_run' }, authoredWorkspace: { kind: 'inherit' }, actionInput: input, actionContract: {
+            inputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.inputSchema, { target: 'draft-7' })),
+            outputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.outputSchema!, { target: 'draft-7' })) } }],
+        source: { kind: 'inline' }, executionTarget: { kind: 'detached_run' }, workspaceTarget: {
+          project: { machineId, directory: root, checkoutRootPath: root } },
+        origin: { kind: 'direct', authenticatedStarterV1: { requestRef: runId,
+          requester: { serverId: homeId, accountId } }, actionPolicy: { authority: 'account_automation' } },
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } }) }));
+    const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin, acceptedEnvelope });
+    WorkflowRunSummaryV1Schema.parse(storage.run());
+    let savedTriggerReads = 0;
+    const unhandledHttp: string[] = [];
+    const artifacts = new Map<string, Record<string, unknown>>();
+    let publishApproval!: (artifactId: string) => void;
+    const approvalPublished = new Promise<string>(resolve => { publishApproval = resolve; });
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+      if (request.method === 'GET' && new URL(request.url!).pathname === `/v3/automations/${origin.automationId}`) {
+        savedTriggerReads++;
+        return { status: 200, data: savedTrigger };
+      }
+      unhandledHttp.push(`${request.method} ${new URL(request.url!).pathname}`);
+      throw new Error('Unexpected scheduled trigger HTTP request');
+    });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: AccountEncryptionCurrentnessResponseSchema.parse({
+        mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }) };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: accountSettings }, version: 1 } };
+      if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), [...artifacts.values()]) };
+      if (path.startsWith('/v1/artifacts/')) {
+        const artifact = artifacts.get(path.split('/').at(-1)!);
+        return artifact ? { status: 200, data: artifact } : { status: 404, data: { error: 'Artifact not found' } };
+      }
+      if (path === SESSION_FOLLOW_HTTP_PATHS_V1.otherSource) return { status: 200,
+        data: ListAccountSessionFollowsResponseV1Schema.parse({ follows: [] }) };
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [{ key: 'role-overrides', revision: 1,
+        content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: {} } } } }] } };
+      unhandledHttp.push(`GET ${path}`);
+      throw new Error(`Unexpected scheduled service HTTP read ${path}`);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v3/automations/runs/workflow-storage') return { status: 200, data: await storage.execute(body as WorkflowRunStorageTestkitOperation) };
+      if (path === '/v1/artifacts/read') return artifactReadResponse(body, id => {
+        const artifact = artifacts.get(id);
+        return artifact ? { ...artifact, id } : null;
+      });
+      if (path === '/v1/artifacts' && body && typeof body === 'object' && 'id' in body && typeof body.id === 'string') {
+        artifacts.set(body.id, { ...body, id: body.id, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        publishApproval(body.id);
+        return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+      }
+      unhandledHttp.push(`POST ${path}`);
+      throw new Error(`Unexpected scheduled service HTTP mutation ${path}`);
+    });
+    const settings = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force', honorAccountSettingsModeEnv: false });
+    if (!settings.scopeKey) throw new Error('Missing scheduled service Account settings scope');
+    const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () =>
+      PromptLibraryRowsListResponseV1Schema.parse((await axios.get(`${home}${PROMPT_LIBRARY_ROWS_ROUTE_V1}`)).data) });
+    expect(commitActivePromptLibraryCatalog({ scopeKey: settings.scopeKey,
+      lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog })).toBe(true);
+    bindApiSessionSocketMock(mocks.io, createApiSessionSocketStub());
+    const installationId = 'scheduled-service-installation';
+    const operations = createHostActionOperationRuntime({ machineId, serverId, custodyBinding: { serverId, installationId },
+      resolveAccountId: async () => policy === 'foreign' ? 'machine-custodian' : accountId,
+      generateOperationId: () => 'scheduled-service-operation' });
+    const unavailable = async (): Promise<never> => { throw new Error('Scheduled local service must not re-enter Machine RPC'); };
+    const requesterWorkAttributionV1 = { serverId, accountId, machineId, installationId };
+    const transportInput = { runId, credentials, requesterWorkAttributionV1, isCurrent: async () => true,
+      boundary: { serverId, serverHttpBaseUrl: home, happyHomeDir: root, getObservedServerIdentityId: () => homeId },
+      transport: { machineId, invoke: async (method: string, request: unknown,
+        options?: Parameters<import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport['invoke']>[2]) => {
+        if (method === 'actionOperation.get.v2') return operations.handlers.getV2(request, options?.rpcContext);
+        return unavailable();
+      } },
+      runActionOperation: (request: Parameters<typeof operations.runActionOperation>[0]) => {
+        expect(request.context).toMatchObject({ authority: 'account_automation', surface: 'agent',
+          requesterSessionBootstrap: { attribution: requesterWorkAttributionV1 },
+          actionCaller: { kind: 'workflowRun', runId }, actionRequestId: expect.stringMatching(new RegExp(`^${runId}/.+/0$`)) });
+        return operations.runActionOperation(request);
+      } };
+    const workflowTransport = createWorkflowRunMachineTransport(transportInput);
+    const savedSecretOperationContext = await workflowTransport.resolveSavedSecretOperationContext();
+    if (!savedSecretOperationContext) throw new Error('Missing captured scheduled requester');
+    const coordinatorInput = { ...workflowTransport, machineId, serverIdentityId: homeId, machineAdmissionTransport: unavailable,
+      requesterWorkAttributionV1, savedSecretOperationContext, machineActionDirectTargetTransport: workflowTransport.transport };
+    const coordinate = createProductionDaemonWorkflowRuntime({ credentials, accountId, serverId }).createCoordinatorForMachine(coordinatorInput);
+    const abort = new AbortController();
+    const coordinating = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope, signal: abort.signal,
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+    try {
+      if (policy !== 'ask' && policy !== 'changed-trigger') {
+        await Promise.race([opened, coordinating.then(outcome => {
+          throw new Error(`Scheduled service never reached native execution: ${JSON.stringify({ outcome, rows: storage.rows() })}`);
+        })]);
+        expect(storage.run().state).toBe('running');
+        expect(await workflowTransport.transport.invoke('actionOperation.get.v2', { operationId: 'scheduled-service-operation' })).toMatchObject({
+          kind: 'found', operation: { actionId: 'machines.services.exec', state: 'running' } });
+        if (policy === 'foreign') expect(await operations.handlers.getV2({ operationId: 'scheduled-service-operation' }))
+          .toMatchObject({ kind: 'not_found' });
+        releaseNative();
+        expect(await coordinating).toMatchObject({ state: 'succeeded' });
+        expect(await workflowTransport.transport.invoke('actionOperation.get.v2', { operationId: 'scheduled-service-operation', waitForTerminal: true })).toMatchObject({
+          kind: 'found', operation: { state: 'succeeded', result: { exitCode: 0, stdout: 'scheduled service output' } } });
+        expect(launches).toBe(1);
+        expect(artifacts.size).toBe(0);
+        if (policy === 'approved-trigger') expect(savedTriggerReads).toBeGreaterThan(0);
+      } else {
+        const artifactId = await Promise.race([approvalPublished, coordinating.then(outcome => {
+          throw new Error(`Scheduled service did not publish its required approval: ${JSON.stringify({ outcome, unhandledHttp })}`);
+        })]);
+        expect(await createCliApprovalsArtifactStore({ credentials }).approvalsGet({ artifactId })).toMatchObject({
+          v: 2, actionId: 'machines.services.exec', requestedSurface: 'agent', status: 'open' });
+        expect(artifacts.size).toBe(1);
+        expect(launches).toBe(0);
+        expect((await operations.handlers.listV2({})).items).toEqual([]);
+        if (policy === 'changed-trigger') expect(savedTriggerReads).toBeGreaterThan(0);
+      }
+      expect(unhandledHttp).toEqual([]);
+    } finally {
+      releaseNative();
+      abort.abort();
+      await coordinating.catch(() => {});
+      await workflowTransport.dispose();
+    }
   });
 });
 

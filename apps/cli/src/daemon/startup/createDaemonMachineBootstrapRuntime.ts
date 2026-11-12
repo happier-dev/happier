@@ -14,7 +14,6 @@ import type { AutomationWorkerHandle, startAutomationWorker } from '../automatio
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
 import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
 import type { DaemonPublicVoiceModelPackRuntime } from '../voiceInference/publicModelPacks/runtime';
-import { resolveVoiceInferencePaths } from '../voiceInference/voiceInferencePaths';
 import { configuration } from '@/configuration';
 import { watchLastCliUpdateResult } from '@happier-dev/cli-common/firstPartyRuntime';
 import { readCliUpdateFactsForThisCli } from '@/cli/runtime/update/cliUpdateFacts';
@@ -47,6 +46,7 @@ import type { WorkflowRecoveryTrigger } from '@/daemon/workflows/recovery';
 import { createRunnerBrokerReadinessApplicationLifecycle } from '../peer/mediation/loopback/runnerBrokerReadinessApplication';
 import type { StartPeerMediationLoopbackInput } from '../peer/mediation/rpc/startLoopback';
 import type { DaemonProviderBrokerRuntime } from '@/providers/broker/daemonProviderBrokerRuntime';
+import { createMachineRoleActivationRuntime, type MachineRoleActivationRuntime } from '../roles/machineRoleActivation';
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import type { ExecutionRunManagedProviderSourceOpener } from '@/agent/runtime/bridges/executionRun/runtime/managedProvider';
 import type { DirectRouteGrantTrustRoot } from '../peer/mediation/verifyDirectRouteGrant';
@@ -258,6 +258,8 @@ export function createDaemonMachineBootstrapRuntime(
     createAgentCatalogObservation?: BootstrapRuntime['createAgentCatalogObservation'];
     onAutomationWorkerStarted?: (worker: AutomationWorkerHandle) => void;
     onPublicVoiceModelPackRuntimeReady?: (runtime: DaemonPublicVoiceModelPackRuntime | null) => void;
+    /** The Machine's role set (P03-ROLES-POLICY). Missing = every core role (today). */
+    machineRoles?: BootstrapRuntime['machineRoles'];
     /** Live canonical Workflow feature decision. Missing/unknown remains disabled. */
     isWorkflowFeatureEnabled?: () => boolean;
     prepareApiMachineForSessions?: (apiMachine: ApiMachineClient) => void;
@@ -278,6 +280,7 @@ export function createDaemonMachineBootstrapRuntime(
       savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
+      runActionOperation?: import('@happier-dev/protocol').ActionExecutorDeps['runActionOperation'];
     }>) => ReturnType<typeof createProductionWorkflowRunCoordinator>;
     createWorkflowRecoveryForMachine?: (input: Readonly<{
       machineId: string;
@@ -295,6 +298,8 @@ export function createDaemonMachineBootstrapRuntime(
       apiMachine: ApiMachineClient;
     }>) => Promise<Readonly<{
       accountConnectionIngress?: boolean;
+      /** The application also serves brokered Action operations (advertised with the ingress). */
+      actionOperationIngress?: boolean;
       resolveProviderBrokerApplicationTarget: NonNullable<NonNullable<
         StartPeerMediationLoopbackInput['irohMachineAdmission']
       >['resolveProviderBrokerApplicationTarget']>;
@@ -314,18 +319,26 @@ export function createDaemonMachineBootstrapRuntime(
   const automationInstallationId = readInstallationIdentityIfExistsSync()?.installationId;
   const runnerBrokerReadinessApplication = createRunnerBrokerReadinessApplicationLifecycle({
     authorize: async (request, signal) => await params.api.authorizeRunnerBrokerReadiness(request, signal),
-    checkLocalCurrentness: async (currentness, signal) => await providerBrokerApplication
+    checkLocalCurrentness: async (currentness, signal) => await providerBrokerApplication()
       ?.checkRunnerCredentialSelectionCurrentness(currentness, signal) ?? { kind: 'update_required' },
   });
   let connectedApiMachine: ApiMachineClient | null = null;
   let unsubscribeLocalServiceSummary: (() => void) | null = null;
   let unsubscribeLocalServiceConnection: (() => void) | null = null;
   let unsubscribeResourcePublication: (() => void) | null = null;
-  let providerBrokerApplication: Awaited<ReturnType<NonNullable<
-    typeof params.startProviderBrokerApplication
-  >>> | null = null;
-  let providerBrokerApplicationMachineId: string | null = null;
-  let providerBrokerApplicationApiMachine: ApiMachineClient | null = null;
+  type ProviderBrokerApplication = Awaited<ReturnType<NonNullable<typeof params.startProviderBrokerApplication>>>;
+  // The `broker` Machine role owns the provider-broker application for the registered Machine: it
+  // starts only while the role is active, and follows the role set. Re-created when the
+  // registered Machine changes; kept across Machine transport replacement.
+  let brokerRole: Readonly<{ machineId: string; runtime: MachineRoleActivationRuntime }> | null = null;
+  let brokerIngressApiMachine: ApiMachineClient | null = null;
+  const providerBrokerApplication = (): ProviderBrokerApplication | null =>
+    (brokerRole?.runtime.get('broker')?.application as ProviderBrokerApplication | undefined) ?? null;
+  const stopBrokerRole = async () => {
+    const retiring = brokerRole;
+    brokerRole = null;
+    await retiring?.runtime.stop();
+  };
   let workflowRecovery: ((trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>) | null = null;
   const workflowRecoveryCancellation = new AbortController();
   let workspaceSyncReadiness: WorkspaceSyncRuntimeReadinessV1 | null = null;
@@ -370,6 +383,7 @@ export function createDaemonMachineBootstrapRuntime(
       onError: (error) => logger.warn('[DAEMON RUN] Stopped watching the CLI update record; the next daemon start republishes it', error),
     }),
     credentials: params.credentials,
+    ...(params.machineRoles ? { machineRoles: params.machineRoles } : {}),
     providerAccountSettings: params.providerAccountSettings,
     secretSources: params.secretSources,
     savedSecretOperationContext: params.savedSecretOperationContext,
@@ -574,29 +588,32 @@ export function createDaemonMachineBootstrapRuntime(
         : null;
       publishWorkspaceSyncEvent();
       params.prepareApiMachineForSessions?.(apiMachine);
-      if (
-        providerBrokerApplication
-        && providerBrokerApplicationMachineId !== registeredMachine.id
-      ) {
-        try {
-          await providerBrokerApplicationApiMachine?.setProviderBrokerIngressLive(false);
-        } finally {
-          await providerBrokerApplication.close();
-          providerBrokerApplication = null;
-          providerBrokerApplicationMachineId = null;
-          providerBrokerApplicationApiMachine = null;
+      if (brokerRole && brokerRole.machineId !== registeredMachine.id) await stopBrokerRole();
+      brokerIngressApiMachine = apiMachine;
+      const startProviderBrokerApplication = params.startProviderBrokerApplication;
+      if (startProviderBrokerApplication && !brokerRole) {
+        const machineId = registeredMachine.id;
+        brokerRole = { machineId, runtime: createMachineRoleActivationRuntime({
+          ...(params.machineRoles ? { roles: params.machineRoles } : {}),
+          contexts: { broker: {
+            startApplication: async () => await startProviderBrokerApplication({ machineId, apiMachine }),
+            setIngressLive: async (live, application) => {
+              const ingressMachine = brokerIngressApiMachine;
+              if (!ingressMachine) return;
+              if (!live) return await ingressMachine.setProviderBrokerIngressLive(false);
+              await ingressMachine.setProviderBrokerIngressLive(true, application?.accountConnectionIngress,
+                application?.actionOperationIngress === true);
+            },
+          } },
+        }) };
+        await brokerRole.runtime.start();
+      } else {
+        // A replacement transport advertises the running application again.
+        const application = providerBrokerApplication();
+        if (application) {
+          await apiMachine.setProviderBrokerIngressLive(true, application.accountConnectionIngress,
+            application.actionOperationIngress === true);
         }
-      }
-      if (params.startProviderBrokerApplication && !providerBrokerApplication) {
-        providerBrokerApplication = await params.startProviderBrokerApplication({
-          machineId: registeredMachine.id,
-          apiMachine,
-        });
-        providerBrokerApplicationMachineId = registeredMachine.id;
-      }
-      if (providerBrokerApplication) {
-        providerBrokerApplicationApiMachine = apiMachine;
-        await apiMachine.setProviderBrokerIngressLive(true, providerBrokerApplication.accountConnectionIngress);
       }
       return apiMachine;
     },
@@ -644,6 +661,7 @@ export function createDaemonMachineBootstrapRuntime(
             transport: { machineId: runtimeMachineId,
               machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
               invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
+            runActionOperation: request => automationApiMachine.runActionOperation(request),
           });
           try {
             const savedSecretOperationContext = await requesterTransport.resolveSavedSecretOperationContext();
@@ -656,6 +674,7 @@ export function createDaemonMachineBootstrapRuntime(
               machineAdmissionTransport: async (request, options) =>
                 await automationApiMachine.enqueueSessionPendingByMachine(request, options),
               machineActionDirectTargetTransport: requesterTransport.transport,
+              runActionOperation: requesterTransport.runActionOperation,
             });
             return await coordinate(claim);
           } finally { await requesterTransport.dispose(); }
@@ -738,9 +757,10 @@ export function createDaemonMachineBootstrapRuntime(
         return null;
       }
       try {
-        const [{ startVoiceInferenceWorker }, { createDaemonPublicVoiceModelPackRuntime }] = await Promise.all([
+        const [{ startVoiceInferenceWorker }, { createDaemonPublicVoiceModelPackRuntime }, { resolveVoiceInferencePaths }] = await Promise.all([
           import('../voiceInference/voiceInferenceWorker'),
           import('../voiceInference/publicModelPacks/runtime'),
+          import('../voiceInference/voiceInferencePaths'),
         ]);
         const publicModelPacks = accountId ? createDaemonPublicVoiceModelPackRuntime({
           accountId, machineId: runtimeMachineId, happyHomeDir: configuration.happyHomeDir,
@@ -773,16 +793,7 @@ export function createDaemonMachineBootstrapRuntime(
       unsubscribeLocalServiceSummary = null;
       unsubscribeLocalServiceConnection?.();
       unsubscribeLocalServiceConnection = null;
-      if (providerBrokerApplication) {
-        try {
-          await providerBrokerApplicationApiMachine?.setProviderBrokerIngressLive(false);
-        } finally {
-          await providerBrokerApplication.close();
-          providerBrokerApplication = null;
-          providerBrokerApplicationMachineId = null;
-          providerBrokerApplicationApiMachine = null;
-        }
-      }
+      await stopBrokerRole();
       await runnerBrokerReadinessApplication.stop();
       await params.beforeShutdown();
     },
@@ -811,9 +822,9 @@ export function createDaemonMachineBootstrapRuntime(
       ...(params.startProviderBrokerApplication
         ? {
             resolveProviderBrokerApplicationTarget: async (input) =>
-              await providerBrokerApplication?.resolveProviderBrokerApplicationTarget(input) ?? null,
+              await providerBrokerApplication()?.resolveProviderBrokerApplicationTarget(input) ?? null,
             resolveExternalProviderBrokerApplicationTarget: async (input) =>
-              await providerBrokerApplication?.resolveExternalProviderBrokerApplicationTarget(input) ?? null,
+              await providerBrokerApplication()?.resolveExternalProviderBrokerApplicationTarget(input) ?? null,
           }
         : {}),
       resolveRunnerBrokerReadinessApplicationTarget: async ({ request, signal }) => {

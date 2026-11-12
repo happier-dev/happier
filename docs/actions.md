@@ -143,6 +143,13 @@ their existing settlement semantics. Pending Stop/Suspend recovery uses the
 Home's policy-admission provenance projected in the controller census, rather
 than treating matching desired and submitted intents as policy ownership.
 
+In unreleased 0.3 source, `machines.setup.adminAccess.inspect` returns the saved
+`adminAccess` policy and `metadataVersion` from one metadata snapshot alongside
+the native observation. Supply those values as `expectedAdminAccess` and
+`expectedMetadataVersion` to `machines.setup.adminAccess.set`; observed sudo
+power does not establish the saved policy. Matching Protocol and daemon readers
+reload together for this closed response extension.
+
 In unreleased 0.3 source, `machines.setup.adminAccess.set` writes the reviewed
 desired policy through the target daemon's existing Machine metadata field CAS,
 including plain and E2EE Accounts with every app client offline. The receiving
@@ -602,6 +609,18 @@ inheritance when that answer matches the Action's default for that surface.
 The settings writer reads the shared approval policy, including contributed
 Action declarations and the Source Control confirmation preference; it clears
 only that surface's approval override or waiver and preserves neighbouring settings.
+One exception keeps Allowed explicit: an Action may declare
+`approvalPolicy.agentDefaultForInput`, an Agent/MCP Ask default for inputs with
+one consequence only. `requiresDefaultApprovalFloor` applies it on the surfaces
+that share the Agent default, Settings shows that the default still asks
+(`approvalAskedForInput`), and choosing Allowed writes the surface waiver
+instead of restoring inheritance. `session.spawn_new` declares it for
+`managedTargetPlacement` (owner decision 2026-11-12): an Agent or MCP request
+that places the new Session inside one of the person's managed targets asks
+first, and the person can allow it on the Agent or MCP target of Create
+session. The person's own app and CLI requests keep their surface defaults.
+The daemon's placement owner (`prepareSessionTargetPlacement`) only consumes
+an already-admitted request; it does not decide approval a second time.
 
 The development Account reader normalizes predecessor `session_agent` policy to
 `agent` at the shared Action-settings owner, including explicit Require, disable
@@ -5831,9 +5850,13 @@ Saved health checks can enroll an ordinary executable Workflow through
 `workflow.trigger.*` with a `pluginEvent` trigger, selecting the Machine-services
 `health-check-failed` or `health-check-recovered` contribution. The same request
 owner still accepts explicit `observationOnly` enrollment without an execution
-target. Event admission owns occurrence deduplication and creates ordinary runs;
-neither notices nor health-check ticks launch Workflows. See
+target. Event admission returns `observed` for a valid observation-only occurrence,
+allowing its committed notice and checkpoint without a Run. A rejected occurrence
+cannot publish that notice. Executable enrollment still uses Event admission's
+ordinary Run path; neither notices nor health-check ticks launch Workflows. See
 [health Event ownership](plugin-platform.md#health-check-kind-declarations-03-development-source).
+The internal `automation.event.admit` and `automation.conversation.admit` Actions
+do not require confirmation by default. Explicit approval policies still apply.
 
 The same catalog also exposes terminal Deployment receipt Events (failure,
 success, promotion completion, cancellation, unknown outcome and rollback),

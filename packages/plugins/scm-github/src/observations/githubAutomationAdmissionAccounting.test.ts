@@ -20,6 +20,10 @@ describe('GitHub Automation admission telemetry', () => {
       { kind: 'rejoined', admittedDelta: 0, skippedDelta: 0 },
     ],
     [
+      { kind: 'observed', checkpointSafe: true },
+      { kind: 'observed', admittedDelta: 0, skippedDelta: 0 },
+    ],
+    [
       { kind: 'blocked', reason: 'temporarilyUnavailable', checkpointSafe: false },
       { kind: 'unsettled', admittedDelta: 0, skippedDelta: 0 },
     ],

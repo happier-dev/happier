@@ -356,6 +356,20 @@ describe('checkpointed observer ownership', () => {
         }
     });
 
+    it('checkpoints an observed occurrence without admitting or skipping a Run', async () => {
+        const f = fixture();
+        const observed = { kind: 'observed', checkpointSafe: true };
+        f.setAdmissionResult({ results: [observed] });
+        await runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, mode: 'once', now: () => 1000 });
+        expect(f.save).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ checkpoint: 'cursor-1',
+            disposition: { kind: 'checkpointSafe', admissions: [expect.objectContaining({ result: observed })] } }));
+        const statuses = f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
+            .map(([, value]) => value);
+        expect(statuses).toEqual([expect.objectContaining({ state: 'observing', code: 'none', nextRetryAt: null,
+            observedDelta: 1, admittedDelta: 0, skippedDelta: 0 })]);
+        expect(f.runCount()).toBe(0);
+    });
+
     it('keeps malformed admission unavailable when the provider reports observing without a retry deadline', async () => {
         const f = fixture();
         f.setAdmissionResult({ results: 'invalid' });
