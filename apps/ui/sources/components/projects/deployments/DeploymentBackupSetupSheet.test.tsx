@@ -9,6 +9,7 @@ import { HappierInputField } from '@happier-dev/plugin-ui/presentation';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { formatAutomationScheduleLabel } from '@/components/automations/list/automationListFormatting';
 import { t } from '@/text';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -83,6 +84,52 @@ describe('Backup destination setup fields', () => {
             else expect(onConfigured).toHaveBeenCalledWith(expect.objectContaining({ destinationRef: {
                 pluginId: destination.pluginId, localId: destination.definition.id } }), schedule);
         });
+
+    describe('provider presets', () => {
+        const preset: typeof destination = { ...destination, id: 'com.acme.backups/archive-preset', definition: {
+            ...destination.definition, id: 'archive-preset', title: 'Archive preset', fieldHints: { fields: [{
+                ...destination.definition.fieldHints!.fields[0]!, defaultValue: 'modern' }] } } };
+        const render = (props: Partial<React.ComponentProps<typeof DeploymentBackupSetupSheet>>, configure = vi.fn<
+            React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+            kind: 'configured', environmentId: 'env', revision: 2,
+            configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration) }))) => renderScreen(
+            <DeploymentBackupSetupSheet detail={environmentDetail()} destination={destination}
+                sourceChoices={[{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' }]} machine="Controller"
+                review={{ pendingId: null, request() {}, open() {} }} configure={configure} onChanged={() => {}}
+                onClose={() => {}} testID="setup" {...props} />);
+        const layout = (screen: Awaited<ReturnType<typeof render>>) => screen.findAllByType(HappierInputField)
+            .find(entry => entry.props.field.path === 'layout')!;
+
+        it('opens a preset destination with its descriptor defaults and saves them unchanged', async () => {
+            const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+                kind: 'configured', environmentId: 'env', revision: 2,
+                configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration) }));
+            const screen = await render({ destination: preset }, configure);
+            expect(layout(screen).props.value).toBe('modern');
+            await screen.pressByTestIdAsync('setup.save');
+            expect(configure).toHaveBeenCalledWith(expect.objectContaining({
+                configuration: expect.objectContaining({ config: { layout: 'modern' } }) }));
+        });
+
+        it('replaces the draft with the newly chosen preset defaults', async () => {
+            const screen = await render({ destinations: [destination, preset] });
+            expect(layout(screen).props.value).toBeUndefined();
+            await act(async () => screen.findAllByType(ValueFieldSelect)
+                .find(entry => entry.props.testID === 'setup.destination')!.props.onSelect(preset.id));
+            expect(layout(screen).props.value).toBe('modern');
+        });
+
+        it('keeps authored values when reopening a saved draft', async () => {
+            const screen = await renderScreen(<DeploymentBackupSetupSheet detail={environmentDetail()} destination={preset}
+                sourceChoices={[{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' }]} machine="Controller"
+                mode="intent" onIntent={() => {}} onClose={() => {}} testID="setup" initialIntent={{ prefix: '', bindings: [],
+                    configuration: { configRevision: 1, destinationRef: { pluginId: preset.pluginId, localId: preset.definition.id },
+                        occurrenceId: preset.definition.id, config: { layout: 'legacy' },
+                        sources: [{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' }],
+                        credentialBindings: [], retention: { kind: 'keepEverything' } } }} />);
+            expect(layout(screen).props.value).toBe('legacy');
+        });
+    });
 
     it('retries schedule authoring without replaying the settled Configure write', async () => {
         const detail = environmentDetail();

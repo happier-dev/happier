@@ -27,6 +27,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInputHints';
+import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
@@ -568,7 +569,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const anotherMachine = !intent && destinationId === 'anotherMachine' && receiverDestination !== undefined;
   const destination = anotherMachine ? receiverDestination : destinations.find(entry => entry.id === destinationId) ?? props.destination;
   const inputHints = React.useMemo(() => deriveActionInputHints(destination.definition.configSchema, destination.definition.fieldHints), [destination]);
-  const [fields, setFields] = React.useState<Record<string, unknown>>(() => intent?.initialIntent?.configuration.config ?? {});
+  const [fields, setFields] = React.useState<Record<string, unknown>>(() => seedInputByFieldHints({ inputHints },
+    intent?.initialIntent?.configuration.config ?? {}));
   const localCapacity = useBackupPathCapacity(props.detail, fields.path, props.lifetime,
     !intent && destination.definition.locality === 'local');
   const [sourceIds, setSourceIds] = React.useState(() => intent?.initialIntent?.configuration.sources.map(choice => choice.sourceId) ?? props.sourceChoices.map(choice => choice.sourceId));
@@ -615,7 +617,14 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const busy = change.running || scheduleChange.running;
   const configured = result?.kind === 'configured';
   const locked = busy || configured;
-  const chooseDestination = (next: string) => { setDestinationId(next); setFields({}); setBindings([]); setDestinationSetup(undefined); setResult(null); };
+  const chooseDestination = (next: string) => {
+    const chosen = next === 'anotherMachine' ? receiverDestination : destinations.find(entry => entry.id === next);
+    setDestinationId(next);
+    // A provider preset is an editable S3 destination: its descriptor defaults seed the new draft.
+    setFields(chosen ? seedInputByFieldHints({ inputHints: deriveActionInputHints(chosen.definition.configSchema,
+      chosen.definition.fieldHints) }, {}) : {});
+    setBindings([]); setDestinationSetup(undefined); setResult(null);
+  };
   const submit = React.useCallback((intent: BackupConfigurePreparation['intent']) => {
     if (!configuration || !configure || busy || configured) return;
     void change.press(async () => {
