@@ -52,6 +52,8 @@ installAutomationScreensCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
+            renderCustomModals: true,
+            settleTransientConfirmations: false,
             spies: {
                 alert: modalAlertSpy,
                 confirm: modalConfirmSpy,
@@ -252,7 +254,8 @@ async function cache(rows: AutomationV3RunListItem[]) {
 async function open(row: AutomationV3RunListItem | null = run()) {
     await cache(row ? [row] : []);
     const { WorkflowRunScreen } = await import('../screens/WorkflowRunScreen');
-    return renderScreen(<WorkflowRunScreen />);
+    const { ModalProvider } = await import('@/modal');
+    return renderScreen(<ModalProvider><WorkflowRunScreen /></ModalProvider>);
 }
 async function respond(row: AutomationV3RunListItem, overrides: Partial<AutomationV3RunDetail> = {}) {
     harness.answer(serverId, DETAIL_PATH, { body: detail(row, overrides) });
@@ -597,17 +600,12 @@ describe('canonical Run page occurrence target', () => {
         // current terminal response correctly removes the Cancel control.
         harness.answer(serverId, DETAIL_PATH, { body: detail(queuedRun) });
         const screen = await open(queuedRun);
-        await act(async () => screen.findByProps({ title: 'common.cancel' }).props.onPress());
-        const readCancelApproval = () => harness.artifacts(serverId).list()
-            .find(row => harness.artifacts(serverId).readPlainBody(row.id)?.includes('workflow.run.cancel'));
-        await waitForHomeGovernance(() => expect(readCancelApproval()).toBeTruthy());
+        act(() => { screen.findByProps({ title: 'common.cancel' }).props.onPress(); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(harness.requestsFor(cancelPath)).toHaveLength(0);
         expect(modalAlertSpy.mock.calls).toEqual([]);
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const decided = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: readCancelApproval()!.id, decision: 'approve' }, {
-            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account-a',
-        });
-        expect(decided).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         // The approved execution publishes the cancelled Run to the projection this screen reads.
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Cancelled'));
         expect(screen.findAllByProps({ title: 'common.cancel' })).toHaveLength(0);
@@ -647,15 +645,12 @@ describe('canonical Run page occurrence target', () => {
         harness.answer(serverId, 'POST ' + retryPath, { body: { run: { ...row, revision: 2, replyHandoffState: 'ready', updatedAt: 12 } } });
         await harness.requireUiApproval(serverId, 'automation.run.reply_handoff.retry');
         const screen = await respond(row);
-        await screen.pressByTestIdAsync('automation-run-retry-reply-handoff');
+        screen.pressByTestId('automation-run-retry-reply-handoff');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(harness.requestsFor(retryPath)).toHaveLength(0);
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list().some(row => harness.artifacts(serverId).readPlainBody(row.id)?.includes('automation.run.reply_handoff.retry'))).toBe(true));
-        const approval = harness.artifacts(serverId).list().find(row => harness.artifacts(serverId).readPlainBody(row.id)?.includes('automation.run.reply_handoff.retry'))!;
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const result = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: approval.id, decision: 'approve' }, {
-            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account-a',
-        });
-        expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await waitForHomeGovernance(() => expect(harness.requestsFor(retryPath)).toHaveLength(1));
         expect(harness.requestsFor(retryPath)).toHaveLength(1);
     });
 

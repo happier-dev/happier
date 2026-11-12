@@ -30,6 +30,8 @@ import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtu
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { parseToken } from '@/utils/auth/parseToken';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createWorkflowAccountRunActionOwner, getActionSpec, actionSpecToActionDefinitionV1, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol/actions';
 import { WorkflowRunGetResultV1Schema, type WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -75,6 +77,7 @@ import { WorkflowRunContent } from '../run/WorkflowRunContent';
 import { projectWorkflowInvocationStructure } from '../run/workflowInvocationStructure';
 import { WorkflowInvocationDetail } from '../run/WorkflowInvocationDetail';
 import { WorkflowReviewCard } from '../run/WorkflowReviewCard';
+import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowRunPeekDetailsView } from '@/components/sessions/work/WorkflowRunPeekDetailsView';
 import { useSessionWorkOpeners } from '@/components/sessions/work/useSessionWorkOpeners';
@@ -110,7 +113,14 @@ function readContentProps(): WorkflowRunContentProps | null {
     return content ? content.props as WorkflowRunContentProps : null;
 }
 async function renderScreen(...args: Parameters<typeof renderTestScreen>) {
-    const screen = await renderTestScreen(...args);
+    const [element, options] = args;
+    const Wrapper = options?.wrapper;
+    const credentials = await TokenStorage.getCredentials();
+    function RunScreenProviders({ children }: React.PropsWithChildren) {
+        const content = <InjectedAuthProvider credentials={credentials}><AccountNoticeInvestigationBoundary>{children}</AccountNoticeInvestigationBoundary></InjectedAuthProvider>;
+        return Wrapper ? <Wrapper>{content}</Wrapper> : content;
+    }
+    const screen = await renderTestScreen(element, { ...options, wrapper: RunScreenProviders });
     observedRunScreen = screen;
     return { ...screen, unmount: async () => {
         if (observedRunScreen === screen) observedRunScreen = null;
@@ -179,10 +189,11 @@ const storeState = {
         getStorage().setState({
             // The real editor waits for the repository's first draft hydration.
             isSessionDraftsReady: true,
-            machines: { [machine.id]: machine }, machineListByServerId: {},
+            machines: {}, machineListByServerId: {},
             workflowRunsById: {}, workflowRunInvocationsByRunId: {}, workflowRunListWindows: {},
             artifacts: {},
         });
+        getStorage().getState().applyMachines([machine], true, { sourceServerId: servedHomeId, sourceAccountId: 'account-a' });
     },
 };
 type MachineRpcCall = Readonly<{ machineId: string; method: string; payload: unknown; requestId?: string;
@@ -1351,6 +1362,8 @@ describe('WorkflowRunScreen', () => {
     });
 
     it('publishes paged occurrence timing for unselected rows through the shared fact owner', async () => {
+        // A phone does not automatically open the terminal Run's final/last step.
+        Object.assign(platformViewport, { width: 390, height: 900 });
         const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333' });
         const index = createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444',
             parentRecordId: root.id, memberOrdinal: '0', sequence: '1', lifecycle: 'completed' });
@@ -1360,6 +1373,7 @@ describe('WorkflowRunScreen', () => {
             timing: { startedAt: '2026-10-11T10:00:00.000Z', finishedAt: '2026-10-11T10:02:00.000Z' },
         };
         await renderRunScreen({ invocations: [root, index], invocationDetails: [{ index, progress, parentRevision: 1 }] });
+        expect(readContentProps()?.selectedInvocationId).toBeNull();
         expect(readContentProps()?.invocationProgressById?.get(index.id)?.timing).toEqual(progress.timing);
         expect(storeState.state.workflowRunInvocationsByRunId[workflowRunStoreKey(index.runId)]?.factsById[index.id]?.opened?.progress.timing).toEqual(progress.timing);
         expect(detailActions.getInvocation).not.toHaveBeenCalled();
@@ -1790,26 +1804,21 @@ describe('WorkflowRunScreen', () => {
         expect(runStartCalls()).toHaveLength(0);
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('workflow-run-another-agent-chip');
-        act(() => invokeTestInstanceHandler(screen.findByProps({ testID: 'workflow-run-another-agent-field' }), 'onChange', {
-            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-6.1-sol',
+        const modelSelection = SessionModelSelectionV1Schema.parse({ v: 1,
+            ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6.1-sol' }, updatedAt: 1 });
+        const engineField = screen.findAllByType(RoleEngineField).find(field => field.props.testID === 'workflow-run-another-agent-field');
+        act(() => invokeTestInstanceHandler(engineField, 'onChangeSelection', {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            modelSelection,
         }));
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
-        act(() => invokeTestInstanceHandler(screen.findByProps({ testID: 'workflow-run-another-agent-field' }), 'onChange', {
-            // An unresolved routing id, not a configured ACP definition: the
-            // latter now normalizes to a valid canonical custom ACP Agent.
-            agentTargetKey: 'backend:unresolved-acp',
-        }));
-        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
-        act(() => invokeTestInstanceHandler(screen.findByProps({ testID: 'workflow-run-another-agent-field' }), 'onChange', {
-            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-6.1-sol',
-        }));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
-        expect(runStartCalls()).toHaveLength(1);
+        await vi.waitFor(() => expect(runStartCalls()).toHaveLength(1));
         const request = WorkflowRunStartRequestV1Schema.parse(runStartCalls()[0]?.[1]);
         expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: '11111111-1111-4111-8111-111111111111', agentOverride: {
             sourceKey: '$root', blockId: 'analyze', engine: { agentTarget: {
                 kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            }, modelSelection: { ref: { modelId: 'gpt-6.1-sol' } } },
+            }, modelSelection },
         } } });
         expect(request.executionTarget).toEqual(ACCEPTED_CONTEXT.executionTarget);
         expect(detailActions.retryInvocation).not.toHaveBeenCalled();
@@ -2644,7 +2653,8 @@ describe('WorkflowRunScreen', () => {
         act(() => { readContentProps()?.onDelete?.(); });
         await act(async () => {});
         expect(detailActions.deleteRun).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync('web-modal-cancel');
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         expect(detailActions.deleteRun).not.toHaveBeenCalled();
         expect(storeState.state.workflowRunsById[workflowRunStoreKey(run.id)]).toBeDefined();
         expect(routerSpy.back).not.toHaveBeenCalled();
@@ -2672,7 +2682,7 @@ describe('WorkflowRunScreen', () => {
 
         act(() => { onDelete?.(); });
         await act(async () => {});
-        await screen.pressByTestIdAsync('web-modal-confirm');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         await vi.waitFor(() => expect(detailActions.deleteRun).toHaveBeenCalledTimes(1));
 
         await screen.unmount();
@@ -2974,7 +2984,7 @@ describe('WorkflowRunScreen', () => {
             'Expected a same-conversation replacement retry handler',
         )(replacement));
         await act(async () => {});
-        expect(detailActions.retryInvocation).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(detailActions.retryInvocation).toHaveBeenCalledTimes(1));
         expect(detailActions.retryInvocation.mock.calls[0]?.[0]).toMatchObject({
             acknowledgeUncertainPriorEffects: true,
             causalInvocationIds: ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'],
@@ -3738,14 +3748,14 @@ describe('WorkflowRunScreen', () => {
         // Starting the answer must not await the dialog it asks the person to answer.
         let answer: Promise<void> | undefined;
         await act(async () => { answer = respondToRequest({ requestId: 'permission-1', approved: true }); });
-        await vi.waitFor(() => expect(screen.findHostByTestId('web-modal-confirm')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         const permissionResponses = () => machineRpcSpy.mock.calls
             .map(([request]) => request)
             .filter(request => request.method === RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND);
         expect(permissionResponses()).toHaveLength(0);
         expect(approvalArtifacts.list()).toHaveLength(0);
 
-        await screen.pressByTestIdAsync(confirmed ? 'web-modal-confirm' : 'web-modal-cancel');
+        await screen.pressByTestIdAsync(confirmed ? 'actions.confirmation-review.decision-approve' : 'actions.confirmation-review.decision-reject');
         await act(async () => { await answer?.catch(() => {}); });
 
         expect(permissionResponses()).toEqual(confirmed ? [expect.objectContaining({

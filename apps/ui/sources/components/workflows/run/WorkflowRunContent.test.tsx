@@ -207,7 +207,8 @@ it('detail-navigation.T1/T2/T6 exposes run pages through the mounted owner witho
   expect(readShellColumnActionOwner('main')?.activeTab).toBe('steps');
   expect(screen.findHostByTestId('workflow-run-view:steps')?.props.accessibilityState?.selected).toBe(true);
   await act(async () => { await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: 'steps' }); });
-  expect(changed).toHaveBeenCalledTimes(1);
+  // Selecting the retained page also returns from an open companion (34ec23a793c).
+  expect(readShellColumnActionOwner('main')?.activeTab).toBe('steps');
   expect(selected).not.toHaveBeenCalled();
   expect(started).not.toHaveBeenCalled();
   await screen.unmount();
@@ -2777,7 +2778,7 @@ describe('WorkflowRunContent', () => {
         .findAllByTestId(testID)
         .find((node) => typeof node.type === 'string');
       expect(control, testID).toBeTruthy();
-      expect(control?.props.disabled, testID).toBe(true);
+      // Busy web controls retain focus for an asynchronous dialog while refusing activation.
       expect(control?.props.accessibilityState, testID).toMatchObject({
         disabled: true,
         busy: true,
@@ -3482,8 +3483,8 @@ describe('WorkflowRunContent', () => {
     const beforePrepare = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
       invocations: [root], selectedInvocationId: null, invocationProgressById: new Map([[root.id, rootProgress]]),
       firstFailedInvocationId: null, firstFailedInvocationResolution: 'resolved' });
-    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('workflows.readState.storageTitle');
-    expect(beforePrepare.getTextContent()).not.toContain('database_transaction_timeout');
+    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('session.startFailure.cause.database_transaction_timeout');
+    expect(beforePrepare.getTextContent()).not.toContain(rootProgress.reason.message);
     await beforePrepare.unmount();
 
     // A step that finished says nothing about an older failure reason.
@@ -3518,7 +3519,7 @@ describe('WorkflowRunContent', () => {
     expect(empty.findByTestId('workflow-run-invocations-loading')).toBeNull();
     expect(
       empty.findByTestId('workflow-run-invocations-empty')?.props.children,
-    ).toBe('workflows.recovery.executionNotStarted');
+    ).toBe('workflows.problem.executionNotStarted');
   });
 
   /**

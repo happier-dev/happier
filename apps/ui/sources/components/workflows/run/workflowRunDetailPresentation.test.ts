@@ -268,7 +268,7 @@ describe('managed workflow Run presentation', () => {
             progress: { ...progress, blockKind: 'step', invocationPath: { blockId: 'a', scope: [] } } });
         expect(step.failureCause).toMatchObject({ code, message: producer,
             headline: code === 'discussion_post_denied' ? t('session.collaboration.discussion.postDenied')
-                : code === 'approval_canceled' ? t('errors.actionCanceled') : producer });
+                : code === 'approval_canceled' ? t('voiceSurface.actionCanceled') : producer });
     });
     it('presents a retained native startup failure through the Session cause owner', () => {
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
