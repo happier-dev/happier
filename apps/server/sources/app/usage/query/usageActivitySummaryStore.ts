@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { usageAccountingProjectionKey } from './usageAccountingProjectionKey';
 import { promisify } from 'node:util';
 import { brotliCompress, brotliDecompress, constants as zlibConstants } from 'node:zlib';
 import * as privacyKit from 'privacy-kit';
@@ -26,8 +26,8 @@ const sourceKinds = { event: `actEvent${USAGE_ACTIVITY_SUMMARY_VERSION}`,
     report: `actReport${USAGE_ACTIVITY_SUMMARY_VERSION}` } as const;
 
 function recordKey(accountId: string, kind: string, item: number | string = 0): string {
-    return createHash('sha256').update(JSON.stringify([`usage-activity-summary-v${USAGE_ACTIVITY_SUMMARY_VERSION}`,
-        accountId, kind, item])).digest('hex');
+    return usageAccountingProjectionKey([`usage-activity-summary-v${USAGE_ACTIVITY_SUMMARY_VERSION}`,
+        accountId, kind, item]);
 }
 
 function sqlDialect() {

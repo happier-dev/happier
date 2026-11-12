@@ -70,6 +70,53 @@ describe('Team credential usage-limit administration', () => {
         return { manager, custodian, member, other, team, memberMembership, currentGroup, formerGroup, resource };
     }
 
+    it('reads recorded spend from one counter per matching limit without loading usage history', async () => {
+        const f = await fixture();
+        const now = new Date();
+        const limit = await db.teamCredentialUsageLimit.create({ data: {
+            resourceId: f.resource.id, subjectKind: 'resource', subjectId: '',
+            period: 'day', metric: 'inference_requests', maximum: '3', createdAt: now,
+        } });
+        for (let index = 0; index < 3; index += 1) {
+            const admission = await inTx(tx => admitTeamCredentialUsageInTx(tx, {
+                storageAccountId: f.member.id, sessionId: null, turnId: null,
+                observedAt: now, requestId: `counter-request-${index}`, modelId: 'model-a',
+                usageRoute: 'agent_runtime_session_turn',
+                authority: {
+                    kind: 'teamCredentialAdmission', requestingAccountId: f.member.id,
+                    resourceId: f.resource.id, externalApiKeyId: null, sourceCredentialId: null,
+                    workerMachineId: null, brokerMachineId: 'broker-a', deliveryMode: 'brokered', executionRunId: null,
+                },
+            }), { isolationLevel: 'ReadCommitted' });
+            expect(admission).toMatchObject({ ok: true, created: true });
+        }
+        let loadedHistoryRows = 0;
+        const evaluation = await inTx(async tx => {
+            // Instrument the real persistent transport; all limit logic remains real.
+            const observedTx = new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property !== 'usageEvent') return Reflect.get(target, property, receiver);
+                    return new Proxy(target.usageEvent, {
+                        get(delegate, method, delegateReceiver) {
+                            const operation = Reflect.get(delegate, method, delegateReceiver);
+                            if (method !== 'findMany' || typeof operation !== 'function') return operation;
+                            return async (...args: readonly unknown[]) => {
+                                const rows = await Reflect.apply(operation, delegate, args) as readonly unknown[];
+                                loadedHistoryRows += rows.length;
+                                return rows;
+                            };
+                        },
+                    });
+                },
+            });
+            return evaluateTeamCredentialUsageAdmissionLimitsInTx(observedTx, {
+                resourceId: f.resource.id, actorAccountId: f.member.id, now,
+            });
+        }, { isolationLevel: 'ReadCommitted' });
+        expect(evaluation).toMatchObject({ ok: false, denied: { limitId: limit.id, recorded: 3 } });
+        expect(loadedHistoryRows).toBe(0);
+    });
+
     it('requires restricted-Team qualification from a current source custodian before limit disclosure', async () => {
         const f = await fixture();
         await db.team.update({ where: { id: f.team.id }, data: { authenticationPolicy: {

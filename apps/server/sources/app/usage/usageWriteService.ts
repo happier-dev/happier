@@ -1,3 +1,4 @@
+import { recordTeamCredentialAdmissionCountersInTx, refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeHistoryDeleteRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -593,13 +594,21 @@ export async function deleteNativeUsageHistory(accountId: string, request: Usage
                 ...(request.dateRange?.startMs !== undefined ? { gte: new Date(request.dateRange.startMs) } : {}),
                 ...(request.dateRange?.endMs !== undefined ? { lte: new Date(request.dateRange.endMs) } : {}),
             } },
-            select: { id: true, metadata: true },
+            select: { id: true, metadata: true, sessionId: true, teamCredentialResourceId: true, observedAt: true },
         });
         const ids = candidates.filter(({ metadata }) => {
             const subject = readStoredNativeSubject(metadata);
             return subject?.machineId === request.machineId && subject.sourceRootKey === request.sourceRootKey && metadata && typeof metadata === 'object' && Reflect.get(metadata, 'captureOrigin') === 'native';
         }).map(({ id }) => id);
         const deleted = ids.length ? await tx.usageEvent.deleteMany({ where: { accountId, id: { in: ids } } }) : { count: 0 };
+        if (deleted.count > 0) await refreshTeamCredentialUsageCountersInTx(tx, {
+            resourceIds: candidates.flatMap(row => row.teamCredentialResourceId ? [row.teamCredentialResourceId] : []),
+            sessionIds: candidates.flatMap(row => {
+                const sessionId = row.sessionId ?? readStoredNativeSubject(row.metadata)?.linkedSessionId;
+                return sessionId ? [sessionId] : [];
+            }),
+            changedObservedAts: candidates.map(row => row.observedAt),
+        });
         if (deleted.count > 0) afterTx(tx, () => eventRouter.emitEphemeral({
             userId: accountId,
             payload: buildUsageEphemeral(null, 'native_history_deleted', { total: 0 }, { total: 0 }, undefined, { sessionId: null }),
@@ -747,6 +756,15 @@ export async function recordUsageEvent(
             turnId: request.turnId ?? null,
         }) : emptySessionUsageAttribution();
 
+        const refreshCounters = async (previous?: Pick<UsageEvent, 'sessionId' | 'teamCredentialResourceId' | 'observedAt'>) => {
+            await refreshTeamCredentialUsageCountersInTx(tx, {
+                changedObservedAts: [new Date(request.observedAt), ...(previous ? [previous.observedAt] : [])],
+                resourceIds: [attribution.resourceId, previous?.teamCredentialResourceId]
+                    .filter((id): id is string => Boolean(id)),
+                sessionIds: [request.sessionId, subject?.linkedSessionId, previous?.sessionId]
+                    .filter((id): id is string => Boolean(id)),
+            });
+        };
         if (request.externalKey) {
             const idempotencyKey = buildUsageEventIdempotencyKey(accountId, request);
             const legacyIdempotencyKey = buildLegacyUsageEventIdempotencyKey(accountId, request);
@@ -765,9 +783,11 @@ export async function recordUsageEvent(
                     const next = toUsageEventCreateInput(accountId, request, attribution);
                     if (Object.entries(next).some(([key, value]) => !isDeepStrictEqual(Reflect.get(existing, key), value))) {
                         await tx.usageEvent.update({ where: { id: existing.id }, data: next });
+                        await refreshCounters(existing);
                         emitUsageEventAfterTransaction(tx, accountId, request);
                     }
                 } else if (await retainEarliestRuntimeOrderInTx(tx, existing, request, attribution)) {
+                    await refreshCounters(existing);
                 }
                 return { ok: true, event: { id: existing.id, createdAt: existing.createdAt } };
             }
@@ -796,6 +816,7 @@ export async function recordUsageEvent(
                 });
             }
             emitUsageEventAfterTransaction(tx, accountId, request);
+            await refreshCounters();
             await publishAttributedUsageChangedInTx(tx, attribution);
             return { ok: true, event: { id: created.id, createdAt: created.createdAt } };
         }
@@ -819,6 +840,7 @@ export async function recordUsageEvent(
             });
         }
         emitUsageEventAfterTransaction(tx, accountId, request);
+        await refreshCounters();
         await publishAttributedUsageChangedInTx(tx, attribution);
 
         return { ok: true, event: created };
@@ -972,6 +994,12 @@ export async function recordTeamCredentialAdmissionUsageEventInTx(
             throw new Error("team credential external key changed during usage admission");
         }
     }
+    await recordTeamCredentialAdmissionCountersInTx(tx, {
+        usageEventId: event.id, resourceId: params.authority.resourceId,
+        actorAccountId: params.authority.requestingAccountId, sessionId: params.sessionId,
+        turnId: params.turnId, observedAt: params.observedAt,
+        deliveryMode: params.authority.deliveryMode, groupIds,
+    });
     await publishTeamCredentialUsageChangedInTx(tx, {
         resourceId: params.authority.resourceId,
         actorAccountId: params.authority.requestingAccountId,
@@ -1135,6 +1163,9 @@ export async function recordTeamCredentialExternalTerminalUsageEventInTx(
             })),
         });
     }
+    await refreshTeamCredentialUsageCountersInTx(tx, { resourceIds: [params.authority.resourceId],
+        changedObservedAts: [params.completedAt],
+    });
     await publishTeamCredentialUsageChangedInTx(tx, {
         resourceId: params.authority.resourceId,
         actorAccountId: params.authority.requestingAccountId,
@@ -1314,6 +1345,7 @@ export async function recordLegacyUsageReport(
 
 
         if (sessionId) {
+            await refreshTeamCredentialUsageCountersInTx(tx, { sessionIds: [sessionId], changedObservedAts: [] });
             afterTx(tx, () => {
                 const usageEvent = buildUsageEphemeral(
                     sessionId,

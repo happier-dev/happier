@@ -1,3 +1,4 @@
+import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { UsageSessionTimingV1Schema, UsageTimingBoundsV1Schema, type UsageTimingBoundsV1, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { nextSessionUsageTiming } from './metadata/sessionUsageTiming';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
@@ -3310,6 +3311,9 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 },
             }) as SessionTurnApplicationRow;
         }
+
+        // A late first turn establishes the pre-limit start boundary used by recorded spend.
+        if (!currentTurn) await refreshTeamCredentialUsageCountersInTx(tx, { sessionIds: [sessionId], changedObservedAts: [] });
 
         if (params.turnMutation.action === 'begin') {
             await reconcileAutonomousExchangeAcceptedTurnInTx(tx, {

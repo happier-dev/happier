@@ -1,3 +1,5 @@
+import { brokerFailureForBindingRejection } from './brokerBindingFailure';
+export { openTeamCredentialActionBroker, admitTeamCredentialActionBrokerRequest } from './actionBrokerAdmission';
 import { z } from 'zod/mini';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerRequestAdmissionV1Schema, SignedProviderBrokerRouteGrantV1Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerOpenRequestV1, type ProviderBrokerOpenResponseV1, type ProviderBrokerRequestAdmissionV1, type SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -265,33 +267,6 @@ function brokerOperationConsumer(
     return { kind: 'execution_run', parentSessionId: executionRun.parentSessionId, resourceId: own.resourceId };
 }
 
-/**
- * The one translation of the Session-binding owner's rejection into this
- * route's denial code, so the broker never re-derives a decision in order to
- * name it. Anything the caller could repair by re-opening is `resource_changed`
- * or a broker/update code; everything else is a refusal of this operation.
- */
-function brokerFailureForBindingRejection(
-    reason: SessionTeamCredentialBindingRejectionV1 | 'binding_missing',
-): Failure['reasonCode'] {
-    switch (reason) {
-        case 'connected_service_credential_reconnect_required':
-            return reason;
-        case 'resource_changed':
-            return 'resource_changed';
-        case 'broker_unavailable':
-            return 'broker_unavailable';
-        case 'update_required':
-            return 'update_required';
-        case 'resource_missing':
-        case 'resource_corrupt':
-        case 'source_owner_required':
-        case 'source_replaced_or_missing':
-            return 'resource_unavailable';
-        default:
-            return 'resource_forbidden';
-    }
-}
 
 async function authorizeCurrentBrokerOperationInTx(
     tx: Tx,
@@ -1260,7 +1235,7 @@ async function admitTeamCredentialProviderBrokerRequestUnreported(
         input,
         parsed.data,
         executionRun,
-    ), { isolationLevel: "Serializable" /* Usage limits are summed before a distinct request fact is admitted. */ });
+    ), { isolationLevel: "ReadCommitted" /* Recorded period spend is read from the accounting counter; in-flight overshoot is accepted. */ });
 }
 
 type ActiveBrokerJob = Readonly<{

@@ -1,3 +1,4 @@
+import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { afterTx, type Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { notifySessionHumanPresenceAccessChanged } from '../humanPresence/sessionHumanPresenceService';
@@ -121,6 +122,10 @@ export async function deleteSessionTree(
     });
     await invalidateSessionManagerForSessionDeleteInTx(tx, { sessionId: params.sessionId });
 
+    const usageResources = await tx.usageEvent.groupBy({
+        by: ['teamCredentialResourceId'], _min: { observedAt: true }, _max: { observedAt: true },
+        where: { sessionId: params.sessionId, teamCredentialResourceId: { not: null } },
+    });
     const deletedSession = await tx.session.deleteMany({
         where: sessionWhere,
     });
@@ -128,6 +133,13 @@ export async function deleteSessionTree(
         throw new SessionDeleteConditionLostError();
     }
 
+    await refreshTeamCredentialUsageCountersInTx(tx, {
+        resourceIds: usageResources.flatMap(row => row.teamCredentialResourceId ? [row.teamCredentialResourceId] : []),
+        changedObservedAts: usageResources.flatMap(row => [
+            ...(row._min.observedAt ? [row._min.observedAt] : []),
+            ...(row._max.observedAt ? [row._max.observedAt] : []),
+        ]),
+    });
     notifySessionTranscriptMutationAfterCommit(tx, {
         kind: 'remove-session',
         sessionId: params.sessionId,

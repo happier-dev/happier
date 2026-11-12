@@ -1,3 +1,4 @@
+import { deleteTeamCredentialUsageCountersInTx } from './teamCredentialUsageCounters';
 import {
     TeamCredentialUsageLimitDeleteInputV1Schema,
     TeamCredentialUsageLimitListInputV1Schema,
@@ -328,6 +329,7 @@ export async function deleteTeamCredentialUsageLimitInTx(
     });
     if (updated.count !== 1) return { ok: false, error: 'resource_changed' };
     await tx.teamCredentialUsageLimit.delete({ where: { id: row.id } });
+    await deleteTeamCredentialUsageCountersInTx(tx, auth.resource.custodianAccountId, row.id);
     await recordTeamCredentialActivityInTx(tx, { teamId: auth.resource.teamId, resourceId: auth.resource.id, kind: 'limits_changed', actor: { kind: 'account', accountId: input.actorAccountId }, subjectDisplayName: auth.resource.displayName });
     await publishTeamChangedInTx(tx, { teamId: auth.resource.teamId, additionalAccountIds: [auth.resource.custodianAccountId, input.actorAccountId] });
     return { ok: true, resourceId: auth.resource.id, revision: parsed.data.expectedRevision + 1 };

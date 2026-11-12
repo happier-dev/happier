@@ -1,3 +1,4 @@
+import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { resolveEffectiveRetentionDomains } from '@/app/retention/config/retentionPolicyState';
 import type { RetentionRule } from '@/app/retention/runtime/retentionRuleRegistry';
 import { db } from '@/storage/db';
@@ -36,8 +37,17 @@ export function createUsageEventRetentionRule(): RetentionRule {
             let deleted = 0;
             for (const [accountId, ids] of byAccount) {
                 deleted += await inTx(async tx => {
+                    const removed = await tx.usageEvent.findMany({
+                        where: { accountId, id: { in: ids }, observedAt: { lt: cutoff } },
+                        select: { sessionId: true, teamCredentialResourceId: true, observedAt: true },
+                    });
                     const result = await tx.usageEvent.deleteMany({
                         where: { accountId, id: { in: ids }, observedAt: { lt: cutoff } },
+                    });
+                    if (result.count > 0) await refreshTeamCredentialUsageCountersInTx(tx, {
+                        changedObservedAts: removed.map(row => row.observedAt),
+                        resourceIds: removed.flatMap(row => row.teamCredentialResourceId ? [row.teamCredentialResourceId] : []),
+                        sessionIds: removed.flatMap(row => row.sessionId ? [row.sessionId] : []),
                     });
                     return result.count;
                 }, { transactionClass: 'usage-retention' });

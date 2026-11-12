@@ -1,3 +1,6 @@
+import { ProviderBrokerActionOpenRequestV3Schema, ProviderBrokerActionOpenResponseV3Schema, ProviderBrokerActionAdmissionV3Schema, ProviderBrokerActionAdmissionResponseV3Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { openTeamCredentialActionBroker, admitTeamCredentialActionBrokerRequest } from './actionBrokerAdmission';
+import { verifyProviderBrokerActionRouteGrantSignatureV3 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1, PROVIDER_BROKER_MODEL_CATALOG_AUTHORIZE_HTTP_PATH_V1, PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerModelCatalogAuthorizationV1Schema, ProviderBrokerModelCatalogAuthorizationResponseV1Schema, ProviderBrokerOpenResponseV1Schema, ProviderBrokerRequestAdmissionV1Schema, ProviderBrokerRequestAdmissionResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_ADMISSION_HTTP_PATH_V1, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_TERMINAL_USAGE_HTTP_PATH_V1, TEAM_CREDENTIAL_RESOURCE_TEST_ADMISSION_HTTP_PATH_V1, TeamCredentialExternalProviderAdmissionResponseV1Schema, TeamCredentialExternalProviderAdmissionV1Schema, TeamCredentialExternalProviderTerminalUsageResponseV1Schema, TeamCredentialExternalProviderTerminalUsageV1Schema, TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema, TeamCredentialResourceTestAdmissionResponseV1Schema, TeamCredentialResourceTestAdmissionV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
@@ -35,6 +38,7 @@ import {
 import { openAccountConnectionProviderBroker, admitAccountConnectionProviderBroker } from '@/app/providers/providerBrokerAdmission';
 import { verifyProviderBrokerRouteGrantSignatureV2 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { readProvidersFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
+import { admitResponse } from '@/app/api/utils/enableSchemaValidation';
 
 export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, personalApp: Fastify = app): void {
     const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
@@ -129,7 +133,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
                 request: external.data,
                 observedAt: new Date(),
             }), { isolationLevel: "Serializable" /* External model disclosure composes key authority, entitlement and resource currentness. */ });
-            return reply.send(ProviderBrokerModelCatalogAuthorizationResponseV1Schema.parse(result));
+            return reply.send(admitResponse(ProviderBrokerModelCatalogAuthorizationResponseV1Schema, result));
         }
         const broker = ProviderBrokerModelCatalogAuthorizationV1Schema.parse(parsed.data);
         const signing = resolvePeerMediationGrantSigningConfig(requestHomeEnv);
@@ -150,7 +154,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             }),
             resolveExecutionRunCurrentness,
         });
-        return reply.send(ProviderBrokerModelCatalogAuthorizationResponseV1Schema.parse(result));
+        return reply.send(admitResponse(ProviderBrokerModelCatalogAuthorizationResponseV1Schema, result));
     });
     app.post(TEAM_CREDENTIAL_RESOURCE_TEST_ADMISSION_HTTP_PATH_V1, {
         preHandler: app.authenticate,
@@ -174,8 +178,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
                 publicKeyBase64Url: relaySigning.capability.publicKey,
                 expiresAt: relaySigning.capability.expiresAt,
             }],
-        }), { isolationLevel: "Serializable" /* Test request admission sums usage limits before inserting a distinct request fact. */ });
-        return reply.send(TeamCredentialResourceTestAdmissionResponseV1Schema.parse(result));
+        }), { isolationLevel: "ReadCommitted" /* Admission reads recorded period spend; in-flight requests may overlap. */ });
+        return reply.send(admitResponse(TeamCredentialResourceTestAdmissionResponseV1Schema, result));
     });
     app.post(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_ADMISSION_HTTP_PATH_V1, {
         preHandler: app.authenticate,
@@ -191,8 +195,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             authenticatedBrokerAccountId: request.userId,
             request: parsed.data,
             observedAt: new Date(),
-        }), { isolationLevel: "Serializable" /* External request admission sums usage limits before inserting a distinct request fact. */ });
-        return reply.send(TeamCredentialExternalProviderAdmissionResponseV1Schema.parse(result));
+        }), { isolationLevel: "ReadCommitted" /* Admission reads recorded period spend; in-flight requests may overlap. */ });
+        return reply.send(admitResponse(TeamCredentialExternalProviderAdmissionResponseV1Schema, result));
     });
     app.post(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_TERMINAL_USAGE_HTTP_PATH_V1, {
         preHandler: app.authenticate,
@@ -210,9 +214,13 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         const result = await inTx(tx => recordTeamCredentialExternalProviderTerminalUsageInTx(tx, {
             authenticatedBrokerAccountId: request.userId,
             request: parsed.data,
-        }), { isolationLevel: "Serializable" /* Terminal usage correction participates in the same resource quota and request-replay family. */ });
-        return reply.send(TeamCredentialExternalProviderTerminalUsageResponseV1Schema.parse(result));
+        }), { isolationLevel: "Serializable" /* Terminal observation replay remains in its existing write family. */ });
+        return reply.send(admitResponse(TeamCredentialExternalProviderTerminalUsageResponseV1Schema, result));
     });
+    const brokerOpenSchema = z.union([ProviderBrokerOpenRequestV1Schema, ProviderBrokerActionOpenRequestV3Schema]);
+    const brokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerActionOpenResponseV3Schema]);
+    const brokerAdmissionSchema = z.union([ProviderBrokerRequestAdmissionV1Schema, ProviderBrokerActionAdmissionV3Schema]);
+    const brokerAdmissionResponseSchema = z.union([ProviderBrokerRequestAdmissionResponseV1Schema, ProviderBrokerActionAdmissionResponseV3Schema]);
     app.post(PROVIDER_BROKER_OPEN_HTTP_PATH_V1, {
         preHandler: app.authenticate,
         config: {
@@ -224,12 +232,12 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         },
         attachValidation: true,
         schema: {
-            body: ProviderBrokerOpenRequestV1Schema,
-            response: { 200: ProviderBrokerOpenResponseV1Schema, 400: ProviderBrokerOpenResponseV1Schema },
+            body: brokerOpenSchema,
+            response: { 200: brokerOpenResponseSchema, 400: brokerOpenResponseSchema },
         },
     }, async (request, reply) => {
         const requestHomeEnv = await readRequestHomeEnv(request);
-        const parsed = ProviderBrokerOpenRequestV1Schema.safeParse(request.body);
+        const parsed = brokerOpenSchema.safeParse(request.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         }
@@ -237,7 +245,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         if (!signing.ok) {
             return reply.send({ ok: false, reasonCode: 'update_required' });
         }
-        if (request.sessionRuntimePrincipal) {
+        if (request.sessionRuntimePrincipal && parsed.data.v !== 3) {
             const runnerSelection = await inTx(tx => verifyRunnerBrokerOpenSelectionInTx(tx, {
                 principal: request.sessionRuntimePrincipal!,
                 request: parsed.data,
@@ -269,6 +277,21 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         request.raw.once('aborted', abortEligibility);
         reply.raw.once('close', abortEligibility);
         try {
+        if (parsed.data.v === 3) {
+            const admission = request.externalActionActionBrokerAdmission;
+            if (!admission || admission.resourceId !== parsed.data.resourceId
+                || admission.machineId !== parsed.data.initiatorMachineId) {
+                return reply.send({ ok: false, reasonCode: 'resource_forbidden' });
+            }
+            const result = await openTeamCredentialActionBroker({
+                actorAccountId: request.userId, rootActionId: admission.rootActionId,
+                ...(admission.admittedReviewedChildActionId ? { admittedReviewedChildActionId: admission.admittedReviewedChildActionId } : {}),
+                authentication: readSessionAccessAuthenticationFromRequest(request), request: parsed.data,
+                readCurrentPresence, nowMs: Date.now(), grantId: crypto.randomUUID(),
+                signingKey: { keyId: signing.keyId, secretKey: signing.secretKey }, signal: eligibilityAbort.signal,
+            });
+            return reply.send(admitResponse(ProviderBrokerActionOpenResponseV3Schema, result));
+        }
         const openInput: TeamCredentialProviderBrokerOpenInput = {
             actorAccountId: request.userId,
             authentication: readSessionAccessAuthenticationFromRequest(request),
@@ -312,7 +335,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
                 principal: request.sessionRuntimePrincipal!,
             })
             : openTeamCredentialProviderBroker(openInput));
-        return reply.send(ProviderBrokerOpenResponseV1Schema.parse(result));
+        return reply.send(admitResponse(ProviderBrokerOpenResponseV1Schema, result));
         } finally {
             request.raw.off('aborted', abortEligibility);
             reply.raw.off('close', abortEligibility);
@@ -323,12 +346,12 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         preHandler: app.authenticate,
         attachValidation: true,
         schema: {
-            body: ProviderBrokerRequestAdmissionV1Schema,
-            response: { 200: ProviderBrokerRequestAdmissionResponseV1Schema, 400: ProviderBrokerRequestAdmissionResponseV1Schema },
+            body: brokerAdmissionSchema,
+            response: { 200: brokerAdmissionResponseSchema, 400: brokerAdmissionResponseSchema },
         },
     }, async (request, reply) => {
         const requestHomeEnv = await readRequestHomeEnv(request);
-        const parsed = ProviderBrokerRequestAdmissionV1Schema.safeParse(request.body);
+        const parsed = brokerAdmissionSchema.safeParse(request.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         }
@@ -337,6 +360,13 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             return reply.send({ ok: false, reasonCode: 'update_required' });
         }
         const observedAt = new Date();
+        if (parsed.data.v === 3) {
+            const result = admitTeamCredentialActionBrokerRequest({ authenticatedBrokerAccountId: request.userId,
+                request: parsed.data, verifyAuthority: authority => verifyProviderBrokerActionRouteGrantSignatureV3({
+                    authority, signingCapability: signing.capability, nowMs: observedAt.getTime(),
+                }) });
+            return reply.send(admitResponse(ProviderBrokerActionAdmissionResponseV3Schema, result));
+        }
         const result = await admitTeamCredentialProviderBrokerRequest({
             authenticatedBrokerAccountId: request.userId,
             request: parsed.data,
@@ -348,6 +378,6 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             }),
             resolveExecutionRunCurrentness,
         });
-        return reply.send(ProviderBrokerRequestAdmissionResponseV1Schema.parse(result));
+        return reply.send(admitResponse(ProviderBrokerRequestAdmissionResponseV1Schema, result));
     });
 }

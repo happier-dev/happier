@@ -81,6 +81,24 @@ the initiator Account need not equal the custodian Account. Home remains the
 resource, membership and consumer-currentness authority, and the source
 credential stays with its custodian.
 
+Finite provisioner and SCM hosting Actions in 0.3 development source retain the
+resource's selected delivery mode without requiring a Session. Home admits the
+requesting member, current declared Action, credential use request and shared
+purpose once at the Team operation owner. Direct delivery opens the admitted
+material before effects and retains it for that Action. Brokered delivery sends
+the declared Action input over the existing broker carrier to the custodian;
+the credential remains there and the effect belongs to the requester. The
+signed finite Action grant pins the input and declaration. Home consumes its
+single-use operation admission before execution; another carrier with that
+grant is refused. A new attempt opens a new grant and re-runs entitlement.
+Custodians that do not support this additive contract return a typed refusal;
+the requester never converts brokered delivery to direct delivery. Withdrawal
+applies at the next Action admission, while local cancellation stops admitted
+execution. Azure DevOps hosting currently returns typed unavailable for a Team
+selection before any native effect; its personal path remains available. Real
+Azure Team support belongs to the SCM owner. These source contracts have
+separate composed and loaded-runtime validation.
+
 For the worker's loopback endpoint, the Team delivery owner selects a local
 capability header from the Agent's declared credential transports, preferring
 standard Bearer authorization and using a declared raw API-key header where
@@ -510,6 +528,29 @@ consumes that typed result and rejects an unavailable mode with
 `team_authentication_policy_unavailable`; it does not parse provider evidence or infer support
 from connection rows locally. The producer's presence does not certify the remaining mounted
 consumer and loaded-runtime journeys.
+
+## Shared credential usage limits
+
+In 0.3 development source, brokered, credential-test, and external API request
+admission read recorded spend under ReadCommitted isolation. Each applicable
+resource/member/Group limit and UTC period has one counter in the existing
+`UsageAccountingProjection` store, under the custodian Account and the `teamSpend`
+kind. Each-member limits have a separate counter for each requesting Account.
+Concurrent requests may overshoot a limit; recorded spend is authoritative for the
+whole period, including already-recorded observations later within that period.
+
+`teamCredentialUsageCounters.ts` owns counter storage. The existing usage fold in
+`teamCredentialUsageLimitEvaluation.ts` owns measurement semantics and reconstructs
+retained facts at first use. Usage writes, late corrections, Group attribution,
+retention, native-history deletion, late first turn insertion, Session deletion,
+and Account erasure refresh consumed counters in their source transaction. Refresh
+uses the affected observations and Session extent to touch only overlapping
+periods; the canonical source fold remains on this producer path. First reconstruction and source
+corrections use the existing resource row's database lock so a concurrent initial
+read cannot leave stale spend behind. Immutable request admissions increment their
+request counters directly. No reservation, settlement ledger, timer, or migration
+is involved. Historical analytics and catalog projections remain read-only views
+of the same canonical measurement rule.
 
 ## Live Session presence
 

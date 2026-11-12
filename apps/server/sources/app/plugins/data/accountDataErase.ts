@@ -1,3 +1,4 @@
+import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
@@ -1023,7 +1024,18 @@ export async function deleteAccountForErasure(input: Readonly<{
         // retained rows disappear through their existing FK cascades/SET NULL.
         const deletedAccountId = input.accountId;
         enqueueAccountChangePublication(tx, [deletedAccountId], async publicationTx => {
+            const usageResources = await publicationTx.usageEvent.groupBy({
+                by: ['teamCredentialResourceId'], _min: { observedAt: true }, _max: { observedAt: true },
+                where: { accountId: deletedAccountId, teamCredentialResourceId: { not: null } },
+            });
             await publicationTx.account.delete({ where: { id: deletedAccountId } });
+            await refreshTeamCredentialUsageCountersInTx(publicationTx, {
+                resourceIds: usageResources.flatMap(row => row.teamCredentialResourceId ? [row.teamCredentialResourceId] : []),
+                changedObservedAts: usageResources.flatMap(row => [
+                    ...(row._min.observedAt ? [row._min.observedAt] : []),
+                    ...(row._max.observedAt ? [row._max.observedAt] : []),
+                ]),
+            });
         });
         return { status: "deleted" };
     }, { isolationLevel: "ReadCommitted", transactionClass: "account-erasure.delete-retired" });

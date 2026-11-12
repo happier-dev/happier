@@ -1,3 +1,4 @@
+import { deleteTeamCredentialUsageCountersInTx } from './teamCredentialUsageCounters';
 import { isDeepStrictEqual } from "node:util";
 import { z } from 'zod/mini';
 import { TeamCredentialDeliveryPolicyV1Schema, TeamCredentialSessionUsePolicyV1Schema, TeamCredentialRequestPolicyV1Schema, TeamCredentialBrokerPlacementV1Schema, TeamCredentialResourceReplacementV1Schema, TeamCredentialResourceUpdateInputV1Schema, type TeamCredentialResourceUpdateInputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -359,6 +360,9 @@ async function applyResourceReplacementInTx(
         await tx.teamCredentialUsageLimit.deleteMany({
             where: { resourceId: resource.id, id: { in: [...deleteIds] } },
         });
+        for (const limitId of deleteIds) {
+            await deleteTeamCredentialUsageCountersInTx(tx, resource.custodianAccountId, limitId);
+        }
     }
     for (const limit of validatedUpserts) {
         if (limit.existingId !== null) {

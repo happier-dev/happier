@@ -1,0 +1,493 @@
+import {
+    TeamCredentialUsageLimitMetricV1Schema,
+    TeamCredentialUsageLimitPeriodV1Schema,
+    TeamCredentialUsageLimitSubjectKindV1Schema,
+    type TeamCredentialUsageLimitMetricV1,
+    type TeamCredentialUsageLimitPeriodV1,
+    type TeamCredentialUsageLimitSubjectKindV1,
+} from '@happier-dev/protocol/teams';
+import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
+import { sumKnownUsageTokenParts } from '@happier-dev/protocol/usage/usageAggregation';
+import type { UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { resolveScopedUsageContributions } from '@/app/usage/query/resolveScopedUsageContributions';
+import { toScopedUsageEventRow } from '@/app/usage/query/scopedUsageEventRow';
+import { resolveEffectiveUsageCostUsd } from '@/app/usage/query/resolveUsageCostMode';
+import {
+    isEffectiveTeamGroupMembership,
+} from '@/app/teams/groups/effectiveGroupMembership';
+import type { Tx } from '@/storage/inTx';
+
+export type TeamCredentialUsageLimitRow = Readonly<{
+    id: string;
+    resourceId: string;
+    subjectKind: TeamCredentialUsageLimitSubjectKindV1;
+    subjectId: string;
+    period: TeamCredentialUsageLimitPeriodV1;
+    metric: TeamCredentialUsageLimitMetricV1;
+    maximum: string;
+    enabled: boolean;
+    createdAt: Date;
+}>;
+
+export type TeamCredentialUsageLimitInputRow = Readonly<
+    Omit<TeamCredentialUsageLimitRow, 'subjectKind' | 'period' | 'metric'> & {
+        subjectKind: string;
+        period: string;
+        metric: string;
+    }
+>;
+
+export type TeamCredentialUsageLimitEvent = Readonly<{
+    id: string;
+    observedAt: Date;
+    resourceId: string | null;
+    actorAccountId: string | null;
+    requestCount: number;
+    totalTokens: number | null;
+    tokens: UsageObservationTokens;
+    effectiveCostUsd: number | null;
+    costMeasurementExpected: boolean;
+    deliveryMode: string | null;
+    groupAdmissions: readonly Readonly<{ groupId: string; observedAtMs: number }>[];
+    /** Canonical SessionTurn start, used so a newly-created token/cost limit
+     * never charges an indivisible turn that was already active. */
+    turnStartedAtMs: number | null;
+}>;
+
+export type TeamCredentialUsageLimitDecision = Readonly<{
+    limitId: string;
+    metric: TeamCredentialUsageLimitMetricV1;
+    recorded: number;
+    maximum: number;
+    resetsAt: Date;
+}>;
+
+export type TeamCredentialUsageLimitEvaluation = Readonly<
+    | { ok: true; applied: readonly TeamCredentialUsageLimitDecision[] }
+    | { ok: false; denied: TeamCredentialUsageLimitDecision; applied: readonly TeamCredentialUsageLimitDecision[] }
+    | {
+        ok: false;
+        unavailable: { limitId: string; metric: 'cost_usd'; reason: 'cost_limit_unavailable' };
+    }
+>;
+
+export function parseMaximum(value: string): number | null {
+    if (!/^\d+(?:\.\d{1,8})?$/u.test(value)) return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function periodToGranularity(period: TeamCredentialUsageLimitPeriodV1): 'day' | 'week' | 'month' {
+    return period;
+}
+
+function isEventInLimitScope(
+    event: TeamCredentialUsageLimitEvent,
+    limit: TeamCredentialUsageLimitRow,
+    actorAccountId: string,
+    windowStartMs: number,
+    windowEndMs: number,
+): boolean {
+    if (event.resourceId !== limit.resourceId) return false;
+    if (event.deliveryMode !== 'brokered' && event.deliveryMode !== 'external_api') return false;
+    if (limit.subjectKind === 'resource') return true;
+    if (limit.subjectKind === 'each_member') return event.actorAccountId === actorAccountId;
+    if (limit.subjectKind === 'team_member') return event.actorAccountId === limit.subjectId;
+    return event.groupAdmissions.some((admission) => (
+        admission.groupId === limit.subjectId
+        && admission.observedAtMs >= windowStartMs
+        && admission.observedAtMs < windowEndMs
+    ));
+}
+
+function readMetric(event: TeamCredentialUsageLimitEvent, metric: TeamCredentialUsageLimitMetricV1): number | null {
+    if (metric === 'inference_requests') return event.requestCount;
+    if (metric === 'total_tokens') return event.totalTokens ?? sumKnownUsageTokenParts(event.tokens);
+    return event.effectiveCostUsd;
+}
+
+function buildExternalAdmissionCorrelationKey(row: Readonly<{
+    teamCredentialResourceId?: string | null;
+    teamCredentialActorAccountId?: string | null;
+    teamCredentialExternalApiKeyId?: string | null;
+    externalKey?: string | null;
+}>): string | null {
+    if (
+        !row.teamCredentialResourceId
+        || !row.teamCredentialActorAccountId
+        || !row.teamCredentialExternalApiKeyId
+        || !row.externalKey
+    ) return null;
+    return JSON.stringify([
+        row.teamCredentialResourceId,
+        row.teamCredentialActorAccountId,
+        row.teamCredentialExternalApiKeyId,
+        row.externalKey,
+    ]);
+}
+
+export type TeamCredentialUsageLimitMeasurement = Readonly<{ recorded: number; measurementUnavailable: boolean }>;
+
+export function measureTeamCredentialUsageLimit(input: Readonly<{
+    limit: TeamCredentialUsageLimitRow;
+    events: readonly TeamCredentialUsageLimitEvent[];
+    actorAccountId: string;
+    now: Date;
+}>): TeamCredentialUsageLimitMeasurement {
+    const limit = input.limit;
+    const bounds = resolveBucketBounds(periodToGranularity(limit.period), input.now.getTime(), 0);
+    const startMs = Math.max(bounds.bucketStartMs, limit.createdAt.getTime());
+    let recorded = 0;
+    let measurementUnavailable = false;
+    for (const event of input.events) {
+        if (!isEventInLimitScope(event, limit, input.actorAccountId, startMs, bounds.bucketEndMs)) continue;
+        const observedAt = event.observedAt.getTime();
+        if (observedAt < startMs || observedAt >= bounds.bucketEndMs) continue;
+        if (
+            limit.metric !== 'inference_requests'
+            && event.turnStartedAtMs !== null
+            && event.turnStartedAtMs < limit.createdAt.getTime()
+        ) continue;
+        const value = readMetric(event, limit.metric);
+        if (value === null) {
+            if (limit.metric === 'cost_usd' && event.costMeasurementExpected) measurementUnavailable = true;
+            continue;
+        }
+        if (Number.isFinite(value) && value >= 0) recorded += value;
+    }
+    return { recorded, measurementUnavailable };
+}
+
+export function selectApplicableTeamCredentialUsageLimits(input: Readonly<{
+    limits: readonly TeamCredentialUsageLimitRow[];
+    actorAccountId: string;
+    currentGroupIds?: readonly string[];
+    includeAllSubjects?: boolean;
+    includeDisabled?: boolean;
+}>): readonly TeamCredentialUsageLimitRow[] {
+    const currentGroupIds = new Set(input.currentGroupIds ?? []);
+    return input.limits.filter((limit) => (input.includeDisabled || limit.enabled) && (
+        input.includeAllSubjects || (
+            (limit.subjectKind !== 'team_member' || limit.subjectId === input.actorAccountId)
+            && (limit.subjectKind !== 'team_group' || currentGroupIds.has(limit.subjectId))
+        )
+    ));
+}
+
+/**
+ * Evaluates all matching ceilings from immutable UsageEvent facts. This is a
+ * pure owner-level primitive so admission and resource analytics cannot drift.
+ */
+export function evaluateTeamCredentialUsageLimits(input: Readonly<{
+    limits: readonly TeamCredentialUsageLimitRow[];
+    events: readonly TeamCredentialUsageLimitEvent[];
+    measurements?: ReadonlyMap<string, TeamCredentialUsageLimitMeasurement>;
+    actorAccountId: string;
+    currentGroupIds?: readonly string[];
+    includeAllSubjects?: boolean;
+    includeDisabled?: boolean;
+    now: Date;
+}>): TeamCredentialUsageLimitEvaluation {
+    const applicable = selectApplicableTeamCredentialUsageLimits(input);
+    const applied: TeamCredentialUsageLimitDecision[] = [];
+    const denied: TeamCredentialUsageLimitDecision[] = [];
+    const unavailable: { limitId: string; metric: 'cost_usd'; reason: 'cost_limit_unavailable' }[] = [];
+    for (const limit of applicable) {
+        const maximum = parseMaximum(limit.maximum);
+        if (maximum === null) {
+            denied.push({
+                limitId: limit.id,
+                metric: limit.metric,
+                recorded: Number.POSITIVE_INFINITY,
+                maximum: 0,
+                resetsAt: input.now,
+            });
+            continue;
+        }
+        const bounds = resolveBucketBounds(periodToGranularity(limit.period), input.now.getTime(), 0);
+        const { recorded, measurementUnavailable } = input.measurements?.get(limit.id)
+            ?? measureTeamCredentialUsageLimit({ limit, events: input.events, actorAccountId: input.actorAccountId, now: input.now });
+        if (measurementUnavailable && limit.metric === 'cost_usd') {
+            unavailable.push({ limitId: limit.id, metric: 'cost_usd', reason: 'cost_limit_unavailable' });
+            continue;
+        }
+        const decision = { limitId: limit.id, metric: limit.metric, recorded, maximum, resetsAt: new Date(bounds.bucketEndMs) };
+        applied.push(decision);
+        if (recorded >= maximum) denied.push(decision);
+    }
+    if (unavailable.length > 0) return { ok: false, unavailable: unavailable[0]! };
+    if (denied.length > 0) {
+        const effectiveDenial = denied.reduce((latest, candidate) => (
+            candidate.resetsAt.getTime() >= latest.resetsAt.getTime() ? candidate : latest
+        ));
+        return { ok: false, denied: effectiveDenial, applied };
+    }
+    return { ok: true, applied };
+}
+
+export function canonicalUsageLimitMaximum(value: string, metric: TeamCredentialUsageLimitMetricV1): string | null {
+    const trimmed = value.trim();
+    if (!/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/u.test(trimmed)) return null;
+    if (metric !== 'cost_usd' && !/^\d+$/u.test(trimmed)) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isSafeInteger(parsed) && metric !== 'cost_usd') return null;
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return trimmed;
+}
+
+export function parseUsageLimitRows(
+    limits: readonly TeamCredentialUsageLimitInputRow[],
+): TeamCredentialUsageLimitRow[] {
+    return limits.map((limit) => {
+        const subjectKind = TeamCredentialUsageLimitSubjectKindV1Schema.safeParse(limit.subjectKind);
+        const period = TeamCredentialUsageLimitPeriodV1Schema.safeParse(limit.period);
+        const metric = TeamCredentialUsageLimitMetricV1Schema.safeParse(limit.metric);
+        if (!subjectKind.success || !period.success || !metric.success) {
+            throw new Error(`invalid Team credential usage limit row: ${limit.id}`);
+        }
+        return { ...limit, subjectKind: subjectKind.data, period: period.data, metric: metric.data };
+    });
+}
+
+export type TeamCredentialUsageDatabaseEvaluationRequest = Readonly<{
+    resourceId: string;
+    resultKey?: string;
+    now?: Date;
+    actorAccountId: string;
+    limits: readonly TeamCredentialUsageLimitInputRow[];
+    includeAllSubjects?: boolean;
+    includeDisabled?: boolean;
+    currentGroupIds?: readonly string[];
+}>;
+
+export async function evaluateResourcesFromDatabaseInTx(
+    tx: Tx,
+    input: Readonly<{
+        requests: readonly TeamCredentialUsageDatabaseEvaluationRequest[];
+        now: Date;
+        sourceEndMs?: number;
+    }>,
+): Promise<Map<string, TeamCredentialUsageLimitEvaluation>> {
+    const results = new Map<string, TeamCredentialUsageLimitEvaluation>();
+    const requests = input.requests.map((request) => ({
+        ...request,
+        limits: parseUsageLimitRows(request.limits),
+    }));
+    for (const request of requests) {
+        if (request.limits.length === 0) results.set(request.resultKey ?? request.resourceId, { ok: true, applied: [] });
+    }
+    const requestsWithLimits = requests.filter((request) => request.limits.length > 0);
+    if (requestsWithLimits.length === 0) return results;
+
+    const earliestStartByResourceId = new Map<string, number>();
+    for (const request of requestsWithLimits) {
+        const earliest = Math.min(...request.limits.map((limit) => {
+            const bounds = resolveBucketBounds(periodToGranularity(limit.period), (request.now ?? input.now).getTime(), 0);
+            return Math.max(bounds.bucketStartMs, limit.createdAt.getTime());
+        }));
+        earliestStartByResourceId.set(request.resourceId,
+            Math.min(earliest, earliestStartByResourceId.get(request.resourceId) ?? Infinity));
+    }
+    const earliestStartMs = Math.min(...earliestStartByResourceId.values());
+    const resourceIds = requestsWithLimits.map((request) => request.resourceId);
+    const candidateResourceRows = await tx.usageEvent.findMany({
+        where: {
+            teamCredentialResourceId: { in: resourceIds },
+            observedAt: { gte: new Date(earliestStartMs), lte: input.sourceEndMs === undefined ? input.now : new Date(input.sourceEndMs) },
+        },
+        orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+    const resourceRows = candidateResourceRows.filter((row) => (
+        row.teamCredentialResourceId !== null
+        && row.observedAt.getTime() >= (earliestStartByResourceId.get(row.teamCredentialResourceId) ?? Number.POSITIVE_INFINITY)
+    ));
+    const sessionIds = [...new Set(resourceRows.flatMap((row) => row.sessionId ? [row.sessionId] : []))];
+    const rows = sessionIds.length === 0 ? resourceRows : await tx.usageEvent.findMany({
+        where: {
+            OR: [
+                { id: { in: resourceRows.map((row) => row.id) } },
+                { sessionId: { in: sessionIds }, observedAt: { lte: input.sourceEndMs === undefined ? input.now : new Date(input.sourceEndMs) } },
+            ],
+        },
+        orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+    const groupRows = resourceRows.length === 0 ? [] : await tx.usageEventTeamCredentialGroupAttribution.findMany({
+        where: { usageEventId: { in: resourceRows.map((row) => row.id) } },
+        select: { usageEventId: true, teamGroupId: true },
+    });
+    const resourceRowsById = new Map(resourceRows.map((row) => [row.id, row]));
+    const groupAdmissionsByEventId = new Map<string, Map<string, number>>();
+    for (const row of groupRows) {
+        const usageEvent = resourceRowsById.get(row.usageEventId);
+        if (
+            !usageEvent
+            || usageEvent.source !== 'team_credential_admission'
+            || (usageEvent.credentialDeliveryMode !== 'brokered' && usageEvent.credentialDeliveryMode !== 'external_api')
+        ) continue;
+        const admissions = groupAdmissionsByEventId.get(row.usageEventId) ?? new Map<string, number>();
+        admissions.set(row.teamGroupId, usageEvent.observedAt.getTime());
+        groupAdmissionsByEventId.set(row.usageEventId, admissions);
+    }
+    const groupAdmissionsByTurn = new Map<string, Map<string, Set<number>>>();
+    const groupAdmissionsByExternalCorrelation = new Map<string, Map<string, Set<number>>>();
+    for (const row of resourceRows) {
+        const eventAdmissions = groupAdmissionsByEventId.get(row.id);
+        if (!eventAdmissions) continue;
+        if (row.sessionId && row.turnId) {
+            const key = JSON.stringify([row.sessionId, row.turnId, row.teamCredentialResourceId]);
+            const turnAdmissions = groupAdmissionsByTurn.get(key) ?? new Map<string, Set<number>>();
+            for (const [groupId, observedAtMs] of eventAdmissions) {
+                const observedAtValues = turnAdmissions.get(groupId) ?? new Set<number>();
+                observedAtValues.add(observedAtMs);
+                turnAdmissions.set(groupId, observedAtValues);
+            }
+            groupAdmissionsByTurn.set(key, turnAdmissions);
+        }
+        const externalCorrelationKey = buildExternalAdmissionCorrelationKey(row);
+        if (!externalCorrelationKey) continue;
+        const externalAdmissions = groupAdmissionsByExternalCorrelation.get(externalCorrelationKey)
+            ?? new Map<string, Set<number>>();
+        for (const [groupId, observedAtMs] of eventAdmissions) {
+            const observedAtValues = externalAdmissions.get(groupId) ?? new Set<number>();
+            observedAtValues.add(observedAtMs);
+            externalAdmissions.set(groupId, observedAtValues);
+        }
+        groupAdmissionsByExternalCorrelation.set(externalCorrelationKey, externalAdmissions);
+    }
+    const { bucketAttributions } = resolveScopedUsageContributions(rows.map(toScopedUsageEventRow));
+    const turnReferences = [...new Map(bucketAttributions.flatMap((row) => (
+        row.sessionId && row.turnId
+            ? [[JSON.stringify([row.sessionId, row.turnId]), { sessionId: row.sessionId, turnId: row.turnId }] as const]
+            : []
+    ))).values()];
+    const turnRows = turnReferences.length === 0 ? [] : await tx.sessionTurn.findMany({
+        where: {
+            OR: turnReferences.map(({ sessionId, turnId }) => ({ sessionId, turnId })),
+        },
+        select: { sessionId: true, turnId: true, startedAt: true },
+    });
+    const turnStartedAtByKey = new Map(turnRows.map((turn) => [
+        JSON.stringify([turn.sessionId, turn.turnId]),
+        Number(turn.startedAt),
+    ]));
+    const events: TeamCredentialUsageLimitEvent[] = bucketAttributions.map((row) => {
+        const directlyAttributedAdmissions = row.contributingEventIds.flatMap((id) => (
+            [...(groupAdmissionsByEventId.get(id) ?? [])]
+        ));
+        const turnAdmissions = row.sessionId && row.turnId && row.teamCredentialResourceId
+            ? groupAdmissionsByTurn.get(JSON.stringify([row.sessionId, row.turnId, row.teamCredentialResourceId]))
+            : undefined;
+        const externalAdmissions = groupAdmissionsByExternalCorrelation.get(
+            buildExternalAdmissionCorrelationKey(row) ?? '',
+        );
+        const groupAdmissions = new Map<string, { groupId: string; observedAtMs: number }>();
+        for (const [groupId, observedAtMs] of directlyAttributedAdmissions) {
+            groupAdmissions.set(JSON.stringify([groupId, observedAtMs]), { groupId, observedAtMs });
+        }
+        for (const [groupId, observedAtValues] of [...(turnAdmissions ?? []), ...(externalAdmissions ?? [])]) {
+            for (const observedAtMs of observedAtValues) {
+                groupAdmissions.set(JSON.stringify([groupId, observedAtMs]), { groupId, observedAtMs });
+            }
+        }
+        return {
+            id: row.id,
+            observedAt: row.observedAt,
+            resourceId: row.teamCredentialResourceId ?? null,
+            actorAccountId: row.teamCredentialActorAccountId ?? null,
+            requestCount: row.requestCount ?? 0,
+            totalTokens: row.tokens.total,
+            tokens: row.tokens,
+            effectiveCostUsd: row.cost.costSource === 'none' ? null : resolveEffectiveUsageCostUsd(row.cost, 'auto'),
+            costMeasurementExpected: row.source !== 'team_credential_admission',
+            deliveryMode: row.credentialDeliveryMode ?? null,
+            groupAdmissions: [...groupAdmissions.values()],
+            turnStartedAtMs: row.sessionId && row.turnId
+                ? turnStartedAtByKey.get(JSON.stringify([row.sessionId, row.turnId])) ?? null
+                : null,
+        };
+    });
+    for (const request of requestsWithLimits) {
+        results.set(request.resultKey ?? request.resourceId, evaluateTeamCredentialUsageLimits({
+            limits: request.limits,
+            events,
+            actorAccountId: request.actorAccountId,
+            currentGroupIds: request.currentGroupIds,
+            includeAllSubjects: request.includeAllSubjects,
+            includeDisabled: request.includeDisabled,
+            now: request.now ?? input.now,
+        }));
+    }
+    return results;
+}
+
+export async function loadTeamCredentialUsageAdmissionRequestsInTx(
+    tx: Tx,
+    input: Readonly<{ resourceIds: readonly string[]; actorAccountId: string; now?: Date }>,
+) {
+    const resourceIds = [...new Set(input.resourceIds)];
+    const budgetGroupIdsByResourceId = new Map<string, readonly string[]>();
+    if (resourceIds.length === 0) return { requests: [], budgetGroupIdsByResourceId };
+    const [resources, limitRows] = await Promise.all([
+        tx.teamCredentialResource.findMany({
+            where: { id: { in: resourceIds } },
+            select: { id: true, teamId: true, custodianAccountId: true },
+        }),
+        tx.teamCredentialUsageLimit.findMany({
+            where: { resourceId: { in: resourceIds }, enabled: true },
+            orderBy: { createdAt: 'asc' },
+        }),
+    ]);
+    const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+    const limitsByResourceId = new Map<string, typeof limitRows>();
+    for (const limit of limitRows) {
+        const limits = limitsByResourceId.get(limit.resourceId) ?? [];
+        limits.push(limit);
+        limitsByResourceId.set(limit.resourceId, limits);
+    }
+    const groupLimitedTeamIds = [...new Set(limitRows.flatMap((limit) => {
+        if (limit.subjectKind !== 'team_group') return [];
+        const resource = resourceById.get(limit.resourceId);
+        return resource ? [resource.teamId] : [];
+    }))];
+    const membershipRows = groupLimitedTeamIds.length === 0 ? [] : await tx.teamMembership.findMany({
+        where: { teamId: { in: groupLimitedTeamIds }, accountId: input.actorAccountId },
+        select: {
+            teamId: true,
+            status: true,
+            account: { select: { status: true } },
+            team: { select: { archivedAt: true } },
+            groupMemberships: {
+                select: { group: { select: { id: true, archivedAt: true } } },
+            },
+        },
+    });
+    const currentGroupIdsByTeamId = new Map(membershipRows.map((membership) => [
+        membership.teamId,
+        membership.groupMemberships
+            .filter(({ group }) => isEffectiveTeamGroupMembership({
+                accountStatus: membership.account.status,
+                membershipStatus: membership.status,
+                teamArchivedAt: membership.team.archivedAt,
+                groupArchivedAt: group.archivedAt,
+            }))
+            .map(({ group }) => group.id)
+            .sort(),
+    ]));
+    const requests = resources.map((resource) => ({
+        resourceId: resource.id,
+        custodianAccountId: resource.custodianAccountId,
+        actorAccountId: input.actorAccountId,
+        limits: limitsByResourceId.get(resource.id) ?? [],
+        currentGroupIds: currentGroupIdsByTeamId.get(resource.teamId) ?? [],
+    }));
+    for (const request of requests) {
+        const currentGroupIdSet = new Set(request.currentGroupIds);
+        const budgetGroupIds = [...new Set(request.limits.flatMap((limit) => (
+            limit.subjectKind === 'team_group' && currentGroupIdSet.has(limit.subjectId)
+                ? [limit.subjectId]
+                : []
+        )))].sort();
+        budgetGroupIdsByResourceId.set(request.resourceId, budgetGroupIds);
+    }
+    return { requests, budgetGroupIdsByResourceId };
+}

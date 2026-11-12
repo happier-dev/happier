@@ -1,3 +1,4 @@
+import { deleteTeamCredentialResourceUsageCountersInTx } from './teamCredentialUsageCounters';
 import type { Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { admitTeamCredentialWithdrawalInTx } from "./resourceWithdrawalAdmission";
@@ -44,6 +45,7 @@ export async function deleteTeamCredentialResourceInTx(
     const publishNativePolicyChanges = await prepareNativeCredentialPolicyChangesInTx(tx, { resourceIds: [resource.id] });
     const deleted = await tx.teamCredentialResource.deleteMany({ where: { id: resource.id, revision: input.expectedRevision } });
     if (deleted.count !== 1) return { ok: false, error: "resource_changed" };
+    await deleteTeamCredentialResourceUsageCountersInTx(tx, resource.custodianAccountId, resource.id);
     await publishNativePolicyChanges();
     await recordTeamCredentialActivityInTx(tx, {
         teamId: resource.teamId, resourceId: resource.id, kind: "resource_deleted",
