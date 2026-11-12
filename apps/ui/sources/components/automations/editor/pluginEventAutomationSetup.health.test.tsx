@@ -10,7 +10,7 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { PluginUiHostApiRequestEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { HealthCheckSetupInputV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AutomationPluginEventTriggerProjectionSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -39,8 +39,17 @@ import { createPluginEventAutomationSetupSurfaceBinding } from './presentPluginE
 
 type SetupForm = ActionInputForm<ActionInputFormSubmissionResult, string, string>;
 
+// The native host transport answers the readonly Configure preview; all form logic stays real.
+const previewHealthSetup: NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['executeAction']> = async request => {
+    const { mode, ...sourceConfig } = HealthCheckSetupPreviewInputV1ProtocolSchema.parse(request.input);
+    return HealthCheckSetupPreviewResultV1ProtocolSchema.parse({ mode, sourceConfig: { ...sourceConfig,
+        alerts: sourceConfig.alerts ?? { channels: [], phases: ['open', 'recovered'] } } });
+};
+
 vi.mock('react-native', async () => await import('react-native-web'));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// The DOM portal painter is a renderer boundary; retain real overlay and target selection.
+vi.mock('@/utils/web/reactDomCjs', async () => (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 // The anchored portal is a platform boundary; the subject starter and Event editor stay real.
 vi.mock('@/components/ui/popover', async original => (await import('@/dev/testkit/mocks/popover'))
@@ -70,7 +79,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     } };
 });
 
+const healthBoundaryErrors: unknown[] = [];
 afterEach(standardCleanup);
+afterEach(() => { healthBoundaryErrors.length = 0; });
 afterEach(() => { rpc.respond = undefined; rpc.hostActions = []; });
 installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 
@@ -82,7 +93,7 @@ async function restoreServerAccountForTest(params: Parameters<typeof restoreAcco
     if (!params.accountId || !params.serverIdentityId) throw new Error('Expected an identified Health Account');
     const boundary = await createExternalActionAccountHttpBoundary({
         serverUrl: params.serverUrl, serverIdentityId: params.serverIdentityId, accountId: params.accountId,
-        machineId: healthSetupFixture().machineId, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'none',
+        machineId: healthSetupFixture().machineId, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
         failure: value => {
             const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(value);
             return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code } : null;
@@ -99,7 +110,9 @@ async function restoreServerAccountForTest(params: Parameters<typeof restoreAcco
     });
     return restoreAccount({ ...params, credentials: { token: createServedHomeAccountToken(params.accountId, true) },
         request: async (input, init) => {
-            const response = await boundary.handle(new URL(String(input)), init);
+            let response: Response | null;
+            try { response = await boundary.handle(new URL(String(input)), init); }
+            catch (error) { healthBoundaryErrors.push(error); throw error; }
             if (response) return response;
             return params.request?.(input, init) ?? null;
         } });
@@ -484,7 +497,7 @@ it.each([
                         adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
                         identity: { instanceId: 'environment-health', mountNonce: 'environment-health-mount' },
                         authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, surfaceContext, launchInput: params.launchInput,
-                        handlers: { settleEphemeralInput: async ({ settlement }) => {
+                        handlers: { executeAction: previewHealthSetup, settleEphemeralInput: async ({ settlement }) => {
                             expect(await handler(PluginUiHostApiRequestEnvelopeV1Schema.parse({ version: 1, requestId: 'environment-health-settle',
                                 surface: { pluginId, contributionId: event.event.identity.localId, surfaceId: 'environment-health',
                                     platform: surfaceContext.platform, channel: 'development' }, method: 'settleEphemeralInput', payload: settlement }))).toBeNull();
@@ -547,7 +560,7 @@ it('admits the machine-services Health Event, offers its installation as a watch
     if (!form) return;
     try {
         const screen = await renderScreen(<ActionInputFormModal form={form} onClose={() => {}} />);
-        expect(form.getFields().map(field => field.path)).toEqual(['subject', 'checks']);
+        expect(form.getFields().map(field => field.path)).toEqual(['subject', 'checks', 'investigation.mode']);
         const controls = () => screen.findAllByType(TextInput);
         expect(controls()).toHaveLength(2);
         expect(dispatch).not.toHaveBeenCalled();
@@ -556,7 +569,7 @@ it('admits the machine-services Health Event, offers its installation as a watch
             config: { host: '127.0.0.1', port: 8080 }, periodMs: 300000, consecutiveFailuresBeforeAlerting: 1 }];
         await act(async () => { changeTextTestInstance(controls()[0], JSON.stringify(subject)); });
         await act(async () => { changeTextTestInstance(controls()[1], JSON.stringify(checks)); });
-        const sourceConfig = { v: 1, subject, checks };
+        const sourceConfig = { v: 1, subject, checks, investigation: { mode: 'inbox' } };
         expect(form.getInput()).toEqual(sourceConfig);
         await act(async () => {
             expect(await form.submit()).toMatchObject({ kind: 'settled', outcome: { ok: true } });
@@ -647,7 +660,7 @@ it.each([
                         identity: { instanceId: 'health-setup-native', mountNonce: 'health-setup-native-mount' },
                         authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, launchInput: params.launchInput,
                         surfaceContext,
-                        handlers: { settleEphemeralInput: async ({ settlement }) => {
+                        handlers: { executeAction: previewHealthSetup, settleEphemeralInput: async ({ settlement }) => {
                             try {
                                 const response = await handler(PluginUiHostApiRequestEnvelopeV1Schema.parse({
                                     version: 1, requestId: 'health-native-settle', surface: {
@@ -689,11 +702,11 @@ it.each([
         expect(settlementErrors).toEqual([]);
         await Promise.race([
             waitForHomeGovernance(() => expect(submitted).toHaveLength(1)),
-            setup.then(outcome => { expect(submitted, JSON.stringify(outcome)).toHaveLength(1); }),
+            setup.then(outcome => { expect(healthBoundaryErrors).toEqual([]); expect(submitted, JSON.stringify(outcome)).toHaveLength(1); }),
         ]);
         const outcome = await setup;
         expect(submitted).toHaveLength(1);
-        expect(rpc.hostActions).toEqual([{ action: event.setupAction.identity, input: submitted[0] }]);
+        expect(rpc.hostActions).toEqual([{ action: event.setupAction.identity, expectedContributorOccurrenceId: event.event.occurrenceId, input: submitted[0] }]);
         const input = HealthCheckSetupInputV1ProtocolSchema.parse(submitted[0]);
         expect(input.subject).toEqual(subject);
         expect(input.checks).toHaveLength(existing.checks.length + 1);

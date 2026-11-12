@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ActionInvokeInputSchema, type ActionInvokeInput } from '@happier-dev/protocol/actions/actionInvokeInput';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationSourceSelectorIdV1Schema} from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
@@ -17,9 +18,6 @@ import {
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     type DaemonPluginStructuredMessageActionExecuteResponse,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import {
-    DaemonPluginStructuredMessageActionExecuteRequestSchema,
-    type DaemonPluginStructuredMessageActionExecuteRequest} from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentReadActionOutputV1Schema,
@@ -50,6 +48,8 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
@@ -90,7 +90,8 @@ let ACCOUNT_LIFETIME: ActiveServerAccountScopeLifetime;
 let rpcEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
 let rpcProjection: ReturnType<typeof projectionResponse>;
 let actionResult: DaemonPluginStructuredMessageActionExecuteResponse;
-const actionRequests: DaemonPluginStructuredMessageActionExecuteRequest[] = [];
+const actionRequests: ActionInvokeInput[] = [];
+let restoreActionLoader: (() => void) | null = null;
 const AUTOMATIONS_PATH = '/v3/automations?limit=100';
 
 installAutomationScreensCommonModuleMocks({
@@ -123,8 +124,7 @@ const rpcRequests = installSessionActionRpcBoundary((request) => {
             : { ok: false, code: 'plugin_action_schemas_unavailable' });
     }
     if (method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
-        actionRequests.push(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.params));
-        return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(actionResult);
+        throw new Error('History recovery must use the admitted Account Action HTTP boundary');
     }
     throw new Error(`Unexpected history recovery RPC: ${method}`);
 });
@@ -352,6 +352,7 @@ async function rereadAutomationStatus() {
 beforeEach(async () => {
     await home.reset();
     await loadSyncSingletonForTests();
+    restoreActionLoader = await installRealActionExecutorModuleLoader();
     clearDaemonMergedProjectionCacheForTests();
     resetMachineProjectionReadsForTests();
     rpcEvent = eligibleEvent();
@@ -400,6 +401,17 @@ beforeEach(async () => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('History recovery Account lifetime is unavailable');
     ACCOUNT_LIFETIME = lifetime;
+    await answerExternalActionAccountForHome(home, SERVER_ID, {
+        machineId: MACHINE_ID, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
+        execute: input => {
+            actionRequests.push(ActionInvokeInputSchema.parse(input));
+            return actionResult.ok ? actionResult.result : actionResult;
+        },
+        failure: value => {
+            const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(value);
+            return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code } : null;
+        },
+    });
     await sync.refreshMachines({ serverId: SERVER_ID });
     await sync.refreshAutomations();
     const refreshed = await createActivePluginAccountAvailabilityProjectionHydrator().refresh();
@@ -415,6 +427,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
     standardCleanup();
+    restoreActionLoader?.();
+    restoreActionLoader = null;
     await connection?.dispose();
     connection = null;
     clearPluginAccountAvailabilityProjection();
@@ -519,10 +533,8 @@ describe('automation history-gap recovery status', () => {
         })).resolves.toEqual({ kind: 'settled' });
 
         expect(actionRequests).toEqual([expect.objectContaining({
-            machineId: MACHINE_ID,
-            qualifiedActionId: `${PLUGIN_ID}/${ACTION_LOCAL_ID}`,
+            action: { pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID },
             expectedContributorOccurrenceId: event.event.occurrenceId,
-            executionSurface: 'ui',
             input: {
                 automationId: AUTOMATION_ID,
                 triggerId: TRIGGER_ID,
