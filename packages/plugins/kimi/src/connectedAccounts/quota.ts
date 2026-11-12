@@ -62,10 +62,10 @@ export function parseKimiQuota(value: unknown, observedAtMs: number): Snapshot {
 
 export async function fetchKimiQuota(input: Readonly<{
   http: Pick<HttpService, 'request'>; baseUrl: string; headers: Readonly<Record<string, string>>;
-  observedAtMs: number; signal: AbortSignal;
+  observedAtMs: number; signal: AbortSignal; apiKind?: 'platform';
 }>): Promise<Snapshot> {
   let response;
-  try { response = await input.http.request({ url: `${input.baseUrl}/usages`, method: 'GET', headers: input.headers, redirect: 'error' }, { signal: input.signal }); }
+  try { response = await input.http.request({ url: `${input.baseUrl.replace(/\/$/, '')}/${input.apiKind === 'platform' ? 'users/me/balance' : 'usages'}`, method: 'GET', headers: input.headers, redirect: 'error' }, { signal: input.signal }); }
   catch { input.signal.throwIfAborted(); throw new QuotaFetchError('Kimi usage request failed', { quotaFetchErrorCode: 'network' }); }
   input.signal.throwIfAborted();
   if (response.status !== 200) throw new QuotaFetchError('Kimi usage request was unavailable', {
@@ -74,5 +74,15 @@ export async function fetchKimiQuota(input: Readonly<{
   });
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(response.body)); } catch { return unavailable(); }
+  if (input.apiKind === 'platform') {
+    const envelope = record(body);
+    const remaining = numeric(record(envelope.data).available_balance);
+    if (envelope.code !== 0 || envelope.status !== true || remaining === undefined) return unavailable();
+    const usd = new URL(input.baseUrl).hostname === 'api.moonshot.ai';
+    return { observedAtMs: input.observedAtMs, limits: [{ id: 'available_balance', label: usd ? 'Available balance' : 'Available balance (CNY)',
+      remaining, unit: usd ? 'usd' : 'unknown', isExhausted: remaining <= 0,
+      ...(!usd ? { details: { note: 'Balance in CNY.' } } : {}),
+    }] };
+  }
   return parseKimiQuota(body, input.observedAtMs);
 }

@@ -46,3 +46,17 @@ describe('Kimi sourced usage', () => {
       .rejects.toMatchObject({ status: 403, quotaFetchErrorCode: 'network' });
   });
 });
+
+describe('Moonshot balance boundary', () => {
+  const input = {baseUrl:'https://api.moonshot.ai/v1',headers:{},observedAtMs:123,signal:new AbortController().signal,apiKind:'platform' as const};
+  it.each([0,-1.25])('preserves an exhausted balance %s without inventing a cap', async remaining => {
+    const snapshot=await fetchKimiQuota({...input,http:{async request(){return {status:200,headers:{},finalUrl:'',body:new TextEncoder().encode(JSON.stringify({code:0,status:true,data:{available_balance:remaining}}))};}}});
+    expect(snapshot.limits).toEqual([{id:'available_balance',label:'Available balance',remaining,unit:'usd',isExhausted:true}]);
+  });
+  it.each([{code:1,status:false,data:{available_balance:25}}, {code:0,status:true,data:{}}, 'bad-json'])('keeps unsuccessful balances unavailable', async body => {
+    await expect(fetchKimiQuota({...input,http:{async request(){return {status:200,headers:{},finalUrl:'',body:new TextEncoder().encode(typeof body==='string'?body:JSON.stringify(body))};}}})).rejects.toMatchObject({quotaFetchErrorCode:'malformed'});
+  });
+  it('preserves authentication refusal and retry-after provenance', async () => {
+    await expect(fetchKimiQuota({...input,http:{async request(){return {status:429,headers:{'retry-after':'30'},finalUrl:'',body:new Uint8Array()};}}})).rejects.toMatchObject({status:429,quotaFetchErrorCode:'provider_backoff'});
+  });
+});

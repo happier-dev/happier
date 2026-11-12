@@ -1,4 +1,5 @@
 import {
+  QuotaFetchError,
   classifyProviderLimitEvidence,
   parseConnectedAccountTokenEndpointFailure,
   requestDeviceGrantStep,
@@ -251,11 +252,11 @@ export function createKimiConnectedAccountRuntime(): ConnectedAccountRuntime {
     },
     async revoke() { return { status: 'remoteUnsupported' }; },
     async quota(context, options) {
-      if (await context.credentials.get('apiKind', options) === 'platform') throw Object.assign(new Error('Kimi subscription usage is unavailable for a platform key'), { code: 'kimi_usage_unavailable' });
+      const platform = await context.credentials.get('apiKind', options) === 'platform';
       const token = await context.credentials.get('accessToken', options);
-      if (!token) throw new Error('Kimi credentials are unavailable');
+      if (!token) throw new QuotaFetchError('Kimi credentials are unavailable', { quotaFetchErrorCode: 'missing_auth' });
       const deviceId = await context.credentials.get('deviceId', options);
-      return fetchKimiQuota({ http: context.services.http, baseUrl: await selectedBase(context), headers: { Authorization: `Bearer ${token}`, ...(deviceId ? { 'X-Msh-Device-Id': deviceId } : {}) }, observedAtMs: context.invokedAtMs, signal: options?.signal ?? context.signal });
+      return fetchKimiQuota({ ...(platform ? { apiKind: 'platform' } : {}), http: context.services.http, baseUrl: await selectedBase(context), headers: { Authorization: `Bearer ${token}`, ...(deviceId ? { 'X-Msh-Device-Id': deviceId } : {}) }, observedAtMs: context.invokedAtMs, signal: options?.signal ?? context.signal });
     },
     async materialize(request, context, options) {
       return materializeKimiCredentials(request, context, await selectedBase(context), options);

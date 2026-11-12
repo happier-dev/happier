@@ -156,3 +156,23 @@ describe('Kimi connected service', () => {
     expect(staged.values.get('accessToken')).toBeUndefined();
   });
 });
+
+// HTTP fixtures follow the vendor's published balance response (2026-11-12).
+describe('Moonshot platform quota', () => {
+  it.each([['https://api.moonshot.ai/v1', 'usd'], ['https://api.moonshot.cn/v1', 'unknown']])('reads the selected regional balance: %s', async (base, unit) => {
+    const calls: string[] = [];
+    const ctx = { ...context(store({ apiKind: 'platform', accessToken: 'fake-platform', apiBase: base })), services: { http: { async request(input: {url: string; method: string; headers: Record<string,string>}) {
+      calls.push(input.url);
+      expect(input.method).toBe('GET');
+      expect(input.headers.Authorization).toBe('Bearer fake-platform');
+      return { status: 200, headers: {}, finalUrl: input.url, body: new TextEncoder().encode(JSON.stringify({code:0,status:true,scode:'0x0',data:{available_balance:49.58894,voucher_balance:46.58893,cash_balance:3.00001}})) };
+    } } } } as Parameters<NonNullable<ConnectedAccountRuntime['quota']>>[0];
+    const snapshot = await createKimiConnectedAccountRuntime().quota!(ctx);
+    expect(calls).toEqual([base + '/users/me/balance']);
+    expect(snapshot.limits).toEqual([expect.objectContaining({ id: 'available_balance', remaining:49.58894, unit })]);
+    expect(snapshot.limits[0]).not.toHaveProperty('utilizationPct');
+    expect(snapshot.limits[0]).not.toHaveProperty('limit');
+    expect(snapshot.limits[0]).not.toHaveProperty('resetsAtMs');
+    if (unit === 'unknown') expect(snapshot.limits[0].details?.note).toContain('CNY');
+  });
+});
