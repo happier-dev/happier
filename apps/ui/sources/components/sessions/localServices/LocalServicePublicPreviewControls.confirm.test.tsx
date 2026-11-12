@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -22,10 +23,9 @@ import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/s
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createLocalServicePublicPreviewActions } from './publicPreviewActions';
 
-const machineRpcMock = vi.hoisted(() => vi.fn());
-// The daemon transport and modal host are genuine boundaries; Action admission,
+const executeOnMachine = vi.fn<RuntimeActionExecute>();
+// The Account Action transport and modal host are genuine boundaries; Action admission,
 // preview registration, public-preview actions and control logic remain real.
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpcMock }));
 
 const originalSettings = storage.getState().settings;
 afterEach(() => storage.setState({ settings: originalSettings }));
@@ -223,7 +223,7 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         modalSpies.alertAsync.mockImplementation(async () => {});
         modalSpies.show.mockReset();
         modalSpies.show.mockImplementation(() => 'modal-id');
-        machineRpcMock.mockReset();
+        executeOnMachine.mockReset();
     });
 
     it('does not offer Share for a Ready managed Service without registration intent', () => {
@@ -247,12 +247,12 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
             owner: { kind: 'user', id: 'account_1' }, target: { scheme: 'http', host: '127.0.0.1', port: 42514 },
             initialPath: { pathname: '/', search: '' }, display: { title: 'Dashboard', addressLabel: 'localhost:42514' }, originMode: 'host' } as const;
         const preview = { previewId: resource.previewId, resource, expiresAt: 61_000, diagnostics: [] };
-        machineRpcMock.mockResolvedValue({ protocolVersion: 1, status: 'created', preview,
+        executeOnMachine.mockResolvedValue({ protocolVersion: 1, status: 'created', preview,
             snapshot: { v: 1, machineId: 'machine_1', generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } });
         const openDetailsTab = vi.fn();
         const fixture = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'workspaceDetails', platform: 'web' }, {
             isActionEnabled: id => id !== 'localServices.preview.openOrCreate' || registrationEnabled,
-            runtimeActionExecute: createLocalServicesRuntimeActionExecutor(),
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ executeOnMachine }),
         });
         const runtimeActionExecute = createFrontDoorRuntimeActionExecutor({
             execute: (id, input, context) => fixture.executor.execute(id, input, { ...context, ...fixture.context }),
@@ -283,11 +283,13 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
             });
             if (registrationEnabled) {
                 expect(lastExposureSheetProps().modeChoices.map(choice => choice.mode)).toEqual(['secret_link', 'people']);
-                expect(machineRpcMock).toHaveBeenCalledTimes(1);
-                expect(machineRpcMock).toHaveBeenCalledWith(expect.objectContaining({ payload: { machineId: 'machine_1', serviceTarget } }));
+                expect(executeOnMachine).toHaveBeenCalledWith(expect.objectContaining({
+                    actionId: 'localServices.preview.openOrCreate',
+                    input: { machineId: 'machine_1', serviceTarget },
+                }));
             } else {
                 expect(modalSpies.show).not.toHaveBeenCalled();
-                expect(machineRpcMock).not.toHaveBeenCalled();
+                expect(executeOnMachine).not.toHaveBeenCalled();
             }
             expect(openDetailsTab).not.toHaveBeenCalled();
         } finally {

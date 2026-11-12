@@ -110,8 +110,9 @@ describe('curated picks through the registered catalog and target reader', () =>
     expect(consumed.payload).toMatchObject({ kind: 'skill', skill: { ref: { repo: 'https://github.com/other/skills', commit }, skillMarkdown: new TextDecoder().decode(files[0]!.bytes) } });
     expect(consumed.summary.itemId).toBe(second!.itemId);
     expect(await host.filesForPointer({ sourceId: source.id, itemId: first!.itemId, version: commit })).toEqual(files);
-    expect(reads.some(url => url.includes('/repos/example/skills/commits/'))).toBe(true);
-    expect(reads.some(url => url.includes('/repos/other/skills/commits/'))).toBe(true);
+    expect(reads.some(url => url.includes(`/repos/example/skills/git/trees/${commit}`))).toBe(true);
+    expect(reads.some(url => url.includes(`/repos/other/skills/git/trees/${commit}`))).toBe(true);
+    expect(reads.filter(url => url.includes('/commits/'))).toEqual([]);
   });
   it.each(['skill', 'mcpServer', 'plugin'] as const)('omits only confirmed-empty picks and preserves %s source failures for recovery', async kind => {
     const { host, catalog, unavailable } = fixture();
