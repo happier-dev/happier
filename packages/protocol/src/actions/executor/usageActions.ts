@@ -83,7 +83,8 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
   };
   if (actionId === 'usage.query') {
     const result = await read(UsageQueryBatchInputSchema.parse(value));
-    return 'ok' in result ? result : { ok: true, result: projectUsageQueryDelivery(result) };
+    return 'ok' in result ? result : { ok: true, result: projectUsageQueryDelivery(result,
+      context.surface === 'agent' || context.surface === 'mcp' ? context.surface : undefined) };
   }
   if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.export' || actionId === 'usage.recap.deliver'
     || actionId === 'usage.recap.private.compose' || actionId === 'usage.recap.private.export' || actionId === 'usage.recap.private.deliver') {

@@ -2116,7 +2116,10 @@ Blocking live-only results follow the admitted approval request's flow, includin
 the required-result default when the authored spec omits `flow`. They resume the
 original daemon invocation so its caller receives the full typed result; approval
 history and the deciding app retain only the Action's observation projection.
-Deliberately deferred proposals keep their existing deciding-user result path.
+This includes CLI requests with live-only results and ordinary durable input:
+UI approval resumes the existing requester rather than replacing its result
+with a redacted Artifact read. Losing that live invocation makes the private
+result unrecoverable. Already-deferred proposals keep their deciding-user result path.
 
 In 0.3 development source, ordinary results retain their complete typed receipt
 in the existing private approval Artifact so an original caller waiting on another
@@ -3559,6 +3562,16 @@ inventory-only demand. They consume distinct accounting ids and labels without
 another result parse or the external Usage response-envelope projection. The
 Resource transport remains the result-validation boundary; external `usage.query`
 still validates and applies its explicit incomplete-response contract.
+
+Agent and MCP delivery defaults to conserved summary facts: accounting totals,
+breakdowns and Work summary counts. The existing delivery owner omits broad
+Work allocations and transcript autopsy bodies, recording them in
+`incomplete.omittedSections` with `narrow_query` recovery for agent tool budgets.
+Select exactly one Session with `session` to obtain those detail sections.
+Narrow the period and filters and use the existing include flags or
+`workProjection: 'summary'` to acquire only needed sections. UI Resources,
+widgets and CLI delivery keep their existing projections. This is unreleased
+0.3 source behavior; it adds no query path or transport cap.
 
 When requested evidence cannot fit that complete Action envelope, the Usage
 delivery projection omits the largest evidence sections first and reports
@@ -6782,6 +6795,15 @@ custodian and active request. A terminal token alone is not that authority.
 Signed controller-free operations bind the signer to the row's own enrolled
 guest or an unshared custodian daemon, with the row's custodian preserved. The
 same route owner protects cancellation and setup decisions on paired rows.
+
+For implicit paired-terminal immediate power and resize, the CLI reuses its own
+daemon's existing signed-root ingress and the daemon's Account authority. An
+absent or unreachable signer returns `daemon_unavailable` before changing the
+Home intent or invoking the native role. Ordinary Account present-user foreground
+execution remains daemon-free; explicit Machine placement retains its existing
+Home admission. Controller-free paired-terminal `after-idle` remains an intent-only submission.
+The native control's retained-row read carries its existing admitted control
+root; Home binds that read to the same `homeId` and `managedId`.
 
 The 0.3 development managed-intent result retains `accepted`, `conflict` and
 `refused`. Its `operation` reference is optional: installed asynchronous
@@ -10258,8 +10280,11 @@ Live development observations reuse the existing Account operation event. Its
 content is explicitly encrypted or plain, admitted against persisted Account
 encryption mode on the exact Home; absent keys never establish Plain mode.
 The Machine connection cannot publish another requester's snapshot into its
-custodian's channel. The authenticated relay checks current socket credentials
-and Account mode before user-scoped fanout. Clients read the current qualified
+custodian's channel. The authenticated relay consumes the identity admitted at socket connect and
+checks Account mode before user-scoped fanout. In development 0.3, the bearer is
+verified once at connect and never again per RPC; the existing socket eviction
+owner closes revoked credentials and PAT grant changes. A restricted PAT viewer
+sees widened permissions after reconnect. Clients read the current qualified
 V2 record through the original Machine before merging that observation, retaining
 Account retirement throughout the read. Released encrypted notifications use the
 canonical V1 projection; an unavailable newer reader cannot erase retained rich

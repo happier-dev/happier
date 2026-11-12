@@ -48,13 +48,26 @@ function projectMeasurementSkeleton(slice: UsageQueryResultSlice): unknown {
  * Action read projection, not a transport fallback. Keep the rich admitted read
  * for Resources/exports. Only evidence that cannot fit the existing complete
  * Action envelope is omitted, explicitly, with caller-driven narrower recovery.
+ * Agent/MCP broad reads select summary delivery for their smaller tool budgets.
  */
-export function projectUsageQueryDelivery(batch: UsageQueryBatchResult): UsageQueryBatchResult {
-  const result = { ...batch, results: batch.results.map(slice => ({ ...slice,
-    ...(slice.accounting ? { accounting: projectAccounting(slice.accounting, slice.work !== undefined) } : {}),
-    ...(slice.comparison?.accounting ? { comparison: { ...slice.comparison,
-      accounting: projectAccounting(slice.comparison.accounting, false) } } : {}),
-  })) };
+export function projectUsageQueryDelivery(batch: UsageQueryBatchResult, surface?: 'agent' | 'mcp'): UsageQueryBatchResult {
+  const result = { ...batch, results: batch.results.map(original => {
+    let slice = original;
+    const sessions = slice.requestedQuery.session;
+    // Agent tools have their own smaller delivery budgets (Pi: 50 KiB tool,
+    // 1 MiB bridge). Broad reads deliver conserved summary facts, not event
+    // bodies. One selected Session is the existing detail/recovery front door.
+    if (surface && !(typeof sessions === 'string' || sessions?.length === 1)) {
+      for (const section of ['work', 'howYouWork'] as const) {
+        if (slice[section] !== undefined) slice = omitEvidence(slice, section);
+      }
+    }
+    return { ...slice,
+      ...(slice.accounting ? { accounting: projectAccounting(slice.accounting, slice.work !== undefined) } : {}),
+      ...(slice.comparison?.accounting ? { comparison: { ...slice.comparison,
+        accounting: projectAccounting(slice.comparison.accounting, false) } } : {}),
+    };
+  }) };
   // Remove largest detail sections first so a large slice cannot erase a small
   // sibling's evidence. Work includes its conservation-dependent inputs/summary.
   const candidates = result.results.flatMap((slice, index) => USAGE_QUERY_EVIDENCE_SECTIONS.flatMap(section => {

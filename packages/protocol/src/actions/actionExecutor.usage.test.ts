@@ -49,6 +49,30 @@ describe('personal usage Action execution', () => {
     let admitted = rich;
     const deps: Partial<ActionExecutorDeps> = { usageActions: { query: async () => { reads += 1; return admitted; } } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
+    // Today at the existing Account-scale shape must reach an agent without
+    // Pi's 50 KiB tool truncation (extensionSource.ts TOOL_OUTPUT_MAX_BYTES),
+    // and therefore also its 1 MiB bridge refusal. This is not a Usage cap.
+    const today = normalizeUsageQuery({ period: { relative: 'today' } });
+    const todayRows = contributions.map(row => ({ ...row, observedAtMs: Date.now() }));
+    const todayBatch = resolveUsagePageAggregation({ queries: [today],
+      accounting: [{ query: today, status: 'available', value: { ...accounting, contributions: todayRows } }],
+      work: [{ query: today, status: 'available', evidence }],
+    });
+    for (const surface of ['agent', 'mcp'] as const) {
+      const agent = await createActionExecutor({ usageActions: { query: async () => todayBatch } } as ActionExecutorDeps)
+        .execute('usage.query', { queries: [{ period: { relative: 'today' } }] }, { surface });
+      expect(agent.ok).toBe(true);
+      if (!agent.ok) throw new Error('Expected agent summary');
+      expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(agent.result)).toBeLessThan(50 * 1024);
+      const slice = UsageQueryBatchResultSchema.parse(agent.result).results[0]!;
+      expect(slice.accounting?.totals).toEqual(accounting.totals);
+      expect(slice.workSummary).toMatchObject({ sessionCount: 1_000, allocatedContributionCount: 1_000 });
+      expect(slice.work).toBeUndefined();
+      expect(slice.incomplete).toMatchObject({ recovery: 'narrow_query', omittedSections: ['work'] });
+    }
+    const narrowed = await createActionExecutor({ usageActions: { query: async () => ({ ...rich, results: [rich.results[1]!] }) } } as ActionExecutorDeps)
+      .execute('usage.query', { queries: [small] }, { surface: 'agent' });
+    expect(narrowed.ok && UsageQueryBatchResultSchema.parse(narrowed.result).results[0]?.work?.allocations).toHaveLength(1);
     const result = await executor.execute('usage.query', { queries: [heavy, small, heavy] }, { surface: 'cli' });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('Expected useful admitted Usage facts');
