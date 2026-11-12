@@ -3,11 +3,9 @@ import { readMachineProvisionerCredentialPurposeSelectorPathsV1,
     type MachineProvisionerContributionV1, type MachineProvisionerCheckResultV1, type MachineProvisionerOptionsResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
-import type { ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import type { createManagedProvisionerClient } from './managedProvisionerClient';
+import type { createManagedProvisionerClient, ManagedProvisionerFailure } from './managedProvisionerClient';
 import type { MachinePresetCollectionSettledResult } from './machinePresetCollectionClient';
 import { readManagedProvisionerAvailability } from './managedProvisionerAvailability';
 
@@ -17,7 +15,7 @@ type ConfigurationRead = Readonly<{ kind: 'retired' }> | Readonly<{
     kind: 'settled';
     check?: MachineProvisionerCheckResultV1;
     options: MachineProvisionerOptionsResultV1 | null;
-    failure?: Readonly<{ code: string; nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1 }>;
+    failure?: Omit<ManagedProvisionerFailure, 'kind'>;
 }>;
 
 /** One captured native question for Create, preset review and the current Reset/Rebuild parent. */
@@ -79,7 +77,7 @@ export async function readManagedConfiguration(input: Readonly<{
         const failure = check.kind === 'failed' ? check : choices?.kind === 'failed' ? choices : undefined;
         return { kind: 'settled', ...(check.kind === 'succeeded' ? { check: check.value } : {}),
             options: choices?.kind === 'succeeded' ? choices.value : null,
-            ...(failure ? { failure: { code: failure.code, ...('details' in failure && failure.details ? { details: failure.details } : {}), ...(failure.nativeCause ? { nativeCause: failure.nativeCause } : {}) } } : {}) };
+            ...(failure ? { failure } : {}) };
     } catch {
         return current() ? { kind: 'settled', options: null, failure: { code: 'unavailable' } } : { kind: 'retired' };
     } finally {

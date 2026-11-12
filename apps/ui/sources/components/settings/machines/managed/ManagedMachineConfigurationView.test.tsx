@@ -481,6 +481,50 @@ describe('mounted managed configurator', () => {
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
     } finally { await screen.unmount(); }
   });
+  it('keeps a thrown provider sign-in repair through the managed configuration read and summary', async () => {
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+    const { readPluginActionError } = await import('@happier-dev/protocol/plugins/actions/invocation');
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://authored-options.example.test',
+      serverIdentityId: 'srv_authored_options', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
+      id: defaultController.machineId, installationId: defaultController.installationId,
+    })]);
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    // The HTTP boundary projects the real thrown provider error through the public PluginError owner.
+    // All configuration/client/presenter logic below that transport stays real.
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      try {
+        throw new PluginError({ code: 'credential_unavailable', message: '  Sign in to Docker: run sbx login  ',
+          remediation: { kind: 'retry' }, details: { privateNativeOutput: 'PRIVATE_PROVIDER_OUTPUT' } });
+      } catch (error) {
+        const failure = readPluginActionError(error);
+        if (!failure) throw error;
+        return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
+          execution: { ok: false, errorCode: failure.code, error: failure.message, details: failure.data } } };
+      }
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
+      expect(screen.findByTestId('managed-config.summary')?.props.accessibilityLabel)
+        .toContain(`Sign in to Docker: run sbx login ${t('errors.tryAgain')}`);
+      expect(screen.getTextContent()).not.toContain('PRIVATE_PROVIDER_OUTPUT');
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
   it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
       serverIdentityId: 'srv_options_retry', accountId: 'owner', currentAccount: true });

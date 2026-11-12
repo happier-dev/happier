@@ -34,6 +34,8 @@ import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigure
 import { ProjectWorkerActionOutputSchemasV1 } from '../actions/specs/projectWorkers.js';
 import { ActionOperationCancelV1ResponseSchema, ManagedNativeFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema } from '../actions/operations/v1.js';
 import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
+import { isPluginErrorData } from '../plugins/errors.js';
+import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } from '../widgets/actionsV1.js';
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
@@ -292,6 +294,12 @@ function parseStrictApprovalFailure(input: Readonly<{
     }
   }
   if (ManagedMachineActionIdV1Schema.safeParse(input.request.actionId).success) {
+    const authored = input.failure.details;
+    if (isPluginErrorData(authored) && authored.code === input.failure.errorCode) {
+      // The host already publishes this canonical PluginError payload on the immediate Action path.
+      const projected = AgentRuntimeJsonValueV1Schema.safeParse(authored);
+      return projected.success ? { ...input.failure, details: projected.data } : null;
+    }
     const details = (storedRead ? createStoredReadSchema(ManagedNativeFailureDetailsV1Schema)
       : ManagedNativeFailureDetailsV1Schema).safeParse(input.failure.details);
     return details.success ? { ...input.failure, details: details.data } : null;

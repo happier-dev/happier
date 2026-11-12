@@ -560,7 +560,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 optionsInput.kind === 'loading' ? 'loading' : 'unavailable') : current);
             setError(result.failure ? describeManagedNativeFailureDiagnostic(result.failure.code, result.failure.nativeCause)
                 : optionsInput.kind === 'unavailable' ? optionsInput.error : null, 'read', result.failure
-                    ? resolveActionExecutionFailureMessage({ ok: false, errorCode: result.failure.code, details: result.failure.details },
+                    ? resolveActionExecutionFailureMessage({ ...result.failure, ok: false, errorCode: result.failure.code },
                         t('managedMachines.options.unavailable')) ?? undefined : undefined);
         });
     }, [props.presetOnly, catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,

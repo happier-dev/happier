@@ -11,9 +11,13 @@ import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/mach
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedNativeFailureDetailsV1Schema, type ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
+import { isPluginErrorData, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
+import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type { PluginActionFailureAuthorPayloadV1 } from '@happier-dev/protocol/plugins/actions/invocation';
 
-type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string;
-    nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1 }>;
+export type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string;
+    nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1 }>
+    & Pick<PluginErrorContractData, 'message'> & Pick<PluginActionFailureAuthorPayloadV1, 'remediation'>;
 export type ManagedProvisionerClientResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'failed' }>
     | ManagedProvisionerFailure
     | Readonly<{ kind: 'admitted'; receipt: ExternalActionManagedAdmissionReceiptV1 }>;
@@ -24,9 +28,14 @@ export type ManagedProvisionerClientOptions<T> = Omit<MachinePresetCollectionOpt
     onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>;
 function managedFailure(code: string, details?: unknown): ManagedProvisionerFailure {
-    // Native Actions own this typed diagnostic; opaque failure text is not presentation data.
-    const native = ManagedNativeFailureDetailsV1Schema.safeParse(details);
-    return { kind: 'failed', code, ...(native.success ? { details: native.data, nativeCause: native.data.nativeCause } : {}) };
+    // Only the canonical PluginError payload carries an authored reason; arbitrary transport text stays private.
+    const authored = isPluginErrorData(details) && details.code === code ? details : undefined;
+    const message = authored?.message?.trim();
+    const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
+    const native = ManagedNativeFailureDetailsV1Schema.safeParse(authored && 'details' in authored ? authored.details : details);
+    return { kind: 'failed', code, ...(message ? { message } : {}),
+        ...(remediation.success ? { remediation: remediation.data } : {}),
+        ...(native.success ? { details: native.data, nativeCause: native.data.nativeCause } : {}) };
 }
 function admittedReceipt(actionId: ManagedMachineActionIdV1, code: string, details: unknown) {
     if (actionId !== 'machines.managed.acquire' || code !== 'target_unavailable') return null;

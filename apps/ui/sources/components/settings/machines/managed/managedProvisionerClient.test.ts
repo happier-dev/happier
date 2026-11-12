@@ -137,7 +137,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
         }
     });
 
-    it('preserves the same native failure when options settle after approval', async () => {
+    it.each(['native', 'authored'] as const)('preserves the %s failure when options settle after approval', async (shape) => {
         const homeId = 'srv_failed_approval';
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://failed-approval.example',
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
@@ -150,7 +150,12 @@ describe('managed configurator uses the exact Home Action front door', () => {
                 execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'native-approval', actionId } } } };
         } });
         const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
-        const details = { kind: 'managedNative', nativeCause } as const;
+        const nativeDetails = { kind: 'managedNative', nativeCause } as const;
+        const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+        const { readPluginActionError } = await import('@happier-dev/protocol/plugins/actions/invocation');
+        const authored = readPluginActionError(new PluginError({ code: 'action_failed',
+            message: '  Sign in to Docker: run sbx login  ', remediation: { kind: 'retry' }, details: nativeDetails }));
+        const details = shape === 'authored' ? authored?.data : nativeDetails;
         const request: ApprovalRequestV2 = { v: 2, status: 'failed', createdAtMs: 1, updatedAtMs: 2,
             createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId, actionArgs: input, summary: 'Read native options',
             executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
@@ -166,7 +171,8 @@ describe('managed configurator uses the exact Home Action front door', () => {
         approval.onTerminal?.('failed', { id: 'native-approval', title: null,
             header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2, isDecrypted: true });
-        expect(await pending).toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details });
+        expect(await pending).toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details: nativeDetails,
+            ...(shape === 'authored' ? { message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' } } : {}) });
     });
 
     it('does not reparse an admitted catalog to check its controller binding', async () => {
