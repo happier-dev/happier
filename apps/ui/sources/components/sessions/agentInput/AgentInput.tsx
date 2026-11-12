@@ -790,7 +790,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: theme.colors.radio.dot,
+        backgroundColor: theme.colors.radio.active,
     },
     selectionLabel: {
         fontSize: 14,
@@ -1053,7 +1053,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: theme.colors.radio.dot,
+        backgroundColor: theme.colors.radio.active,
     },
     overlayOptionLabel: {
         fontSize: 14,

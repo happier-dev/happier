@@ -246,7 +246,6 @@ const buildThemeProfileOverridesFromVsCodeTheme = (theme: Record<string, unknown
     setOverride(overrides, 'control.switch.thumb.inactive', textSecondary);
     setOverride(overrides, 'control.radio.active', activeForeground);
     setOverride(overrides, 'control.radio.inactive', textTertiary);
-    setOverride(overrides, 'control.radio.dot', buttonForeground);
     setOverride(overrides, 'control.segmentedControl.trackBackground', surfaceInset);
     setOverride(overrides, 'control.segmentedControl.activeBackground', surfaceSelected);
     setOverride(overrides, 'control.fab.background', buttonBackground);

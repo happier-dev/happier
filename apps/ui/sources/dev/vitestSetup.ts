@@ -684,7 +684,7 @@ vi.mock('react-native-unistyles', () => {
             // System components
             //
             switch: { track: { inactive: '#dddddd', active: '#34C759' }, thumb: { active: '#FFFFFF', inactive: '#767577' } },
-            radio: { active: '#007AFF', inactive: '#C0C0C0', dot: '#007AFF' },
+            radio: { active: '#007AFF', inactive: '#C0C0C0' },
             button: {
                 primary: { background: '#000000', tint: '#FFFFFF', disabled: '#C0C0C0' },
                 secondary: { background: 'transparent', tint: '#666666', surface: '#ffffff' },
