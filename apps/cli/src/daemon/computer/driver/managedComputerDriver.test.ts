@@ -13,6 +13,8 @@ import { createDaemonRuntimeActionExecutor } from '../../runtimeActionExecutor';
 import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
 import { ActionsSettingsV1Schema, FeaturesResponseSchema, decideApprovalRequestTransition, type ApprovalRequest } from '@happier-dev/protocol';
 import { ComputerSelectedTargetResponseV1Schema } from '@happier-dev/protocol/computer/v1';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 
 describe('native primary-display and macOS contract', () => {
@@ -520,7 +522,11 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     const routes = createComputerRoutes({ machineId: 'machine', machineDisplayName: 'Workstation',
       registry: createMachineLiveStreamCaptureRegistry(), executablePath: '/managed/native-driver', defaultDisplayId: ':73' });
     let stored: ApprovalRequest | undefined;
-    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null }, {
+    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      // 62e7ae8da3fa / 2d29685e1f47: admission reads the bound Session approval profile.
+      rawSession: createSessionRecordFixture({ id: 'session', encryptionMode: 'plain',
+        metadata: JSON.stringify(createTestMetadata({ machineId: 'machine' })) }),
+    }, {
       runtimeActionExecute: createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ computer: routes }),
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({}) }) }),
       approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'explicit-approval' }; },
@@ -541,7 +547,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     { name: 'with an edited window', windowId: 456, access: 'use' as const },
     { name: 'with downgraded access', windowId: 123, access: 'see' as const },
     { name: 'outside the user-side target list', windowId: 999, access: 'use' as const },
-  ])('stores the human selection $name from the blocking approval, preserving the agent origin and suggestion', async ({ windowId, access }) => {
+  ])('stores the human selection $name from the deferred approval, preserving the agent origin and suggestion', async ({ windowId, access }) => {
     const chosen = { ...target, windowId };
     native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
       windows: [{ pid: target.pid, window_id: target.windowId, title: 'Requested app' },
@@ -552,12 +558,15 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       executablePath: '/managed/native-driver', defaultDisplayId: ':73' });
     let stored: ApprovalRequest | undefined;
     const updates: ApprovalRequest[] = [];
-    let created!: () => void;
-    const requestCreated = new Promise<void>(resolve => { created = resolve; });
-    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null }, {
+
+    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      // 62e7ae8da3fa / 2d29685e1f47: admission reads the bound Session approval profile.
+      rawSession: createSessionRecordFixture({ id: 'session', encryptionMode: 'plain',
+        metadata: JSON.stringify(createTestMetadata({ machineId: 'machine' })) }),
+    }, {
       runtimeActionExecute: createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ computer: routes }),
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({}) }) }),
-      approvalsCreate: async ({ request }) => { stored = request; created(); return { artifactId: 'selection-approval' }; },
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'selection-approval' }; },
       approvalsGet: async () => stored ?? null,
       approvalsUpdate: async ({ request }) => {
         if (!stored) throw new Error('Missing persisted approval');
@@ -576,9 +585,10 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       machineId: 'machine', target, access: 'use', requestedTarget: 'Requested app',
     }, context);
     try {
-      await Promise.race([requestCreated, selecting.then(result => {
-        throw new Error(`Selection returned without requesting approval: ${JSON.stringify(result)}`);
-      })]);
+      // 651bc122d9e7: the durable Agent request returns before the person's deferred choice.
+      expect(await selecting).toMatchObject({ ok: true, result: {
+        kind: 'approval_request_created', artifactId: 'selection-approval', actionId: 'computer.target.select',
+      } });
       expect(stored).toMatchObject({ actionArgs: { requestedTarget: 'Requested app' },
         preview: { computerApprovalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: true } } });
       expect(await harness.executor.execute('approval.request.decide', {
@@ -599,10 +609,10 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
         expect(registry.list()).toHaveLength(0);
         return;
       }
-      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
-      expect(await selecting).toMatchObject({ ok: true, result: { selectedTarget: chosen, consentGranted: false, access } });
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed' } });
       expect(registry.list()[0]?.computer?.target).toEqual(chosen);
       expect(registry.list()[0]?.computer?.access).toBe(access);
+      expect(registry.list()[0]?.computer?.consentGranted()).toBe(false);
       expect(stored).toMatchObject({ executionOriginV1: { authority: 'account_automation' } });
       expect(updates).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'approved',
         actionArgs: expect.objectContaining({ target, access: 'use', requestedTarget: 'Requested app' }),
@@ -626,14 +636,22 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
         executablePath: '/managed/native-driver', defaultDisplayId: ':73' });
       const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ computer: routes }),
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({}) }) });
-      let decision: 'approve' | 'reject' = 'reject';
       let requested: ApprovalRequest | undefined;
-      const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null }, {
+      const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+        // 62e7ae8da3fa / 2d29685e1f47: admission reads the bound Session approval profile.
+        rawSession: createSessionRecordFixture({ id: 'session', encryptionMode: 'plain',
+          metadata: JSON.stringify(createTestMetadata({ machineId: 'machine' })) }),
+      }, {
         runtimeActionExecute,
         approvalsCreate: async ({ request }) => { requested = request; return { artifactId: 'approval' }; },
-        approvalsGet: async () => null,
-        approvalsWaitForDecision: async ({ request }) => ({ decision, request }),
-        approvalsUpdate: async () => ({ ok: true }),
+        approvalsGet: async () => requested ?? null,
+        approvalsUpdate: async ({ request }) => {
+          if (!requested) throw new Error('Missing persisted Computer approval');
+          const transition = decideApprovalRequestTransition(requested, request);
+          if (!transition.ok) return transition;
+          requested = request;
+          return { ok: true };
+        },
         isApprovalExecutionOriginCurrent: async () => true,
       });
       const context = { authority: 'account_automation' as const, surface: 'agent' as const,
@@ -641,20 +659,34 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
       const args = actionId === 'computer.target.select' ? { machineId: 'machine', requestedTarget: 'Fixture' }
         : actionId === 'computer.targets.list' ? { machineId: 'machine', displayId: ':73' } : { machineId: 'machine' };
+      const decide = (decision: 'approve' | 'reject') => harness.executor.execute('approval.request.decide', {
+        artifactId: 'approval', decision,
+      }, { ...context, authority: 'present_user', surface: 'ui' });
+      const ask = async () => {
+        // 651bc122d9e7: durable Agent requests return an Artifact; only a retained host invocation blocks.
+        const result = await harness.executor.execute(actionId, args, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+        expect(requested).toMatchObject({ status: 'open' });
+      };
       try {
         if (actionId === 'computer.control.interrupt' || actionId === 'computer.control.handBack') {
           await routes.dispatch('computer.target.select', { machineId: 'machine', target }, { authority: 'present_user', defaultSessionId: 'session' });
         }
         const before = registry.list()[0]?.computer?.status();
         const listedBefore = native.tools.filter(tool => tool.name === 'list_windows').length;
-        expect(await harness.executor.execute(actionId, args, context)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+        await ask();
+        expect(native.tools.filter(tool => tool.name === 'list_windows')).toHaveLength(listedBefore);
+        expect(registry.list()[0]?.computer?.status()).toEqual(before);
+        expect(await decide('reject')).toMatchObject({ ok: true, result: { status: 'rejected' } });
+        expect(requested).toMatchObject({ status: 'rejected' });
         expect(native.tools.filter(tool => tool.name === 'list_windows')).toHaveLength(listedBefore);
         expect(registry.list()[0]?.computer?.status()).toEqual(before);
         expect(requested).toMatchObject({ actionId, executionOriginV1: { authority: 'account_automation' } });
-        decision = 'approve';
-        const result = await harness.executor.execute(actionId, args, context);
-        expect(result).toMatchObject({ ok: true });
-        if (actionId === 'computer.targets.list') expect(result).toMatchObject({ result: { targets: [{ target, title: 'Fixture' }] } });
+        await ask();
+        const approved = await decide('approve');
+        expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(requested).toMatchObject({ status: 'executed' });
+        if (actionId === 'computer.targets.list') expect(native.tools.filter(tool => tool.name === 'list_windows').length).toBeGreaterThan(listedBefore);
         if (actionId === 'computer.target.select') expect(registry.list()[0]?.computer?.target).toEqual(target);
         if (actionId === 'computer.control.interrupt') expect(registry.list()[0]?.computer?.status().controller).toBe('human');
         if (actionId === 'computer.control.handBack') {
@@ -662,13 +694,16 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
           if (!source) throw new Error('Missing target');
           const observed = await source.observe();
           await source.interrupt();
-          expect(await harness.executor.execute(actionId, args, context)).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+          await ask();
+          expect(await decide('approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
           expect(await source.input(observed.captureId, { kind: 'press', key: 'Return' }, 'agent')).toMatchObject({ status: 'failed', code: 'observation_required' });
         }
         requested = undefined;
-        expect(await harness.executor.execute(actionId, args, { ...context,
+        const waived = await harness.executor.execute(actionId, args, { ...context,
           actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } }),
-        })).toMatchObject({ ok: true });
+        });
+        expect(waived).toMatchObject({ ok: true });
+        if (actionId === 'computer.targets.list') expect(waived).toMatchObject({ result: { targets: [{ target, title: 'Fixture' }] } });
         expect(requested).toBeUndefined();
         if (actionId !== 'computer.targets.list') expect(registry.list()[0]?.computer?.consentGranted()).toBe(false);
       } finally { await routes.dispose(); }
