@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { handleMachineCommand } from './machine';
+import { STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS } from '@happier-dev/cli-common/firstPartyRuntime';
 
 describe('handleMachineCommand', () => {
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -349,6 +350,7 @@ describe('handleMachineCommand', () => {
     }));
 
     try {
+      for (const key of STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS) vi.stubEnv(key, undefined);
       process.argv = ['hdev', 'machine', 'enroll'];
       await handleMachineCommand(
         ['enroll', '--ssh', 'dev@example.test', '--json'],
@@ -382,6 +384,7 @@ describe('handleMachineCommand', () => {
       });
     } finally {
       process.argv = originalArgv;
+      vi.unstubAllEnvs();
     }
   });
 

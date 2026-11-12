@@ -1,5 +1,8 @@
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { machineSetup } from '@happier-dev/cli-common';
 import { runMachineSetupEffectInternal } from './effectInternal';
 import { MachineEffectInternalRecordSchema } from './effectInternalProtocol';
@@ -98,14 +101,31 @@ describe('pre-daemon check and apply on retained bootstrap admission', () => {
 });
 
 async function administratorFixture(present = true) {
+    const root = await mkdtemp(join(tmpdir(), 'happier-bootstrap-administrator-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const policyPath = join(root, 'sudoers');
+    await writeFile(policyPath, '%sudo ALL=(ALL:ALL) ALL\n');
     let established = false;
     let consumedBytes: Uint8Array | undefined;
     const password = 'transient-🔐-test-password';
     const runNative = async (command: machineSetup.MachineSetupNativeCommand): Promise<machineSetup.MachineSetupNativeCommandResult> => {
+        if (command.executable === 'getent' && command.args.includes('group')) return { code: 0, stdout: 'sudo:x:27:\n', stderr: '' };
         if (command.executable === 'getent') return present
             ? { code: 0, stdout: 'operator:x:1100:1100::/home/operator:/bin/bash\n', stderr: '' }
             : { code: 2, stdout: '', stderr: '' };
         if (command.executable === 'useradd') { present = true; return { code: 0, stdout: '', stderr: '' }; }
+        if (command.executable === 'visudo') {
+            expect(command.args).toEqual(['-c']);
+            return { code: 0, stdout: `${policyPath}: parsed OK\n`, stderr: '' };
+        }
+        if (command.executable === 'usermod') {
+            expect(command.args).toEqual(['--append', '--groups', 'sudo', '--', 'operator']);
+            return { code: 0, stdout: '', stderr: '' };
+        }
+        if (command.executable === 'sudo') {
+            expect(command.args).toEqual(['-n', '-l', '-U', 'operator', '-u', 'root', '--', process.execPath]);
+            return { code: 0, stdout: process.execPath, stderr: '' };
+        }
         if (command.executable === 'passwd') return { code: 0, stdout: 'operator P 01/01/2026 0 99999 7 -1\n', stderr: '' };
         if (command.executable === '/usr/sbin/chpasswd') {
             expect(command.args).toEqual([]);

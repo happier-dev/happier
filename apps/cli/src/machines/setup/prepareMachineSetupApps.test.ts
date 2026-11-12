@@ -54,6 +54,7 @@ it('prepares saved catalog setup intent through P45 without creating resources, 
     let contentWrites = 0;
     const templates = createDeploymentTemplateInstantiationForHost({ credentials, serverId: 'home', machineId: 'target',
         serverHttpBaseUrl: 'https://home.test', savedSecretOperationContext: operation, assertCurrent: async () => {},
+        readInstallation: async () => identity.installationId,
         headers: async () => ({ Authorization: `Bearer ${token}` }),
         // These are the actual server storage/Artifact transport boundaries. Preview must issue neither.
         storage: async () => { throw new Error('Preview cannot write an Environment'); },
@@ -80,7 +81,9 @@ it('prepares saved catalog setup intent through P45 without creating resources, 
             setup: { items: [{ kind: 'app' as const, definition: { name: 'App', project: { kind: 'create' as const },
                 definition: { from: 'catalogApp' as const, templateRef }, bindings: [] } }] } },
             { kind: 'direct' as const, setup: {} }] };
-    const planned = MachineSetupPlanResultV1Schema.parse(await setupPlan({ input: request, context: { runtimeAccountId: 'owner' } }));
+    const result = await setupPlan({ input: request, context: { runtimeAccountId: 'owner' } });
+    if ('errorCode' in result) throw new Error(JSON.stringify(result));
+    const planned = MachineSetupPlanResultV1Schema.parse(result);
     expect(planned).toMatchObject({ appChildren: [{ sourceIndex: 0, itemIndex: 0,
         actionId: 'deployments.templates.instantiate', input: { mode: 'apply', serverId: 'home', machineId: 'target',
             newProject: { owner: { kind: 'account', accountId: 'owner' } }, templateRef,

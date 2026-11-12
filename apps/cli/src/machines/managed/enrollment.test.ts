@@ -160,6 +160,7 @@ describe('runManagedMachineEnrollment', () => {
         exec: async request => {
           if (request.command.includes('/etc/os-release')) return { status: 0, stdout: 'ubuntu\nnoble\namd64\n', stderr: '' };
           if (request.command === 'id -u happier') return { status: 0, stdout: '1000\n', stderr: '' };
+          if (request.command === 'which dockerd') return { status: 1, stdout: '', stderr: '' };
           const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(request.input ?? '{}'));
           if (frame.mode !== 'check' || !('basis' in frame) || !('steps' in frame)) throw new Error('plan captured before mutation');
           program = await machineSetup.checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps,
@@ -226,6 +227,7 @@ describe('runManagedMachineEnrollment', () => {
           if (request.command.includes('uname -m')) return ok('Linux\naarch64\n/home/bootstrap\n');
           if (request.command.includes('/etc/os-release')) return ok('ubuntu\nnoble\narm64\n');
           if (request.command === 'id -u happier') return ok('1001\n');
+          if (request.command === 'which dockerd') return { status: 1, stdout: '', stderr: '' };
           if (request.command === "id -u 'operator.name'") return ok('1002\n');
           if (request.command.includes('mktemp')) return ok('/tmp/happier-bootstrap-transfer.123\n');
           if (request.command.includes('effect-internal')) {
@@ -334,7 +336,7 @@ describe('runManagedMachineEnrollment', () => {
         expect.objectContaining({ kind: 'serviceUnit', unit: 'docker.service', running: true }),
       ]));
       const packages = plan.steps.flatMap(step => step.kind === 'package' ? step.packages.map(pkg => pkg.name) : []);
-      expect(packages).toEqual(expect.arrayContaining(['acl', 'git', 'docker-ce', 'docker-compose-plugin']));
+      expect(packages).toEqual(expect.arrayContaining(['acl', 'git', 'docker.io', 'docker-buildx', 'docker-compose-v2']));
       if (adminAccessAtCreation === 'none') expect(plan.steps.some(step => step.kind === 'file' && step.path === '/etc/sudoers.d/90-happier-daemon')).toBe(false);
       expect(events).toContainEqual(expect.objectContaining({ type: 'progress', stepId: 'agent-account' }));
       const signIn = requests.findIndex(request => request.command.includes('auth'));

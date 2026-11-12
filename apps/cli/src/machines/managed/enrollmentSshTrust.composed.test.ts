@@ -55,7 +55,7 @@ async function enroll(managedId: string, key: string, generated = false, retaine
     boundary.commands = 0;
     const credentialRef = { kind: 'shared_resource', resourceId: `credential-${managedId}` } as const;
     const resource = { contributionRef: { pluginId: 'happier.machine.lume', localId: 'lume' }, schemaVersion: 1,
-        value: { storage: 'home', vmName: `happier-${managedId}` } };
+        value: { storage: 'home', vmName: `happier-${managedId}`, keepPasswordLogin: true } };
     const row = ManagedMachineV1Schema.parse({ id: managedId, homeId, custodianAccountId: 'owner', controller,
         launch: { provider: resource.contributionRef, schemaVersion: 1, name: 'Guest', choices: {} },
         allocation: 'bound', creationState: 'active', resource, desired: 'start', desiredWhen: 'now', intentRevision: 0,
@@ -68,15 +68,15 @@ async function enroll(managedId: string, key: string, generated = false, retaine
         ipAddress: '192.168.64.7', sshAvailable: true,
     }) });
     // This OS boundary fixture exposes only the services the real Lume carrier uses.
-    const exec = { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool',
-        id: { pluginId: 'happier.machine.lume', localId: 'ssh-keyscan' } }, executablePath: '/usr/bin/ssh-keyscan' }) },
+    const exec = { systemTools: { resolve: async ({ toolId }: { toolId: string }) => ({ executable: { kind: 'systemTool',
+        id: { pluginId: 'happier.machine.lume', localId: toolId } }, executablePath: `/usr/bin/${toolId}` }) },
         run: async (request: Parameters<ExecService['run']>[0]) => request.executable.id.localId === 'ssh-keyscan'
             ? completed(`192.168.64.7 ${key}\n`) : completed(),
     } as ExecService;
     const preparedCarrier = generated ? buildMachineProvisionerPinnedSshBootstrap({
         connection: { address: '192.168.64.7', user: 'happier-bootstrap', port: 22 }, guestHostPublicKey: retainedKey, credentialRef,
     }) : await resolveLumeBootstrap({ native, exec, resource: resource.value, credentialRef, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
-        executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } } });
+        credentials: { materializeBootstrapCredential: async () => ({ kind: 'file', path: '/fixture/login-key', dispose: async () => {} }) } });
     // A changed scanner and changed evidence must not replace retained generated trust.
     const carrier = generated ? { ...preparedCarrier, hostKeyEvidence: { hostKey: `192.168.64.7 ${key}`,
         fingerprint: computeSshHostKeyFingerprint(key.split(' ')[1]!) } } : preparedCarrier;
