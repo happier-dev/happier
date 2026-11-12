@@ -264,7 +264,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
       if (native.sessionId !== nativeSessionId) throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR',
         message: 'Muse returned a different native Session identity during fork configuration.' });
     }
-    const currentProfile = explicitPermissions || request.kind === 'create'
+    let currentProfile = explicitPermissions || request.kind === 'create'
       ? permissions.permissionProfile : readMuseRecord(native.permissionState).profileId;
     let currentApproval = request.kind === 'create' ? permissions.approvalMode
       : readMuseRecord(native.approvalMode).mode;
@@ -274,12 +274,25 @@ async function openMuseConversation<SessionId extends string | undefined>(
         return { status: 'applied' as const, changed: [] };
       }
       const selected = musePermissions(configuration);
-      // MSP has no in-place permission-profile RPC. Do not silently widen or restart.
-      if (selected.permissionProfile !== currentProfile) return { status: 'unsupported' as const,
-        diagnostic: { code: 'unsupported', severity: 'error' as const,
-          message: 'Muse permission profile changes apply to the next Session.' } };
-      if (selected.approvalMode === currentApproval) return { status: 'applied' as const, changed: [] };
+      if (selected.permissionProfile === currentProfile && selected.approvalMode === currentApproval) {
+        return { status: 'applied' as const, changed: [] };
+      }
+      let method = 'session/setPermissionProfile';
       try {
+        if (selected.permissionProfile !== currentProfile) {
+          const result = readMuseRecord(await msp.command(method, {
+            sessionId: nativeSessionId, profileId: selected.permissionProfile,
+          }, { signal: options?.signal ?? context.signal }));
+          if (result.status !== 'accepted' || readMuseRecord(result.permissionState).profileId !== selected.permissionProfile) {
+            return { status: 'unavailable' as const,
+              diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' as const } };
+          }
+          currentProfile = selected.permissionProfile;
+          // Profile selection changes native permission policy. Reapply the mapping's
+          // separate approval axis rather than assuming the prior override survived.
+          currentApproval = undefined;
+        }
+        method = 'session/setApprovalMode';
         const result = readMuseRecord(await msp.command('session/setApprovalMode', {
           sessionId: nativeSessionId, mode: selected.approvalMode,
         }, { signal: options?.signal ?? context.signal }));
@@ -290,10 +303,17 @@ async function openMuseConversation<SessionId extends string | undefined>(
         currentApproval = selected.approvalMode;
         return { status: 'applied' as const, changed: ['permissionIntent' as const] };
       } catch (error) {
-        const failure = classifyJsonRpcSubmissionFailure(error, { method: 'session/setApprovalMode', effectObserved: false });
+        const failure = classifyJsonRpcSubmissionFailure(error, { method, effectObserved: false });
+        const data = readMuseRecord(error instanceof Error && 'data' in error ? error.data : undefined);
+        // Only native permission-profile reason identifiers escape; arbitrary provider
+        // prose/data may contain content and is not a diagnostic carrier.
+        const reason = data.reason === 'permission_profile_ephemeral_fixed'
+          || data.reason === 'permission_profile_unknown' || data.reason === 'permission_profile_unavailable'
+          || data.reason === 'permission_profile_reviewer_unavailable' ? data.reason : undefined;
         return { status: failure.kind === 'rejected_before_effect' ? 'rejected' as const : 'unavailable' as const,
           diagnostic: { code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
-            severity: 'error' as const } };
+            severity: 'error' as const, ...(reason ? { message: reason } : {}),
+            ...(failure.kind === 'rejected_before_effect' ? { details: { ...failure.details, ...(reason ? { reason } : {}) } } : {}) } };
       }
     };
     if (request.kind !== 'create' && explicitPermissions && request.configuration) {
@@ -332,8 +352,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
         const result = await applyPermissions({ permissionIntent: { value: intent, updatedAtMs: 0 },
           ...(request.configuration?.workspaceWrites ? { workspaceWrites: request.configuration.workspaceWrites } : {}) });
         return result.status === 'applied' ? { status: 'applied' }
-          : result.status === 'unsupported' ? { status: 'unsupported', reason: result.diagnostic.message }
-          : { status: 'failed', reason: result.diagnostic.code };
+          : { status: 'failed', reason: result.diagnostic.message ?? result.diagnostic.code };
       },
       clearTerminalComposer: () => ({ ok: false, status: 'unsupported' }),
       async interruptPendingInputAndRun() {

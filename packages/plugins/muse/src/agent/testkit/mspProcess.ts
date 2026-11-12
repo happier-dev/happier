@@ -21,6 +21,8 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
     requireDataDirectory?: boolean;
     /** Schema-derived busy startup; early turn requests retain the native queued disposition. */
     readinessGuard?: boolean;
+    /** Muse 1.4.15's documented ephemeral-session profile refusal. */
+    permissionProfileRefusal?: boolean;
     /** Schema-derived admission failures, optionally after the captured native turn/started frame. */
     turnFailure?: 'refuse' | 'eof' | 'started-refuse' | 'started-eof';
     recording?: JsonValue;
@@ -52,6 +54,7 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
             ...(options?.playbackSteps ? { MUSE_TEST_PLAYBACK_STEPS: JSON.stringify(options.playbackSteps) } : {}),
             ...(options?.expectedMcpServers ? { MUSE_TEST_EXPECTED_MCP: JSON.stringify(options.expectedMcpServers) } : {}),
             ...(options?.scenario ? { MUSE_TEST_SCENARIO: options.scenario } : {}),
+            MUSE_TEST_PROFILE_REFUSAL: options?.permissionProfileRefusal ? '1' : '0',
             MUSE_TEST_SCHEMA: JSON.stringify(options?.schema ?? {}),
             ...(options?.turnFailure ? { MUSE_TEST_TURN_FAILURE: options.turnFailure } : {}),
             ...(options?.readinessGuard ? { MUSE_TEST_READINESS_GUARD: '1' } : {}),
@@ -89,7 +92,7 @@ export type MuseMspProcessAudit = Readonly<{
     /** Fixture-only native inputs, never a production diagnostic/log carrier. */
     turnInputs: readonly (readonly JsonValue[])[];
     commandTargets: readonly Readonly<{ method: string; commandId: string; sessionId?: string; providerId?: string;
-        modelId?: string; approvalMode?: string; mode?: string; permissionProfile?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
+        modelId?: string; approvalMode?: string; mode?: string; permissionProfile?: string; profileId?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
     modelSelections: readonly Readonly<{ providerId?: string | null; modelId?: string }>[];
     modelListSessionIds: readonly (string | null)[];
     viewPages: readonly Readonly<{ sessionId: string | null; cursor: string | null }>[];
@@ -315,13 +318,29 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         if (message.params?.commandId) {
             commands.push(message.params.commandId);
             const target = { method: message.method, commandId: message.params.commandId };
-            for (const key of ['sessionId', 'providerId', 'modelId', 'approvalMode', 'mode', 'permissionProfile', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
+            for (const key of ['sessionId', 'providerId', 'modelId', 'approvalMode', 'mode', 'permissionProfile', 'profileId', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
                 if (typeof message.params[key] === 'string') target[key] = message.params[key];
             }
             if (typeof message.params.model?.modelId === 'string') target.modelId = message.params.model.modelId;
             if (typeof message.params.model?.providerId === 'string') target.providerId = message.params.model.providerId;
             if (typeof message.params.cutPoint?.lastTurnId === 'string') target.lastTurnId = message.params.cutPoint.lastTurnId;
             commandTargets.push(target);
+        }
+        // Muse 1.4.15 SessionSetPermissionProfileParams/Result; schema-derived
+        // boundary variation, not a captured successful native transaction.
+        if (message.method === 'session/setPermissionProfile') {
+            if (process.env.MUSE_TEST_PROFILE_REFUSAL === '1') {
+                send({ jsonrpc: '2.0', id: message.id, error: { code: -32030, message: 'Permission profile is fixed for ephemeral Sessions',
+                    data: { kind: 'commandRejected', commandId: message.params.commandId,
+                        reason: 'permission_profile_ephemeral_fixed', retryable: false } } });
+            } else {
+                send({ jsonrpc: '2.0', id: message.id, result: { status: 'accepted',
+                    commandId: message.params.commandId, applyOutcome: 'completed', permissionState: {
+                        profileId: message.params.profileId, reviewerAuthority: 'human', reviewerAttached: true,
+                    } } });
+            }
+            writeAudit();
+            return;
         }
         if (message.method === 'turn/start' && process.env.MUSE_TEST_READINESS_GUARD === '1' && readinessState === 'busy') {
             // Schema-derived ordering of the native documented queue disposition;
