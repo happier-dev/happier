@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "Fallada i recuperació",
   "machineServices.healthSetup.alerts.failure": "Només fallades",
   "machineServices.healthSetup.alerts.recovery": "Només recuperacions",
-  "machineServices.healthSetup.alerts.turnOff": "Desactiva les alertes"
+  "machineServices.healthSetup.alerts.turnOff": "Desactiva les alertes",
+  "machineServices.healthSetup.saveChanges": "Desa els canvis",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "Esperant el primer ping",
+  "machineServices.healthSetup.saved.heartbeat.late": "Batec endarrerit",
+  "machineServices.healthSetup.saved.heartbeat.current": "Rebent pings"
 }

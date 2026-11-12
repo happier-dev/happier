@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "Failure and recovery",
   "machineServices.healthSetup.alerts.failure": "Failure only",
   "machineServices.healthSetup.alerts.recovery": "Recovery only",
-  "machineServices.healthSetup.alerts.turnOff": "Turn alerts off"
+  "machineServices.healthSetup.alerts.turnOff": "Turn alerts off",
+  "machineServices.healthSetup.saveChanges": "Save changes",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "Waiting for first ping",
+  "machineServices.healthSetup.saved.heartbeat.late": "Heartbeat late",
+  "machineServices.healthSetup.saved.heartbeat.current": "Receiving pings"
 }

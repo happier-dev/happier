@@ -170,6 +170,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const t = usePluginTranslation();
     const host = usePluginHostApi();
     const [draft, setDraft] = useState<Draft>(EMPTY);
+    const [existing, setExisting] = useState(props.existing);
     const [alertDraft, setAlertDraft] = useState<Readonly<{
         alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
         destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
@@ -189,13 +190,15 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             setAlertDraft(current => ({ alerts: current.alerts ?? prepared.sourceConfig.alerts,
                 destinationSelectionContext: prepared.destinationSelectionContext,
                 ...(current.alerts === props.sourceOptions.alerts ? { testContext: prepared.testContext } : {}) }));
+            setExisting(prepared.sourceConfig.checks ?? props.existing);
+            setInvestigation(current => current ?? prepared.sourceConfig.investigation);
             setPreviewUnavailable(false);
         }).catch(() => { if (!retired && !props.signal.aborted) setPreviewUnavailable(true); });
         return () => { retired = true; };
     }, [host, props.signal, props.subject, props.existing, props.sourceOptions, previewAttempt]);
-    const [investigationMode, setInvestigationMode] = useState(props.sourceOptions.investigation?.mode ?? 'inbox');
-    const [configuredActionId, setConfiguredActionId] = useState(props.sourceOptions.investigation?.mode === 'auto_start'
-        ? props.sourceOptions.investigation.configuredActionId : '');
+    const [investigation, setInvestigation] = useState<Readonly<{ mode: 'inbox' | 'auto_start'; configuredActionId?: string }> | undefined>(props.sourceOptions.investigation);
+    const investigationMode = investigation?.mode ?? 'inbox';
+    const configuredActionId = investigation?.configuredActionId ?? '';
     const [saving, setSaving] = useState(false);
     const [refusedSave, setRefusedSave] = useState(false);
     const [catalog, setCatalog] = useState<HealthCheckKindCatalogV1 | null>(null);
@@ -206,7 +209,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set({ contributedKind: kind,
         contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedConfig: '{}' });
     const issues = fieldIssues(draft, t);
-    const candidate = buildHealthCheckSetupInput(props.subject, props.existing, draft, { ...props.sourceOptions,
+    const candidate = buildHealthCheckSetupInput(props.subject, existing, draft, { ...props.sourceOptions,
         ...(alerts === undefined ? {} : { alerts }),
         investigation: investigationMode === 'auto_start'
             ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
@@ -223,6 +226,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         && isValidPluginJsonSchemaValue(draft.contributedValidator, configFor(draft)));
     const monitorKind = !draft.contributedKind && isMonitorKind(draft.kind) ? draft.kind : null;
     const monitorValid = !monitorKind || monitorDefinitions[monitorKind].configSchema.safeParse(configFor(draft)).success;
+    const savedCandidate = HealthCheckSetupInputV1ProtocolSchema.safeParse({ v: 1, subject: props.subject, checks: existing,
+        alerts, investigation: investigationMode === 'auto_start'
+            ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
     const canAdd = alerts !== undefined && candidate.success && contributedValid && monitorValid && loopback?.refused !== true && !saving;
     const domainConditions = [
         { value: 'domain_probe_failed', label: t(`${K}.domain.route`, 'Route check') },
@@ -305,9 +311,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         previewUnavailable ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
             h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
         h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
-        h(SavedHeartbeatControls, { subject: props.subject, checks: props.existing, signal: props.signal }),
-        h(SavedHealthCheckControls, { subject: props.subject, checks: props.existing, signal: props.signal }),
-        ...props.existing.flatMap(check => {
+        h(SavedHeartbeatControls, { subject: props.subject, checks: existing, signal: props.signal }),
+        h(SavedHealthCheckControls, { subject: props.subject, checks: existing, signal: props.signal }),
+        ...existing.flatMap(check => {
             if (!isMonitorCheck(check)) return [];
             const kind = check.kind.localId;
             const parsed = monitorDefinitions[kind].configSchema.safeParse(check.config);
@@ -354,7 +360,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         })) : null,
         ...fields,
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
-            value: investigationMode, onChange: mode => { setInvestigationMode(mode); setRefusedSave(false); }, maximumColumns: 2,
+            value: investigationMode, onChange: mode => { setInvestigation({ mode, configuredActionId }); setRefusedSave(false); }, maximumColumns: 2,
             options: [
                 { id: 'inbox', title: t(`${K}.investigation.inbox`, 'Show in Inbox'),
                     subtitle: t(`${K}.investigation.inbox.description`, 'Investigate when you choose.') },
@@ -362,10 +368,20 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                     subtitle: t(`${K}.investigation.automatic.description`, 'Use a configured Action when a new alert opens.') },
             ] }),
         investigationMode === 'auto_start' ? text(t(`${K}.investigation.action`, 'Configured investigation'), configuredActionId,
-            value => { setConfiguredActionId(value); setRefusedSave(false); }, { testID: 'health-setup-investigation-action',
+            value => { setInvestigation({ mode: 'auto_start', configuredActionId: value }); setRefusedSave(false); }, { testID: 'health-setup-investigation-action',
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
+        existing.length > 0 ? h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant: 'secondary',
+            disabled: alerts === undefined || !savedCandidate.success || saving, busy: saving, testID: 'health-setup-save',
+            onPress: async () => {
+                if (!savedCandidate.success) return;
+                setSaving(true);
+                try {
+                    await host.settleEphemeralInput({ kind: 'completed', input: savedCandidate.data }, { signal: props.signal });
+                } catch { setRefusedSave(true); }
+                finally { setSaving(false); }
+            } }) : null,
         h(Row, { justify: 'flex-end' }, h(Button, { title: nativeDomain ? t(`${K}.enable`, 'Enable checks') : t(`${K}.add`, 'Add check'), variant: 'primary', disabled: !canAdd,
             busy: saving, testID: 'health-setup-add',
             onPress: async () => {

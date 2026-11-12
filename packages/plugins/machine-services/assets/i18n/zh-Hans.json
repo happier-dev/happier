@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "故障和恢复",
   "machineServices.healthSetup.alerts.failure": "仅故障",
   "machineServices.healthSetup.alerts.recovery": "仅恢复",
-  "machineServices.healthSetup.alerts.turnOff": "关闭警报"
+  "machineServices.healthSetup.alerts.turnOff": "关闭警报",
+  "machineServices.healthSetup.saveChanges": "保存更改",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "等待首次心跳",
+  "machineServices.healthSetup.saved.heartbeat.late": "心跳已延迟",
+  "machineServices.healthSetup.saved.heartbeat.current": "正在接收心跳"
 }

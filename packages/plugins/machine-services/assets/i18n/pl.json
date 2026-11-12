@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "Awarii i przywróceniu działania",
   "machineServices.healthSetup.alerts.failure": "Tylko awarii",
   "machineServices.healthSetup.alerts.recovery": "Tylko przywróceniu działania",
-  "machineServices.healthSetup.alerts.turnOff": "Wyłącz alerty"
+  "machineServices.healthSetup.alerts.turnOff": "Wyłącz alerty",
+  "machineServices.healthSetup.saveChanges": "Zapisz zmiany",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "Oczekiwanie na pierwszy sygnał",
+  "machineServices.healthSetup.saved.heartbeat.late": "Spóźniony sygnał",
+  "machineServices.healthSetup.saved.heartbeat.current": "Odbieranie sygnałów"
 }

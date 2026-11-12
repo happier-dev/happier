@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "障害と復旧",
   "machineServices.healthSetup.alerts.failure": "障害のみ",
   "machineServices.healthSetup.alerts.recovery": "復旧のみ",
-  "machineServices.healthSetup.alerts.turnOff": "アラートをオフにする"
+  "machineServices.healthSetup.alerts.turnOff": "アラートをオフにする",
+  "machineServices.healthSetup.saveChanges": "変更を保存",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "最初の ping を待機中",
+  "machineServices.healthSetup.saved.heartbeat.late": "ハートビートが遅延しています",
+  "machineServices.healthSetup.saved.heartbeat.current": "ping を受信中"
 }

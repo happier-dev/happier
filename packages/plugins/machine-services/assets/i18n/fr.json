@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "Panne et rétablissement",
   "machineServices.healthSetup.alerts.failure": "Panne uniquement",
   "machineServices.healthSetup.alerts.recovery": "Rétablissement uniquement",
-  "machineServices.healthSetup.alerts.turnOff": "Désactiver les alertes"
+  "machineServices.healthSetup.alerts.turnOff": "Désactiver les alertes",
+  "machineServices.healthSetup.saveChanges": "Enregistrer les modifications",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "En attente du premier ping",
+  "machineServices.healthSetup.saved.heartbeat.late": "Signal de vie en retard",
+  "machineServices.healthSetup.saved.heartbeat.current": "Réception des pings"
 }

@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "Сбое и восстановлении",
   "machineServices.healthSetup.alerts.failure": "Только при сбое",
   "machineServices.healthSetup.alerts.recovery": "Только при восстановлении",
-  "machineServices.healthSetup.alerts.turnOff": "Выключить оповещения"
+  "machineServices.healthSetup.alerts.turnOff": "Выключить оповещения",
+  "machineServices.healthSetup.saveChanges": "Сохранить изменения",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "Ожидание первого сигнала",
+  "machineServices.healthSetup.saved.heartbeat.late": "Сигнал задерживается",
+  "machineServices.healthSetup.saved.heartbeat.current": "Сигналы поступают"
 }

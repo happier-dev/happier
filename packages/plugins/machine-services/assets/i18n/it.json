@@ -65,5 +65,9 @@
   "machineServices.healthSetup.alerts.both": "Errore e ripristino",
   "machineServices.healthSetup.alerts.failure": "Solo errori",
   "machineServices.healthSetup.alerts.recovery": "Solo ripristini",
-  "machineServices.healthSetup.alerts.turnOff": "Disattiva gli avvisi"
+  "machineServices.healthSetup.alerts.turnOff": "Disattiva gli avvisi",
+  "machineServices.healthSetup.saveChanges": "Salva modifiche",
+  "machineServices.healthSetup.saved.heartbeat.waiting": "In attesa del primo ping",
+  "machineServices.healthSetup.saved.heartbeat.late": "Heartbeat in ritardo",
+  "machineServices.healthSetup.saved.heartbeat.current": "Ricezione dei ping"
 }

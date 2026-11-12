@@ -608,3 +608,25 @@ it('explains itself instead of showing a form when no watched service is bound',
   ).toBeUndefined();
   expect(settled).toEqual([]);
 });
+
+
+it('reopens an Environment source and saves alert changes without adding or replacing its checks', async () => {
+  const environment = { kind: 'environment', environmentId: 'production' } as const;
+  const check = { checkId: 'outside', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'tcp' },
+    binding: { kind: 'healthCheck' }, config: { host: 'app.example.test', port: 443 },
+    periodMs: 60000, consecutiveFailuresBeforeAlerting: 3 };
+  const alerts = { channels: [{ channelId: 'saved-slack', destination: { connectionId: 'production' } }], phases: ['open'] };
+  const investigation = { mode: 'auto_start', configuredActionId: 'production-triage' };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {}, async () => ({
+    mode: 'preview', sourceConfig: { v: 1, subject: environment, checks: [check], alerts, investigation },
+    destinationSelectionContext: { serverId: 'home', machineId: 'controller' },
+    testContext: { serverId: 'home', machineId: 'controller',
+      sourceInstanceId: createHealthCheckSourceInstanceIdV1(environment), expectedSourceRevision: '9' },
+  }));
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Turn alerts off' })); });
+  const save = await page.getByRole('button', { name: 'Save changes' });
+  expect(save.state?.disabled ?? false).toBe(false);
+  await act(async () => { await page.press(save); });
+  expect(settled).toEqual([{ kind: 'completed', input: { v: 1, subject: environment, checks: [check],
+    alerts: { channels: [], phases: ['open'] }, investigation } }]);
+});
