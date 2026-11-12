@@ -3,40 +3,22 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
 
-import { collectRenderedTestIds, createDeferred, decideApprovalAsInbox, homeAccountPickerRowFixture, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamInvitationRowFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, homeAccountPickerRowFixture, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamInvitationRowFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
-/**
- * The last mile of a deferred Team journey.
- *
- * An explicit UI-approval requirement turns a Team Action into a durable
- * approval request instead of an immediate answer. These cases are about what
- * the *initiating surface* then owes the person: that the wait is visible and
- * the control is withheld rather than silently doing nothing, and that when the
- * approval executes the journey continues at the Home's own result — the Team
- * or Group it created, the membership whose history was to be prepared, the
- * bearer that was minted — instead of degrading into "something changed".
- *
- * Every deferred case runs the real approval lifecycle: the Team operation
- * reaches the shared Action front door, which persists an open approval in the
- * Home's stateful Artifact store; the Inbox then decides it through the generic
- * executor, whose replay is the one Home operation; and the mounted surface
- * learns the outcome only through the real `useApprovalArtifact` and
- * `useActionApprovalContinuation`. Only the network, the credential store and
- * genuine platform boundaries are replaced.
- *
- * Invitation creation and reissue are the deliberate exception. They mint a raw
- * bearer, so they are declared live-only custody: the invocation waits, the
- * link returns to it alone, and the durable Artifact keeps only the safe
- * projection. Their case therefore proves the opposite property — that no
- * continuation is registered and the surface's own lifetime owns the wait.
+/** Configured own-UI Ask settles through the canonical native confirmation.
+ * These journeys retain real Action admission and Home transport, preserving
+ * pending controls, cancellation, exact result navigation and live-only links.
+ * See docs/actions.md: explicit UI Ask creates no self-approval Artifact.
  */
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplace = vi.hoisted(() => vi.fn());
+const modalConfirm = vi.hoisted(() => vi.fn(async () => true));
 const routerPush = vi.hoisted(() => vi.fn());
 const routerBack = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
@@ -57,45 +39,20 @@ vi.mock('@/components/appShell/workspace/destinationRoute', async (importOrigina
     };
 });
 
-/**
- * Invitation creation is live-only custody: its invocation, not an Artifact,
- * owns the wait. Armed per case; unarmed it keeps its real implementation.
- */
-const deferrals = vi.hoisted(() => ({
-    createTeamInvitation: null as null | ((params: never) => Promise<never>),
-    calls: { createTeamInvitation: 0 },
-}));
-
-vi.mock('@/sync/ops/teams/teamInvitationOperations', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/ops/teams/teamInvitationOperations')>();
-    return {
-        ...original,
-        createTeamInvitation: (params: never) => {
-            deferrals.calls.createTeamInvitation += 1;
-            return deferrals.createTeamInvitation
-                ? deferrals.createTeamInvitation(params)
-                : original.createTeamInvitation(params);
-        },
-    };
-});
-
 installSettingsViewCommonModuleMocks({
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+        spies: { confirm: modalConfirm },
+    }).module,
     router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
         params: () => routeParams.current,
         router: { push: routerPush, replace: routerReplace, back: routerBack },
     }).module,
-    // The real client store: the approval writer publishes the settled
-    // Artifact into it and the mounted continuation reads it back, so a stub
-    // here would sever exactly the path these journeys prove.
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({ importOriginal, overrides: {} });
-    },
+    storage: 'real',
 });
 
 // The clipboard and share sheet are genuine platform boundaries reached by the
 // invitation link delivery; everything below them stays real.
-const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async () => true));
+const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async (_value: string) => true));
 vi.mock('expo-clipboard', () => ({ setStringAsync: setClipboardStringSafeMock }));
 vi.mock('@/utils/ui/shareText', () => ({
     isTextSharingAvailable: () => true,
@@ -110,11 +67,6 @@ vi.mock('expo-file-system', () => ({
     },
 }));
 
-// App-bundled plugin bytes are an unrelated generated build boundary. The
-// synchronized test target intentionally has no generated inventory, so keep
-// that boundary inert while these Team approval journeys exercise their real
-// continuation and screen owners.
-
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 
@@ -128,21 +80,14 @@ const MEMBER_ADD_PATH = '/v1/teams/members/add';
 const TEAM_CREATE_PATH = '/v1/teams/create';
 const TEAM_LOGO_SET_PATH = '/v1/teams/logo/set';
 
-/** The one approval the Home persisted for this journey, decoded as stored. */
-function storedApproval(serverId: string): Readonly<{ id: string; request: Record<string, unknown> }> {
-    const rows = harness.artifacts(serverId).list();
-    if (rows.length !== 1) throw new Error(`expected_one_approval_artifact:${rows.length}`);
-    const body = harness.artifacts(serverId).readPlainBody(rows[0]!.id);
-    if (body === null) throw new Error('approval_artifact_not_plain');
-    return { id: rows[0]!.id, request: JSON.parse(body) as Record<string, unknown> };
+function holdConfirmation() {
+    const decision = createDeferred<boolean>();
+    modalConfirm.mockImplementationOnce(() => decision.promise);
+    return decision;
 }
 
-/** Waits for the deferral to persist its open approval, and returns its id. */
-async function waitForOpenApproval(serverId: string, actionId: string): Promise<string> {
-    await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-    const pending = storedApproval(serverId);
-    expect(pending.request).toMatchObject({ status: 'open', actionId });
-    return pending.id;
+async function settleConfirmation(decision: ReturnType<typeof holdConfirmation>, accepted: boolean): Promise<void> {
+    await act(async () => { decision.resolve(accepted); });
 }
 
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
@@ -213,6 +158,16 @@ beforeAll(async () => {
         resetHomeGovernanceEngineForTests: governanceEngine.resetHomeGovernanceEngineForTests,
         resetServerFeaturesClientForTests: serverFeaturesClient.resetServerFeaturesClientForTests,
     };
+    // Resolve the mounted screen graphs before a test starts a pending native
+    // decision. A cold import must not outlive that test and render into the
+    // next case after cleanup has already run.
+    await import('./identity/TeamAuthenticationSettingsScreen');
+    await import('@/app/(app)/settings/teams/[serverId]/[teamId]/authentication/[connectionId]');
+    await import('./groups/TeamGroupCreateScreen');
+    await import('./members/TeamMemberAddScreen');
+    await import('./invitations/TeamInvitationCreateScreen');
+    await import('./TeamCreateScreen');
+    await import('./TeamSettingsScreen');
 }, 300_000);
 
 beforeEach(async () => {
@@ -232,8 +187,22 @@ beforeEach(async () => {
     routeParams.current = {};
     focusEffects.clear();
     setClipboardStringSafeMock.mockClear();
-    deferrals.createTeamInvitation = null;
-    deferrals.calls = { createTeamInvitation: 0 };
+    installBrowserClipboardBoundary(async value => { await setClipboardStringSafeMock(value); });
+    modalConfirm.mockReset().mockResolvedValue(true);
+    const { Modal } = await import('@/modal');
+    // The canonical factory wraps this controller in its own spy. Clear that
+    // outer spy too, including unused one-shot choices from Portal cases.
+    vi.mocked(Modal.confirm).mockReset().mockImplementation(modalConfirm);
+    vi.mocked(Modal.show).mockImplementation(config => {
+        if (config.chrome?.testID !== 'actions.confirmation-review.modal') return 'modal-id';
+        const props = config.props as Readonly<{ onAnswer(accepted: boolean): void }>;
+        // The fixture's person-choice controller answers either host presentation.
+        // The real executor and review still prepare and present the decision.
+        queueMicrotask(() => {
+            void vi.mocked(Modal.confirm)('Action review', '').then(accepted => props.onAnswer(accepted));
+        });
+        return 'action-review';
+    });
     pickImages.mockReset();
 });
 
@@ -241,7 +210,7 @@ afterEach(() => {
     standardCleanup();
 });
 
-describe('deferred Team identity reads', () => {
+describe('native-confirmed Team identity reads', () => {
     it.each(['approve', 'reject'] as const)('settles a configured list confirmation in the mounted loader after %s', async (decision) => {
         const serverId = await addTeamHome({ manageAuthentication: true });
         await harness.requireUiApproval(serverId, 'teams.identity.connections.list');
@@ -257,18 +226,20 @@ describe('deferred Team identity reads', () => {
             },
         });
         harness.answer(serverId, '/v1/identity/github-apps/list', { body: { registrations: [], installations: [] } });
+        const confirmation = holdConfirmation();
         const { TeamAuthenticationSettingsScreen } = await import('./identity/TeamAuthenticationSettingsScreen');
         const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />);
-        const artifactId = await waitForOpenApproval(serverId, 'teams.identity.connections.list');
-        await waitForTestId(screen, 'team-approval');
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
         expect(harness.requestsFor(listPath)).toHaveLength(0);
 
-        await expect(decideApprovalAsInbox(serverId, artifactId, decision)).resolves.toMatchObject({ ok: true });
+        await settleConfirmation(confirmation, decision === 'approve');
 
         await waitForTestId(screen, decision === 'approve' ? 'team-authentication-empty' : 'team-authentication-unavailable');
         expect(harness.requestsFor(listPath)).toHaveLength(decision === 'approve' ? 1 : 0);
-        if (decision === 'reject') expect(screen.findByTestId('team-authentication-unavailable-action')?.props.onPress).toEqual(expect.any(Function));
-        expect(harness.artifacts(serverId).list()).toHaveLength(1);
+        if (decision === 'reject') {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-authentication-unavailable-action');
+        }
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
 });
 
@@ -395,8 +366,8 @@ describe('WorkOS Portal return', () => {
     });
 });
 
-describe('deferred Group creation', () => {
-    it('shows the wait, withholds the control, then opens the Group the approval produced', async () => {
+describe('native-confirmed Group creation', () => {
+    it('withholds submission during confirmation, then opens the created Group', async () => {
         const serverId = await addTeamHome({ manageGroups: true });
         await harness.requireUiApproval(serverId, 'teams.groups.create');
         harness.answer(serverId, GROUP_CREATE_PATH, {
@@ -406,31 +377,32 @@ describe('deferred Group creation', () => {
         const screen = await renderScreen(<TeamGroupCreateScreen serverId={serverId} teamId="team-1" />);
         await waitForTestId(screen, 'team-group-create-name');
         act(() => screen.changeTextByTestId('team-group-create-name', 'Design'));
-        await screen.pressByTestIdAsync('team-group-create-submit');
+        await vi.waitFor(() => expect(screen.findByTestId('team-group-create-submit')?.props.disabled).toBe(false));
+        const confirmation = holdConfirmation();
+        act(() => screen.pressByTestId('team-group-create-submit'));
 
-        // The deferral is visible and the control is withheld, so the same
-        // creation cannot be asked for a second time while it is undecided.
-        const artifactId = await waitForOpenApproval(serverId, 'teams.groups.create');
-        await waitForTestId(screen, 'team-approval');
-        expect(screen.findByTestId('team-group-create-submit')?.props.disabled).toBe(true);
+        // One pending confirmation owns this submission.
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(screen.findHostByTestId('team-group-create-submit')?.props.accessibilityState)
+            .toMatchObject({ disabled: true, busy: true }));
+        act(() => screen.pressByTestId('team-group-create-submit'));
+        expect(modalConfirm).toHaveBeenCalledOnce();
         expect(routerReplace).not.toHaveBeenCalled();
         expect(harness.requestsFor(GROUP_CREATE_PATH)).toHaveLength(0);
 
-        await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
+        await settleConfirmation(confirmation, true);
 
         await vi.waitFor(() => {
             expect(routerReplace).toHaveBeenCalledWith(
                 `/settings/teams/${serverId}/team-1/groups/group-new`,
             );
         });
-        // The Home created the Group once, through the Inbox's replay.
+        // The admitted invocation creates the Group once.
         expect(harness.requestsFor(GROUP_CREATE_PATH)).toHaveLength(1);
     });
 });
 
-describe('deferred Team admission', () => {
+describe('native-confirmed Team admission', () => {
     async function renderMemberAdd(serverId: string) {
         const { TeamMemberAddScreen } = await import('./members/TeamMemberAddScreen');
         const screen = await renderScreen(<TeamMemberAddScreen serverId={serverId} teamId="team-1" />);
@@ -463,17 +435,15 @@ describe('deferred Team admission', () => {
 
         await waitForTestId(screen, 'team-member-add-history:all_existing');
         act(() => screen.pressByTestId('team-member-add-history:all_existing'));
-        await screen.pressByTestIdAsync('team-member-add-submit');
+        const confirmation = holdConfirmation();
+        act(() => screen.pressByTestId('team-member-add-submit'));
 
-        const artifactId = await waitForOpenApproval(serverId, 'teams.members.add');
-        await waitForTestId(screen, 'team-approval');
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
         expect(routerReplace).not.toHaveBeenCalled();
         expect(routerBack).not.toHaveBeenCalled();
         expect(harness.requestsFor(MEMBER_ADD_PATH)).toHaveLength(0);
 
-        await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
+        await settleConfirmation(confirmation, true);
 
         // Including existing history is an instruction, and the membership it
         // is prepared at exists only in the Home's answer.
@@ -492,11 +462,11 @@ describe('deferred Team admission', () => {
     it('reports a refused admission instead of navigating as though it happened', async () => {
         const serverId = await addAdmissionHome();
         const screen = await renderMemberAdd(serverId);
-        await screen.pressByTestIdAsync('team-member-add-submit');
-        const artifactId = await waitForOpenApproval(serverId, 'teams.members.add');
-        await waitForTestId(screen, 'team-approval');
+        const confirmation = holdConfirmation();
+        act(() => screen.pressByTestId('team-member-add-submit'));
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
 
-        await expect(decideApprovalAsInbox(serverId, artifactId, 'reject')).resolves.toMatchObject({ ok: true });
+        await settleConfirmation(confirmation, false);
 
         await vi.waitFor(() => {
             expect(screen.getTextContent()).toContain('teams.errors.forbidden');
@@ -505,7 +475,7 @@ describe('deferred Team admission', () => {
         expect(routerBack).not.toHaveBeenCalled();
         // A refused admission never reaches the Home.
         expect(harness.requestsFor(MEMBER_ADD_PATH)).toHaveLength(0);
-        expect(storedApproval(serverId).request).toMatchObject({ status: 'rejected' });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
 });
 
@@ -519,26 +489,15 @@ describe('live-only invitation custody', () => {
      */
     it('aborts the original live waiter when its initiating surface unmounts', async () => {
         let observedSignal: AbortSignal | null = null;
-        let waiterSettled = false;
-        deferrals.createTeamInvitation = (async (params: Readonly<{ signal?: AbortSignal }>) => {
-            observedSignal = params.signal ?? null;
-            try {
-                await new Promise<never>((_resolve, reject) => {
-                    const signal = params.signal;
-                    if (!signal) return;
-                    const abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-                    if (signal.aborted) abort();
-                    else signal.addEventListener('abort', abort, { once: true });
-                });
-            } finally {
-                waiterSettled = true;
-            }
-        }) as never;
-
+        const response = createDeferred<void>();
         const serverId = await addTeamHome({ manageInvitations: true });
         harness.answer(serverId, INVITATIONS_LIST_PATH, {
             body: { items: [], nextCursor: null, emailDelivery: 'unavailable', linkDelivery: 'available' },
         });
+        harness.answer(serverId, '/v1/teams/invitations/create', { select: (_input, request) => {
+            observedSignal = request.signal ?? null;
+            return { respondAfter: response.promise, body: { invitation: teamInvitationRowFixture(), joinUrl: null } };
+        } });
         const { TeamInvitationForm } = await import('./invitations/TeamInvitationCreateScreen');
         const { TeamSection } = await import('./TeamSection');
         const screen = await renderScreen(
@@ -557,25 +516,23 @@ describe('live-only invitation custody', () => {
         await act(async () => screen.tree.unmount());
 
         expect(observedSignal!.aborted).toBe(true);
-        await vi.waitFor(() => expect(waiterSettled).toBe(true));
-        expect(deferrals.calls.createTeamInvitation).toBe(1);
+        response.resolve();
+        expect(harness.requestsFor('/v1/teams/invitations/create')).toHaveLength(1);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it('binds a bearer-minting creation to the surface lifetime and reveals nothing while it waits', async () => {
         const joinUrl = `https://home-a.example/join/${'a'.repeat(43)}`;
         let observedSignal: AbortSignal | null = null;
-        let releaseCreate = (): void => {};
-        const decided = new Promise<void>((resolve) => { releaseCreate = resolve; });
-        deferrals.createTeamInvitation = (async (params: Readonly<{ signal?: AbortSignal }>) => {
-            observedSignal = params.signal ?? null;
-            await decided;
-            return { kind: 'succeeded' as const, value: { invitation: teamInvitationRowFixture(), joinUrl } };
-        }) as never;
-
+        const response = createDeferred<void>();
         const serverId = await addTeamHome({ manageInvitations: true });
         harness.answer(serverId, INVITATIONS_LIST_PATH, {
             body: { items: [], nextCursor: null, emailDelivery: 'unavailable', linkDelivery: 'available' },
         });
+        harness.answer(serverId, '/v1/teams/invitations/create', { select: (_input, request) => {
+            observedSignal = request.signal ?? null;
+            return { respondAfter: response.promise, body: { invitation: teamInvitationRowFixture(), joinUrl } };
+        } });
         const { TeamInvitationForm } = await import('./invitations/TeamInvitationCreateScreen');
         const { TeamSection } = await import('./TeamSection');
         const screen = await renderScreen(
@@ -590,8 +547,8 @@ describe('live-only invitation custody', () => {
         act(() => screen.pressByTestId('team-invite-submit'));
 
         await vi.waitFor(() => expect(observedSignal).not.toBeNull());
-        // Custody is the live call, not a durable registration, and nothing is
-        // revealed while the approval is undecided. The bearer is never rendered
+        // Nothing is revealed while the live creation request is pending.
+        // The bearer is never rendered
         // as text, so its absence is asserted at the controls that hand it over —
         // a text check would pass even on a fully revealed link.
         expect(observedSignal!.aborted).toBe(false);
@@ -602,10 +559,7 @@ describe('live-only invitation custody', () => {
         expect(waitingIds).not.toContain('team-invite-qr');
         expect(setClipboardStringSafeMock).not.toHaveBeenCalled();
 
-        await act(async () => {
-            releaseCreate();
-            await decided;
-        });
+        await act(async () => { response.resolve(); });
 
         // The one confined delivery reaches the invoking surface, and it is the
         // same presentation an immediate creation gets — the exact minted link,
@@ -615,9 +569,10 @@ describe('live-only invitation custody', () => {
         // The exact minted bearer, handed over once: a link rebuilt locally or a
         // second dispatch would both be invisible to a testID-only assertion.
         expect(setClipboardStringSafeMock).toHaveBeenCalledWith(joinUrl);
-        expect(deferrals.calls.createTeamInvitation).toBe(1);
+        expect(harness.requestsFor('/v1/teams/invitations/create')).toHaveLength(1);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
 
-        // Leaving the surface cancels the wait rather than stranding a bearer.
+        // The surface still owns the bearer lifetime after delivery.
         await act(async () => {
             screen.tree.unmount();
         });
@@ -625,7 +580,7 @@ describe('live-only invitation custody', () => {
     });
 });
 
-describe('deferred Team creation', () => {
+describe('native-confirmed Team creation', () => {
     async function addCreationHome(): Promise<string> {
         const serverId = await harness.addHome({
             name: 'Home A',
@@ -638,7 +593,7 @@ describe('deferred Team creation', () => {
         return serverId;
     }
 
-    it('opens the Team the approval produced rather than re-asking for one', async () => {
+    it('opens the created Team after confirmation', async () => {
         const serverId = await addCreationHome();
         await harness.requireUiApproval(serverId, 'teams.create');
         harness.answer(serverId, TEAM_CREATE_PATH, {
@@ -649,20 +604,19 @@ describe('deferred Team creation', () => {
         const screen = await renderScreen(<TeamCreateScreen />);
         await waitForTestId(screen, 'teams-create-name');
         act(() => screen.changeTextByTestId('teams-create-name', 'Design'));
-        await screen.pressByTestIdAsync('teams-create-submit');
+        const confirmation = holdConfirmation();
+        act(() => screen.pressByTestId('teams-create-submit'));
 
-        // A Team being created has no Team shell to host its approval, so this
-        // screen owns one: the wait is visible and the form is withheld rather
-        // than silently creating a second Team.
-        const artifactId = await waitForOpenApproval(serverId, 'teams.create');
-        await waitForTestId(screen, 'teams-create-approval');
-        expect(screen.findByTestId('teams-create-submit')?.props.disabled).toBe(true);
+        // The initiating form stays disabled until confirmation settles.
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(screen.findHostByTestId('teams-create-submit')?.props.accessibilityState)
+            .toMatchObject({ disabled: true, busy: true }));
+        act(() => screen.pressByTestId('teams-create-submit'));
+        expect(modalConfirm).toHaveBeenCalledOnce();
         expect(routerReplace).not.toHaveBeenCalled();
         expect(harness.requestsFor(TEAM_CREATE_PATH)).toHaveLength(0);
 
-        await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
+        await settleConfirmation(confirmation, true);
 
         await vi.waitFor(() => {
             expect(routerReplace).toHaveBeenCalledWith(
@@ -673,10 +627,8 @@ describe('deferred Team creation', () => {
     });
 
     it('waits for an approved logo publication instead of reporting an upload failure', async () => {
-        // The Team is already created. A logo publication that requires explicit
-        // approval is a wait on a person, and reporting `teams.logo.failed` here
-        // both lies about the Team and offers a Retry that mints a second
-        // approval for the same upload.
+        // The Team is already created when its logo awaits confirmation.
+        // Pending confirmation must not report an upload failure or offer Retry.
         const created = teamSummaryFixture({ id: 'team-new', name: 'Design' });
         const serverId = await addCreationHome();
         await harness.requireUiApproval(serverId, 'teams.logo.set');
@@ -694,35 +646,34 @@ describe('deferred Team creation', () => {
         act(() => screen.changeTextByTestId('teams-create-name', 'Design'));
         await screen.pressByTestIdAsync('teams-create-logo-set');
         await screen.pressByTestIdAsync('teams-create-logo-use');
-        await screen.pressByTestIdAsync('teams-create-submit');
+        const confirmation = holdConfirmation();
+        act(() => screen.pressByTestId('teams-create-submit'));
 
-        const artifactId = await waitForOpenApproval(serverId, 'teams.logo.set');
-        await waitForTestId(screen, 'teams-create-approval');
-        expect(screen.findByTestId('teams-create-submit')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(screen.findHostByTestId('teams-create-submit')?.props.accessibilityState)
+            .toMatchObject({ disabled: true, busy: true }));
         // A retained press callback must also refuse redispatch while the
         // publication waits for a person, not merely look disabled.
         await act(async () => { screen.findByTestId('teams-create-submit')?.props.onPress(); });
-        expect(harness.artifacts(serverId).list()).toHaveLength(1);
+        expect(modalConfirm).toHaveBeenCalledOnce();
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
         const { t } = await import('@/text');
         expect(screen.getTextContent()).not.toContain(t('teams.logo.failed'));
         expect(routerReplace).not.toHaveBeenCalled();
         expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(0);
 
-        await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
+        await settleConfirmation(confirmation, true);
 
         await vi.waitFor(() => {
             expect(routerReplace).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-new`);
         });
-        // One Team, one upload intent: the approval finishes the publication
-        // that was deferred rather than starting another one.
+        // Confirmation completes the existing publication once.
         expect(harness.requestsFor(TEAM_CREATE_PATH)).toHaveLength(1);
         expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(1);
     });
 });
 
-describe('deferred Team logo replacement', () => {
+describe('native-confirmed Team logo replacement', () => {
     it.each(['approve', 'reject'] as const)('settles the picked image truthfully after %s', async (decision) => {
         const serverId = await addTeamHome({ manageSettings: true });
         await harness.requireUiApproval(serverId, 'teams.logo.set');
@@ -739,23 +690,27 @@ describe('deferred Team logo replacement', () => {
         const screen = await renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
         await waitForTestId(screen, 'team-settings-logo-set');
         await screen.pressByTestIdAsync('team-settings-logo-set');
-        await screen.pressByTestIdAsync('team-settings-logo-use');
+        const confirmation = holdConfirmation();
+        act(() => screen.pressByTestId('team-settings-logo-use'));
 
-        const artifactId = await waitForOpenApproval(serverId, 'teams.logo.set');
-        await waitForTestId(screen, 'team-approval');
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
         const { t } = await import('@/text');
         expect(screen.getTextContent()).not.toContain(t('teams.logo.failed'));
-        expect(screen.findByTestId('team-settings-logo-use')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(screen.findHostByTestId('team-settings-logo-use')?.props.accessibilityState)
+            .toMatchObject({ disabled: true, busy: true }));
+        act(() => screen.pressByTestId('team-settings-logo-use'));
+        expect(modalConfirm).toHaveBeenCalledOnce();
         expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(0);
 
         harness.answer(serverId, TEAM_GET_PATH, { body: published });
-        await expect(decideApprovalAsInbox(serverId, artifactId, decision)).resolves.toMatchObject({ ok: true });
+        await settleConfirmation(confirmation, decision === 'approve');
         if (decision === 'reject') {
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('teams.errors.forbidden')));
             expect(screen.findByTestId('team-settings-logo-use')?.props.disabled).toBe(false);
             expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(0);
             await screen.pressByTestIdAsync('team-settings-logo-use');
-            await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
+            await vi.waitFor(() => expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(1));
+            expect(harness.artifacts(serverId).list()).toHaveLength(0);
             expect(pickImages).toHaveBeenCalledTimes(1);
             return;
         }
