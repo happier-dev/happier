@@ -1,6 +1,7 @@
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { ExternalActionAuthorizationRefusalPhaseSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { REQUESTER_CURRENTNESS_REFUSAL_BRANCHES } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { readHomeAuthorizationRefusalDetails } from '@/api/client/homeAuthorizationHttpFailure';
 
@@ -32,10 +33,11 @@ export function deploymentAuthorizationFailure(reason: DeploymentAuthorizationSu
             `deployment.authorization.${reason}`) };
 }
 
-class DeploymentAuthorizationRefusal extends Error {
+class DeploymentAuthorizationRefusal extends RpcError {
     readonly code = 'action_forbidden';
     constructor(readonly reason: DeploymentAuthorizationSubreason, failure?: ActionExecuteFailure) {
-        super(deploymentAuthorizationFailure(reason).error, { cause: failure });
+        super(deploymentAuthorizationFailure(reason).error, 'action_forbidden');
+        Object.defineProperty(this, 'cause', { value: failure, configurable: true, writable: true });
     }
 }
 
