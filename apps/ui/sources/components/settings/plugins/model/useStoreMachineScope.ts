@@ -5,6 +5,8 @@ import { useDestinationGlobalParamsSelector } from '@/components/appShell/worksp
 import { readStoreBrowserProfileRoute, readStoreMachineRoute } from './pluginsSurfaceRoutes';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 const selectMachineParam = (params: Readonly<Record<string, unknown>>) => params.machine;
 const selectBrowserProfileParam = (params: Readonly<Record<string, unknown>>) => readStoreBrowserProfileRoute(params);
@@ -52,9 +54,14 @@ export function useStoreMachineScope(includeSelected = true) {
 }
 
 /** Carry the Store's existing subject scope; the Action owner decides execution placement. */
-export function useStoreActionTarget(installMachineId?: string | null, includeSelected = false): ActionExecutorContext['externalActionTarget'] {
+export function useStoreActionTarget(installMachineId?: string | null, includeSelected = false,
+    scope?: ServerAccountScope): ActionExecutorContext['externalActionTarget'] {
     const machine = useStoreMachineScope(includeSelected);
-    const machineId = installMachineId ?? machine?.machineId;
+    const candidateAccount = useServerCredentialAccountScopeBinding(scope && !installMachineId ? machine?.serverId : null);
+    // An embedded author can belong to another Account than the surrounding Store's Machine choice.
+    const ambient = scope === undefined || candidateAccount.binding && areServerAccountScopesEqual(scope, candidateAccount.binding.scope)
+        ? machine?.machineId : undefined;
+    const machineId = installMachineId ?? ambient;
     return React.useMemo(() => machineId ? { kind: 'machine', machineId } : undefined, [machineId]);
 }
 

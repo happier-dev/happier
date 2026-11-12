@@ -8,6 +8,7 @@ import { describeRegistrySourceStatus } from './describeRegistrySourceStatus';
 import { useRegistryListSourceSelection } from './useRegistrySourceRevision';
 import { admitRegistrySummaryMark, type RegistryCatalogItemSummary } from './registryBrandMark';
 import type { RegistryContributionFamilyV1 } from '@happier-dev/protocol/registries';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type DisplayPage = Omit<RegistryListPageV1, 'items'> & Readonly<{ items: RegistryCatalogItemSummary[] }>;
 type CurationPage = Readonly<{ sourceId: string; discovery: NonNullable<DisplayPage['discovery']> }>;
@@ -49,8 +50,8 @@ const project = (parsed: ListResult, previous: readonly DisplayPage[] = [], prev
 const EMPTY_PAGES: readonly DisplayPage[] = [];
 const EMPTY_CURATION: readonly CurationPage[] = [];
 export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: readonly string[]; query?: string;
-    contributionFamily?: RegistryContributionFamilyV1 }, enabled = true) {
-    const selection = useRegistryListSourceSelection(request.kind, enabled, request.sourceIds);
+    contributionFamily?: RegistryContributionFamilyV1 }, enabled = true, scope?: ServerAccountScope) {
+    const selection = useRegistryListSourceSelection(request.kind, enabled, request.sourceIds, scope);
     const input = { ...request, sourceIds: selection.sourceIds };
     const revision = selection.revision;
     const [more, setMore] = React.useState<{ first: ReturnType<typeof project> | null; pages: readonly DisplayPage[] } | null>(null);
@@ -83,7 +84,7 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
             return first;
         }
         return refreshed;
-    }, revision, enabled, { sourceIds: input.sourceIds, failures: value => pagesFor(value) ?? EMPTY_PAGES });
+    }, revision, enabled, { scope, sourceIds: input.sourceIds, failures: value => pagesFor(value) ?? EMPTY_PAGES });
     const pages = pagesFor(read.value) ?? EMPTY_PAGES;
     // Loading/error publications do not change catalog content. Keep this
     // producer's array stable while the same admitted pages remain displayed.

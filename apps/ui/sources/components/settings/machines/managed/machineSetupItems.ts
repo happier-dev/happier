@@ -1,5 +1,5 @@
 import { isSameActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import { mergeMachineSetupsV1, readMachineSetupRecipeIdentityV1, type MachinePresetItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { mergeMachineSetupsV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachinePresetItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { InputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
 import { listMachineSetupAdaptersV1, type BuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
@@ -107,13 +107,25 @@ export function machineSetupItemPresentation(
   return { title: retired?.label ?? ref.recipeId, ...(retired?.icon ? { icon: retired.icon } : {}), offered: false };
 }
 
-/** Add an offered recipe as a Software item through the one setup merge; a recipe already held (any revision) is refused. */
-export function addMachineSetupSoftware(
+const itemIdentity = (item: MachinePresetItemV1) => item.kind === 'app'
+  ? readMachineSetupAppIdentityV1(item) : readMachineSetupRecipeIdentityV1(item.selection.ref);
+
+/** Recipe revisions and App pins retain one identity in the preset's single item list. */
+export function containsMachineSetupItem(setup: MachineSetupV1 | undefined, item: MachinePresetItemV1): boolean {
+  const identity = itemIdentity(item);
+  return identity !== undefined && (setup?.items ?? []).some(entry => itemIdentity(entry) === identity);
+}
+
+/** Every authoring door appends through the existing setup merge; saving the draft executes nothing. */
+export function addMachineSetupItem(
   setup: MachineSetupV1 | undefined,
-  ref: MachineRecipeReferenceV1,
+  item: MachinePresetItemV1,
 ): Readonly<{ ok: true; setup: MachineSetupV1 }> | Readonly<{ ok: false; reason: 'contains' | 'conflict' }> {
-  if ((setup?.items ?? []).some((item) => item.kind !== 'app' && sameRecipe(item.selection.ref, ref)))
-    return { ok: false, reason: 'contains' };
-  const merged = mergeMachineSetupsV1([setup ?? {}, { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] }]);
+  if (containsMachineSetupItem(setup, item)) return { ok: false, reason: 'contains' };
+  const merged = mergeMachineSetupsV1([setup ?? {}, { items: [item] }]);
   return merged.ok ? { ok: true, setup: { ...setup, items: merged.setup.items } } : { ok: false, reason: 'conflict' };
+}
+
+export function addMachineSetupSoftware(setup: MachineSetupV1 | undefined, ref: MachineRecipeReferenceV1) {
+  return addMachineSetupItem(setup, { kind: 'softwareRecipe', selection: { ref, inputs: {} } });
 }

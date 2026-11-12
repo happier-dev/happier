@@ -6,6 +6,10 @@ import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/App
 import { projectPluginRegistrySources } from './pluginRegistrySources';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { registrySourceRevision } from './registrySourceRevision';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readCurrentAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+
+const noSubscription = () => () => {};
 
 /** Selected reads retire only with their consumed source; source-list readers consume the whole row. */
 export function useRegistrySourceRevision(enabled = true, sourceIds?: readonly string[]): string {
@@ -13,13 +17,17 @@ export function useRegistrySourceRevision(enabled = true, sourceIds?: readonly s
 }
 
 /** Lists acquire additions as a new selection, retaining unchanged source pages while it settles. */
-export function useRegistryListSourceSelection(kind: RegistryKindV1, enabled = true, sourceIds?: readonly string[]) {
-    return useRegistrySourceSelection(enabled, sourceIds, kind);
+export function useRegistryListSourceSelection(kind: RegistryKindV1, enabled = true, sourceIds?: readonly string[], scope?: ServerAccountScope) {
+    return useRegistrySourceSelection(enabled, sourceIds, kind, scope);
 }
 
-function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly string[], kind?: RegistryKindV1) {
+function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly string[], kind?: RegistryKindV1, scope?: ServerAccountScope) {
     const presented = useLayoutPresentationActive();
-    const registrySourcesById = useAppShellPluginUiProjection(value => value.pluginUiProjection?.registrySourcesById);
+    const activeSources = useAppShellPluginUiProjection(value => scope === undefined ? value.pluginUiProjection?.registrySourcesById : undefined);
+    const readSources = React.useCallback(() => scope ? readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById : undefined,
+        [scope?.serverId, scope?.accountId]);
+    const scopedSources = React.useSyncExternalStore(scope ? subscribeCommittedAppShellPluginUiProjection : noSubscription, readSources, readSources);
+    const registrySourcesById = scope === undefined ? activeSources : scopedSources;
     const pluginSources = React.useMemo(() => projectPluginRegistrySources(registrySourcesById ? { registrySourcesById } : null), [registrySourcesById]);
     const sourceIdsKey = JSON.stringify(sourceIds);
     const selectedIds = React.useMemo(() => sourceIdsKey === undefined ? undefined : JSON.parse(sourceIdsKey) as string[], [sourceIdsKey]);
@@ -34,7 +42,7 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
             && source.kinds.includes(kind) && (selectedIds === undefined || selectedIds.includes(source.id))).map(source => source.id);
         return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null]);
     }, [selectedIds, priorIds, pluginSources, kind]);
-    const selection = usePromptLibraryCatalogSelection('registry-sources', select, undefined, { enabled: enabled && presented });
+    const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: enabled && presented });
     const [fingerprint, priorFingerprint, consumedIds] = React.useMemo(
         () => JSON.parse(selection) as [string, string, string[] | null], [selection]);
     const previous = lifetime.current;

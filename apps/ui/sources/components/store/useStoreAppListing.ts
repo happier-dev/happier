@@ -20,6 +20,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { randomUUID } from '@/platform/randomUUID';
 import type { StoreDemand } from './catalog/storeKinds';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readStoreAppTemplateRef } from './presets/storePresetDoor';
 
 function recoveryForPartial(progress: DeploymentPartialResult): DeploymentEnvironmentTabV1 | 'deploy' {
     return progress.phase === 'deploy'
@@ -89,11 +90,7 @@ export function useStoreAppListing(input: Readonly<{
             kind: 'needs_review' as const, item, diagnostics: item.payload.diagnostics,
             reviewSource: item.payload.reviewSource, correctMappings,
         };
-        const templateRef: DeploymentTemplateRefV1 = {
-            sourceId: item.summary.sourceId, itemId: item.summary.itemId,
-            // RegistryItemV1 admission requires every App summary version to identify its payload ref.
-            version: item.summary.version!, ref: item.payload.ref,
-        };
+        const templateRef = readStoreAppTemplateRef(item)!;
         const execute = createFrontDoorActionExecute();
         return {
             kind: 'ready' as const, item, app: item.payload.app, templateRef, appMappingCorrection,

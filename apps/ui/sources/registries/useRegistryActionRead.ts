@@ -8,13 +8,14 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { invalidateUiRegistryItemMemoV1, invalidateUiRegistryUpdateMemoV1, invalidateUiRegistrySourcesMemoV1, useRegistryCarrierRecovery } from './registryHostDeps';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useStoreActionTarget } from '@/components/settings/plugins/model/useStoreMachineScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import { RegistryActionFailure } from './registryActionFailure';
 
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
 export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId: K, input: unknown,
     parse: (value: ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous: T | null) => T, revision?: unknown, enabled = true,
-    recovery?: Readonly<{ sourceIds?: readonly string[]; installMachineId?: string | null;
+    recovery?: Readonly<{ sourceIds?: readonly string[]; installMachineId?: string | null; scope?: ServerAccountScope;
         failures?: (value: T | null) => readonly Readonly<{ sourceId: string; status: RegistrySourceStatusV1 }>[] }>): {
     scopeKey: string;
     inputKey: string;
@@ -33,9 +34,10 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     enabled = enabled && presented;
     const demand = React.useRef(enabled);
     demand.current = enabled;
-    const scope = useAccountSettingsScope();
+    const activeScope = useAccountSettingsScope();
+    const scope = recovery?.scope ?? activeScope;
     const externalActionTarget = useStoreActionTarget(recovery?.installMachineId,
-        actionId === REGISTRY_ITEMS_LIST_ACTION_ID_V1 || actionId === REGISTRY_ITEMS_READ_ACTION_ID_V1);
+        actionId === REGISTRY_ITEMS_LIST_ACTION_ID_V1 || actionId === REGISTRY_ITEMS_READ_ACTION_ID_V1, recovery?.scope);
     const execution = useMountedActionExecution(scope);
     const scopeKey = JSON.stringify([scope?.serverId, scope?.accountId, externalActionTarget]);
     const inputKey = JSON.stringify(input);

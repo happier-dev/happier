@@ -31,7 +31,7 @@ import { t } from '@/text';
 
 import { catalogText, showStoreAppPreparation } from './StoreAppPreparation';
 import { StoreAddToPresetButton, StorePresetEditorHandoff, type StorePresetChoice } from './presets/StoreAddToPreset';
-import type { StorePresetDoorItem } from './presets/storePresetDoor';
+import { storeAppPresetItem, type StorePresetDoorItem } from './presets/storePresetDoor';
 import { useStoreListingPaneTitle } from './storeListingPaneTitle';
 import {
   useStoreAppListing,
@@ -140,8 +140,7 @@ export function StoreAppListing(
   const ready = state.kind === 'ready' ? state : null;
   // The exact pin joins a preset as an App in its own new Environment; saving the preset deploys nothing.
   const templateRef = ready?.templateRef;
-  const presetItem = React.useMemo((): StorePresetDoorItem | null => templateRef ? { kind: 'app', definition: {
-    name, project: { kind: 'create' }, definition: { from: 'catalogApp', templateRef } } } : null, [templateRef, name]);
+  const presetItem = React.useMemo((): StorePresetDoorItem | null => templateRef ? storeAppPresetItem(name, templateRef) : null, [templateRef, name]);
   const [presetHandoff, setPresetHandoff] = React.useState<StorePresetChoice | null>(null);
   // As its own page (a phone push) the bar names the App, as every pushed detail names its subject; a preset
   // hand-off names its editor instead.
