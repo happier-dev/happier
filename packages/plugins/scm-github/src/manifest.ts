@@ -346,7 +346,7 @@ const GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA = {
   properties: { ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.properties,
     credentialRef: { anyOf: [QualifiedConnectedAccountRefJsonSchema, { type: 'null' }] },
     deploymentReview: GithubDeploymentMonitoringSelectionV1Schema.jsonSchema },
-  required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required, 'deploymentReview'],
+  required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required!, 'deploymentReview'],
 } satisfies PluginJsonSchema;
 
 const GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA =
@@ -358,7 +358,7 @@ const GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA =
 const GITHUB_CHECKS_SOURCE_CONFIG_SCHEMA = {
   ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
   properties: { ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.properties, checks: GITHUB_CHECKS_SOURCE_SCHEMA },
-  required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required, 'checks'],
+  required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required!, 'checks'],
 } satisfies PluginJsonSchema;
 
 const GITHUB_NATIVE_SERVICE_INPUT_SCHEMA = {
@@ -2130,8 +2130,8 @@ function createGithubPlugin(): GithubPlugin {
             outcomeReconciliation: 'none',
             clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'scopes' },
             configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
-              { id: 'clientId', title: 'OAuth client ID', schema: { type: 'string' } },
-              { id: 'scopes', title: 'OAuth scopes', schema: { type: 'string' } },
+              { id: 'clientId', title: 'OAuth client ID', schema: { type: 'string' }, required: false, secret: false },
+              { id: 'scopes', title: 'OAuth scopes', schema: { type: 'string' }, required: false, secret: false },
             ] },
           }, {
             id: 'copilot-token',
@@ -2240,7 +2240,7 @@ function createGithubPlugin(): GithubPlugin {
   setup: setupGithubPluginGeneration,
   });
   const declaredPlugin: GithubPlugin = plugin;
-  return declaredPlugin satisfies typeof plugin;
+  return declaredPlugin;
 }
 
 export const GITHUB_PLUGIN: Omit<ReturnType<typeof createGithubPlugin>, 'activateAccount'> & {

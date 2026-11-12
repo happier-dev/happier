@@ -25,7 +25,8 @@ export async function executeGithubCiAction<K extends ForgeCiOperationIdV1>(oper
     switch (operation) {
       case 'listRuns': case 'readRun': case 'listJobs': case 'readJob': {
         const cadence = createGithubReadCadence(client, Date.now());
-        const result = ForgeCiActionResultSchemasV1[operation].parse(
+        const readOperation: 'listRuns' | 'readRun' | 'listJobs' | 'readJob' = operation;
+        const result = ForgeCiActionResultSchemasV1[readOperation].parse(
           await readGithubCiOperation(operation, input as Parameters<typeof readGithubCiOperation>[1], cadence.client));
         if (result.kind === 'unavailable') return result;
         await cadence.acquireMissingBudget();

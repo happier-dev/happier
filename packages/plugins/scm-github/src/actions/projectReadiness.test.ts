@@ -152,3 +152,19 @@ describe('registered GitHub Project readiness source facts', () => {
     } finally { release(); await kit.dispose(); }
   });
 });
+
+// Coordination's 2026-11-12 compile-closure ruling: no validator means no reusable value.
+it('reports incomplete CI source evidence when an unconditional workflow read returns not modified', async () => {
+  const transport = createStubGithubTransport({
+    nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture' } },
+    respond: () => ({ status: 304 }),
+    executeAction: () => TriageReadConfiguredSourceInstancesResultV1Schema.parse({ kind: 'read', status: 'complete', instances: [] }),
+  });
+  const kit = await createPluginTestkit({ manifest: GITHUB_PLUGIN.manifest, module: GITHUB_PLUGIN,
+    services: transport.context.services });
+  try {
+    expect(await kit.invokeAction(actionId, { repository })).toMatchObject({
+      ci: { status: 'unavailable', reason: 'ci_source_read_incomplete' },
+    });
+  } finally { await kit.dispose(); }
+});

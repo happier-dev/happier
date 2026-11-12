@@ -1,3 +1,4 @@
+import { readGithubPreview } from './previewRead.js';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
@@ -2388,4 +2389,20 @@ describe('GitHub pull-request status operation', () => {
       kind: 'unavailable', failure: { class: 'transient', code: 'github_request_timed_out' },
     });
   });
+});
+
+// Coordination's 2026-11-12 compile-closure ruling: no head means no preview operand.
+it('refuses preview discovery before reading deployments when the observed PR has no head revision', async () => {
+  const downstreamActions: string[] = [];
+  const stub = createStubGithubTransport({
+    respond: request => new URL(request.url).pathname.endsWith('/pulls/1284')
+      ? { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, head: { ...GITHUB_PULL_REQUEST_RESPONSE.head, sha: null } } }
+      : undefined,
+    executeAction: actionId => { downstreamActions.push(actionId); return { ok: true, items: [], coverage: 'complete' }; },
+  });
+  expect(await readGithubPreview({ v: 1, serverId: 'server-under-test', instance: configuredInstance(),
+    localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY }, stub.context)).toMatchObject({
+    kind: 'unavailable', failure: { code: 'github_entry_not_observed' },
+  });
+  expect(downstreamActions).toEqual([]);
 });

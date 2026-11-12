@@ -24,6 +24,7 @@ export async function readGithubPreview(input: unknown, context: GithubTriageInv
     if (current.observation.kind === 'unresolved') return { kind: 'unavailable', failure: current.observation.failure };
     if (current.observation.kind !== 'present' || current.facts === null) return unavailable('github_entry_not_observed', context.requestId);
     const headSha = current.facts.headRevision;
+    if (headSha === null) return unavailable('github_entry_not_observed', context.requestId);
     const environments = await readGithubPreviewEnvironments(request.serverId, admitted.route, admitted.localRef.entryId, context);
     if (!environments.ok) return unavailable(environments.error, context.requestId);
     const previews = await Promise.all(environments.items.map(async ({ id: environmentId }) => {

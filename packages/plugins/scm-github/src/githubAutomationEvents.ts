@@ -245,6 +245,10 @@ export function normalizeGithubAutomationEvent(input: GithubAutomationEventFacts
     case 'issueOpened':
       return Object.freeze({ eventRef, payload: Object.freeze({ repository: input.repository, issue: input.issue }) });
     case 'pullRequestOpened':
+      return Object.freeze({
+        eventRef,
+        payload: Object.freeze({ repository: input.repository, pullRequest: input.pullRequest }),
+      });
     case 'pullRequestLifecycle':
       return Object.freeze({
         eventRef,

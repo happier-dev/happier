@@ -48,7 +48,8 @@ export const GITHUB_PROJECT_READINESS_ACTIONS_V1 = {
         readFact(async () => {
           const workflows = ForgeCiActionResultSchemasV1.listWorkflows.parse(
             await executeGithubCiAction('listWorkflows', { repository }, context));
-          if (workflows.kind !== 'value') return unavailable(workflows.failure.code);
+          if (workflows.kind === 'unavailable') return unavailable(workflows.failure.code);
+          if (workflows.kind === 'notModified') return unavailable('ci_source_read_incomplete');
           return workflows.value.rows.length > 0
             ? { status: 'ready', reason: 'ci_source_present' }
             : workflows.value.continuation !== null || workflows.value.incomplete !== null
