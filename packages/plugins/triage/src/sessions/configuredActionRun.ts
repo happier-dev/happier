@@ -10,7 +10,7 @@ import { resolveTriageConfiguredActionForExecutionV1 } from './actionResolution.
 import { readTriageActionPlacementV1, resolveTriageActionReferencesV1, resolveTriageActionInstructionV1 } from './actionResolution.js';
 import { triageFailureSubjectEntryV1, triageHealthAlertEntryV1, type TriageSessionHandoffInputV1, type TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { SessionMessageSendResultV1ProtocolSchema, type ActionSessionAddressV1, type SessionInputForgeEvidenceV1, type SessionStatusActionResultV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { PluginUiHostApi, ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, ComposerTransactionV1, PluginUiActionReference, PluginUiActionInputFor, PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -212,7 +212,7 @@ export async function runTriageConfiguredHandoffV1(
         const openNewSession = host.openNewSession;
         const executionHost: TriageConfiguredActionRunHostV1 = {
             ...host,
-            executeAction: (id, value, executionOptions) => host.executeAction(id, value, { ...executionOptions, signal: options.signal }),
+            executeAction: <TAction extends PluginUiActionReference>(id: TAction, value?: PluginUiActionInputFor<TAction>, executionOptions?: PluginUiActionExecutionOptions) => host.executeAction<TAction>(id, value, { ...executionOptions, signal: options.signal }),
             selectActionInput: (request, selectionOptions) => host.selectActionInput(request, { ...selectionOptions, signal: options.signal }),
             ...(openNewSession ? { openNewSession: (request: Parameters<typeof openNewSession>[0],
                 authoringOptions?: Parameters<typeof openNewSession>[1]) => openNewSession(request, { ...authoringOptions, signal: options.signal }) } : {}),

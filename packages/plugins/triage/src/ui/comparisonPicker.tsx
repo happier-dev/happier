@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginUiContextEnrichmentV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { readInputTypePickerLaunchInput } from '@happier-dev/plugin-sdk/actions';
 import { Button, EmptyState, FreshnessLine, List, PageLoadingRows, PagePinnedBar, Stack, Status, defineUiSurface,
@@ -127,11 +128,11 @@ function TriageComparisonPicker(context: RenderContext) {
         command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } },
       ...(refreshAvailable ? [{ title: text('plugins.triage.surface.refresh', 'Refresh'), command: {
         kind: 'executeAction' as const, action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1,
-        input: { mountId, operation: { kind: 'refresh' } },
+        input: { mountId, operation: { kind: 'refresh' } } satisfies JsonValue,
       } }] : []),
       ...(moreAvailable ? [{ title: text('plugins.triage.surface.loadMore', 'Load more'), command: {
         kind: 'executeAction' as const, action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1,
-        input: { mountId, operation: { kind: 'loadMore', section: 'entries' } },
+        input: { mountId, operation: { kind: 'loadMore', section: 'entries' } } satisfies JsonValue,
       } }] : []),
       ...view.rows.map(item => ({ title: item.title, command: { kind: 'executeAction' as const,
         action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation: { kind: 'attachEntry', entryRef: item.entryRef } } } })),

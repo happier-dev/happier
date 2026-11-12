@@ -31,7 +31,9 @@ export function createTriageConfiguredActionHost(context: PluginAccountActionCon
                 ...(context.accountScope ? { accountScope: context.accountScope }
                     : snapshot?.accountScope ? { accountScope: snapshot.accountScope } : {}) };
         },
-        executeAction,
+        // The uniform Action transport retains the SDK's producer-derived signature.
+        // Domain owners below still parse their results, including approval deferral.
+        executeAction: executeAction as PluginClientActionUi['executeAction'],
         selectActionInput,
         ...(ui ? { readSession: ui.readSession } : {}),
         readSessionStatus: async (requested, options?: PluginCancellationOptions) => {

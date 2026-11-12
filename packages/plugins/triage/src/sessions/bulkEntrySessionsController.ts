@@ -1036,13 +1036,13 @@ export function createTriageBulkEntrySessionsController(
         stopped = true;
         const requestIdentity = activeRequestIdentity;
         if (requestIdentity === null) return;
-        const result = await host.executeAction('action.operations.list', { requestIdentity });
+        const result = await host.executeAction<'action.operations.list'>('action.operations.list', { requestIdentity });
         const operation = result.items[0];
         const context = await host.context();
         if (!operation || !context.accountScope) throw new PluginError({ code: 'unavailable', diagnostics: [
             { code: 'action_operation_not_found', severity: 'error' },
         ] });
-        const cancellation = await host.executeAction('action.operations.cancel', {
+        const cancellation = await host.executeAction<'action.operations.cancel'>('action.operations.cancel', {
             serverId: context.accountScope.serverId, machineId: operation.scope.machineId, operationId: operation.operationId,
         });
         if (cancellation.kind !== 'requested' && cancellation.kind !== 'already_settled') throw new PluginError({ code: 'unavailable', diagnostics: [

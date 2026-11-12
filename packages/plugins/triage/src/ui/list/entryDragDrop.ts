@@ -1,4 +1,4 @@
-import type { PluginClientApi, PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
+import { isRecord, type PluginClientApi, type PluginDragSourceRuntime, type PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import {
   TriageEntryRefV1Schema,
@@ -55,7 +55,7 @@ const PersonalTaskOrderInput = defineProtocolObject({
 export const triageTaskStatusDropTargetRuntime: PluginDropTargetRuntime = {
   settle: settleTriageTaskDropResult,
   resolve({ item, targetInput }) {
-    const targetRecord = targetInput !== null && typeof targetInput === 'object' && !Array.isArray(targetInput) ? targetInput : null;
+    const targetRecord = isRecord(targetInput) ? targetInput : null;
     const target = TaskStatusDropMetadata.safeParse({ preview: targetRecord?.preview, unavailableReason: targetRecord?.unavailableReason });
     const reference = item.kind === 'plugin' && item.contribution.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1
       && item.contribution.localId === TRIAGE_ENTRY_DRAG_SOURCE_ID_V1
@@ -65,7 +65,7 @@ export const triageTaskStatusDropTargetRuntime: PluginDropTargetRuntime = {
     } };
     // Indexing is the group producer's job; a pointer frame validates only this dragged entry's Action input.
     const candidates = targetRecord?.candidatesByEntry;
-    const candidate = TriageTransitionTaskActionInputV1Schema.safeParse(candidates !== null && typeof candidates === 'object' && !Array.isArray(candidates)
+    const candidate = TriageTransitionTaskActionInputV1Schema.safeParse(isRecord(candidates)
       ? candidates[triageEntryRowKey(reference.data.entryRef)] : undefined);
     if (!candidate.success || candidate.data.sourceInstanceId !== reference.data.sourceInstance.sourceInstanceId
       || !sameTriageEntryReference(candidate.data.entryRef, reference.data.entryRef)) return { status: 'refused', reason: {

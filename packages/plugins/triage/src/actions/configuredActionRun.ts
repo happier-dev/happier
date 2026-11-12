@@ -1,6 +1,6 @@
 import type { JsonValue, PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext, PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, PluginUiActionReference, PluginUiActionInputFor, PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { triageEntryRowKey } from '../projection/listWindow.js';
 import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageConfiguredActionRunRequestV1 } from '../sessions/configuredActionRun.js';
@@ -125,7 +125,7 @@ export function createTriageRunConfiguredActionHandler(): PluginAccountActionHan
         }
         const executionHost = {
             ...host,
-            executeAction: (action: string, value: JsonValue, options?: Parameters<PluginUiHostApi['executeAction']>[2]) => host.executeAction(
+            executeAction: <TAction extends PluginUiActionReference>(action: TAction, value?: PluginUiActionInputFor<TAction>, options?: PluginUiActionExecutionOptions) => host.executeAction<TAction>(
                 action, value, { ...options, signal: context.signal },
             ),
             selectActionInput: (request: Parameters<PluginUiHostApi['selectActionInput']>[0], options?: Parameters<PluginUiHostApi['selectActionInput']>[1]) => host.selectActionInput(
