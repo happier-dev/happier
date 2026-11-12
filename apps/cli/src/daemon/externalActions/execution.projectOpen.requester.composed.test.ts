@@ -9,7 +9,9 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
@@ -39,7 +41,12 @@ vi.mock('@/daemon/controlServer', async importOriginal => ({ ...await importOrig
   return { port: 43129, stop: async () => {} };
 } }));
 
-it.each(['owner', 'member', 'foreign-manager'] as const)('opens an approved owner folder only for its own Account Agent (%s)', async actor => {
+it.each([
+  { actor: 'owner', actionId: 'projects.open' },
+  { actor: 'member', actionId: 'projects.open' },
+  { actor: 'foreign-manager', actionId: 'projects.open' },
+  { actor: 'owner', actionId: 'projects.inspect' },
+] as const)('dispatches $actionId through the installed Account Agent receiver ($actor)', async ({ actor, actionId: rootActionId }) => {
   expect(getActionSpec('projects.open').surfaces.agent).toBe(true);
   onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null;
     resetServerFeaturesClientForTests(); withdrawActiveProjectAccountRowsSnapshot(); });
@@ -55,8 +62,9 @@ it.each(['owner', 'member', 'foreign-manager'] as const)('opens an approved owne
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
     credentials: custodianCredentials, externalActionAccountId: custodianAccountId,
     accountActionCredentials: credentials, requesterCredentials: credentials,
+    ...(rootActionId === 'projects.inspect' ? { ordinaryAccountSession: true } : {}),
     homeServerIdentityId: homeId, machineAccess: { custodianAccountId, role },
-    machineRpcMethods: [RPC_METHODS.PROJECTS_OPEN, RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED],
+    machineRpcMethods: [RPC_METHODS.PROJECTS_OPEN, RPC_METHODS.PROJECTS_INSPECT, RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED],
     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: 'machine' }),
   });
   const serverId = h.f.bootstrap.attribution.serverId;
@@ -74,14 +82,16 @@ it.each(['owner', 'member', 'foreign-manager'] as const)('opens an approved owne
   const owner = h.daemon.externalActionIngressOwner;
   if (!owner) throw new Error('Missing installed external Action owner');
   Reflect.set(h.machine, 'token', custodianCredentials.token);
-  Reflect.set(h.machine, 'socket', createApiSessionSocketStub({ connected: true }));
+  Reflect.set(h.machine, 'socket', createApiSessionSocketStub({ connected: true,
+    emitWithAck: (event, payload) => event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1
+      ? { v: 1, result: 'success', revision: 1 } : resolveApiSessionSocketDefaultAck(event, payload) }));
   h.machine.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
       errorMessage: 'Native Agent startup is unavailable in this process-boundary fixture' }),
     stopSession: async () => true, requestShutdown() {} }, { externalActionIngressOwner: owner,
     actionsSettingsProvider: h.actionsSettingsProvider,
     requesterSessionRuntime: { serverId, resolve: h.resolveRequesterRuntime,
       release: runtime => releaseUnretainedRequesterSessionRuntimeContext(runtime,
-        [...h.pidToTrackedSession.values()].map(session => session.requesterSessionRuntimeContext)) },
+        [...h.trackedSessionsByKey.values()].map(session => session.requesterSessionRuntimeContext)) },
     requesterBootstrapBoundary: { serverId, serverHttpBaseUrl: 'https://session-home.test', happyHomeDir: h.f.directory,
       getObservedServerIdentityId: async () => homeId,
       readInstallation: async () => ({ machineId: 'machine', identity: h.f.installation }),
@@ -168,26 +178,26 @@ it.each(['owner', 'member', 'foreign-manager'] as const)('opens an approved owne
       if (result.kind !== 'response') throw new Error('Installed approval ingress refused');
       return { status: 200, data: result.response };
     }
-    if (path !== '/v1/actions/projects.open/execution-authorization'
+    if (path !== `/v1/actions/${rootActionId}/execution-authorization`
       && path !== '/v1/actions/approval.request.decide/execution-authorization') {
       try { return await homeWrite(...args); }
       catch (error) { transportFailures.push(String(error)); throw error; }
     }
     try {
     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(args[1]);
-    const actionId = path.includes('/approval.request.decide/') ? 'approval.request.decide' : 'projects.open';
-    if (actionId === 'projects.open') {
+    const actionId = path.includes('/approval.request.decide/') ? 'approval.request.decide' : rootActionId;
+    if (actionId === rootActionId) {
     if (!request.sessionActionOrigin || !request.sessionActionSource || !request.installationProof) throw new Error('Missing Agent Session root proof');
     expect(request.sessionActionOrigin.caller).toMatchObject({ kind: 'session', sessionId: h.sessionId });
     expect(verifyMachineInstallationProof({ publicKey: h.f.installation.publicKey, proof: request.installationProof,
       payload: { version: 1, accountId: 'requester', ...request.sessionActionSource,
-        externalActionOrigin: { homeId, actionId: 'projects.open', requestId: request.envelope.requestId!,
+        externalActionOrigin: { homeId, actionId, requestId: request.envelope.requestId!,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), origin: request.sessionActionOrigin } } })).toBe(true);
     roots++;
     }
     return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'project-agent-root', binding: {
       accountId: 'requester', custodianAccountId, serverIdentityId: homeId,
-      authentication: { kind: actionId === 'projects.open' ? 'terminal' : 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      authentication: { kind: actionId === rootActionId ? 'terminal' : 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
       machineId: 'machine', installationId: h.f.installation.installationId, admittedMachineRole: role,
       actionId, requestId: request.envelope.requestId, target: request.envelope.target,
       ...(actionId === 'approval.request.decide' ? { approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(request.envelope.v === 1 ? request.envelope.input : {}) } : {}),
@@ -214,13 +224,45 @@ it.each(['owner', 'member', 'foreign-manager'] as const)('opens an approved owne
     });
   for (const socket of h.f.channel.server.sockets.sockets.values()) observeSocket(socket);
   h.f.channel.server.on('connection', observeSocket);
-  const result = await h.dispatch({ kind: 'action.execute', surface: 'agent', actionId: 'projects.open',
+  const operation: Parameters<typeof h.dispatch>[0] = { kind: 'action.execute', surface: 'agent', actionId: rootActionId,
     requestId: h.operationBase().requestId,
-    input: { serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: h.cwd }, materialization: { kind: 'attach' } },
+    input: rootActionId === 'projects.inspect'
+      ? { workspace: { serverId: homeId, workspaceId: 'project-inspection-workspace', machineId: 'machine', rootPath: h.cwd } }
+      : { serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: h.cwd }, materialization: { kind: 'attach' } },
     witness: { turnId: 'project-turn', inputId: 'project-input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
-      agentStartCaller: { kind: 'session', sessionId: h.sessionId, starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'default' } });
+      agentStartCaller: { kind: 'session', sessionId: h.sessionId, starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'default' } };
+  // Observe the real local RPC receiver, without replacing its implementation.
+  // The caller cancels a self-forward so RED exercises the real path without
+  // retaining a recursively dispatched request until its transport expires.
+  const localRpc = vi.spyOn(h.machine, 'invokeLocalMachineAction');
+  const cancellation = new AbortController();
+  const services = boundary.control?.agentRuntimeDaemonServices;
+  if (!services) throw new Error('Missing installed Agent service');
+  let completed = false;
+  const pending = (rootActionId === 'projects.inspect' ? services.dispatch(
+    AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1, context: { token: 'a'.repeat(43), sessionId: h.sessionId }, operation }),
+    { sessionId: h.sessionId, runner: h.runner, retainedAgent: h.retainedAgent, trackedSession: h.tracked,
+      invocationContext: h.tracked.runnerAgentInvocationContext!, isCurrent: async () => true,
+      signal: AbortSignal.any([h.signal, cancellation.signal]) },
+  ).then(result => AgentRuntimeDaemonServiceResponseV1Schema.parse(result)) : h.dispatch(operation))
+    .finally(() => { completed = true; });
+  if (rootActionId === 'projects.inspect') {
+    await Promise.race([pending, vi.waitFor(() => {
+      if (completed) return;
+      expect(localRpc).toHaveBeenCalled();
+      cancellation.abort();
+    }, { timeout: 30_000 })]);
+  }
+  const result = await pending;
   expect(result, JSON.stringify({ result, roots, mintFailures })).toMatchObject({ ok: true,
     result: { kind: 'action.execution', outcome: { ok: true } } });
+  if (rootActionId === 'projects.inspect') {
+    expect(result).toMatchObject({ result: { outcome: { result: { definition: { basis: { kind: 'absent' } } } } } });
+    expect(localRpc).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(0);
+    expect(h.nativeEffects()).toBe(0);
+    return;
+  }
   if (!artifact || typeof artifact.id !== 'string') throw new Error('Agent request did not create a review card');
   const store = createCliApprovalsArtifactStore({ credentials, serverHttpBaseUrl: 'https://session-home.test' });
   const approval = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifact.id }));

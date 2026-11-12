@@ -392,25 +392,14 @@ export function createCliProjectActionDeps(
         ? params.machineActionDirectTargetTransport.machineId === workspace.machineId
         : !context.externalActionTarget || context.externalActionTarget.kind === 'machine'
           && context.externalActionTarget.machineId === workspace.machineId;
-      const externalRequest = context.externalActionCredential !== undefined
-        || context.externalActionExecutionAuthorization !== undefined;
-      // A signed local root still needs the same private requester admission as
-      // a transported UI read. Native placement alone supplies no review custody.
       const originalAccountInspection = actionId === 'projects.inspect' && params.credentials
         && !readHostAdmittedReviewedRootV1(context)
         && (!params.machineActionDirectTargetTransport || context.surface === 'cli' || context.surface === 'mcp')
         && !context.externalActionCredential && !context.externalActionExecutionAuthorization
         && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
-      const { readRequesterAccountActionContext } = await import('@/daemon/sessionEncryption/requesterAccountActionContext');
-      const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
-      // Opened local custody or the existing reviewed Move verifier admits the
-      // native dependency. Session projections retain the exact Machine opener.
-      const admittedLocalRequester = requester?.authorization.binding.machineId === workspace.machineId;
-      if (!originalAccountInspection && params.projectDefinitionAction && localDefinition && (!externalRequest || admittedLocalRequester
-        || actionId === 'projects.inspect' && context.externalActionExecutionAuthorization
-          && await isReviewedServiceMoveChild({ authorization: context.externalActionExecutionAuthorization,
-            envelope: context.originalActionEnvelope, actionId, machineId: workspace.machineId, params: parsed.data,
-            ...(context.signal ? { signal: context.signal } : {}) }))) {
+      // The installed executor already admitted this Action. A Session's public
+      // authorization need not carry the private requester-context facet.
+      if (!originalAccountInspection && params.projectDefinitionAction && localDefinition) {
         return await params.projectDefinitionAction({ actionId, input: parsed.data, context });
       }
       if (!await isMachineActionServerScopeCurrent({ serverId: workspace.serverId, machineId: workspace.machineId, context, signal: context.signal })
@@ -431,8 +420,10 @@ export function createCliProjectActionDeps(
       }
       context.signal?.throwIfAborted();
       if (originalAccountInspection) {
+        // This new Home admission owns its request identity; an enclosing host
+        // operation id can be longer than the external Action wire permits.
         const execution = await dispatchOriginalAccountAction({ actionId, input: parsed.data,
-          requestId: context.actionRequestId ?? randomUUID(), target: { kind: 'machine', machineId: workspace.machineId },
+          requestId: randomUUID(), target: { kind: 'machine', machineId: workspace.machineId },
           credentials: params.credentials, authority: context.authority,
           serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
           ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
