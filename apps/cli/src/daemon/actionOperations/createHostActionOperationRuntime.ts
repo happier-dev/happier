@@ -28,7 +28,7 @@ import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } 
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentTargetLinkActionIdV1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
 
@@ -86,6 +86,11 @@ function readInitialDomainRef(
     const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return undefined;
     return { kind: 'managedMachine', id: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId };
+  }
+  if (isDeploymentTargetLinkActionIdV1(actionId)) {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    return parsed.success ? { kind: 'deploymentTargetLink', serverId: parsed.data.serverId,
+      environmentId: parsed.data.environmentId, requestKey: parsed.data.requestKey, purpose: 'providerCreate' in parsed.data ? 'create' : 'associate' } : undefined;
   }
   if (!requestId) return undefined;
   if (actionId === 'session.spawn_new') return { kind: 'spawnAttempt' as const, id: requestId };
@@ -231,6 +236,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     input: unknown;
     /** Receiving-host metadata for a typed operation arm, never public input. */
     operation?: ActionOperationDeclarationV1;
+    response?: 'admission';
     actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
     sessionId?: string;
     /** Already admitted receiving-host context, never a public Action input. */
@@ -351,6 +357,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     let observedOperationId: string | undefined;
     const execution = runner.observe({
       actionId: request.actionId,
+      ...(request.response ? { response: request.response } : {}),
       ...(request.operation || request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? { action: { actionId: spec.id,
         title: spec.title, operation: request.operation ?? spec.operation,
         ...(request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? {
@@ -525,6 +532,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     title: string;
     operation: ActionOperationDeclarationV1;
     input: unknown;
+    response?: 'admission';
     failureResult?: Parameters<typeof runner.observe>[0]['failureResult'];
     requestId?: string;
     sessionId?: string;
@@ -546,6 +554,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     const attribution = acceptedAttribution(scope, request.rpcContext);
     return await runner.observe({
       actionId: request.actionId,
+      ...(request.response ? { response: request.response } : {}),
       action: {
         actionId: request.actionId,
         title: request.title,
@@ -646,6 +655,12 @@ export async function runHostActionOperation(
   if (context.operationAcceptance?.actionId === request.actionId) return request.execute(context);
   const resume = request.resume;
   return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context,
+    ...((context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
+      // Workflow uses the Agent surface but consumes the child's declared
+      // result. Signed native ports retain that identity in the verified origin.
+      && context.actionCaller?.kind !== 'workflowRun'
+      && !context.externalActionExecutionAuthorization?.binding.workflowActionOrigin
+      ? { response: 'admission' as const } : {}),
     ...(request.resumeRetained ? { resumeRetained: true as const } : {}),
     ...(resume ? { resume: (operation: Parameters<HostActionOperationExecute>[0]) => resume({ ...context, ...operation }) } : {}),
     ...(request.recoverPendingDeployment ? { recoverPendingDeployment: request.recoverPendingDeployment } : {}),

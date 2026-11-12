@@ -1,6 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { AccountStoredContentUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -90,6 +90,7 @@ import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
 beforeEach(async () => { currentnessChannel = await createRequesterCurrentnessSocketHarness(); });
@@ -137,6 +138,72 @@ function createExactLimitMultibyteResult() {
 }
 
 describe('executeExternalAction', () => {
+  it('rejects a generic operation receipt for an Action without an operation', () => {
+    expect(settleActionOutput('session.message.send', { ok: true,
+      result: { status: 'accepted', operationId: 'foreign-operation', machineId: 'machine' } }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+  });
+
+  it.each(['agent', 'mcp'] as const)('projects a real %s operation admission through signed ingress before the native launch settles', async surface => {
+    const actionId = 'session.spawn_new';
+    const target = { kind: 'machine' as const, machineId: 'admission-machine' };
+    const accountPrincipal = { accountId: 'admission-account', authentication: { kind: 'account' as const, tokenEpoch: 0 },
+      authority: 'present_user' as const };
+    const keys = tweetnacl.sign.keyPair();
+    const input = { creationKey: `signed-${surface}`, executionTarget: { serverId: 'srv_admission', machineId: target.machineId },
+      directory: { kind: 'managed' as const }, agentTarget: { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+    const envelope = { v: 1 as const, requestId: `signed-${surface}`, target, input };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: `proof-${surface}`, binding: {
+      serverIdentityId: 'srv_admission', accountId: accountPrincipal.accountId, authentication: accountPrincipal.authentication,
+      custodianAccountId: accountPrincipal.accountId, machineId: target.machineId, installationId: 'admission-installation',
+      admittedMachineRole: 'manage', accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId, target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const operations = createHostActionOperationRuntime({ serverId: 'srv_admission', machineId: target.machineId,
+      resolveAccountId: async () => accountPrincipal.accountId, generateOperationId: () => `operation-${surface}` });
+    let release!: () => void;
+    const nativeGate = new Promise<void>(resolve => { release = resolve; });
+    onTestFinished(async () => {
+      release();
+      await operations.runner.waitForTerminal({ accountId: accountPrincipal.accountId, machineId: target.machineId }, `operation-${surface}`);
+    });
+    let launched = false;
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, scopedApprovalPreferences: [{ actionId,
+      scope: { kind: 'machine', machineId: target.machineId }, approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent', 'mcp'],
+    }] });
+    // Constructed host input, as in the Agent-start owner's contract tests;
+    // the real policy still admits the selection and its ordinary depth.
+    const agentStartContext = { caller: { kind: 'originless', runId: 'host-agent-caller', runDepth: 0 },
+      baseline: { machineId: target.machineId, directory: '/workspace' }, ledSubtreeSessionIds: [],
+      workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default',
+    } satisfies NonNullable<ActionExecutorContext['agentStartContext']>;
+    const realExecutor = createActionExecutor({ ...createUnavailableHostActionDeps(), runActionOperation: operations.runActionOperation,
+      // The spawned Agent process is the external boundary; Action policy,
+      // operation admission, terminal storage and output projection stay real.
+      sessionSpawnNew: async request => {
+        launched = true;
+        await nativeGate;
+        return { type: 'success', disposition: 'created', sessionId: 'created-session', executionTarget: request.executionTarget,
+          organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+      },
+    });
+    const executor: ExternalActionExecutor = { execute: (id, value, context) => realExecutor.execute(id, value,
+      { ...context, actionsSettings: settings, agentStartContext }) };
+    try {
+      const result = await executeExternalAction({ actionId, envelope, principal: accountPrincipal, surface,
+        executionAuthorization: authorization, currentMachineId: target.machineId, currentAccountId: accountPrincipal.accountId,
+        currentServerId: 'srv_admission', currentInstallationId: 'admission-installation',
+        externalActionMachineRequestPrivateKey: keys.secretKey, verifyExecutionAuthorization: async () => true,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }), executor });
+      expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response', response: { execution: { ok: true,
+        result: { status: 'accepted', operationId: `operation-${surface}`, machineId: target.machineId } } } });
+    } finally { release(); }
+    const terminal = await operations.runner.waitForTerminal({ accountId: accountPrincipal.accountId, machineId: target.machineId }, `operation-${surface}`);
+    expect(launched).toBe(true);
+    expect(terminal).toMatchObject({ state: 'succeeded', result: { type: 'success', sessionId: 'created-session' } });
+  });
+
   it.each(['omitted-projection', 'omitted-setup-fact', 'invented-setup-fact'] as const)(
     'rejects %s before opening encrypted spawn setup to effects', async variant => {
       const target = { kind: 'machine' as const, machineId: 'machine-1' };

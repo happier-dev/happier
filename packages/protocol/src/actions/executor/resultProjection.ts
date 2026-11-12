@@ -45,7 +45,10 @@ function completeUnknownProjectOpenResult(details?: unknown): ActionExecuteResul
  * metadata and successful built-in Actions project through their declared
  * output schema. Approval admission is deliberately not an action output.
  */
-export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult, requestId?: string): ActionExecuteResult {
+export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult, requestId?: string,
+  publicOutputSchema?: Readonly<{ safeParse(value: unknown):
+    Readonly<{ success: true; data: unknown }> | Readonly<{ success: false }> }>,
+): ActionExecuteResult {
   const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => {
     const carriedCause = settled.ok ? undefined : readCarriedActionFailureCause(settled);
     const projected = settled.ok ? settled : projectActionExecuteFailure({ ...settled,
@@ -65,7 +68,7 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
     const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
     if (accepted.success) return withCredentialUses({ ok: true, result: accepted.data });
   }
-  const outputSchema = spec.outputSchema;
+  const outputSchema = publicOutputSchema ?? spec.outputSchema;
   if (!outputSchema) return result;
   const invalidOutput = (): ActionExecuteResult => actionId === 'projects.open'
     ? completeUnknownProjectOpenResult()

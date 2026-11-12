@@ -24,6 +24,7 @@ import type { ActionExecuteResult, ActionExecutorContext, ExternalActionResponse
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { invokeAdmittedReviewedChild } from './managedReviewedChild';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -1075,22 +1076,9 @@ async function executeExternalActionRequest(input: Readonly<{
     errorCode: 'invalid_action_output',
     error: 'invalid_action_output',
   };
-  if (
-    execution.ok
-    && !(
-      execution.result !== null
-      && typeof execution.result === 'object'
-      && !Array.isArray(execution.result)
-      && 'kind' in execution.result
-      && execution.result.kind === 'approval_request_created'
-    )
-  ) {
-    const publicResult = logsOperands.resourceContinuation
-      ? { success: true, data: execution.result }
-      : SIGNED_ROOT_ACTION_OUTPUT_RUNTIME_SCHEMAS[actionId.data].safeParse(execution.result);
-    execution = publicResult.success
-      ? { ok: true, result: publicResult.data }
-      : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  if (execution.ok && !logsOperands.resourceContinuation) {
+    execution = settleActionOutput(actionId.data, execution, envelope.data.requestId,
+      SIGNED_ROOT_ACTION_OUTPUT_RUNTIME_SCHEMAS[actionId.data]);
   }
 
   return prepare({
