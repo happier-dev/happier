@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionAccess';
 import { readSessionTranscriptRowsInTx } from '@/app/session/access/readSessionTranscriptRows';
@@ -87,7 +88,7 @@ export async function readSessionMessagePages(input: Readonly<{
                             sessionId: { in: chunk.map(session => session.id) },
                             AND: [roleWhere ?? {}, { OR: ranges.map(range => ({ sessionId: range.session_id,
                                         seq: { gte: Number(range.min_seq), lte: Number(range.max_seq) } })) }],
-                        }, orderBy: { seq: 'desc' }, select: SESSION_MESSAGE_PAGE_ROW_SELECT });
+                        }, orderBy: { seq: 'desc' }, select: SESSION_MESSAGE_PAGE_ROW_SELECT }).then(row => decodeStoredSessionMessages(row));
                     const visible = new Map<string, SessionMessagePageRow[]>();
                     for (const row of rows) {
                         const sessionRows = visible.get(row.sessionId) ?? [];

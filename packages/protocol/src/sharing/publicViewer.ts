@@ -10,5 +10,5 @@ export { readSessionDataKeyBundleV0 } from '../crypto/sessionDataKeyBundleV0.js'
 export { openAesGcmPayloadWebCrypto } from '../crypto/sessionDataKeyBundleWebCrypto.js';
 export { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 export { openPublicShareDataKeyV1 } from '../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
-export { openSessionDataKeyBundleV0 } from '../crypto/sessionDataKeyBundleWebCrypto.js';
+export { openSessionDataKeyBundle, openSessionDataKeyBundleV0 } from '../crypto/sessionDataKeyBundleWebCrypto.js';
 export { decodePlainArtifactStoredContent, isPlainArtifactStoredContent } from '../storage/artifactStoredContent.js';

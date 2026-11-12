@@ -1514,6 +1514,10 @@ model Session {
     teamCredentialBindings SessionTeamCredentialBinding[]
     id                String              @id @default(cuid())
     tag               String
+    /// Opaque `direct:v1:<sha256>` external-conversation identity ("which external
+    /// conversation this Session is"). Only this Session may replace it; never another Session's;
+    /// distinct from the immutable creation `tag`. Unique per Account.
+    externalIdentityTag String?
     accountId         String
     createdByApiTokenId String?
     createdByApiToken AccountApiToken? @relation("ApiTokenCreatedSessions", fields: [createdByApiTokenId], references: [id], onDelete: SetNull)
@@ -1623,6 +1627,7 @@ model Session {
     followDestinationEdges SessionFollowEdge[] @relation("SessionFollowDestination")
 
     @@unique([accountId, tag])
+    @@unique([accountId, externalIdentityTag])
     @@index([accountId, managedCreationId], map: "Session_account_managed_creation_idx")
     @@index([createdByApiTokenId])
     @@index([accountId, updatedAt(sort: Desc)])
@@ -2333,8 +2338,10 @@ model SessionMessage {
     targetExecutionRunId String?
     seq       Int
     messageRole String?
-    /// [SessionMessageContent]
+    /// [SessionMessageStoredContent]
     content   Json
+    /// Raw ciphertext; null for historical JSON envelopes and plaintext content.
+    contentBytes Bytes?
     /// [SessionInputAdmissionReceiptV1]
     inputAdmissionReceipt Json?
     /// Derived query projection of `inputAdmissionReceipt.actorAccountId` for a
@@ -3110,6 +3117,8 @@ model AutomationRun {
     originSession              Session? @relation("WorkflowRunOriginSession", fields: [originSessionId], references: [id], onDelete: SetNull)
     originDiscussionId         String?
     workflowAcceptedSnapshotEnvelope String?
+    /// Row display summary sealed beside the accepted snapshot under the same Run key; null for Runs admitted before it existed.
+    workflowDisplaySummaryEnvelope String?
     sourceArtifactId           String?
     visibleTeamId              String?
     workflowCheckpointEnvelope String?

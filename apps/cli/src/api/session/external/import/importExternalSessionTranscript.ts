@@ -8,7 +8,7 @@ import type { ExternalSessionTranscriptRawMessageV1, SessionMessageRole, StrictS
 import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
-  encryptSessionPayload,
+  encryptSessionMessagePayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -95,7 +95,7 @@ function buildStoredMessageContent(params: Readonly<{
   }
   return {
     t: 'encrypted',
-    c: encryptSessionPayload({
+    c: encryptSessionMessagePayload({
       ctx,
       payload: params.raw,
     }),

@@ -1,6 +1,7 @@
 import { createHash, getHashes, randomFillSync } from 'node:crypto';
 import * as React from 'react';
 import type { NativeComposerInputHandle } from '@/components/ui/forms/nativeComposerInput';
+import { happierCryptoWorkerStub } from './happierCryptoWorkerStub';
 
 // Vitest runs in a Node environment; `expo-modules-core` is designed for Expo/Metro and
 // imports `react-native` (Flow) via its TS source entrypoint. For unit tests we only need
@@ -74,6 +75,7 @@ const expoCryptoModule = {
 export function requireNativeModule<T = never>(moduleName: string): T {
     if (moduleName === 'ExpoCrypto') return expoCryptoModule as T;
     if (optionalNativeModules.has(moduleName)) return optionalNativeModules.get(moduleName) as T;
+    if (moduleName === 'HappierCryptoWorker') return happierCryptoWorkerStub as T;
     return {} as T;
 }
 

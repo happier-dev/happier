@@ -309,7 +309,7 @@ test('notification processes reuse the canonical native Session crypto owner', (
       `${name} has no public canonical Session-payload opener`);
     assert.match(source, /decryptDataKeyEnvelopeV1Batch/,
       `${name} reimplemented the recipient-envelope cipher`);
-    assert.match(source, /decryptSecretboxJsonBatch/,
+    assert.match(source, /decryptAesGcmJsonBatch/,
       `${name} reimplemented the Session payload cipher`);
   }
 });

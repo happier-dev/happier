@@ -1,4 +1,5 @@
 package dev.happier.cryptoworker
+import org.json.JSONObject
 
 /**
  * Public, React-free access to the canonical Session crypto primitives.
@@ -9,10 +10,7 @@ public object HappierCryptoWorkerSessionCrypto {
   /** Machine data-key content uses the canonical AES-GCM worker, not Session secretbox. */
   @JvmStatic
   public fun decryptMachinePayload(ciphertextBase64: String, machineDataKeyBase64: String): String? =
-    HappierCryptoWorker.decryptAesGcmJsonBatch(listOf(mapOf(
-      "encryptedPayloadBase64" to ciphertextBase64,
-      "keyBase64" to machineDataKeyBase64,
-    ))).firstOrNull()
+    decryptSessionPayload(ciphertextBase64, machineDataKeyBase64)
 
   @JvmStatic
   public fun openSessionDataKey(
@@ -27,8 +25,16 @@ public object HappierCryptoWorkerSessionCrypto {
   public fun decryptSessionPayload(
     ciphertextBase64: String,
     sessionDataKeyBase64: String,
-  ): String? = HappierCryptoWorker.decryptSecretboxJsonBatch(listOf(mapOf(
-    "ciphertextBase64" to ciphertextBase64,
-    "keyBase64" to sessionDataKeyBase64,
-  ))).firstOrNull()
+  ): String? {
+    val serialized = HappierCryptoWorker.decryptAesGcmJsonBatch(listOf(mapOf(
+      "encryptedPayloadBase64" to ciphertextBase64,
+      "keyBase64" to sessionDataKeyBase64,
+    ))).firstOrNull() ?: return null
+    return try {
+      val root = JSONObject(serialized)
+      if (root.opt("__happierSerializedJsonValueV1") != true) serialized
+      else if (root.opt("type") == "json") (root.opt("value") as? JSONObject)?.toString()
+      else null
+    } catch (_: Exception) { null }
+  }
 }

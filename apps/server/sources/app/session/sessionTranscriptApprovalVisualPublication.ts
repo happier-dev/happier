@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import { ApprovalTranscriptVisualPublicationV1Schema, type ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
@@ -46,7 +47,7 @@ async function retainAndEnrichInTx(tx: Tx, params: Readonly<{
     if (params.native && previous?.native && !isDeepStrictEqual(previous.native,
         { localId: params.native.localId, messageId: params.native.messageId })) return false;
     const stored = native ? await tx.sessionMessage.findUnique({ where: { id: native.messageId },
-        select: { id: true, sessionId: true, localId: true, messageRole: true, content: true, rowRevision: true, surfaceItemReference: true } }) : null;
+        select: { contentBytes: true, id: true, sessionId: true, localId: true, messageRole: true, content: true, rowRevision: true, surfaceItemReference: true } }).then(row => decodeStoredSessionMessage(row)) : null;
     if (native && !stored) return params.native === undefined;
     // Native tool results are event rows; older admitted agent rows keep their correspondence.
     if (native && stored && (stored.sessionId !== params.sessionId || stored.localId !== native.localId

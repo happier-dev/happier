@@ -121,6 +121,18 @@ NUL-bearing object keys and ciphertext are rejected: rewriting
 keys could merge distinct fields, and encrypted content is opaque. This correction
 is development source behavior; release availability is tracked separately.
 
+## SessionMessage physical storage (0.3 development)
+
+The logical plain/encrypted message envelopes and API responses are unchanged.
+`apps/server/sources/storage/sessionMessageContent.ts` stores canonical Base64
+ciphertext as raw `SessionMessage.contentBytes`, with JSON null in `content`.
+Plain envelopes and accepted noncanonical ciphertext strings remain JSON so
+round trips preserve their exact values. Historical JSON rows remain readable.
+Query owners decode physical rows before passing logical content to consumers;
+Usage's SQL projection classifies byte-backed rows as encrypted without opening
+them. The nullable column is additive across PostgreSQL, SQLite, and MySQL;
+MySQL uses LongBlob to avoid narrowing previously accepted message sizes.
+
 ## Authentication
 Most endpoints require `Authorization: Bearer <token>`. The same token is also used in the Socket.IO handshake. Full auth flows and endpoints are documented in `api.md`.
 
@@ -404,6 +416,9 @@ Field names below match on-wire payloads.
   - `body`: `{ t: "update-session", id, metadata?, agentState? }`
   - `metadata`: `{ value, version }` or null
   - `agentState`: `{ value, version }` or null
+  - In 0.3 development, a metadata mutation whose stored owner and shared parts are both unchanged commits
+    nothing. The writer compares those stored parts, not the local compatibility view, because the view adds
+    predecessor aliases (for example `provider` on `sessionModelsV1`) that a field producer never writes.
   - In 0.3 development, a layout-1 owner tuple write publishes only the parts it changed. `metadata` (shared,
     which carries the tuple revision) is always present. `ownerMetadata` and `agentState` are present only when
     this commit changed their stored bytes; an omitted part kept its version, so a reader that holds the

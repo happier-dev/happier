@@ -48,5 +48,23 @@ public final class HappierCryptoWorkerModule: Module {
     AsyncFunction("decryptAesGcmJsonBatch") { (items: [[String: String]]) in
       HappierCryptoWorker.decryptAesGcmJsonBatch(items)
     }.runOnQueue(Self.workerQueue)
+
+    AsyncFunction("encodeContentValueBase64") { (jsonBase64: String) in
+      HappierCryptoWorkerAesGcm.encodeContentValueBase64(jsonBase64)
+    }.runOnQueue(Self.workerQueue)
+
+    AsyncFunction("decodeContentValueBase64") { (frameBase64: String) -> String? in
+      guard let frame = HappierCryptoWorkerBase64.decode(frameBase64),
+            let json = HappierCryptoWorkerContentCodec.decodeLegacy(frame) else { return nil }
+      return String(data: json, encoding: .utf8)
+    }.runOnQueue(Self.workerQueue)
+
+    AsyncFunction("openAesGcmContentBatch") { (items: [[String: String]]) in
+      HappierCryptoWorkerAesGcm.openAesGcmContentBatch(items)
+    }.runOnQueue(Self.workerQueue)
+
+    AsyncFunction("encryptAesGcmContentBatch") { (items: [[String: String]]) in
+      HappierCryptoWorkerAesGcm.encryptAesGcmContentBatch(items)
+    }.runOnQueue(Self.workerQueue)
   }
 }

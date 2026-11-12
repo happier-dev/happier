@@ -144,6 +144,7 @@ function addSessionCryptoFramework(project, targetUuid, frameworkPath) {
     link: true,
     target: targetUuid,
   });
+  project.addFramework('libz.tbd', { target: targetUuid, link: true });
 }
 
 /**

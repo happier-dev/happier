@@ -40,5 +40,23 @@ class HappierCryptoWorkerModule : Module() {
     AsyncFunction("decryptAesGcmJsonBatch") { items: List<Map<String, String>> ->
       return@AsyncFunction HappierCryptoWorker.decryptAesGcmJsonBatch(items)
     }.runOnQueue(Queues.DEFAULT)
+
+    AsyncFunction("encodeContentValueBase64") { jsonBase64: String ->
+      return@AsyncFunction HappierCryptoWorker.encodeContentValueBase64(jsonBase64)
+    }.runOnQueue(Queues.DEFAULT)
+
+    AsyncFunction("decodeContentValueBase64") { frameBase64: String ->
+      return@AsyncFunction HappierCryptoWorkerBase64.decode(frameBase64)?.let {
+        HappierCryptoWorkerContentCodec.decodeLegacy(it)?.let { bytes -> HappierCryptoWorkerContentCodec.json(bytes) }
+      }
+    }.runOnQueue(Queues.DEFAULT)
+
+    AsyncFunction("openAesGcmContentBatch") { items: List<Map<String, String>> ->
+      return@AsyncFunction HappierCryptoWorker.openAesGcmContentBatch(items)
+    }.runOnQueue(Queues.DEFAULT)
+
+    AsyncFunction("encryptAesGcmContentBatch") { items: List<Map<String, String>> ->
+      return@AsyncFunction HappierCryptoWorker.encryptAesGcmContentBatch(items)
+    }.runOnQueue(Queues.DEFAULT)
   }
 }

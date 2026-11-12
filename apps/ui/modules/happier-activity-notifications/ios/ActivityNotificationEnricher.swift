@@ -74,9 +74,7 @@ enum ActivityNotificationEnricher {
 
   private static func productionDecryptMachinePayload(_ ciphertext: String, _ key: String) -> String? {
     #if canImport(Clibsodium)
-    return HappierCryptoWorkerAesGcm.decryptAesGcmJsonBatch([[
-      "encryptedPayloadBase64": ciphertext, "keyBase64": key,
-    ]]).first ?? nil
+    return HappierCryptoWorkerSessionCrypto.decryptMachinePayload(ciphertextBase64: ciphertext, machineDataKeyBase64: key)
     #else
     return nil
     #endif

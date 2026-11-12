@@ -9,7 +9,7 @@ import { applyReducedMessages, createRawMessageNormalizationSequenceState, creat
 import { configuration } from '@/configuration';
 import { fetchSessionById, importHistoricalSessionTranscript, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { openSessionMessageContent, resolveExactSessionOrCredentialCryptoContext, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
-import { sealSessionStoredContent } from '@/session/transport/encryption/sessionStoredContentCodec';
+import { sealSessionMessageContent } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { createSessionBoardActionDeps } from '@/session/board/sessionBoardActionDeps';
 import { openSessionSystemRecord } from '@/session/systemRecords/sessionSystemRecordCodec';
@@ -261,7 +261,7 @@ export async function seedForkVisualCopies(params: SeedParams): Promise<readonly
             const raw = settledApprovalReferences.length ? { ...row.item.raw, meta: { ...meta,
                 forkVisualOriginV1: { ...record(meta?.forkVisualOriginV1), settledApprovalReferences } } } : row.item.raw;
             // Gather every tool result's lineage, then seal its one unchanged native body once.
-            return { id: row.item.id, content: sealSessionStoredContent({ ...childCrypto, idempotencyKey: row.item.id,
+            return { id: row.item.id, content: sealSessionMessageContent({ ...childCrypto, idempotencyKey: row.item.id,
                 payload: StrictJsonValueSchema.parse(raw) }),
                 ...(references.length > 0 ? { surfaceItemReference: { v: 1 as const, references } } : {}) };
         });

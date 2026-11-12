@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { DiscussionSecondOpinionPreviewInputV1Schema, type DiscussionSecondOpinionPreviewInputV1,
     type DiscussionSecondOpinionPreviewV1, type DiscussionSecondOpinionPreviewSourceV1 } from '@happier-dev/protocol/discussions/secondOpinion';
 import { DiscussionAnchorV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
@@ -57,7 +58,7 @@ async function sessionSourceFactsInTx(tx: Tx, input: Actor & Readonly<{ sessionI
             ...createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: input.actorAccountId }),
             accountId: true, account: { select: RECIPIENT_READINESS_SELECT },
         } }),
-        tx.sessionMessage.findFirst({ where: { sessionId, id: input.messageId }, select: { content: true } }),
+        tx.sessionMessage.findFirst({ where: { sessionId, id: input.messageId }, select: { contentBytes: true, content: true } }).then(row => decodeStoredSessionMessage(row)),
         access.capabilities.manageAccess ? resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [sessionId] }) : new Map<string, readonly string[]>(),
     ]);
     if (!session || !message) return null;
@@ -218,6 +219,11 @@ export async function admitDiscussionSecondOpinionGrantInTx(tx: Tx, input: Actor
     return admitDiscussionSecondOpinionSourceInTx(tx, { ...input, anchor: row?.anchorV1, allowMissingSource: true,
         destination: { kind: 'resource', resourceId: input.discussionId, adapter: {
             ...discussionContextStorageAdapter,
-            async readAccessFactsInTx(_tx, resourceId) { return resourceId === input.discussionId ? facts : null; },
+            async readAccessFactsBatchInTx(_tx, resourceIds) {
+                return new Map(resourceIds.includes(input.discussionId) ? [[input.discussionId, facts]] : []);
+            },
+            async readAccessFactsInTx(tx, resourceId, actorAccountId) {
+                return (await this.readAccessFactsBatchInTx(tx, [resourceId], actorAccountId)).get(resourceId) ?? null;
+            },
         } } });
 }

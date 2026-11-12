@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { Prisma } from "@prisma/client";
 import type { FastifyRequest } from "fastify";
@@ -147,7 +148,7 @@ export async function readSessionMessagePage(input: Readonly<{
             // would truncate a turn's reply away from its prompt.
             ...(turnProjectionPaging === null ? { take: limit + 1 } : {}),
             select: SESSION_MESSAGE_PAGE_ROW_SELECT,
-        });
+        }).then(row => decodeStoredSessionMessages(row));
         const hasMore = turnProjectionPaging !== null
             ? turnProjectionPaging.hasMore
             : fetchedMessages.length > limit;
@@ -261,7 +262,7 @@ export async function readSessionMessagePage(input: Readonly<{
                     }),
                     orderBy: { seq: "asc" },
                     take: EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1,
-                    select: {
+                    select: { contentBytes: true,
                         id: true,
                         seq: true,
                         localId: true,
@@ -273,7 +274,7 @@ export async function readSessionMessagePage(input: Readonly<{
                         transcriptObservationProvenance: true,
                         inputAdmissionReceipt: true,
                     },
-                })
+                }).then(row => decodeStoredSessionMessages(row))
                 : [];
             const referencedUserRows = referencedRows.flatMap((row) => {
                 const projected = projectExternalShareableReferencedUserRow(row);

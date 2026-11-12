@@ -1,5 +1,5 @@
 import {
-    encryptSessionPayload,
+    encryptSessionMessagePayload,
     type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionStoredContentCodec';
 
@@ -10,5 +10,5 @@ export function buildOutboundSessionMessagePayload(
 ): string | { t: 'plain'; v: unknown } {
     return context.mode === 'plain'
         ? { t: 'plain', v: content }
-        : encryptSessionPayload({ ctx: context.ctx, payload: content });
+        : encryptSessionMessagePayload({ ctx: context.ctx, payload: content });
 }

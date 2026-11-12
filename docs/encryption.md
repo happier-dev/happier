@@ -2510,22 +2510,57 @@ packet-beta
   45-60: "authTag (16 bytes)"
 ```
 
-- `version` is currently `0`.
+- Historical and generic non-message writers use version `0`; framed SessionMessage writers use version `1` as described below.
 
 In current development source,
-`packages/protocol/src/crypto/sessionDataKeyBundleV0.ts` owns this version-0
-framing, its 12-byte nonce and 16-byte tag boundaries, and the existing serialized
-JSON value format. `packages/protocol/src/crypto/sessionDataKeyBundleWebCrypto.ts`
+`packages/protocol/src/crypto/sessionDataKeyBundleV0.ts` owns AES bundle
+framing for versions 0 and 1, the 12-byte nonce and 16-byte tag boundaries, and
+the existing serialized JSON value format. `packages/protocol/src/crypto/sessionDataKeyBundleWebCrypto.ts`
 owns the shared browser WebCrypto seal/open implementation. This extraction leaves
 the version-0 wire bytes unchanged.
 
 The UI's `AES256Encryption` and browser AES wrappers consume those owners while
-retaining the native string-cipher adapter and native-worker batching path. The
-CLI's data-key adapter retains synchronous Node AES-GCM and delegates framing and
+retaining the generic native string-cipher adapter and native-worker batching
+path. New SessionMessage encryption uses the native byte-AES path described
+below. The CLI's data-key adapter retains synchronous Node AES-GCM and delegates framing and
 serialization to Protocol. These are platform adapters, not separate bundle
 formats; the shared open result distinguishes authenticated content, unsupported
 framing, authentication failure, and authenticated invalid JSON. This describes
 development implementation ownership, not released SDK availability.
+
+### SessionMessage content bytes (0.3 development)
+
+New direct SessionMessage writes encode serialized JSON as a one-byte content
+marker followed by UTF-8 JSON (`0`) or gzip-compressed JSON (`1`). Writers choose
+gzip only when its complete representation is smaller. Compression happens
+before the existing domain cipher; it does not change keys, Account mode,
+authorization, or the explicit plain/encrypted wire envelope.
+
+AES-GCM message bundles use version `1` with the existing nonce and tag layout;
+version `0` continues to carry historical unframed JSON. Legacy secretbox keeps
+its nonce and authenticated-box layout and seals the marked content bytes.
+Readers authenticate before decoding content and continue accepting historical
+unframed JSON. Generic non-message writers keep their existing formats.
+
+Protocol owns the content frame without a compression dependency. Node uses
+`node:zlib`, browser and desktop adapters use platform compression streams, and
+native AES and gzip run in the existing iOS/Android crypto worker. The iOS
+notification extension consumes the same native reader. New native messages do
+not route byte payloads through a string AES bridge or JavaScript AES.
+
+Inflation uses the existing HTTP request-body ceiling from
+`SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1`, exposed by the content codec as
+`CONTENT_VALUE_MAX_DECODED_BYTES`. Every platform stops inflation at that
+boundary and returns `invalid_payload` for oversized authenticated content.
+This prevents a co-editor from amplifying a small encrypted message into an
+unbounded allocation in another member's reader.
+
+Pending content already encrypted before transcript admission remains readable
+in its original format when copied into SessionMessage. Pending and other
+content domains will adopt new writes in later batches. This describes
+unreleased 0.3 development; 0.2-created data remains readable in 0.3, while old
+binaries reading newly written version-1 data are not a supported coexistence
+or rollback direction.
 
 ## Live-stream frame and input transport (0.3 development)
 
@@ -3775,8 +3810,12 @@ sequenceDiagram
 - The client emits an explicit `{ t: "encrypted", c }` or `{ t: "plain", v }`
   envelope. A legacy ciphertext string is normalized to the encrypted branch.
 - The server enforces that the envelope kind matches the Session's persisted
-  `encryptionMode`, stores it as `SessionMessage.content`, and emits the same
-  canonical envelope in `new-message` updates.
+  `encryptionMode` and emits the same canonical envelope in `new-message` updates.
+  The storage owner `sources/storage/sessionMessageContent.ts` keeps canonical
+  ciphertext in `SessionMessage.contentBytes` and JSON null in `content`; plain
+  values and retained noncanonical ciphertext strings remain JSON envelopes.
+  Reads reconstruct the logical envelope once before domain or wire projection.
+  Historical JSON/plain/base64 rows require no rewrite.
 
 #### Private accepted-delivery and human-completion facts (0.3 development)
 
@@ -5590,8 +5629,8 @@ schemas.
 
 ### Session message content
 
-The payload stored in `SessionMessage.content` is always explicitly wrapped. For an
-E2EE Session:
+The logical SessionMessage content on the wire is always explicitly wrapped. Its
+physical ciphertext storage uses `contentBytes` as described above. For an E2EE Session:
 ```json
 { "t": "encrypted", "c": "<base64 encrypted>" }
 ```
@@ -6578,10 +6617,15 @@ Do not gate plaintext behavior on raw env vars or `capabilities` fields.
 Resource grants and content-envelope preparation share the server owner
 `app/teams/resourceGrantAccess.ts` and Protocol vocabulary
 `teams/resourceGrantAccessV1.ts`. Storage adapters supply the resource's current
-owner, persisted mode, grants and recipient tuples. The shared owner evaluates
-live Account/Team/Group membership, projects the census against verified recipient
-bindings, fences preparation against the owner key and rechecks each recipient
-before applying envelopes. Artifact adapters retain Artifact content/provenance
+owner, persisted mode, grants and recipient tuples. In 0.3 development, the shared
+owner returns independent matched Account/Team/Group grant contributions. Its batch
+admission reads the resource facts once through the storage adapter and evaluates
+each distinct resource once; single-resource admission wraps a batch of one.
+Session and Machine owners project their own capabilities from the shared principal
+policy, preserving same-grant delegation, history horizons and controller inheritance.
+The same principal iterator serves recipient census. Envelope preparation projects
+that census against verified recipient bindings, fences preparation against the owner
+key and checks each recipient before applying envelopes. Artifact adapters retain Artifact content/provenance
 validation, storage and change publication; their public grant Actions and wire
 shapes are unchanged. This extraction does not make a link or an envelope an
 access grant, and does not replace Session access or permission delegation.

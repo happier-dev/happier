@@ -18,9 +18,19 @@ public enum HappierCryptoWorkerSessionCrypto {
     ciphertextBase64: String,
     sessionDataKeyBase64: String
   ) -> String? {
-    HappierCryptoWorkerSecretbox.decryptSecretboxJsonBatch([[
-      "ciphertextBase64": ciphertextBase64,
+    guard let serialized = HappierCryptoWorkerAesGcm.decryptAesGcmJsonBatch([[
+      "encryptedPayloadBase64": ciphertextBase64,
       "keyBase64": sessionDataKeyBase64,
-    ]]).first ?? nil
+    ]]).first ?? nil,
+      let data = serialized.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    guard object["__happierSerializedJsonValueV1"] as? Bool == true else { return serialized }
+    guard object["type"] as? String == "json", let value = object["value"] as? [String: Any],
+          let json = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+    return String(data: json, encoding: .utf8)
+  }
+
+  public static func decryptMachinePayload(ciphertextBase64: String, machineDataKeyBase64: String) -> String? {
+    decryptSessionPayload(ciphertextBase64: ciphertextBase64, sessionDataKeyBase64: machineDataKeyBase64)
   }
 }

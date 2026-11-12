@@ -1,3 +1,4 @@
+import { sessionMessageContentEnvelopeTypeSql } from "@/storage/sessionMessageContent";
 import type { Tx } from '@/storage/inTx';
 import { prismaRuntime } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -71,7 +72,7 @@ export async function readSessionMessageEvidenceRowsInTx(tx: Tx,
                 SELECT ${s.json(data, 'sidechainId')} AS value WHERE ${s.type(s.json(data, 'sidechainId'))}='string'
                 UNION ALL SELECT ${s.json(data, 'parent_tool_use_id')} WHERE ${recordType}='output'
                     AND ${s.type(s.json(data, 'parent_tool_use_id'))}='string') sc)`)} AS ${prismaRuntime.raw(s.column('sidechainIds'))},
-            ${prismaRuntime.raw(s.text(content, 't'))} AS ${prismaRuntime.raw(s.column('envelopeType'))},
+            ${prismaRuntime.raw(sessionMessageContentEnvelopeTypeSql('m.' + s.column('contentBytes'), s.text(content, 't')))} AS ${prismaRuntime.raw(s.column('envelopeType'))},
             ${prismaRuntime.raw(s.text(content, 'v', 'role'))} AS ${prismaRuntime.raw(s.column('role'))},
             ${prismaRuntime.raw(recordType)} AS ${prismaRuntime.raw(s.column('recordType'))},
             ${prismaRuntime.raw(`CASE WHEN ${recordType}='output' THEN 'claude' WHEN ${recordType}='codex' THEN 'codex'

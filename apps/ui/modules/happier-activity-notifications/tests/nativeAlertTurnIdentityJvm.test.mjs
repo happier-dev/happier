@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { dirname, join as joinPath } from 'node:path';
@@ -731,4 +731,87 @@ test('Android admits exactly the Protocol content-free wake and never an alert a
       `${scenario.id} must not be admitted by both native owners`);
     if (scenario.id === ALERT_SCENARIO) assert.equal(row.status, 'rejected');
   }
+});
+
+
+// The existing host-JVM harness loads the actual JNI implementation here; only
+// Android's Base64 OS class is substituted. This checks the same shared fixture
+// bytes as Swift, including the historical secretbox writer's output.
+test('Android worker opens shared content vectors and seals byte AES through real JNI', (t) => {
+  const toolchain = discoverKotlinToolchain();
+  assert.ok(toolchain, 'required Android native content gate needs existing Java/Kotlin toolchain on an equipped executor');
+  const repo = dirname(dirname(dirname(dirname(moduleRoot))));
+  const fixture = JSON.parse(readFileSync(join(repo, 'packages/protocol/src/crypto/fixtures/sessionMessageContentV1.json'), 'utf8'));
+  const crypto = join(dirname(moduleRoot), 'happier-crypto-worker/android/src/main');
+  const vendoredSodiumHeaders = join(repo, 'node_modules/@more-tech/react-native-libsodium/libsodium/build/libsodium-apple/macos/include');
+  const sodiumRoot = ['/usr/include', '/opt/homebrew/opt/libsodium/include', vendoredSodiumHeaders].find(path => existsSync(join(path, 'sodium.h')));
+  assert.ok(sodiumRoot, 'host libsodium headers are required for the real JNI fixture gate');
+  const sodiumLibrary = ['/opt/homebrew/opt/libsodium/lib/libsodium.a', '/usr/lib/x86_64-linux-gnu/libsodium.so.23', '/usr/lib/aarch64-linux-gnu/libsodium.so.23'].find(existsSync);
+  assert.ok(sodiumLibrary, 'existing host libsodium is required for the real JNI fixture gate');
+  const settings = spawnSync('java', ['-XshowSettings:properties', '-version'], { encoding: 'utf8' });
+  const javaHome = settings.stderr.match(/java\.home\s*=\s*(.+)/)?.[1]?.trim();
+  assert.ok(javaHome, 'existing JDK headers are required for the real JNI fixture gate');
+  const work = mkdtempSync(join(tmpdir(), 'happier-content-jni-'));
+  try {
+    const library = join(work, process.platform === 'darwin' ? 'libhappiercryptoworker.dylib' : 'libhappiercryptoworker.so');
+    execFileSync(process.platform === 'darwin' ? 'clang++' : 'g++', [
+      process.platform === 'darwin' ? '-dynamiclib' : '-shared', '-fPIC', '-std=c++17',
+      '-I', join(javaHome, 'include'), '-I', join(javaHome, 'include', process.platform === 'darwin' ? 'darwin' : 'linux'),
+      '-I', sodiumRoot, join(crypto, 'cpp/happier_crypto_worker.cpp'), sodiumLibrary, '-o', library,
+    ], { stdio: 'pipe' });
+    const rows = fixture.vectors.map(row => `Triple(${JSON.stringify(row.variant)}, ${JSON.stringify(row.ciphertextBase64)}, ${JSON.stringify(Buffer.from(row.serializedJson).toString('base64'))})`).join(',\n');
+    const probe = join(work, 'ContentProbe.kt');
+    writeFileSync(probe, `package dev.happier.cryptoworker
+import java.util.Base64
+fun main(args: Array<String>) {
+  val key = ${JSON.stringify(fixture.keyBase64)}
+  for ((variant, ciphertext, expected64) in listOf(${rows})) {
+    val opened = if (variant == "dataKey") HappierCryptoWorker.decryptAesGcmJsonBatch(listOf(mapOf("encryptedPayloadBase64" to ciphertext, "keyBase64" to key))).single()
+      else HappierCryptoWorker.decryptSecretboxJsonBatch(listOf(mapOf("ciphertextBase64" to ciphertext, "keyBase64" to key))).single()
+    val expected = String(Base64.getDecoder().decode(expected64), Charsets.UTF_8)
+    check(opened == expected) { "shared native vector failed: $variant" }
+    if (variant == "dataKey") {
+      val notification = HappierCryptoWorkerSessionCrypto.decryptSessionPayload(ciphertext, key)
+      val root = org.json.JSONObject(expected)
+      val expectedNotification = if (root.opt("__happierSerializedJsonValueV1") == true) (root.opt("value") as org.json.JSONObject).toString() else expected
+      check(notification == expectedNotification) { "notification dataKey facade failed" }
+      check(HappierCryptoWorkerSessionCrypto.decryptMachinePayload(ciphertext, key) == expectedNotification)
+    }
+    val sealed = HappierCryptoWorker.encryptAesGcmContentBatch(listOf(mapOf("jsonBase64" to expected64, "keyBase64" to key, "nonceBase64" to Base64.getEncoder().encodeToString(ByteArray(12) { 9 })))).single()!!
+    check(HappierCryptoWorker.decryptAesGcmJsonBatch(listOf(mapOf("encryptedPayloadBase64" to sealed, "keyBase64" to key))).single() == expected)
+    val tampered = Base64.getDecoder().decode(sealed)
+    tampered[tampered.lastIndex] = (tampered.last().toInt() xor 1).toByte()
+    check(HappierCryptoWorker.decryptAesGcmJsonBatch(listOf(mapOf("encryptedPayloadBase64" to Base64.getEncoder().encodeToString(tampered), "keyBase64" to key))).single() == null)
+  }
+  for (frame in listOf(byteArrayOf(2), byteArrayOf(1, 1, 2, 3), byteArrayOf(0, -1))) {
+    val nonce = ByteArray(12) { 7 }
+    val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, javax.crypto.spec.SecretKeySpec(Base64.getDecoder().decode(key), "AES"), javax.crypto.spec.GCMParameterSpec(128, nonce))
+    val bundle = byteArrayOf(1) + nonce + cipher.doFinal(frame)
+    check(HappierCryptoWorker.openAesGcmContentBatch(listOf(mapOf("encryptedPayloadBase64" to Base64.getEncoder().encodeToString(bundle), "keyBase64" to key))).single()["status"] == "invalid_payload")
+  }
+  check(HappierCryptoWorkerContentCodec.encode("1".toByteArray())[0] == 0.toByte())
+  check(HappierCryptoWorkerContentCodec.encode("repeated content ".repeat(200).toByteArray())[0] == 1.toByte())
+  check(HappierCryptoWorkerContentCodec.decode(byteArrayOf(2)) == null)
+  check(HappierCryptoWorkerContentCodec.decode(byteArrayOf(1, 1, 2, 3)) == null)
+  val bounds = org.json.JSONObject(java.io.File(args[0]).readText())
+  check((bounds.opt("maxDecodedBytes") as Number).toInt() == HappierCryptoWorkerContentCodec.maxDecodedBytes) { "native ceiling diverged from Protocol" }
+  val boundVectors = bounds.optJSONArray("vectors")!!
+  for (index in 0 until boundVectors.length()) {
+    val vector = boundVectors.opt(index) as org.json.JSONObject
+    val decoded = HappierCryptoWorkerContentCodec.decode(Base64.getDecoder().decode(vector.getString("frameBase64")))
+    if (vector.getString("expectedStatus") == "authenticated") check(decoded?.size == (vector.opt("decodedBytes") as Number).toInt()) { "valid near-bound content rejected" }
+    else check(decoded == null) { "gzip expanded beyond Protocol ingress ceiling" }
+  }
+  println("native content fixtures and byte AES round trips passed")
+}`);
+    const base64 = join(work, 'Base64.kt');
+    writeFileSync(base64, 'package android.util\nobject Base64 { const val NO_WRAP = 2; fun decode(value: String, flags: Int) = java.util.Base64.getDecoder().decode(value); fun encodeToString(value: ByteArray, flags: Int) = java.util.Base64.getEncoder().encodeToString(value) }');
+    const sources = ['HappierCryptoWorker.kt', 'HappierCryptoWorkerBase64.kt', 'HappierCryptoWorkerTypes.kt', 'HappierCryptoWorkerNative.kt', 'HappierCryptoWorkerSessionCrypto.kt'].map(name => join(crypto, 'java/dev/happier/cryptoworker', name));
+    const orgJson = join(work, 'OrgJson.kt');
+    writeFileSync(orgJson, jsonRuntimeStub);
+    const classes = join(work, 'classes');
+    execFileSync('java', ['-cp', toolchain.compilerJars.join(delimiter), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-classpath', toolchain.runtimeJars.join(delimiter), '-no-stdlib', '-d', classes, '-nowarn', ...sources, base64, orgJson, probe], { stdio: 'pipe' });
+    assert.match(execFileSync('java', [`-Djava.library.path=${work}`, '-cp', [classes, ...toolchain.runtimeJars].join(delimiter), 'dev.happier.cryptoworker.ContentProbeKt', join(repo, 'packages/protocol/src/crypto/fixtures/contentInflateBoundsV1.json')], { encoding: 'utf8' }), /round trips passed/);
+  } finally { rmSync(work, { recursive: true, force: true }); }
 });

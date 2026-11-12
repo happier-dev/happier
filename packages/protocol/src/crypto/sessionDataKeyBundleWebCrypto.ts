@@ -1,7 +1,8 @@
+import { decodeContentValueWeb, encodeContentValueWeb } from './contentByteCodecWeb.js';
 import {
-  frameSessionDataKeyBundleV0,
+  frameSessionDataKeyBundle,
+  readSessionDataKeyBundle,
   parseSessionDataKeyValue,
-  readSessionDataKeyBundleV0,
   serializeSessionDataKeyValue,
   SESSION_DATA_KEY_BYTES,
   SESSION_DATA_KEY_NONCE_BYTES,
@@ -36,22 +37,31 @@ export async function openAesGcmPayloadWebCrypto(payload: Uint8Array, keyBytes: 
 }
 
 export async function sealSessionDataKeyBundleV0(value: unknown, key: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
-  if (key.length !== SESSION_DATA_KEY_BYTES) {
-    throw new Error('Session data-key encryption requires a 32-byte key');
-  }
-  return frameSessionDataKeyBundleV0(await sealAesGcmPayloadWebCrypto(new TextEncoder().encode(serializeSessionDataKeyValue(value)), key));
+  return sealSessionDataKeyBytes(new TextEncoder().encode(serializeSessionDataKeyValue(value)), key, 0);
 }
 
 export async function openSessionDataKeyBundleV0(bundle: Uint8Array, key: Uint8Array): Promise<SessionDataKeyOpenResult> {
-  const parts = readSessionDataKeyBundleV0(bundle);
-  if (parts.status !== 'ready' || key.length !== SESSION_DATA_KEY_BYTES) {
-    return { status: 'unsupported' };
-  }
+  return bundle[0] === 0 ? await openSessionDataKeyBundle(bundle, key) : { status: 'unsupported' };
+}
+
+function sealSessionDataKeyBytes(plaintext: Uint8Array, key: Uint8Array, version: 0 | 1): Promise<Uint8Array<ArrayBuffer>> {
+  if (key.length !== SESSION_DATA_KEY_BYTES) throw new Error('Session data-key encryption requires a 32-byte key');
+  return sealAesGcmPayloadWebCrypto(plaintext, key).then(payload => frameSessionDataKeyBundle(payload, version));
+}
+
+/** SessionMessage writes opt in; other content keeps the V0 writer. */
+export async function sealSessionMessageDataKeyBundle(value: unknown, key: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+  return sealSessionDataKeyBytes(await encodeContentValueWeb(value), key, 1);
+}
+
+export async function openSessionDataKeyBundle(bundle: Uint8Array, key: Uint8Array): Promise<SessionDataKeyOpenResult> {
+  const parts = readSessionDataKeyBundle(bundle);
+  if (parts.status !== 'ready' || key.length !== SESSION_DATA_KEY_BYTES) return { status: 'unsupported' };
   let plaintext: Uint8Array;
   try {
     plaintext = await openAesGcmPayloadWebCrypto(parts.payload, key);
   } catch {
     return { status: 'authentication_failed' };
   }
-  return parseSessionDataKeyValue(new TextDecoder().decode(plaintext));
+  return parts.version === 1 ? await decodeContentValueWeb(plaintext) : parseSessionDataKeyValue(new TextDecoder().decode(plaintext));
 }

@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import type { SessionRecipientCursor, SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
@@ -278,8 +279,8 @@ async function resolvePendingProviderRejoinInTx(params: {
     }).messageRole;
     const existingTranscriptMessage = await params.tx.sessionMessage.findFirst({
         where: { sessionId: params.sessionId, localId: row.localId },
-        select: { id: true, seq: true, sidechainId: true, content: true, messageRole: true },
-    });
+        select: { contentBytes: true, id: true, seq: true, sidechainId: true, content: true, messageRole: true },
+    }).then(row => decodeStoredSessionMessage(row));
     if (existingTranscriptMessage) {
         const compatibility = compareSessionMessageContentAndRole({
             existing: existingTranscriptMessage,
@@ -682,8 +683,8 @@ async function materializePendingTargetInTx(
 
             const existingTranscriptMessage = await tx.sessionMessage.findFirst({
                     where: { sessionId, localId },
-                    select: { id: true, seq: true, sidechainId: true, content: true, messageRole: true },
-                });
+                    select: { contentBytes: true, id: true, seq: true, sidechainId: true, content: true, messageRole: true },
+                }).then(row => decodeStoredSessionMessage(row));
                 if (existingTranscriptMessage) {
                     const compatibility = compareSessionMessageContentAndRole({
                         existing: existingTranscriptMessage,

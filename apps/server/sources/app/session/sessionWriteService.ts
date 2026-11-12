@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { UsageSessionTimingV1Schema, UsageTimingBoundsV1Schema, type UsageTimingBoundsV1, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { nextSessionUsageTiming } from './metadata/sessionUsageTiming';
@@ -30,7 +31,7 @@ import type { Prisma } from "@prisma/client";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { scheduleSessionPersonalEvent } from "@/app/session/personal/publishPersonalEvent";
 import { acceptSessionPersonalEventOnceInTx } from '@/app/session/personal/eventEligibility';
-import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT, agentEventLocalIdAttentionImpact, buildAgentEventLocalId, TranscriptRawRecordV1Schema, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT, agentEventLocalIdAttentionImpact, buildAgentEventLocalId, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { AccountEncryptionMigrateSessionsDirectiveSchema, type AccountEncryptionMigrateSessionsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
 import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protocol/sessions/control/contract';
 import { ExactSessionTurnEndMutationV1Schema, SessionTurnMutationActionV1Schema, SessionTurnMutationV1Schema, type SessionTurnMutationActionV1, type SessionTurnMutationDecisionV1, type SessionTurnMutationReceiptV1, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
@@ -88,7 +89,7 @@ import {
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     type SessionTranscriptPublicationFields,
 } from "./sessionTranscriptPublicationPolicy";
-import { resolveMessageAttentionImpact } from "./messageAttentionImpact";
+import { createPlainTranscriptRecordReader, resolveMessageAttentionImpact, type PlainTranscriptRecordReader } from "./messageAttentionImpact";
 import {
     isTerminalPrimaryTurnStatus,
     maxReadSeq,
@@ -646,28 +647,29 @@ export function resolveReadyProjectionEventType(params: Readonly<{
     sessionOwnerId: string;
     content: PrismaJson.SessionMessageContent;
     requestedSessionEventType?: "ready";
+    readPlainRecord?: PlainTranscriptRecordReader;
 }>): "ready" | undefined {
     if (params.actorUserId !== params.sessionOwnerId) return undefined;
     if (params.requestedSessionEventType === "ready") return "ready";
     if (params.content.t !== "plain") return undefined;
 
-    const parsed = TranscriptRawRecordV1Schema.safeParse(params.content.v);
-    if (!parsed.success) return undefined;
+    const record = (params.readPlainRecord ?? createPlainTranscriptRecordReader(params.content))();
+    if (!record) return undefined;
 
-    return parsed.data.role === "agent"
-        && parsed.data.content.type === "event"
-        && parsed.data.content.data.type === "ready"
+    return record.role === "agent"
+        && record.content.type === "event"
+        && record.content.data.type === "ready"
         ? "ready"
         : undefined;
 }
 
 /** The original publisher's existing opaque local ID keeps encrypted event bodies private. */
-function readPublishedOriginalFollowEvent(content: PrismaJson.SessionMessageContent, localId: string | null): Readonly<{ kind: 'goal_changed' | 'update_posted' }> | undefined {
+function readPublishedOriginalFollowEvent(content: PrismaJson.SessionMessageContent, localId: string | null, readPlainRecord: PlainTranscriptRecordReader): Readonly<{ kind: 'goal_changed' | 'update_posted' }> | undefined {
     if (content.t === 'plain') {
-        const record = TranscriptRawRecordV1Schema.safeParse(content.v);
-        if (!record.success || record.data.role !== 'agent' || record.data.content.type !== 'event') return undefined;
-        if (record.data.sidechainId || 'sidechainId' in record.data.content && record.data.content.sidechainId) return undefined;
-        const type = record.data.content.data.type;
+        const record = readPlainRecord();
+        if (!record || record.role !== 'agent' || record.content.type !== 'event') return undefined;
+        if (record.sidechainId || 'sidechainId' in record.content && record.content.sidechainId) return undefined;
+        const type = record.content.data.type;
         return type === 'goal-changed' ? { kind: 'goal_changed' } : type === 'worker-report' ? { kind: 'update_posted' } : undefined;
     }
     for (const [type, kind] of [['goal-changed', 'goal_changed'], ['worker-report', 'update_posted']] as const) {
@@ -1110,7 +1112,7 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
     const existing = await params.tx.sessionMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: params.localId } },
         select: SESSION_MESSAGE_WRITE_SELECT,
-    });
+    }).then(row => decodeStoredSessionMessage(row));
     if (!existing) {
         return {
             status: "not-found",
@@ -1354,6 +1356,7 @@ async function createSessionMessageAttempt(
     }
     const content = normalizeSessionMessageContentForStorage(rawContent);
     if (!content) return { ok: false, error: "invalid-params" };
+    const readPlainRecord = createPlainTranscriptRecordReader(content);
 
     const encryptionPolicy = readEncryptionFeatureEnv(process.env);
 
@@ -1444,6 +1447,7 @@ async function createSessionMessageAttempt(
                     : null;
                 attentionImpact = resolveMessageAttentionImpact({
                     content,
+                    readPlainRecord,
                     localId: localId ?? null,
                     explicitAttentionImpact:
                         resolveSessionOwnedAttentionImpact(access.sessionTag)
@@ -1493,7 +1497,7 @@ async function createSessionMessageAttempt(
                 // this transaction; only an unfenced write reads it here.
                 && (hasTrustedProvenance
                     || await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, actorUserId, sessionId))
-                ? readPublishedOriginalFollowEvent(content, localId) : undefined;
+                ? readPublishedOriginalFollowEvent(content, localId, readPlainRecord) : undefined;
             if (params.inputAdmission === "authenticatedAccount" && resolvedRole === "user") {
                 for (const recipientAccountId of access.recipientAccountIds) {
                     scheduleSessionPersonalEvent(tx, recipientAccountId, {
@@ -1515,6 +1519,7 @@ async function createSessionMessageAttempt(
                     actorUserId,
                     sessionOwnerId: access.sessionOwnerId,
                     content,
+                    readPlainRecord,
                     requestedSessionEventType: params.trustedSessionEventType,
                 }),
                 affectsMeaningfulActivity: attentionImpact.affectsMeaningfulActivity,
@@ -1677,7 +1682,7 @@ async function createSessionMessageAttempt(
                     const existing = await tx.sessionMessage.findUnique({
                         where: { sessionId_localId: { sessionId, localId } },
                         select: SESSION_MESSAGE_WRITE_SELECT,
-                    });
+                    }).then(row => decodeStoredSessionMessage(row));
                     if (!existing) {
                         observeCreateSessionMessageStage({
                             stage: "total",

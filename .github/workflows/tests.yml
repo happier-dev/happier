@@ -3496,6 +3496,14 @@ jobs:
         working-directory: apps/ui/android
         run: ./gradlew :app:assembleDebug
 
+      - name: Verify Android native shared content vectors and inflate ceiling
+        if: ${{ matrix.platform == 'android' }}
+        run: |
+          # The preceding Gradle build owns Java/Kotlin; JNI also needs host libsodium.
+          sudo apt-get update
+          sudo apt-get install --yes libsodium-dev
+          node --test --test-name-pattern="Android worker opens shared content vectors" apps/ui/modules/happier-activity-notifications/tests/nativeAlertTurnIdentityJvm.test.mjs
+
       - name: Install iOS pods
         if: ${{ matrix.platform == 'ios' }}
         working-directory: apps/ui/ios
@@ -3514,6 +3522,13 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/native-derived-data" \
             build CODE_SIGNING_ALLOWED=NO
+
+      - name: Verify Swift native shared content vectors and inflate ceiling
+        if: ${{ matrix.platform == 'ios' }}
+        run: |
+          node -e 'if (process.platform !== "darwin") throw new Error("Required Swift native fixture check needs Darwin")'
+          brew install libsodium
+          node --test apps/ui/modules/happier-crypto-worker/tests/contentCodec.swift.test.mjs
 
   ci_summary:
     if: ${{ always() && !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}

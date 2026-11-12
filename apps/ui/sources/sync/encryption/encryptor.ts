@@ -1,11 +1,11 @@
-import { decryptBox, decryptSecretBox, encryptBox, encryptSecretBox } from "@/encryption/libsodium";
+import { decryptBox, decryptSecretBoxBytes, encryptBox, encryptSecretBox, encryptSecretBoxBytes } from "@/encryption/libsodium";
 import { encodeBase64, decodeBase64 } from "@/encryption/base64";
 import sodium from '@/encryption/libsodium.lib';
 import { decodeUTF8, encodeUTF8 } from "@/encryption/text";
 import { decryptAESGCMString, encryptAESGCMString } from "@/encryption/aes";
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { frameSessionDataKeyBundleV0, parseSessionDataKeyValue, readSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import { frameSessionDataKeyBundleV0, readSessionDataKeyBundle, parseSessionDataKeyValue, readSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
 import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 import { yieldToEventLoop } from './cryptoBatchYield';
@@ -17,13 +17,12 @@ import {
     type NativeJsonDecryptWorkerBinding,
 } from './nativeCryptoWorker/nativeJsonDecryptBatch';
 
-//
-// IMPORTANT: Right now there is a bug in the AES implementation and it works only with a normal strings converted to Uint8Array. 
-// Any abnormal string might break encoding and decoding utf8.
-//
+import { encodeSessionMessageContent, decodeSessionMessageContent, sealSessionMessageContent, openSessionMessageContent } from './sessionMessageContent';
+
+export type EncryptOptions = Readonly<{ contentCodec?: 'session-message' }>;
 
 export interface Encryptor {
-    encrypt(data: any[]): Promise<Uint8Array[]>;
+    encrypt(data: any[], options?: EncryptOptions): Promise<Uint8Array[]>;
 }
 
 export interface Decryptor {
@@ -159,11 +158,13 @@ export class SecretBoxEncryption implements Encryptor, Decryptor {
         }
     }
 
-    private decryptReference(data: readonly Uint8Array[], options: DecryptOptions = {}): (any | null)[] {
+    private async decryptReference(data: readonly Uint8Array[], options: DecryptOptions = {}): Promise<(any | null)[]> {
         const results: (any | null)[] = [];
         for (const item of data) {
             const index = results.length;
-            results.push(decryptSecretBox(item, this.secretKey, () => options.onAuthenticationFailure?.(index)));
+            const bytes = decryptSecretBoxBytes(item, this.secretKey, () => options.onAuthenticationFailure?.(index));
+            const decoded = bytes === null ? null : await decodeSessionMessageContent(bytes);
+            results.push(decoded?.status === 'authenticated' ? decoded.value : null);
         }
         return results;
     }
@@ -182,19 +183,19 @@ export class SecretBoxEncryption implements Encryptor, Decryptor {
                         nativeCryptoWorker,
                         referenceRun,
                         { signal: options.signal },
-                    ), async (item, onFailure) => this.decryptReference([item], { onAuthenticationFailure: onFailure })[0], options);
+                    ), async (item, onFailure) => (await this.decryptReference([item], { onAuthenticationFailure: onFailure }))[0], options);
                 }
                 return this.decryptReference(data, options);
             },
         );
     }
 
-    private decryptBase64Reference(data: readonly string[], options: DecryptOptions = {}): (any | null)[] {
+    private async decryptBase64Reference(data: readonly string[], options: DecryptOptions = {}): Promise<(any | null)[]> {
         const results: (any | null)[] = [];
         for (const item of data) {
             try {
                 const index = results.length;
-                results.push(decryptSecretBox(decodeBase64(item, 'base64'), this.secretKey, () => options.onAuthenticationFailure?.(index)));
+                results.push((await this.decryptReference([decodeBase64(item, 'base64')], { onAuthenticationFailure: () => options.onAuthenticationFailure?.(index) }))[0]);
             } catch {
                 options.onAuthenticationFailure?.(results.length);
                 results.push(null);
@@ -220,14 +221,19 @@ export class SecretBoxEncryption implements Encryptor, Decryptor {
                         nativeCryptoWorker,
                         referenceRun,
                         { signal: options.signal },
-                    ), async (item, onFailure) => this.decryptBase64Reference([item], { onAuthenticationFailure: onFailure })[0], options);
+                    ), async (item, onFailure) => (await this.decryptBase64Reference([item], { onAuthenticationFailure: onFailure }))[0], options);
                 }
                 return this.decryptBase64Reference(data, options);
             },
         );
     }
 
-    async encrypt(data: any[]): Promise<Uint8Array[]> {
+    async encrypt(data: any[], options: EncryptOptions = {}): Promise<Uint8Array[]> {
+        if (options.contentCodec === 'session-message') {
+            const results: Uint8Array[] = [];
+            for (const value of data) results.push(encryptSecretBoxBytes(await encodeSessionMessageContent(value), this.secretKey));
+            return results;
+        }
         return syncPerformanceTelemetry.measure(
             'sync.encryption.crypto.secretbox.encrypt',
             { items: data.length },
@@ -332,7 +338,10 @@ export class AES256Encryption implements Encryptor, Decryptor {
             ciphertext: parts.payload.subarray(SESSION_DATA_KEY_NONCE_BYTES) });
     }
 
-    async encrypt(data: any[]): Promise<Uint8Array[]> {
+    async encrypt(data: any[], options: EncryptOptions = {}): Promise<Uint8Array[]> {
+        if (options.contentCodec === 'session-message') {
+            return await mapWithConcurrency(data, this.batchConcurrencyLimit, value => sealSessionMessageContent(value, this.secretKey));
+        }
         return syncPerformanceTelemetry.measureAsync(
             'sync.encryption.crypto.aes.encrypt',
             { items: data.length, concurrency: this.batchConcurrencyLimit },
@@ -373,10 +382,15 @@ export class AES256Encryption implements Encryptor, Decryptor {
         return await mapWithConcurrency(data, this.batchConcurrencyLimit, async (item, index) => {
             let decryptedString: string | null;
             try {
-                const parts = readSessionDataKeyBundleV0(item);
+                const parts = readSessionDataKeyBundle(item);
                 if (parts.status !== 'ready') {
                     options.onAuthenticationFailure?.(index);
                     return null;
+                }
+                if (parts.version === 1) {
+                    const opened = await openSessionMessageContent(item, this.secretKey);
+                    if (opened.status === 'authentication_failed' || opened.status === 'unsupported') options.onAuthenticationFailure?.(index);
+                    return opened.status === 'authenticated' ? opened.value : null;
                 }
                 decryptedString = await this.decryptString(encodeBase64(parts.payload), this.secretKeyB64);
             } catch (error) {

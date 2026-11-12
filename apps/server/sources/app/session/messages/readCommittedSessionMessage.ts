@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import type { Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
@@ -28,13 +29,13 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
             },
             publication,
         }),
-        select: {
+        select: { contentBytes: true,
             id: true, seq: true, localId: true, sidechainId: true, messageRole: true, content: true,
             deliveryResolution: true, acceptedTurnKind: true, acceptedTurnId: true, turnStartWitnessId: true,
             createdAt: true, updatedAt: true, sourceCreatedAt: true, sourceUpdatedAt: true,
             transcriptObservationProvenance: true, inputAdmissionReceipt: true, authorAccountId: true,
         },
-    });
+    }).then(row => decodeStoredSessionMessage(row));
     // A refused recovery has no accepted transcript anchor. Read its existing
     // Pending disposition by the Session-wide input identity, never an inventory
     // or the main queue (which cannot describe an exact Run target).

@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { isStoredJsonContentEnvelopeModeCompatible } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { db } from '@/storage/db';
@@ -11,7 +12,7 @@ export const readCanonicalSessionMessagesPage: HomeSearchCanonicalPageReader = a
     if (sessionIds.length === 0) return { messages: [] };
     const rows = await db.sessionMessage.findMany({
         where: { sessionId: { in: [...sessionIds] }, ...(afterId ? { id: { gt: afterId } } : {}) },
-        select: {
+        select: { contentBytes: true,
             id: true,
             sessionId: true,
             seq: true,
@@ -23,7 +24,7 @@ export const readCanonicalSessionMessagesPage: HomeSearchCanonicalPageReader = a
         },
         orderBy: { id: 'asc' },
         take: Math.max(1, Math.min(500, Math.trunc(limit))),
-    });
+    }).then(row => decodeStoredSessionMessages(row));
     const messages = rows.flatMap((row) => {
         const content = SessionStoredMessageContentSchema.safeParse(row.content);
         const sessionMode = row.session.encryptionMode;

@@ -147,7 +147,7 @@ describe('createDaemonSessionMutationCustody', () => {
       retainedSessionIds: [],
     });
 
-    expect(resolveTransport).toHaveBeenCalledWith({ credentials, idOrPrefix: 'session-1' });
+    expect(resolveTransport).toHaveBeenCalledWith({ credentials, idOrPrefix: 'session-1', reason: 'session-control', exact: true });
     expect(mocks.awaitReady).not.toHaveBeenCalled();
     expect(mocks.flush).not.toHaveBeenCalled();
 

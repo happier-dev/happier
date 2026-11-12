@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -178,7 +179,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
 
     const existing = await tx.sessionMessage.findFirst({
         where: { sessionId, localId },
-        select: {
+        select: { contentBytes: true,
             id: true,
             seq: true,
             localId: true,
@@ -194,7 +195,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
             createdAt: true,
             updatedAt: true,
         },
-    });
+    }).then(row => decodeStoredSessionMessage(row));
     if (existing && existing.localId) {
         const existingTargetExecutionRunId = existing.targetExecutionRunId ?? null;
         if (existing.sidechainId !== (params.expectedSidechainId ?? null)) {
@@ -327,8 +328,8 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
                     ...(needsTargetExecutionRunIdBackfill ? { targetExecutionRunId } : {}),
                     rowRevision: { increment: BigInt(1) },
                 },
-                select: { id: true, seq: true, localId: true, messageRole: true, content: true, deliveryResolution: true, createdAt: true, updatedAt: true },
-            })
+                select: { contentBytes: true, id: true, seq: true, localId: true, messageRole: true, content: true, deliveryResolution: true, createdAt: true, updatedAt: true },
+            }).then(row => decodeStoredSessionMessage(row))
             : existing;
 
         if (needsRoleUpdate || needsDeliveryResolutionUpdate || needsTimingUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill) {

@@ -12,7 +12,7 @@ import {
 } from '@/session/metadata/updateSessionMetadataWithRetry';
 import {
   encryptStoredSessionPayload,
-  sealSessionStoredContent,
+  sealSessionMessageContent,
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import type {
@@ -172,7 +172,7 @@ export function buildSessionAgentTransitionDividerPayload(
       },
     },
   };
-  const content = SessionStoredMessageContentSchema.parse(sealSessionStoredContent({
+  const content = SessionStoredMessageContentSchema.parse(sealSessionMessageContent({
     ...params,
     payload,
     idempotencyKey: localId,

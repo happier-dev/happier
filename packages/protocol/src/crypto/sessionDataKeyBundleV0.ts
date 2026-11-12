@@ -8,6 +8,10 @@ export type SessionDataKeyOpenResult =
   | Readonly<{ status: 'authenticated'; value: unknown }>
   | Readonly<{ status: 'authentication_failed' | 'unsupported' | 'invalid_payload' }>;
 
+export type SessionDataKeyBundleReadResult =
+  | (Extract<SessionDataKeyBundleV0ReadResult, { status: 'ready' }> & Readonly<{ version: 0 | 1 }>)
+  | Readonly<{ status: 'unsupported' }>;
+
 export type SessionDataKeyBundleV0ReadResult =
   | Readonly<{
       status: 'ready';
@@ -20,10 +24,15 @@ export type SessionDataKeyBundleV0ReadResult =
 
 /** Version 0: [0x00 | nonce(12) | ciphertext | authentication tag(16)]. */
 export function frameSessionDataKeyBundleV0(payload: Uint8Array): Uint8Array<ArrayBuffer> {
+  return frameSessionDataKeyBundle(payload, 0);
+}
+
+export function frameSessionDataKeyBundle(payload: Uint8Array, version: 0 | 1): Uint8Array<ArrayBuffer> {
   if (payload.length < SESSION_DATA_KEY_NONCE_BYTES + SESSION_DATA_KEY_TAG_BYTES) {
     throw new Error('Invalid session data-key AES-GCM payload');
   }
   const bundle = new Uint8Array(1 + payload.length);
+  bundle[0] = version;
   bundle.set(payload, 1);
   return bundle;
 }
@@ -33,10 +42,20 @@ export function packSessionDataKeyBundleV0(parts: Readonly<{
   ciphertext: Uint8Array;
   authTag: Uint8Array;
 }>): Uint8Array {
+  return packSessionDataKeyBundle({ ...parts, version: 0 });
+}
+
+export function packSessionDataKeyBundle(parts: Readonly<{
+  nonce: Uint8Array;
+  ciphertext: Uint8Array;
+  authTag: Uint8Array;
+  version: 0 | 1;
+}>): Uint8Array {
   if (parts.nonce.length !== SESSION_DATA_KEY_NONCE_BYTES || parts.authTag.length !== SESSION_DATA_KEY_TAG_BYTES) {
     throw new Error('Invalid session data-key AES-GCM nonce or authentication tag');
   }
   const bundle = new Uint8Array(1 + parts.nonce.length + parts.ciphertext.length + parts.authTag.length);
+  bundle[0] = parts.version;
   bundle.set(parts.nonce, 1);
   bundle.set(parts.ciphertext, 1 + parts.nonce.length);
   bundle.set(parts.authTag, 1 + parts.nonce.length + parts.ciphertext.length);
@@ -44,7 +63,15 @@ export function packSessionDataKeyBundleV0(parts: Readonly<{
 }
 
 export function readSessionDataKeyBundleV0(bundle: Uint8Array): SessionDataKeyBundleV0ReadResult {
-  if (bundle.length < 1 + SESSION_DATA_KEY_NONCE_BYTES + SESSION_DATA_KEY_TAG_BYTES || bundle[0] !== 0) {
+  if (bundle[0] !== 0) return { status: 'unsupported' };
+  const parts = readSessionDataKeyBundle(bundle);
+  if (parts.status !== 'ready') return parts;
+  const { version: _version, ...v0 } = parts;
+  return v0;
+}
+
+export function readSessionDataKeyBundle(bundle: Uint8Array): SessionDataKeyBundleReadResult {
+  if (bundle.length < 1 + SESSION_DATA_KEY_NONCE_BYTES + SESSION_DATA_KEY_TAG_BYTES || (bundle[0] !== 0 && bundle[0] !== 1)) {
     return { status: 'unsupported' };
   }
   // Keep one payload copy, as the existing UI adapter did before awaiting its cipher.
@@ -52,6 +79,7 @@ export function readSessionDataKeyBundleV0(bundle: Uint8Array): SessionDataKeyBu
   const tagOffset = payload.length - SESSION_DATA_KEY_TAG_BYTES;
   return {
     status: 'ready',
+    version: bundle[0],
     payload,
     nonce: payload.subarray(0, SESSION_DATA_KEY_NONCE_BYTES),
     ciphertext: payload.subarray(SESSION_DATA_KEY_NONCE_BYTES, tagOffset),

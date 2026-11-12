@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { PrimaryTurnStatusV1Schema, type PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
@@ -86,8 +87,8 @@ export async function findLatestUnreadAffectingMainTranscriptMessageSeq(
                     },
                     publication,
                 }),
-                select: { id: true, content: true, localId: true },
-            });
+                select: { contentBytes: true, id: true, content: true, localId: true },
+            }).then(row => decodeStoredSessionMessages(row));
             const contentById = new Map(contentRows.map((row) => [row.id, row]));
             for (const row of batch) {
                 const stored = contentById.get(row.id);

@@ -1,3 +1,5 @@
+import { decodeStoredSessionMessage, decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
+import { encodeSessionMessageContentForStorage } from "@/storage/sessionMessageContent";
 import { UsageTimingBoundsV1Schema, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { isPrismaErrorCode, prismaRuntime } from '@/storage/prisma';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
@@ -85,7 +87,7 @@ export const SESSION_TRANSCRIPT_WRITE_SELECT = {
     localId: true,
     sidechainId: true,
     messageRole: true,
-    content: true,
+    contentBytes: true, content: true,
     sourceCreatedAt: true,
     sourceUpdatedAt: true,
     transcriptObservationProvenance: true,
@@ -349,11 +351,13 @@ export async function writeSessionTranscriptMessageInTx(
         sessionId: params.sessionId,
         sessionEncryptionMode: params.sessionEncryptionMode, surfaceItemReference: params.surfaceItemReference,
     });
+    const storedContent = encodeSessionMessageContentForStorage(params.content);
     const message = await tx.sessionMessage.create({
         data: {
             sessionId: params.sessionId,
             seq: next.seq,
-            content: params.content,
+            ...storedContent,
+            content: storedContent.content ?? prismaRuntime.JsonNull,
             usageTimingV1: params.usageTimingV1 ?? prismaRuntime.DbNull,
             localId: params.localId,
             sidechainId: params.sidechainId,
@@ -379,7 +383,7 @@ export async function writeSessionTranscriptMessageInTx(
                 : {}),
         },
         select: SESSION_TRANSCRIPT_WRITE_SELECT,
-    });
+    }).then(row => decodeStoredSessionMessage(row));
 
     if (params.writeAuthority === "hosted") {
         const voiceHistory = next.tag === VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG;
@@ -512,8 +516,8 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
     const orderedItems = [...itemByLocalId.values()];
     const existing = await tx.sessionMessage.findMany({
         where: { sessionId: params.sessionId, localId: { in: orderedItems.map((item) => item.localId) } },
-        select: { ...SESSION_TRANSCRIPT_WRITE_SELECT, surfaceItemReference: true, rowRevision: true },
-    });
+        select: { contentBytes: true, ...SESSION_TRANSCRIPT_WRITE_SELECT, surfaceItemReference: true, rowRevision: true },
+    }).then(row => decodeStoredSessionMessages(row));
     const existingByLocalId = new Map(
         existing.flatMap((message) => message.localId ? [[message.localId, message] as const] : []),
     );

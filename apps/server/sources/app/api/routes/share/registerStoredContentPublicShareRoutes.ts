@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage, decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { type Fastify } from "../../types";
 import { z } from "zod/mini";
 import { StoredContentPublicShareCreateRequestV1Schema } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
@@ -63,7 +64,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
             if (!session || !isSessionTranscriptShareable(session) || (session.encryptionMode !== 'plain' && session.encryptionMode !== 'e2ee')) return { type: 'missing' as const };
             const message = await tx.sessionMessage.findFirst({ where: buildShareableSessionMessagePublicationWhere({
                 where: { sessionId: share.sessionId, id: request.params.messageId, sidechainId: null }, publication: session,
-            }), select: { id: true, content: true, surfaceItemReference: true } });
+            }), select: { contentBytes: true, id: true, content: true, surfaceItemReference: true } }).then(row => decodeStoredSessionMessage(row));
             const reference = readSessionTranscriptSurfaceItemReferencesV1(message?.surfaceItemReference)?.[request.query.referenceIndex ?? 0];
             if (!message || !reference || !publicShareMessagesMatchSessionMode([message], session.encryptionMode)) return { type: 'missing' as const };
             if (session.encryptionMode === 'e2ee' ? tryParseEncryptedDataKeyV0Bytes(share.encryptedDataKey).type === 'error' : share.encryptedDataKey !== null) return { type: 'missing' as const };
@@ -180,7 +181,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
                     if (!pageGrant) return { type: "missing" as const };
                 }
                 messagesAccessToken = createPublicShareMessagesAccessToken({ secret: requirePublicShareAccessGrantSecret(), publicShareId: share.id, sessionId: share.sessionId, tokenHashHex: hash.toString("hex") });
-                const rows = await tx.sessionMessage.findMany({ where: buildShareableSessionMessagePublicationWhere({ where: { sessionId: share.sessionId, sidechainId: null, ...(request.query.beforeSeq ? { seq: { lt: request.query.beforeSeq } } : {}) }, publication: session }), orderBy: { seq: "desc" }, take: request.query.limit + 1 });
+                const rows = await tx.sessionMessage.findMany({ where: buildShareableSessionMessagePublicationWhere({ where: { sessionId: share.sessionId, sidechainId: null, ...(request.query.beforeSeq ? { seq: { lt: request.query.beforeSeq } } : {}) }, publication: session }), orderBy: { seq: "desc" }, take: request.query.limit + 1 }).then(row => decodeStoredSessionMessages(row));
                 const hasMore = rows.length > request.query.limit;
                 if (!publicShareMessagesMatchSessionMode(rows.slice(0, request.query.limit), encryptionMode)) return { type: "missing" as const };
                 const messages = rows.slice(0, request.query.limit).map(row => {

@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { type Fastify } from "../../types";
 import { z } from "zod/mini";
 import { logPublicShareAccess, getUserAgent } from "@/app/share/accessLogger";
@@ -486,7 +487,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                 orderBy: { seq: 'desc' },
                 // One extra row so `hasMore` is observed rather than guessed.
                 take: limit + 1,
-                select: {
+                select: { contentBytes: true,
                     id: true,
                     seq: true,
                     localId: true,
@@ -495,7 +496,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                     createdAt: true,
                     updatedAt: true
                 }
-            });
+            }).then(row => decodeStoredSessionMessages(row));
             const hasMore = fetchedMessages.length > limit;
             const messages = hasMore ? fetchedMessages.slice(0, limit) : fetchedMessages;
             if (!publicShareMessagesMatchSessionMode(messages, sessionEncryptionMode)) return { error: 'Public share not found or expired' };

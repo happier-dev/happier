@@ -1,3 +1,5 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
+import { encodeSessionMessageContentForStorage } from "@/storage/sessionMessageContent";
 import type { Prisma } from '@prisma/client';
 
 import type { Tx } from '@/storage/inTx';
@@ -6,7 +8,7 @@ import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptM
 
 export const SESSION_MESSAGE_WRITE_SELECT = {
     id: true, sessionId: true, seq: true, localId: true, sidechainId: true,
-    messageRole: true, content: true, createdAt: true, updatedAt: true,
+    messageRole: true, contentBytes: true, content: true, createdAt: true, updatedAt: true,
     sourceCreatedAt: true, sourceUpdatedAt: true, transcriptObservationProvenance: true,
     inputAdmissionReceipt: true, authorAccountId: true, rowRevision: true,
 } as const;
@@ -23,13 +25,16 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
     tx: Tx;
     id: string;
     rowRevision: bigint;
-    data: Prisma.SessionMessageUncheckedUpdateInput;
+    data: Omit<Prisma.SessionMessageUncheckedUpdateInput, "content" | "contentBytes"> & { content?: PrismaJson.SessionMessageContent };
 }>) {
+    const storedContent = params.data.content === undefined ? undefined
+        : encodeSessionMessageContentForStorage(params.data.content);
     try {
         const updated = await params.tx.sessionMessage.update({
             where: { id: params.id, rowRevision: params.rowRevision },
             data: {
                 ...params.data,
+                ...(storedContent ? { ...storedContent, content: storedContent.content ?? prismaRuntime.JsonNull } : {}),
                 // Changed opaque content/delivery cannot retain the previous body's timing proof.
                 ...((params.data.content !== undefined || params.data.deliveryResolution !== undefined)
                     && params.data.usageTimingV1 === undefined ? { usageTimingV1: prismaRuntime.DbNull } : {}),
@@ -38,7 +43,7 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
                     ? { surfaceItemReference: prismaRuntime.DbNull } : {}),
             },
             select: SESSION_MESSAGE_WRITE_SELECT,
-        });
+        }).then(row => decodeStoredSessionMessage(row));
         // Corrections bypass transcript insertion's parent cursor write.
         await params.tx.session.update({
             where: { id: updated.sessionId },

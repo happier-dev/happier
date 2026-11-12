@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
@@ -1095,9 +1096,9 @@ async function enqueuePendingMessageWithAdmission(
                 const originalKey = deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original);
                 if (!originalKey) return { ok: false, error: 'invalid-params' } as const;
                 const accepted = await tx.sessionMessage.findFirst({ where: { sessionId, acceptedFollowOriginalKey: originalKey },
-                    select: { id: true, seq: true, localId: true, sidechainId: true, messageRole: true, content: true,
+                    select: { contentBytes: true, id: true, seq: true, localId: true, sidechainId: true, messageRole: true, content: true,
                         inputAdmissionReceipt: true, authorAccountId: true, deliveryResolution: true, createdAt: true, updatedAt: true,
-                        acceptedTurnId: true } });
+                        acceptedTurnId: true } }).then(row => decodeStoredSessionMessage(row));
                 if (accepted?.localId && accepted.messageRole === 'user' && (accepted.acceptedTurnId !== null
                     || readStoredSessionMessageDeliveryResolutionV1(accepted.deliveryResolution)?.kind === 'provider_accepted')) {
                     if (!await settleSessionFollowInputReasonsInTx(tx, { progresses, relations,
@@ -1372,7 +1373,7 @@ async function enqueuePendingMessageWithAdmission(
 
             const terminalTranscript = await tx.sessionMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
-                select: {
+                select: { contentBytes: true,
                     id: true,
                     seq: true,
                     localId: true,
@@ -1387,7 +1388,7 @@ async function enqueuePendingMessageWithAdmission(
                     createdAt: true,
                     updatedAt: true,
                 },
-            });
+            }).then(row => decodeStoredSessionMessage(row));
             if (terminalTranscript) {
                 const identityConflict = {
                     ok: false,
@@ -2398,8 +2399,8 @@ export async function settlePendingInputAdmission(params: Readonly<{
             if (!existing) {
                 const committed = await tx.sessionMessage.findUnique({
                     where: { sessionId_localId: { sessionId, localId } },
-                    select: { id: true, seq: true, localId: true, sidechainId: true, targetExecutionRunId: true, messageRole: true, content: true, inputAdmissionReceipt: true, authorAccountId: true, deliveryResolution: true, replyProgress: true, turnStartWitnessId: true, createdAt: true, updatedAt: true },
-                });
+                    select: { contentBytes: true, id: true, seq: true, localId: true, sidechainId: true, targetExecutionRunId: true, messageRole: true, content: true, inputAdmissionReceipt: true, authorAccountId: true, deliveryResolution: true, replyProgress: true, turnStartWitnessId: true, createdAt: true, updatedAt: true },
+                }).then(row => decodeStoredSessionMessage(row));
                 const state = await readCurrentPendingMutationState(tx, sessionId);
                 if (!committed) return { ok: false, error: "not-found" } as const;
                 const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(committed.inputAdmissionReceipt);
@@ -2482,8 +2483,8 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 && isDeepStrictEqual(existing.content, params.decision.finalContent)
                 ? await tx.sessionMessage.findUnique({
                     where: { sessionId_localId: { sessionId, localId } },
-                    select: { content: true, inputAdmissionReceipt: true },
-                }) : null;
+                    select: { contentBytes: true, content: true, inputAdmissionReceipt: true },
+                }).then(row => decodeStoredSessionMessage(row)) : null;
             // This is the existing exact admission-rejoin proof, before any
             // domain continuation asks for a current Account preference.
             const settledOriginal = committedAdmission !== null
@@ -2904,8 +2905,8 @@ export async function updatePendingRequestedAction(params: Readonly<{
                     requestedAction: requestedActionResult.data,
                     resumeWhenAvailable: params.resumeWhenAvailable,
                 });
+                const session = await reconcileSessionPendingQueueStateInTx(tx, sessionId);
                 if (shouldArmActivation || targetExecutionRunId === null && params.resumeWhenAvailable === false) {
-                    await reconcileSessionPendingQueueStateInTx(tx, sessionId);
                     const activationTarget = shouldArmActivation
                         ? await armPendingActivationAuthorizationInTx({
                             tx,
@@ -2918,16 +2919,17 @@ export async function updatePendingRequestedAction(params: Readonly<{
                     if (!shouldArmActivation) {
                         await reconcilePendingActivationAuthorizationForRemovedRequestInTx({ tx, sessionId, requestId: localId });
                     }
-                    const state = await applyPendingSessionStateChange({ tx, sessionId, activationTarget });
-                    return {
-                        ok: true,
-                        didUpdate: true,
-                        requestedAction: currentAction,
-                        ...(activationTarget ? { activationTarget } : {}),
-                        ...state,
-                    } as const;
+                    if (activationTarget || !shouldArmActivation) {
+                        const state = await applyPendingSessionStateChange({ tx, sessionId, activationTarget });
+                        return {
+                            ok: true,
+                            didUpdate: true,
+                            requestedAction: currentAction,
+                            ...(activationTarget ? { activationTarget } : {}),
+                            ...state,
+                        } as const;
+                    }
                 }
-                const session = await reconcileSessionPendingQueueStateInTx(tx, sessionId);
                 const recipientCursors = session.didRepair
                     ? await markPendingStateChangedRecipients({
                         tx,
@@ -3954,8 +3956,8 @@ export async function resolveAcceptedPendingDelivery(params: {
                                 { messageRole: null },
                             ],
                         },
-                        select: { id: true, seq: true, localId: true, sidechainId: true, targetExecutionRunId: true, messageRole: true, content: true, inputAdmissionReceipt: true, authorAccountId: true, deliveryResolution: true, createdAt: true, updatedAt: true },
-                    });
+                        select: { contentBytes: true, id: true, seq: true, localId: true, sidechainId: true, targetExecutionRunId: true, messageRole: true, content: true, inputAdmissionReceipt: true, authorAccountId: true, deliveryResolution: true, createdAt: true, updatedAt: true },
+                    }).then(row => decodeStoredSessionMessage(row));
                     if (!committed) {
                         return { ok: false, error: "not-found" } as const;
                     }

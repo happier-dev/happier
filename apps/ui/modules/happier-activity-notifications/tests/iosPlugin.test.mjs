@@ -135,7 +135,8 @@ test('a repeated prebuild converges on one target and refreshes its identity', (
   const app = findTarget(project, 'HappierApp');
   assert.equal(app.target.dependencies.length, 1);
   const frameworks = phaseOf(project, extension.target, 'PBXFrameworksBuildPhase');
-  assert.equal(frameworks.files.length, 1);
+  assert.equal(frameworks.files.length, 2);
+  assert.ok(frameworks.files.some(file => file.comment.startsWith('libz.tbd in ')), 'native gzip requires zlib in the extension');
   const references = Object.values(project.pbxFileReferenceSection())
     .filter((file) => file?.path?.includes('Clibsodium.xcframework'));
   assert.equal(references.length, 1);

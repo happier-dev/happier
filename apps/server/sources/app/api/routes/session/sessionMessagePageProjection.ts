@@ -16,6 +16,7 @@ import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessio
 import { issueSessionMessageActionReference } from "@/app/session/sessionMessageActionLookup";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
 import { projectSessionFollowWakeBatchDelivery } from "@/app/session/follow/projectSessionFollowWakeBatchDelivery";
+import { recordAssembledResponse } from "@/app/api/utils/enableSchemaValidation";
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 export const SessionTranscriptStoredContentUnavailableResponseSchema = z.strictObject({
     error: z.literal("session_transcript_stored_content_unavailable"),
@@ -228,7 +229,7 @@ export const SESSION_MESSAGE_PAGE_ROW_SELECT = {
     localId: true,
     sidechainId: true,
     messageRole: true,
-    content: true,
+    contentBytes: true, content: true,
     deliveryResolution: true,
     acceptedTurnKind: true,
     acceptedTurnId: true,
@@ -242,9 +243,9 @@ export const SESSION_MESSAGE_PAGE_ROW_SELECT = {
     inputAdmissionReceipt: true,
     authorAccountId: true,
 } as const satisfies Prisma.SessionMessageSelect;
-export type SessionMessagePageRow = Prisma.SessionMessageGetPayload<{
+export type SessionMessagePageRow = Omit<Prisma.SessionMessageGetPayload<{
     select: typeof SESSION_MESSAGE_PAGE_ROW_SELECT;
-}>;
+}>, "content" | "contentBytes"> & { content: PrismaJson.SessionMessageContent };
 export type SessionMessagePageResponse = {
     status: 200;
     body: z.output<typeof SessionTranscriptMessagePageResponseSchema>;
@@ -296,25 +297,14 @@ export function projectSessionMessagePage(input: Readonly<{
             ? resultMessages[resultMessages.length - 1].seq
             : null
         : null;
-    return { status: 200, body: {
+    // Every member below is admitted here (stored values through their own schemas,
+    // the rest typed construction); the route's serializer does not parse the page again.
+    return { status: 200, body: recordAssembledResponse(SessionTranscriptMessagePageResponseSchema, {
+            // Members follow the response schema's order, the order its parse emitted.
             messages: resultMessages.map((v, index) => ({
                 id: v.id,
                 seq: v.seq,
                 content: parsedResultContents[index]!,
-                ...(!sessionListPreviewProjection ? (() => {
-                    const reference = issueSessionMessageActionReference({
-                        sessionId,
-                        messageId: v.id,
-                        updatedAt: v.updatedAt,
-                    });
-                    return reference ? { messageActionReference: reference } : {};
-                })() : {}),
-                ...(!sessionListPreviewProjection ? (() => {
-                    const deliveryResolution = readStoredSessionMessageDeliveryResolutionV1(v.deliveryResolution);
-                    return deliveryResolution ? { deliveryResolution } : {};
-                })() : {}),
-                ...(!externalShareableProjection && !sessionListPreviewProjection
-                    ? projectSessionFollowWakeBatchDelivery(v) : {}),
                 localId: v.localId,
                 ...(!sessionListPreviewProjection && typeof v.sidechainId === "string" && v.sidechainId
                     ? { sidechainId: v.sidechainId }
@@ -323,6 +313,12 @@ export function projectSessionMessagePage(input: Readonly<{
                     const messageRole = parseSessionMessageRole(v.messageRole);
                     return messageRole ? { messageRole } : {};
                 })(),
+                ...(!sessionListPreviewProjection ? (() => {
+                    const deliveryResolution = readStoredSessionMessageDeliveryResolutionV1(v.deliveryResolution);
+                    return deliveryResolution ? { deliveryResolution } : {};
+                })() : {}),
+                ...(!externalShareableProjection && !sessionListPreviewProjection
+                    ? projectSessionFollowWakeBatchDelivery(v) : {}),
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime(),
                 ...(!sessionListPreviewProjection && v.sourceCreatedAt
@@ -335,6 +331,12 @@ export function projectSessionMessagePage(input: Readonly<{
                     const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(v.transcriptObservationProvenance);
                     return provenance.success ? { transcriptObservationProvenance: provenance.data } : {};
                 })() : {}),
+                // Ordinary pages carry admitted occurrences when present. Only
+                // the explicit publication page asserts completeness with null.
+                ...(externalShareableProjection
+                    ? { surfaceItemReference: v.surfaceItemReference == null ? null : SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(v.surfaceItemReference) }
+                    : !sessionListPreviewProjection && v.surfaceItemReference != null
+                        ? { surfaceItemReference: SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(v.surfaceItemReference) } : {}),
                 ...(() => {
                     if (!externalShareableProjection)
                         return {};
@@ -345,18 +347,20 @@ export function projectSessionMessagePage(input: Readonly<{
                     });
                     return externalShareableActor ? { externalShareableActor } : {};
                 })(),
-                // Ordinary pages carry admitted occurrences when present. Only
-                // the explicit publication page asserts completeness with null.
-                ...(externalShareableProjection
-                    ? { surfaceItemReference: v.surfaceItemReference == null ? null : SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(v.surfaceItemReference) }
-                    : !sessionListPreviewProjection && v.surfaceItemReference != null
-                        ? { surfaceItemReference: SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(v.surfaceItemReference) } : {}),
                 // Transcript pages state object-or-null so clients can retract
                 // stale attribution. Derived evidence may omit presentation.
                 ...(externalShareableProjection || sessionListPreviewProjection
                     ? {}
                     : { ...(pageAccountActors === undefined ? {} : { accountActor: pageAccountActors[index] ?? null }),
                         ...projectSessionInputAdmissionReceipt(v.inputAdmissionReceipt) }),
+                ...(!sessionListPreviewProjection ? (() => {
+                    const reference = issueSessionMessageActionReference({
+                        sessionId,
+                        messageId: v.id,
+                        updatedAt: v.updatedAt,
+                    });
+                    return reference ? { messageActionReference: reference } : {};
+                })() : {}),
             })),
             hasMore: sessionListPreviewProjection
                 ? false
@@ -367,5 +371,5 @@ export function projectSessionMessagePage(input: Readonly<{
             nextBeforeSeq: sessionListPreviewProjection ? null : nextBeforeSeq,
             nextAfterSeq: sessionListPreviewProjection ? null : nextAfterSeq,
             ...(externalShareableProjection ? { publicationBlocked, externalShareableSnapshot } : {}),
-        } };
+        }) };
 }

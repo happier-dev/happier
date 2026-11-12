@@ -1,0 +1,104 @@
+{
+  "schema": "happier.sessionMessageContentVectors.v1",
+  "provenance": {
+    "predecessorHead": "7b0f74960b1393886b994dbda71dcb3439c1ab57",
+    "legacyWriter": "../0.2/apps/cli/src/api/encryption.ts#encryptLegacyWithNonce (executed unchanged)",
+    "aesV0": "fixed nonce original 0.2 envelope layout",
+    "gzip": "Node node:zlib gzip, mtime 0; readers must accept arbitrary valid gzip streams"
+  },
+  "keyBase64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "vectors": [
+    {
+      "name": "aes-v0",
+      "variant": "dataKey",
+      "value": {
+        "role": "user",
+        "content": {
+          "type": "text",
+          "text": "跨端 🗝️"
+        }
+      },
+      "serializedJson": "{\"__happierSerializedJsonValueV1\":true,\"type\":\"json\",\"value\":{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":\"跨端 🗝️\"}}}",
+      "ciphertextBase64": "AAkJCQkJCQkJCQkJCcg6V2Tv/jPUuGxCqs7k0q5Ve6VLPkwz2n2hAwfmUt12qk8axKaZ0MzHzfuYQjjemdYacVXKTMAvS7fSBfwbbSSkT4HgQuVjMn8viYFrp0kN5duST8lXrMhkgJg/fjPLmw/5JvOPUBFyDz7FkH0JEZWMlsD4c06iLvMw39oF5UY1zjEspXViiPGji3zzJR5B"
+    },
+    {
+      "name": "aes-v1-raw",
+      "variant": "dataKey",
+      "value": {
+        "role": "user",
+        "content": {
+          "type": "text",
+          "text": "跨端 🗝️"
+        }
+      },
+      "serializedJson": "{\"__happierSerializedJsonValueV1\":true,\"type\":\"json\",\"value\":{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":\"跨端 🗝️\"}}}",
+      "ciphertextBase64": "AQkJCQkJCQkJCQkJCbNjKmTY9yLUoWBVi/jzyaZYfrZUP2IKxnyZNAr/Qu4RuVdUwqGJmcKRwPKNBSDG0c8GcBnEQpQ4Rq7CQuRaNHS5TIinWv00NGk42Y9l5kUM/8qZVZ9P7ZEyjZEqOSvTzR7kKqWBXkdjEjKTiGXDTorD2sR3oyGqJIFn6Hda5UYUpl9K+zevH3d6cIzr+NhhzQ=="
+    },
+    {
+      "name": "aes-v1-gzip",
+      "variant": "dataKey",
+      "value": {
+        "role": "agent",
+        "content": {
+          "type": "output",
+          "data": "shared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\n"
+        }
+      },
+      "serializedJson": "{\"__happierSerializedJsonValueV1\":true,\"type\":\"json\",\"value\":{\"role\":\"agent\",\"content\":{\"type\":\"output\",\"data\":\"shared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\n\"}}}",
+      "ciphertextBase64": "AQkJCQkJCQkJCQkJCbIHgzOHn0Ok0QkzFGAntg0JAtr+D6TrZsONZjE3Y8OWoUzm5yOlG92xlkS9KYekcAgVG5NkS2Y7eD0ImIa/AE5oBD1SAFvr1NwoSX2oWI84EO0172kz9WuTugpacZUD5wSAs2h1ysK3p4gn6zSTbdKrZAx2UFm/UzzFeMxOmyTKLwOavNcwjZQPxGwt2uuJCstOSUIy6uhQAT8kbNm0IGPBUG78ddEefoeeC7KU8MKLuvjgi4maU/w="
+    },
+    {
+      "name": "secretbox-v0",
+      "variant": "legacy",
+      "value": {
+        "role": "user",
+        "content": {
+          "type": "text",
+          "text": "跨端 🗝️"
+        }
+      },
+      "serializedJson": "{\"__happierSerializedJsonValueV1\":true,\"type\":\"json\",\"value\":{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":\"跨端 🗝️\"}}}",
+      "ciphertextBase64": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLvqXovlPmZdyYloRnB6rcd9227QiV/+hRLYLbGToeES3KgDF7XqW6Lmg80YLkEx2+z/HXd/vRe+jOjd4LlQKBQVbanwsCnEs8pAS2WlNbqgU+7HHbzfguCDFkJ4NH5Wsn9gPmrU7O6TkLBsPgVpP3iwtcX/D7sBmMCe7oGCtRM/SDV7ONsJP9AuABKNL+8xc="
+    },
+    {
+      "name": "secretbox-v1-raw",
+      "variant": "legacy",
+      "value": {
+        "role": "user",
+        "content": {
+          "type": "text",
+          "text": "跨端 🗝️"
+        }
+      },
+      "serializedJson": "{\"__happierSerializedJsonValueV1\":true,\"type\":\"json\",\"value\":{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":\"跨端 🗝️\"}}}",
+      "ciphertextBase64": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsL0H8iwXfK5F8ptuzlyKTxfabvkAii9vlRNI7MOAwJCiXHhSJkX4uDMmkE5o/9Ay7Z3OmZcfzBMuaYgNce0hqZCU/GnkcMkh8rqR2mHUsa81Uj73ic1eB5Didzd41JpGcm7BLttxjWqGBdC8r1EYvv3RpBU6b1vk+dFOK+ADObbOvMG7cCYPz1CJJWH3+h8xdU"
+    },
+    {
+      "name": "secretbox-v1-gzip",
+      "variant": "legacy",
+      "value": {
+        "role": "agent",
+        "content": {
+          "type": "output",
+          "data": "shared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\nshared compression fixture 🗝️\n"
+        }
+      },
+      "serializedJson": "{\"__happierSerializedJsonValueV1\":true,\"type\":\"json\",\"value\":{\"role\":\"agent\",\"content\":{\"type\":\"output\",\"data\":\"shared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\nshared compression fixture 🗝️\\n\"}}}",
+      "ciphertextBase64": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLERwXXtKfCO0VVY5uD35GqKeLOV/9npghROeqp5TddY6W+U7Ob01iktYQtLQ1IgNexPIrVH7tsPm41mEu/r37qIjV9c2sm+0ol45sxyn/x2/yp81pj0am7pJj53+EGq0SAzVBDe6qsJr8PFGFWTU/9wAlymsBKspJoVgKY2LLT7OkpX8Dk4Tgfy/0j8S1jXWK5mIUvLTHvGflEYgLxtrCdz3uWML4djUWFcEjGgmtckOZ2FlMwzzwhg=="
+    }
+  ],
+  "messageNonceVectors": [
+    {
+      "variant": "legacy",
+      "idempotencyKey": "codec-fixture",
+      "value": null,
+      "nonceBase64": "/jc19OLMseNWy6HqmbWAjcG3r1JjBoQp"
+    },
+    {
+      "variant": "dataKey",
+      "idempotencyKey": "codec-fixture",
+      "value": null,
+      "nonceBase64": "J2MeVwV4j/vR9heN"
+    }
+  ]
+}

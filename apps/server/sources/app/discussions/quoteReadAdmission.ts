@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { DiscussionAnchorV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { resolveEffectiveSessionAccessForSessionsInTx } from '@/app/session/access/sessionAccess';
@@ -81,7 +82,7 @@ export async function admitDiscussionQuoteSourcesInTx(tx: Tx, input: Readonly<{
     const readableMessages = new Set<string>();
     for (const chunk of portableQueryChunks({ values: sessions, bindingsPerValue: 2, fixedBindings: 1 })) {
         const rows = await tx.sessionMessage.findMany({ where: { OR: chunk.map(source => ({ sessionId: source.sessionId, id: source.messageId })) },
-            select: { id: true, sessionId: true, content: true } });
+            select: { contentBytes: true, id: true, sessionId: true, content: true } }).then(row => decodeStoredSessionMessages(row));
         for (const row of rows) {
             const envelope = SessionStoredMessageContentSchema.safeParse(row.content);
             if (envelope.success && envelope.data.t === readySessions.get(row.sessionId)) readableMessages.add(`session:${row.sessionId}:${row.id}`);

@@ -276,7 +276,7 @@ export class SessionEncryption {
             'sync.encryption.session.encryptRawRecord',
             { items: 1 },
             async () => {
-                const encrypted = await this.encryptor.encrypt([record]);
+                const encrypted = await this.encryptor.encrypt([record], { contentCodec: 'session-message' });
                 return encodeBase64(encrypted[0], 'base64');
             },
         );

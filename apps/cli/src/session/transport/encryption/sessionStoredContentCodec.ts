@@ -11,6 +11,7 @@ import {
   encodeBase64,
   encrypt,
   encryptWithDerivedNonce,
+  encryptSessionMessage,
 } from '../../../api/encryption';
 
 export type SessionEncryptionContext = Readonly<{
@@ -38,22 +39,29 @@ export class SessionStoredContentError extends Error {
  * Domain codecs validate the payload; the established mode and deterministic
  * nonce namespace are preserved at this platform boundary.
  */
-export function sealSessionStoredContent(
-  params: SessionStoredContentCryptoContext & Readonly<{
-    payload: Extract<StrictSessionStoredMessageContentEnvelope, { t: 'plain' }>['v'];
-    idempotencyKey?: string;
-  }>,
+type SessionContentSealParams = SessionStoredContentCryptoContext & Readonly<{
+  payload: Extract<StrictSessionStoredMessageContentEnvelope, { t: 'plain' }>['v'];
+  idempotencyKey?: string;
+}>;
+
+export function sealSessionStoredContent(params: SessionContentSealParams): StrictSessionStoredMessageContentEnvelope {
+  return sealSessionContent(params, encryptSessionPayload);
+}
+
+/** Only fresh transcript writes activate the content-byte frame. */
+export function sealSessionMessageContent(params: SessionContentSealParams): StrictSessionStoredMessageContentEnvelope {
+  return sealSessionContent(params, encryptSessionMessagePayload);
+}
+
+function sealSessionContent(
+  params: SessionContentSealParams,
+  encryptPayload: typeof encryptSessionPayload,
 ): StrictSessionStoredMessageContentEnvelope {
-  if (params.mode === 'plain') {
-    return Object.freeze({ t: 'plain' as const, v: params.payload });
-  }
+  if (params.mode === 'plain') return Object.freeze({ t: 'plain' as const, v: params.payload });
   return Object.freeze({
     t: 'encrypted' as const,
-    c: encryptSessionPayload({
-      ctx: params.ctx,
-      payload: params.payload,
-      ...(params.idempotencyKey === undefined ? {} : { idempotencyKey: params.idempotencyKey }),
-    }),
+    c: encryptPayload({ ctx: params.ctx, payload: params.payload,
+      ...(params.idempotencyKey === undefined ? {} : { idempotencyKey: params.idempotencyKey }) }),
   });
 }
 
@@ -95,12 +103,26 @@ export function encryptSessionPayload(params: Readonly<{
     : deriveIdempotentSessionPayloadNonce({
         ctx: params.ctx,
         idempotencyKey: params.idempotencyKey,
-        payload: params.payload,
+        payloadBytes: new TextEncoder().encode(stringifySerializedJsonValue(params.payload)),
+        domain: IDEMPOTENT_SESSION_PAYLOAD_NONCE_DOMAIN_V1,
       });
   const ciphertext = nonce === undefined
     ? encrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, params.payload)
     : encryptWithDerivedNonce(params.ctx.encryptionKey, params.ctx.encryptionVariant, params.payload, nonce);
   return encodeBase64(ciphertext, 'base64');
+}
+
+export function encryptSessionMessagePayload(params: Readonly<{
+  ctx: SessionEncryptionContext;
+  payload: unknown;
+  idempotencyKey?: string;
+}>): string {
+  const idempotencyKey = params.idempotencyKey;
+  return encodeBase64(encryptSessionMessage(params.ctx.encryptionKey, params.ctx.encryptionVariant, params.payload,
+    idempotencyKey === undefined ? undefined : encodedPayload => deriveIdempotentSessionPayloadNonce({
+      ctx: params.ctx, idempotencyKey, payloadBytes: encodedPayload,
+      domain: 'happier.session-message.idempotent-content.v1',
+    })), 'base64');
 }
 
 /**
@@ -115,17 +137,18 @@ const IDEMPOTENT_SESSION_PAYLOAD_NONCE_DOMAIN_V1 =
 function deriveIdempotentSessionPayloadNonce(params: Readonly<{
   ctx: SessionEncryptionContext;
   idempotencyKey: string;
-  payload: unknown;
+  payloadBytes: Uint8Array;
+  domain: string;
 }>): Uint8Array {
   // A keyed synthetic nonce makes same-ID/same-content retries byte-identical
   // without reusing a nonce when either the identity or plaintext changes.
   const fields = [
-    IDEMPOTENT_SESSION_PAYLOAD_NONCE_DOMAIN_V1,
+    params.domain,
     params.ctx.encryptionVariant,
     params.idempotencyKey,
-    stringifySerializedJsonValue(params.payload),
+    params.payloadBytes,
   ];
-  const encodedFields = fields.map((field) => new TextEncoder().encode(field));
+  const encodedFields = fields.map((field) => typeof field === 'string' ? new TextEncoder().encode(field) : field);
   const totalLength = encodedFields.reduce((total, field) => total + 4 + field.length, 0);
   const input = new Uint8Array(totalLength);
   const view = new DataView(input.buffer);

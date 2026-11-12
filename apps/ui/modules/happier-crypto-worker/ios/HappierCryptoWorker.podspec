@@ -14,6 +14,7 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.9'
   s.source         = { :path => '.' }
   s.static_framework = true
+  s.libraries = 'z'
 
   s.dependency 'ExpoModulesCore'
   s.dependency 'react-native-libsodium'

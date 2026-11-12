@@ -10,9 +10,19 @@ import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeCon
 
 // Database transport is the only substitute. Route parsing, transaction handling,
 // Account mode, stored-content opening, kind policy and publication owner are real.
-const mocks = createDbMocks({ artifact: ['findFirst'], publicSessionShare: ['findUnique', 'create', 'update'], session: ['findUnique'], sessionMessage: ['findFirst'], sessionSystemRecord: ['findFirst'], homeSettings: ['findUnique'], homeGovernancePolicy: ['findUnique'] } as const);
-const transactions = createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...homeConfigSnapshotPostgresQueryMock, ...mocks.db }));
-installDbModuleMock(() => ({ db: transactions.wrapDb(mocks.db) }));
+const mocks = createDbMocks({ artifact: ['findFirst', 'findMany'], publicSessionShare: ['findUnique', 'create', 'update'], session: ['findUnique'], sessionMessage: ['findFirst'], sessionSystemRecord: ['findFirst'], homeSettings: ['findUnique'], homeGovernancePolicy: ['findUnique'] } as const);
+const transactions = createDbTransactionMock(() => ({
+    ...inTxPostgresControlStatementMock, ...mocks.db,
+    async $queryRawUnsafe(query: string, id: unknown) {
+        // Persistence locks return the selected fixture identity; domain admission stays real.
+        if ((query === 'SELECT "id" FROM "Account" WHERE "id" = $1 FOR KEY SHARE'
+            || query === 'SELECT "id" FROM "Artifact" WHERE "id" = $1 FOR NO KEY UPDATE') && typeof id === 'string') {
+            return [{ id }];
+        }
+        return homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call(this, query, id);
+    },
+}));
+installDbModuleMock(() => ({ db: transactions.wrapDb({ ...mocks.db, ...homeConfigSnapshotPostgresQueryMock }) }));
 // Replace the SQLite connection boundary as well as the Prisma write transport.
 vi.doMock('@/storage/prisma', async importOriginal => ({
     ...await importOriginal<typeof import('@/storage/prisma')>(),
@@ -32,6 +42,8 @@ describe('Artifact public-share kind admission through the HTTP owner', () => {
         createdAt: new Date(1), updatedAt: new Date(1), createdByUserId: 'owner' };
     beforeEach(() => {
         mocks.reset();
+        mocks.db.artifact.findMany.mockResolvedValue([{ id: artifactId, kind: null, accountId: 'owner',
+            account: { encryptionMode: 'plain' }, accountGrants: [], teamGrants: [], groupGrants: [] }]);
         mocks.db.homeSettings.findUnique.mockResolvedValue(null);
         mocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
         mocks.db.publicSessionShare.findUnique.mockResolvedValue(share);

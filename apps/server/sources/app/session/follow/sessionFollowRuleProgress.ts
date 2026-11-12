@@ -1,3 +1,4 @@
+import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1, isSessionFollowFrontierEqualV1, type SessionFollowFrontierV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { buildSessionFollowRulePhysicalKeyV1, type SessionFollowRuleStoredRowV1, type SessionFollowRuleWitnessV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
@@ -186,7 +187,7 @@ export async function readSessionFollowOriginalOccurrenceFrontiersInTx(tx: Tx, i
     if (occurrence.sourceMessage) {
         const original = await tx.sessionMessage.findUnique({ where: { sessionId_localId: {
             sessionId: source.id, localId: occurrence.sourceMessage.localId,
-        } }, select: { seq: true, content: true, sidechainId: true, createdAt: true, messageRole: true, inputAdmissionReceipt: true } });
+        } }, select: { contentBytes: true, seq: true, content: true, sidechainId: true, createdAt: true, messageRole: true, inputAdmissionReceipt: true } }).then(row => decodeStoredSessionMessage(row));
         const content = SessionStoredMessageContentSchema.safeParse(original?.content);
         if (!original || original.seq !== occurrence.sourceMessage.seq || original.seq > source.seq || original.sidechainId !== null
             || !content.success || (source.encryptionMode === 'plain') !== (content.data.t === 'plain')) return null;

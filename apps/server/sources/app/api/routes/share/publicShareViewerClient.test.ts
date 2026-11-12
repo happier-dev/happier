@@ -1,3 +1,4 @@
+import { sealSessionMessageDataKeyBundle } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
 import { describe, expect, it, vi } from "vitest";
 import { createContext, runInContext, runInNewContext } from "node:vm";
 import { encodePlainArtifactStoredContent, sealPublicShareDataKeyV1,
@@ -140,7 +141,7 @@ describe("isolated public viewer browser boundary", () => {
         expect(rows[0]?.attributes['data-tool-status']).toBe('permission_blocked');
         expect(rows[0]?.childNodes.slice(0, 2).map(element => element.textContent)).toEqual(['Run pwd', 'Permission denied']);
     });
-    it.each(['plain', 'e2ee'] as const)('renders decrypted %s Codex tool records as the canonical transcript row', async mode => {
+    it.each([['plain', 0], ['e2ee', 0], ['e2ee', 1]] as const)('renders decrypted %s frame %i Codex tool records as the canonical transcript row', async (mode, version) => {
         const key = new Uint8Array(32).fill(9);
         // Redacted stored-record shapes emitted by createRuntimeTranscriptProjector
         // and persisted by createSessionMessage before the share route envelopes them.
@@ -159,7 +160,7 @@ describe("isolated public viewer browser boundary", () => {
         expect(canonical).toMatchObject([{ kind: 'tool-call', tool: { name: 'exec_command', state: 'completed' } }]);
         const envelope = async (value: unknown) => mode === 'plain'
             ? { t: 'plain' as const, v: value }
-            : { t: 'encrypted' as const, c: encodeBase64(await sealSessionDataKeyBundleV0(value, key)) };
+            : { t: 'encrypted' as const, c: encodeBase64(await (version === 1 ? sealSessionMessageDataKeyBundle(value, key) : sealSessionDataKeyBundleV0(value, key))) };
         const payload = {
             subject: { kind: 'session', id: 'session' }, encryptionMode: mode,
             encryptedDataKey: mode === 'plain' ? null : sealPublicShareDataKeyV1({

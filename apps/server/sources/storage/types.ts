@@ -12,6 +12,9 @@ declare global {
                   v: unknown;
               };
 
+        // Physical JSON is null when contentBytes holds the ciphertext.
+        type SessionMessageStoredContent = SessionMessageContent | null;
+
         // Pending queue content types (same encrypted wrapper).
         type SessionPendingMessageContent = SessionMessageContent;
 

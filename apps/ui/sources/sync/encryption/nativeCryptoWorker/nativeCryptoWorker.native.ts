@@ -23,7 +23,14 @@ type NativeCapabilitiesResult = Readonly<{
     supportedOperations?: unknown;
 }>;
 
+type NativeContentOpenResult = Readonly<{ status: 'authenticated'; serializedJson: string }>
+    | Readonly<{ status: 'unsupported' | 'authentication_failed' | 'invalid_payload' }>;
+
 type HappierCryptoWorkerNativeModule = Readonly<{
+    openAesGcmContentBatch?: (items: readonly NativeCryptoWorkerAesGcmJsonItem[]) => Promise<readonly NativeContentOpenResult[]>;
+    encodeContentValueBase64?: (jsonBase64: string) => Promise<string | null>;
+    decodeContentValueBase64?: (frameBase64: string) => Promise<string | null>;
+    encryptAesGcmContentBatch?: (items: readonly Readonly<{ jsonBase64: string; keyBase64: string; nonceBase64: string }>[]) => Promise<readonly (string | null)[]>;
     derivePasswordEnvelopeKey?: (request: NativePasswordEnvelopeKeyRequest) => Promise<string>;
     getCapabilities?: () => Promise<NativeCapabilitiesResult>;
     echoBatchForDiagnostics?: (values: readonly string[]) => Promise<readonly string[]>;
@@ -37,6 +44,37 @@ type HappierCryptoWorkerNativeModule = Readonly<{
         items: readonly NativeCryptoWorkerAesGcmJsonItem[],
     ) => Promise<readonly (string | null)[]>;
 }>;
+
+/** Codec and byte AES remain on the native worker queue; no string cipher fallback. */
+export async function encodeNativeContentValue(json: Uint8Array): Promise<Uint8Array> {
+    const module = getNativeModule();
+    if (!module?.encodeContentValueBase64) throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing);
+    const encoded = await module.encodeContentValueBase64(encodeBase64(json));
+    if (encoded === null) throw new Error('Native content encoding failed');
+    return decodeBase64(encoded);
+}
+
+export async function decodeNativeContentValue(frame: Uint8Array): Promise<string | null> {
+    const module = getNativeModule();
+    if (!module?.decodeContentValueBase64) throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing);
+    return await module.decodeContentValueBase64(encodeBase64(frame));
+}
+
+export async function sealNativeSessionMessageContent(json: Uint8Array, key: Uint8Array, nonce: Uint8Array): Promise<Uint8Array> {
+    const module = getNativeModule();
+    if (!module?.encryptAesGcmContentBatch) throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing);
+    const [sealed] = await module.encryptAesGcmContentBatch([{ jsonBase64: encodeBase64(json), keyBase64: encodeBase64(key), nonceBase64: encodeBase64(nonce) }]);
+    if (sealed == null) throw new Error('Native content encryption failed');
+    return decodeBase64(sealed);
+}
+
+export async function openNativeSessionMessageContent(bundle: Uint8Array, key: Uint8Array): Promise<NativeContentOpenResult> {
+    const module = getNativeModule();
+    if (!module?.openAesGcmContentBatch) throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing);
+    const [opened] = await module.openAesGcmContentBatch([{ encryptedPayloadBase64: encodeBase64(bundle), keyBase64: encodeBase64(key) }]);
+    if (!opened) throw new Error('Native content decryption returned no result');
+    return opened;
+}
 
 const probeEchoPayload = 'happier-crypto-worker-probe';
 

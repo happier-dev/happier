@@ -1,7 +1,7 @@
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { deriveBoxPublicKeyFromSeed, openBoxBundle, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
-import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
+import { stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 export function getPublicKeyForBox(secretKey: Uint8Array): Uint8Array {
     return deriveBoxPublicKeyFromSeed(secretKey);
@@ -22,10 +22,14 @@ export function decryptBox(encryptedBundle: Uint8Array, recipientSecretKey: Uint
     });
 }
 
-export function encryptSecretBox(data: any, secret: Uint8Array): Uint8Array {
+export function encryptSecretBox(data: unknown, secret: Uint8Array): Uint8Array {
+    return encryptSecretBoxBytes(new TextEncoder().encode(stringifySerializedJsonValue(data)), secret);
+}
+
+export function encryptSecretBoxBytes(data: Uint8Array, secret: Uint8Array): Uint8Array {
     const nonce = getRandomBytes(sodium.crypto_secretbox_NONCEBYTES);
     const encrypted = sodium.crypto_secretbox_easy(
-        new TextEncoder().encode(stringifySerializedJsonValue(data)),
+        data,
         nonce,
         secret
     );
@@ -35,7 +39,7 @@ export function encryptSecretBox(data: any, secret: Uint8Array): Uint8Array {
     return result;
 }
 
-export function decryptSecretBox(data: Uint8Array, secret: Uint8Array, onAuthenticationFailure?: () => void): any | null {
+export function decryptSecretBoxBytes(data: Uint8Array, secret: Uint8Array, onAuthenticationFailure?: () => void): Uint8Array | null {
     const nonce = data.slice(0, sodium.crypto_secretbox_NONCEBYTES);
     const encrypted = data.slice(sodium.crypto_secretbox_NONCEBYTES);
 
@@ -50,9 +54,5 @@ export function decryptSecretBox(data: Uint8Array, secret: Uint8Array, onAuthent
         onAuthenticationFailure?.();
         return null;
     }
-    try {
-        return parseSerializedJsonValue(new TextDecoder().decode(decrypted));
-    } catch {
-        return null;
-    }
+    return decrypted;
 }

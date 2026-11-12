@@ -2,7 +2,7 @@
 
 import {
     decodeBase64, decodePlainArtifactStoredContent, isPlainArtifactStoredContent,
-    openPublicShareDataKeyV1, openSessionDataKeyBundleV0,
+    openPublicShareDataKeyV1, openSessionDataKeyBundle,
     readStoredContentPublicShareSecretV1, StoredContentPublicShareReadResponseV1Schema,
     ArtifactBlobReferenceV1Schema, artifactHtmlBundleFromBodyV1, isArtifactHtmlHeaderV1,
     readSessionDataKeyBundleV0, openAesGcmPayloadWebCrypto, type ArtifactHtmlBundleV1,
@@ -88,7 +88,7 @@ export async function loadPublicShareViewerContent(input: ViewerInput): Promise<
             if (!isPlainArtifactStoredContent(encoded)) throw new Error("Content mode mismatch");
             return decodePlainArtifactStoredContent(encoded);
         }
-        const opened = await openSessionDataKeyBundleV0(decodeBase64(encoded), key!);
+        const opened = await openSessionDataKeyBundle(decodeBase64(encoded), key!);
         if (opened.status !== "authenticated") throw new Error("Content authentication failed");
         return opened.value;
     };

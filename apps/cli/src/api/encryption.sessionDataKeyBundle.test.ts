@@ -29,7 +29,7 @@ describe('session data-key cross-adapter contract', () => {
   it('returns typed failure for wrong versions, truncated framing, wrong keys and tampered tags', async () => {
     const ciphertext = encryptWithDataKey({ message: 'authenticated' }, key);
     const wrongVersion = ciphertext.slice();
-    wrongVersion[0] = 1;
+    wrongVersion[0] = 99;
     const tampered = ciphertext.slice();
     tampered[tampered.length - 1] ^= 1;
     for (const bundle of [wrongVersion, new Uint8Array([0])]) {

@@ -8,7 +8,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { sealSessionStoredContent, resolveSessionStoredContentEncryptionMode, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { sealSessionMessageContent, resolveSessionStoredContentEncryptionMode, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { hasEffectiveSessionGoalChange } from '@/session/goalControls/commitGoalFollowOccurrence';
 import { logger } from '@/ui/logger';
@@ -137,11 +137,11 @@ export function createDaemonSessionMutationCustody(params: Readonly<{
           const mode = resolveSessionStoredContentEncryptionMode(rawSession);
           let content: SessionStoredMessageContent;
           if (mode === 'plain') {
-            content = sealSessionStoredContent({ mode, ctx: null, payload });
+            content = sealSessionMessageContent({ mode, ctx: null, payload });
           } else {
             const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
             if (!ctx) throw new AccountEncryptionMaterialUnavailableError();
-            content = sealSessionStoredContent({ mode, ctx, payload });
+            content = sealSessionMessageContent({ mode, ctx, payload });
           }
           // The successful metadata write already admitted this Session material.
           // A second HTTP lookup must not lose the original before journal admission.
@@ -215,7 +215,7 @@ export function createDaemonSessionMutationCustody(params: Readonly<{
       if (resolved.sessionId !== sessionId || resolved.rawSession.id !== sessionId) {
         throw new DaemonSessionMutationAdmissionError('session_unavailable');
       }
-      const content: SessionStoredMessageContent = sealSessionStoredContent({
+      const content: SessionStoredMessageContent = sealSessionMessageContent({
         ...resolved,
         payload,
       });

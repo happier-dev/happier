@@ -17,7 +17,7 @@ enum HappierCryptoWorkerSecretbox {
       else {
         return nil
       }
-      return String(data: opened, encoding: .utf8)
+      return HappierCryptoWorkerContentCodec.decodeLegacy(opened).flatMap { String(data: $0, encoding: .utf8) }
     }
   }
 

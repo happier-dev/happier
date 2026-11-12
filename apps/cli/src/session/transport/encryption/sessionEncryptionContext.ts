@@ -24,8 +24,10 @@ import {
 import {
   decryptSessionPayload,
   encryptSessionPayload,
+  encryptSessionMessagePayload,
   openSessionStoredContent,
   sealSessionStoredContent,
+  sealSessionMessageContent,
   SessionStoredContentError,
   type SessionEncryptionContext,
   type SessionStoredContentCryptoContext,
@@ -35,8 +37,10 @@ import {
 export {
   decryptSessionPayload,
   encryptSessionPayload,
+  encryptSessionMessagePayload,
   openSessionStoredContent,
   sealSessionStoredContent,
+  sealSessionMessageContent,
   SessionStoredContentError,
 };
 export type {

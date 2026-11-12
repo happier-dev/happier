@@ -1,9 +1,11 @@
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { encodeContentValue, decodeContentValue, decodeLegacyContentValue } from '@happier-dev/protocol/crypto/contentByteCodec';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 as decodeBase64Protocol, encodeBase64 as encodeBase64Protocol } from '@happier-dev/protocol/crypto/base64';
 import { deriveBoxPublicKeyFromSeed, openBoxBundle, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
-import { packSessionDataKeyBundleV0, parseSessionDataKeyValue, readSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_BYTES, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
-import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
+import { packSessionDataKeyBundle, parseSessionDataKeyValue, readSessionDataKeyBundle, serializeSessionDataKeyValue, SESSION_DATA_KEY_BYTES, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import { stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 import type { Base64Variant } from '@happier-dev/protocol';
 
 /**
@@ -70,11 +72,15 @@ export function libsodiumDecryptForSecretKey(
  * @param secret - The secret key to use for encryption
  * @returns The encrypted data
  */
-function encryptLegacyWithNonce(data: any, secret: Uint8Array, nonce: Uint8Array): Uint8Array {
+function encryptLegacyWithNonce(data: unknown, secret: Uint8Array, nonce: Uint8Array): Uint8Array {
+  return encryptLegacyBytes(new TextEncoder().encode(stringifySerializedJsonValue(data)), secret, nonce);
+}
+
+function encryptLegacyBytes(plaintext: Uint8Array, secret: Uint8Array, nonce: Uint8Array): Uint8Array {
   if (nonce.length !== tweetnacl.secretbox.nonceLength) {
     throw new Error(`Legacy encryption nonce must be ${tweetnacl.secretbox.nonceLength} bytes`);
   }
-  const encrypted = tweetnacl.secretbox(new TextEncoder().encode(stringifySerializedJsonValue(data)), nonce, secret);
+  const encrypted = tweetnacl.secretbox(plaintext, nonce, secret);
   const result = new Uint8Array(nonce.length + encrypted.length);
   result.set(nonce);
   result.set(encrypted, nonce.length);
@@ -89,13 +95,6 @@ export type DecryptionResult =
   | Readonly<{ status: 'authenticated'; value: unknown }>
   | Readonly<{ status: 'authentication_failed' | 'unsupported' | 'invalid_payload' }>;
 
-function parseAuthenticatedContent(decrypted: Uint8Array): DecryptionResult {
-  try {
-    return { status: 'authenticated', value: parseSerializedJsonValue(new TextDecoder().decode(decrypted)) };
-  } catch {
-    return { status: 'invalid_payload' };
-  }
-}
 
 /**
  * Decrypt data using the secret key
@@ -119,7 +118,7 @@ export function decryptLegacyResult(data: Uint8Array, secret: Uint8Array): Decry
   if (!decrypted) {
     return { status: 'authentication_failed' };
   }
-  return parseAuthenticatedContent(decrypted);
+  return decodeLegacyContentValue(decrypted, gunzipSync);
 }
 
 /**
@@ -128,13 +127,16 @@ export function decryptLegacyResult(data: Uint8Array, secret: Uint8Array): Decry
  * @param dataKey - The 32-byte AES-256 key
  * @returns The encrypted data bundle (nonce + ciphertext + auth tag)
  */
-function encryptWithDataKeyAndNonce(data: any, dataKey: Uint8Array, nonce: Uint8Array): Uint8Array {
+function encryptWithDataKeyAndNonce(data: unknown, dataKey: Uint8Array, nonce: Uint8Array): Uint8Array {
+  return encryptDataKeyBytes(new TextEncoder().encode(serializeSessionDataKeyValue(data)), dataKey, nonce, 0);
+}
+
+function encryptDataKeyBytes(plaintext: Uint8Array, dataKey: Uint8Array, nonce: Uint8Array, version: 0 | 1): Uint8Array {
   if (nonce.length !== SESSION_DATA_KEY_NONCE_BYTES) {
     throw new Error('Data-key encryption nonce must be 12 bytes');
   }
   const cipher = createCipheriv('aes-256-gcm', dataKey, nonce);
 
-  const plaintext = new TextEncoder().encode(serializeSessionDataKeyValue(data));
   const encrypted = Buffer.concat([
     cipher.update(plaintext),
     cipher.final()
@@ -142,7 +144,21 @@ function encryptWithDataKeyAndNonce(data: any, dataKey: Uint8Array, nonce: Uint8
 
   const authTag = cipher.getAuthTag();
 
-  return packSessionDataKeyBundleV0({ nonce, ciphertext: encrypted, authTag });
+  return packSessionDataKeyBundle({ nonce, ciphertext: encrypted, authTag, version });
+}
+
+/** SessionMessage alone opts in to the shared content-byte frame. */
+export function encryptSessionMessage(
+  key: Uint8Array,
+  variant: 'legacy' | 'dataKey',
+  value: unknown,
+  nonceForPlaintext?: (plaintext: Uint8Array) => Uint8Array,
+): Uint8Array {
+  const plaintext = encodeContentValue(value, gzipSync);
+  const nonce = nonceForPlaintext?.(plaintext);
+  return variant === 'legacy'
+    ? encryptLegacyBytes(plaintext, key, nonce ?? getRandomBytes(tweetnacl.secretbox.nonceLength))
+    : encryptDataKeyBytes(plaintext, key, nonce ?? getRandomBytes(SESSION_DATA_KEY_NONCE_BYTES), 1);
 }
 
 export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
@@ -176,7 +192,7 @@ export function decryptWithDataKey(bundle: Uint8Array, dataKey: Uint8Array): any
 }
 
 export function decryptWithDataKeyResult(bundle: Uint8Array, dataKey: Uint8Array): DecryptionResult {
-  const parts = readSessionDataKeyBundleV0(bundle);
+  const parts = readSessionDataKeyBundle(bundle);
   if (parts.status !== 'ready' || dataKey.length !== SESSION_DATA_KEY_BYTES) {
     return { status: 'unsupported' };
   }
@@ -193,7 +209,7 @@ export function decryptWithDataKeyResult(bundle: Uint8Array, dataKey: Uint8Array
   } catch {
     return { status: 'authentication_failed' };
   }
-  return parseSessionDataKeyValue(new TextDecoder().decode(decrypted));
+  return parts.version === 1 ? decodeContentValue(decrypted, gunzipSync) : parseSessionDataKeyValue(new TextDecoder().decode(decrypted));
 }
 
 export function encrypt(

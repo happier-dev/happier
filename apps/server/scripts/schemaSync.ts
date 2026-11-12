@@ -124,6 +124,9 @@ function generateProviderSchemaFromPostgres(
         // Prisma's default Bytes mapping is BLOB and would disagree with that storage contract.
         body = body.replace(/^model\s+(?:Artifact|ArtifactRevision|ArtifactKeyEnvelope)\s+\{[\s\S]*?^\}/gm,
             (model) => model.replace(/^([ \t]*\w+\s+Bytes\??)(?!\?)(?![^\n]*@db\.)/gm, "$1 @db.LongBlob"));
+        // SessionMessage ciphertext retains the existing JSON column's message capacity.
+        body = body.replace(/^model\s+SessionMessage\s+\{[\s\S]*?^\}/gm,
+            model => model.replace(/^([ \t]*contentBytes\s+Bytes\?)(?![^\n]*@db\.)/m, "$1 @db.LongBlob"));
         // Personal Follow policy and accepted one-shot source references are
         // serialized documents, not VARCHAR(191) identifiers.
         body = body.replace(/^model\s+AccountSessionFollow\s+\{[\s\S]*?^\}/gm,
@@ -167,6 +170,7 @@ function generateProviderSchemaFromPostgres(
             body = body.replace(/^(\s*(?:runLifecycleConfigurationJson|causeRunLifecycleEvidenceJson)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowAcceptedSnapshotEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowCheckpointEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*workflowDisplaySummaryEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowInvocationJson\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*contentEnvelope\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 
