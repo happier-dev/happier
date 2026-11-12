@@ -84,7 +84,7 @@ export type TriageSourceSettingsDiscoveryFailureV1 = Readonly<{
 export type TriageSourceSettingsDiscoveryV1 =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'unreadable' }>
-  | Readonly<{ kind: 'unreachable'; failure: TriageSourceFailureV1 | null; message: string | null }>
+  | Readonly<{ kind: 'unreachable'; failure: TriageSourceReadFailureV1 | null; message: string | null }>
   | Readonly<{ kind: 'outcomeUnknown' }>
   | Readonly<{
     kind: 'listed';
@@ -134,7 +134,7 @@ export type TriageSourceSettingsConfiguredInstanceV1 = Readonly<{
 export type TriageSourceSettingsConfiguredV1 =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'unreadable' }>
-  | Readonly<{ kind: 'unreachable'; message: string }>
+  | Readonly<{ kind: 'unreachable'; message: string; failure?: TriageSourceReadFailureV1 }>
   | Readonly<{ kind: 'outcomeUnknown' }>
   | Readonly<{ kind: 'sourceNotAdmitted' }>
   | Readonly<{ kind: 'raced' }>
@@ -186,7 +186,8 @@ export function readTriageSourceConfiguredInstances(
 ): TriageSourceSettingsConfiguredV1 {
   if (execution.status === 'idle' || execution.status === 'pending') return { kind: 'loading' };
   if (execution.status === 'outcomeUnknown') return { kind: 'outcomeUnknown' };
-  if (execution.status === 'error') return { kind: 'unreachable', message: execution.message };
+  if (execution.status === 'error') return { kind: 'unreachable', message: execution.message,
+    failure: projectTriageSourceReadFailureV1(execution, execution.code, execution.code) };
 
   const parsed = TriageReadConfiguredSourceInstancesResultV1Schema.safeParse(execution.result);
   if (!parsed.success) return { kind: 'unreadable' };
@@ -350,7 +351,8 @@ export function readTriageSourceDiscovery(
   if (execution.status === 'idle' || execution.status === 'pending') return { kind: 'loading' };
   if (execution.status === 'outcomeUnknown') return { kind: 'outcomeUnknown' };
   if (execution.status === 'error') {
-    return { kind: 'unreachable', failure: null, message: execution.message };
+    return { kind: 'unreachable',
+      failure: projectTriageSourceReadFailureV1(execution, execution.code, execution.code), message: execution.message };
   }
 
   const parsed = TriageListInstancesResultV1Schema.safeParse(execution.result);

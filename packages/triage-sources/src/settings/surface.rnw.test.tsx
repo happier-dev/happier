@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -228,6 +228,27 @@ async function removeRow(page: PluginUiTestkit, title: string): Promise<void> {
     await page.press(await page.getByRole('menuitem', { name: `Remove ${title} from PRs & Issues` }));
   });
 }
+
+it('keeps a source-authored plugin id and cause without inventing a Request ID', async () => {
+  const page = await mountSettings(createHarness({ discovery: { kind: 'failed', failure: {
+    class: 'unsupportedContract', code: 'plugin_manifest_invalid', detail: `${PLUGIN_ID}: Plugin manifest is invalid.`,
+  } } }));
+  await pressControl(page, 'Details');
+  await expect(page.getByText('plugin_manifest_invalid')).resolves.toBeDefined();
+  await expect(page.getByText(`${PLUGIN_ID}: Plugin manifest is invalid.`)).resolves.toBeDefined();
+  await expect(page.queryByText('Request ID')).resolves.toBeUndefined();
+});
+
+it.each(['plugin_manifest_invalid', 'credential_reconnect_required'])(
+  'discloses source availability cause %s through existing Details', async (code) => {
+    const page = await mountSettings(createHarness({ discovery: async () => {
+      throw new PluginError({ code, message: 'Source cannot be read', retryable: false,
+        details: { requestId: 'availability-read-17' } });
+    } }));
+    await pressControl(page, 'Details');
+    await expect(page.getByText(`${code} retryable=false`)).resolves.toBeDefined();
+    await expect(page.getByText('availability-read-17')).resolves.toBeDefined();
+  });
 
 afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();

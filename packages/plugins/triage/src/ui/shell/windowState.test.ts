@@ -7,7 +7,7 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuratio
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
 import { planTriageConfigureSourceOffersV1 } from './configureSources.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
-  TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
+  TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
 import {
   TRIAGE_LIST_NO_FILTERS_V1,
 } from '../../projection/listWindow.js';
@@ -50,6 +50,48 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
 }
 
 describe('resolveTriageListShellState', () => {
+  it.each([
+    { class: 'unsupportedContract' as const, code: 'plugin_manifest_invalid', detail: 'happier.scm.forge.github: Non-safe plugin actions must declare host confirmation metadata.' },
+    { class: 'authentication' as const, code: 'credential_reconnect_required', detail: 'Reconnect the GitHub account.', requestId: 'read-availability-17' },
+  ])('retains $code in Details when the configured source is unavailable', (failure) => {
+    const state = resolveTriageListShellState(snapshot({
+      configuredSources: [{ sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, available: false }],
+      window: window({ lanes: [{ source: SOURCE, sourceInstanceId: INSTANCE, exhausted: false,
+        health: { kind: 'failed', failure } }] }),
+    }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
+    expect(state.failure.sources).toHaveLength(1);
+    const details = readTriageListFailureNotice(state.failure).details;
+    expect(details).toContain(failure.code);
+    expect(details).toContain(failure.detail);
+    if ('requestId' in failure) expect(details).toContain(failure.requestId);
+    else expect(details).not.toContain('Request ID');
+  });
+
+  it('keeps one diagnostic per unavailable connection at the canonical source batch scale', () => {
+    const configuredSources = Array.from({ length: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }, (_, index) => ({
+      source: SOURCE, sourceInstanceId: `connection-${index}`, configurationRowId: `connection-${index}`, available: false,
+    }));
+    const state = resolveTriageListShellState(snapshot({ configuredSources, window: window({
+      lanes: configuredSources.map(source => ({ source: source.source, sourceInstanceId: source.sourceInstanceId,
+        exhausted: false, health: { kind: 'failed' as const, failure: { class: 'authentication' as const,
+          code: 'credential_reconnect_required', requestId: `read-${source.sourceInstanceId}` } } })),
+    }) }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected source failures');
+    expect(state.failure.sources).toHaveLength(configuredSources.length);
+    expect(new Set(state.failure.sources.map(source => source.sourceInstanceId)).size).toBe(configuredSources.length);
+    expect(state.failure.sources.every(source => source.requestId === `read-${source.sourceInstanceId}`)).toBe(true);
+  });
+
+  it('retains the exact provider Request ID on an admitted source failure', () => {
+    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
+      source: SOURCE, sourceInstanceId: INSTANCE, exhausted: false,
+      health: { kind: 'failed', failure: { class: 'permission', code: 'forbidden', requestId: 'provider-42' } },
+    }] }) }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
+    expect(readTriageListFailureNotice(state.failure).details).toContain('provider-42');
+  });
+
   // VIEW-HEALTH-1109: the selected view owns the body; the whole scan owns Manage sources.
   it('keeps a healthy empty selected source quiet while six outside sources need attention', () => {
     const lanes = Array.from({ length: 7 }, (_, index) => ({

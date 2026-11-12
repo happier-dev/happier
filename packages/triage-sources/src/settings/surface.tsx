@@ -439,10 +439,15 @@ export function createTriageSourceSettingsSurface(
           ) : null}
 
           {showConfiguredNotice && configuredNotice !== null ? (
-            <Banner tone={configuredNotice.tone} title={configuredNotice.title} description={configuredNotice.description} />
+            <>
+              <Banner tone={configuredNotice.tone} title={configuredNotice.title} description={configuredNotice.description} />
+              {configured.kind === 'unreachable' && configured.failure !== undefined
+                ? <TriageSourceReadFailureDetails failures={[configured.failure]} /> : null}
+            </>
           ) : null}
 
           {state.kind === 'listed' && !state.complete ? (
+            <>
             <Banner
               tone="warning"
               title={text('plugins.triage.sourceSettings.incomplete.title', 'This list may be incomplete')}
@@ -450,6 +455,8 @@ export function createTriageSourceSettingsSurface(
                 ? text('plugins.triage.sourceSettings.incomplete.description', 'Some accounts or scopes could not be enumerated, so one you expect may be missing.')
                 : describeTriageSourceFailure(state.listingFailure, text)}
             />
+            <TriageSourceReadFailureDetails failures={[state.listingFailure]} />
+            </>
           ) : null}
 
           {/*
@@ -490,15 +497,17 @@ export function createTriageSourceSettingsSurface(
             ) : null}
 
             {state.kind === 'unreachable' ? (
+              <>
               <ErrorState
                 layout="line"
                 title={text('plugins.triage.sourceSettings.unreachable.title', '{source} could not be read', { source: sourceDisplayName })}
                 description={state.failure === null
                   ? state.message ?? text('plugins.triage.sourceSettings.unreachable.noMachine', 'No machine answered this read.')
                   : describeTriageSourceFailure(state.failure, text)}
-                {...(state.failure === null ? {} : { details: state.failure.code })}
                 action={<Button title={text('plugins.triage.sourceSettings.tryAgain', 'Try again')} variant="secondary" size="small" onPress={refresh} />}
               />
+              <TriageSourceReadFailureDetails failures={[state.failure]} />
+              </>
             ) : null}
 
             {rows.length === 0 && state.kind === 'listed' ? (

@@ -181,12 +181,12 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
   // Every distinct connection is kept. A reader with three broken ones needs
   // all three names, not the first.
   const sources: TriageListSourceFailureV1[] = projectTriageFailedSourceHealth(snapshot)
-    .filter((entry) => !unavailableSourceIds.has(entry.sourceInstance.sourceInstanceId))
     .map((entry) => Object.freeze({
       sourceInstanceId: entry.sourceInstance.sourceInstanceId,
       displayName: entry.displayName,
       reason: listReadFailureMessage(entry.failure.code, entry.failure.detail ?? SOURCE_FAILURE_COPY_V1[entry.failure.class]),
       code: entry.failure.code,
+      ...(entry.failure.requestId === undefined ? {} : { requestId: entry.failure.requestId }),
       ...(entry.failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(entry.failure.code, SOURCE_FAILURE_COPY_V1[entry.failure.class]) }),
       needsConnectionChange: entry.failure.class === 'authentication' || entry.failure.class === 'permission',
     }));
@@ -198,7 +198,6 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
   // that never reached the connection, and an unclassified exception's text, are diagnostics, not reader copy;
   // the reader is told the shell's translated reason instead.
   for (const entry of projectTriageUnreadableSourceHealth(snapshot)) {
-    if (unavailableSourceIds.has(entry.sourceInstance.sourceInstanceId)) continue;
     // `plugin_action_failed` is the store's code for an exception no host classified.
     const hostWorded = entry.code !== undefined && entry.code !== 'plugin_action_failed'
       && entry.reason !== UNREADABLE_IN_THIS_PASS_V1.message;
@@ -216,14 +215,23 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
   }
   // Configuration admission, not the presence of a coverage lane, establishes
   // which contributions cannot be asked. Name that state once, superseding any
-  // retained read failure from before admission was lost. An available lane
+  // retained read failure from before admission was lost, keeping its diagnostic.
+  // An available lane
   // the pass has not reached is still only unfinished coverage.
+  const failureIndexBySource = new Map(sources.map((source, index) => [source.sourceInstanceId, index]));
   for (const configured of snapshot.configuredSources) {
     if (!unavailableSourceIds.has(configured.sourceInstanceId)) continue;
     const sourceInstance = {
       source: configured.source,
       sourceInstanceId: configured.sourceInstanceId,
     };
+    const existingIndex = failureIndexBySource.get(configured.sourceInstanceId);
+    const existing = existingIndex === undefined ? undefined : sources[existingIndex];
+    if (existing !== undefined && existingIndex !== undefined) {
+      sources[existingIndex] = Object.freeze({ ...existing,
+        lineReason: SOURCE_UNAVAILABLE_COPY_V1, needsConnectionChange: true });
+      continue;
+    }
     sources.push(Object.freeze({
       sourceInstanceId: configured.sourceInstanceId,
       displayName: readTriageSourceDisplayName(snapshot, sourceInstance),

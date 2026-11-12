@@ -55,6 +55,19 @@ function draft(localInstanceKey: string, overrides: Readonly<{
 }
 
 describe('the source settings discovery model', () => {
+  it.each(['plugin_manifest_invalid', 'plugin_disabled', 'credential_reconnect_required'])(
+    'retains host availability cause %s for the existing Details disclosure', (code) => {
+      const execution = { status: 'error' as const, code, message: 'Source unavailable', retryable: false,
+        requestId: 'source-read-17', diagnostics: [{ severity: 'error' as const, code }] };
+      expect(readTriageSourceDiscovery(execution)).toMatchObject({ kind: 'unreachable',
+        failure: { code, requestId: 'source-read-17' } });
+      expect(readTriageSourceConfiguredInstances(execution)).toMatchObject({ kind: 'unreachable',
+        failure: { code, requestId: 'source-read-17' } });
+      const { requestId: _id, ...withoutId } = execution;
+      const unavailable = readTriageSourceDiscovery(withoutId);
+      expect(unavailable.kind === 'unreachable' && unavailable.failure).not.toHaveProperty('requestId');
+    });
+
   it('retains an editable configured binding only when its source declares the instance key stability', () => {
     const persisted = draft('acme/api');
     const execution = { status: 'success' as const, result: {
@@ -229,7 +242,8 @@ describe('the source settings discovery model', () => {
       code: 'plugin_action_failed',
       message: 'The daemon is unavailable.',
       retryable: true,
-    })).toEqual({ kind: 'unreachable', failure: null, message: 'The daemon is unavailable.' });
+    })).toEqual({ kind: 'unreachable',
+      failure: { class: 'transient', code: 'plugin_action_failed', retryable: true }, message: 'The daemon is unavailable.' });
     expect(readTriageSourceDiscovery({ status: 'outcomeUnknown', code: 'timeout', message: 'x' }))
       .toEqual({ kind: 'outcomeUnknown' });
   });
@@ -732,7 +746,8 @@ describe('the configured-instance read', () => {
       code: 'plugin_action_failed',
       message: 'No machine answered.',
       retryable: true,
-    })).toEqual({ kind: 'unreachable', message: 'No machine answered.' });
+    })).toEqual({ kind: 'unreachable', message: 'No machine answered.',
+      failure: { class: 'transient', code: 'plugin_action_failed', retryable: true } });
     expect(readTriageSourceConfiguredInstances({
       status: 'outcomeUnknown',
       code: 'timeout',
