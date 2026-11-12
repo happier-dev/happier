@@ -56,14 +56,16 @@ test.skipIf(process.platform !== 'linux')('private cancellation waits for the ve
   const home = await mkdtemp(join(tmpdir(), 'happier-member-cancel-'));
   const input = new PassThrough(); const output = new PassThrough();
   let records = ''; output.on('data', chunk => { records += String(chunk); if (String(chunk).includes('"t":"outcome"')) input.end(); });
-  const spec = vendorSpec('printf started > "$HOME/started"; /bin/sleep 100');
+  const spec = vendorSpec('/bin/sleep 100 & child=$!; printf "%s" "$child" > "$HOME/started"; wait');
   input.write(`${JSON.stringify({ kind: 'install', request: { agentId: spec.id, intent: 'install', consent: { vendorRecipe: true } },
     accountId: 'member', registry: { agents: [{ id: spec.id, runtimeSpec: spec }] }, targetInUse: false, runtimeManagedDependencyId: null })}\n`);
   const run = runMemberAgentInstallEffect(input, output, new AbortController().signal, buildMemberAgentInstallEnvironment(home));
   try {
     await vi.waitFor(() => access(join(home, 'started')));
+    const pid = Number(await readFile(join(home, 'started'), 'utf8'));
     input.write('cancel\n');
     await run;
+    expect(() => process.kill(pid, 0)).toThrow();
     expect(records.split('\n').filter(Boolean).map(line => JSON.parse(line))).toContainEqual(expect.objectContaining({
       t: 'outcome', outcome: expect.objectContaining({ kind: 'failed', code: 'cancelled' }),
     }));
@@ -100,4 +102,20 @@ test.skipIf(process.platform !== 'linux')('native installer consumes the admitte
     expect(await readFile(join(home, '.happier/tools/dep.fixture.companion/current/companion'), 'utf8')).toBe(dependencyBytes);
     expect(records).not.toContain('owner-private');
   } finally { input.destroy(); output.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(home, { recursive: true, force: true }); }
+});
+
+
+test.skipIf(process.platform !== 'linux')('member vendor verification failure retains verification_failed', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-member-verify-'));
+  const input = new PassThrough(); const output = new PassThrough();
+  let records = ''; output.on('data', chunk => { records += String(chunk); if (String(chunk).includes('"t":"outcome"')) input.end(); });
+  const spec = vendorSpec('mkdir -p "$HOME/.local/bin"; printf "#!/bin/sh\\nexit 1\\n" > "$HOME/.local/bin/fixture-member"; chmod 755 "$HOME/.local/bin/fixture-member"');
+  input.write(JSON.stringify({ kind: 'install', request: { agentId: spec.id, intent: 'install', consent: { vendorRecipe: true } },
+    accountId: 'member', registry: { agents: [{ id: spec.id, runtimeSpec: spec }] }, targetInUse: false, runtimeManagedDependencyId: null }) + '\n');
+  try {
+    await runMemberAgentInstallEffect(input, output, new AbortController().signal, buildMemberAgentInstallEnvironment(home));
+    expect(records.split('\n').filter(Boolean).map(line => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      t: 'outcome', outcome: expect.objectContaining({ kind: 'failed', code: 'verification_failed' }),
+    }));
+  } finally { input.destroy(); output.destroy(); await rm(home, { recursive: true, force: true }); }
 });

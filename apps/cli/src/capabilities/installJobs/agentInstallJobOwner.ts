@@ -2,19 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { resolveCanonicalAgentIdFromFlavor } from '@happier-dev/agents';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
-import { hasAgentCliManagedInstallForRuntime, installAgentCliForRuntime, removeAgentCliManagedInstallForRuntime, resolvePlatformFromNodePlatform, type AgentInstallProgressCallback } from '@happier-dev/cli-common/agents';
-import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
-import { PluginAgentCliInstallMetadataSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import { installAgentCliForRuntime } from '@happier-dev/cli-common/agents';
+import { buildAgentInstallJobCliStepId, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { AgentInstallJob, AgentInstallJobEvent, AgentInstallJobFailureCode, AgentInstallJobOutcome, DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest, DaemonAgentInstallStartResponse, DaemonAgentInstallReadResponse, DaemonAgentInstallCancelResponse, DaemonAgentInstallListResponse } from '@happier-dev/protocol';
+import type { AgentInstallJob, AgentInstallJobEvent, AgentInstallJobOutcome, DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest, DaemonAgentInstallStartResponse, DaemonAgentInstallReadResponse, DaemonAgentInstallCancelResponse, DaemonAgentInstallListResponse } from '@happier-dev/protocol';
 import type { ResolvedAgentContribution, ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { invalidateCliSnapshots, probeAgentCliForInstall } from '@/capabilities/snapshots/cliSnapshot';
-import { withAgentCliUpdates } from '@/capabilities/cliUpdate/agentCliUpdates';
-import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
-import { resolveAgentRuntimeManagedDependencyId, resolveExecutableManagedDependenciesRegistry, selectExecutableManagedDependencies } from '@/plugins/projection/registry/managedDependencyExecutables';
-import { executeInstallCommand } from './executeInstallCommand';
-import { resolveAgentSetupPlatform } from '@happier-dev/protocol/agents/setup';
+import { invalidateCliSnapshots } from '@/capabilities/snapshots/cliSnapshot';
+import { resolveAgentRuntimeManagedDependencyId, selectExecutableManagedDependencies } from '@/plugins/projection/registry/managedDependencyExecutables';
 import type { LiveWorkItemV1, LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
@@ -22,12 +17,11 @@ import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/cat
 import { buildConfiguredAcpAgentSelectionV1, isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { getAcpArchiveInstallableDescriptor, getAcpNpmRuntimeSpec, getAcpUvRuntimeSpec, installAcpLaunch, resolveAcpLaunch, type AcpLaunchInstallResult } from '@/agent/acp/catalog/configured/resolveAcpLaunch';
-import { hasPinnedArchiveManagedInstall } from '@/packagedRuntime/installables/sourceAdapters/pinnedArchive';
-import { isAgentInstallTargetInUse, removeManagedAcpInstall } from '@/agent/acp/catalog/registry/managedAgentInstalls';
+import { isAgentInstallTargetInUse } from '@/agent/acp/catalog/registry/managedAgentInstalls';
 import type { TrackedSession } from '@/daemon/types';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { executeAgentInstall } from './executeAgentInstall';
 
 export type AgentInstallJobRegistry = Readonly<{
   agents: readonly Pick<ResolvedAgentContribution, 'id' | 'identity' | 'runtimeSpec' | 'pluginId' | 'richDefinition' | 'hostAccess' | 'cliMetadata'>[];
@@ -56,9 +50,6 @@ export type AgentInstallJobOwnerOptions = Readonly<{
   readAcpCatalog?: () => AcpCatalogSnapshotV1 | undefined;
   readTrackedSessions?: () => Iterable<TrackedSession>;
   invalidateInventory?: () => void;
-  /** Captured by the admitting owner before entering the native child. */
-  admittedOperation?: Pick<MemberAgentInstallOperation, 'targetInUse' | 'runtimeManagedDependencyId'>;
-  onEvent?: (event: AgentInstallJobEvent) => void;
 }>;
 
 type JobRecord = {
@@ -72,26 +63,6 @@ type JobRecord = {
   cleanupError: ExecFileTerminationError | null;
 };
 
-function failureCode(code: string): AgentInstallJobFailureCode {
-  switch (code) {
-    case 'in_use': return 'in_use';
-    case 'not_managed': return 'not_managed';
-    case 'vendor-recipe-disallowed': return 'consent_required';
-    case 'install-confirmation-required': return 'consent_required';
-    case 'unsupported-platform': return 'unsupported_platform';
-    case 'no-recipe': return 'install_not_available';
-    case 'install-not-available': return 'install_not_available';
-    case 'archive-expanded-byte-limit': return 'archive_expanded_byte_limit';
-    case 'download-failed': return 'download_failed';
-    case 'rate-limited': return 'rate_limited';
-    case 'verification-failed':
-    case 'update-not-verified': return 'verification_failed';
-    case 'command-timed-out': return 'timeout';
-    case 'update-not-available': return 'update_not_available';
-    default: return 'install_failed';
-  }
-}
-
 export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions = {}) {
   let accountId = options.accountId;
   let admissionDrain = options.admissionDrain;
@@ -100,7 +71,6 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   let invalidateInventory = options.invalidateInventory;
   const readRegistry = options.readRegistry ?? readCurrentContributionRegistry;
   const env = options.env ?? process.env;
-  const installerDeps = { execFileWithDeadline: executeInstallCommand, ...options.installerDeps };
   const host = { platform: options.platform ?? process.platform, architecture: options.arch ?? process.arch };
   const jobs = new Map<string, JobRecord>();
   const activeByAgent = new Map<string, JobRecord>();
@@ -129,7 +99,6 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
 
   const emit = (job: JobRecord, event: AgentInstallJobEvent) => {
     job.events.push(event);
-    options.onEvent?.(event);
     if (event.t === 'step') {
       job.snapshot.steps = [...job.snapshot.steps.filter((step) => step.stepId !== event.stepId), {
         stepId: event.stepId, label: event.label, state: event.state,
@@ -140,14 +109,9 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       }];
     }
   };
-  const progressFor = (job: JobRecord, stepId: string): AgentInstallProgressCallback => (event) => {
-    emit(job, event.t === 'progress' ? { ...event, stepId } : event);
-  };
-
   const targetKey = (target: Pick<DaemonAgentInstallStartRequest, 'agentId' | 'definitionId'>, account?: string) =>
     JSON.stringify([account, buildMachineAgentInventoryKey(target)]);
   const inUse = (target: Pick<DaemonAgentInstallStartRequest, 'agentId' | 'definitionId'>, memberAccountId?: string): boolean => {
-    if (options.admittedOperation) return options.admittedOperation.targetInUse;
     try {
       if (!readTrackedSessions) return true;
       const sessions = readTrackedSessions();
@@ -172,225 +136,6 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     if (result.kind === 'succeeded') invalidateInventory?.();
     notifyActivity();
   };
-  const runDefinition = async (job: JobRecord, input: DaemonAgentInstallStartRequest, definition: AcpBackendDefinitionV1 | undefined) => {
-    const signal = job.controller.signal;
-    const stepId = buildAgentInstallJobCliStepId(input);
-    const label = definition?.title ?? 'Remove managed Agent';
-    emit(job, { t: 'step', stepId, label, state: 'running' });
-    const fail = (code: AgentInstallJobFailureCode, message: string): AgentInstallJobOutcome => ({ kind: 'failed', code, stepId, message });
-    let result: AgentInstallJobOutcome;
-    try {
-      signal.throwIfAborted();
-      if ((input.intent === 'uninstall' || input.force) && inUse(input)) {
-        result = fail('in_use', 'Stop the sessions using this Agent before changing its managed installation.');
-      } else if (input.intent === 'uninstall') {
-        const removed = await removeManagedAcpInstall({ accountId: job.accountId, definitionId: input.definitionId!, env, signal,
-          isDefinitionInUse: () => inUse(input) });
-        result = removed.ok ? { kind: 'succeeded', version: null }
-          : fail(removed.code, removed.code === 'in_use' ? 'The Agent is in use.' : 'The Agent is not installed through Happier.');
-      } else if (!definition || definition.launch.kind === 'command') {
-        result = fail('install_not_available', 'This definition has no managed installation.');
-      } else {
-        const params = { accountId: job.accountId, definition, env, platform: host.platform, arch: host.architecture, signal,
-          onProgress: progressFor(job, stepId), intent: input.intent, force: input.force };
-        const archive = getAcpArchiveInstallableDescriptor(definition, job.accountId!);
-        const npm = getAcpNpmRuntimeSpec(definition, job.accountId!);
-        const uv = getAcpUvRuntimeSpec(definition, job.accountId!);
-        const resolutionBeforeInstall = await resolveAcpLaunch(params);
-        const retained = archive
-          ? await hasPinnedArchiveManagedInstall({ installId: archive.capabilityId, env })
-          : (npm ?? uv) !== null && await hasAgentCliManagedInstallForRuntime({ runtimeSpec: (npm ?? uv)!, env });
-        // A pin change acquires another root. Repair/removal of this exact version still needs live-use evidence.
-        const needsRemoval = retained && (input.force || resolutionBeforeInstall.kind !== 'ready');
-        const replacingInUse = needsRemoval && inUse(input);
-        if (replacingInUse) {
-          result = fail('in_use', 'Stop the sessions using this Agent before replacing its managed installation.');
-        } else {
-          const removed = needsRemoval ? await removeManagedAcpInstall({ accountId: job.accountId,
-            definitionId: definition.id, version: definition.launch.version, env, signal, isDefinitionInUse: () => inUse(input) }) : { ok: true as const };
-          const installed: AcpLaunchInstallResult = removed.ok ? await installAcpLaunch(params, { installerDeps })
-            : { ok: false, errorCode: removed.code, errorMessage: 'The retained version cannot be removed for repair.', logPath: null };
-          if (!installed.ok) {
-            if (installed.errorCode === 'termination-failed') job.cleanupError = new ExecFileTerminationError(new Error(installed.errorMessage));
-            result = fail(failureCode(installed.errorCode ?? 'install-failed'), installed.errorMessage);
-          } else {
-            signal.throwIfAborted();
-            const resolution = await resolveAcpLaunch(params);
-            signal.throwIfAborted();
-            result = resolution.kind === 'ready' ? { kind: 'succeeded', version: definition.launch.version,
-              ...(installed.checksum ? { checksum: installed.checksum } : {}) }
-              : fail('verification_failed', 'The installed definition does not resolve to a ready launch.');
-          }
-        }
-      }
-    } catch (error) {
-      const terminationFailed = error instanceof ExecFileTerminationError;
-      if (terminationFailed) job.cleanupError = error;
-      const cancelled = signal.aborted && (error === signal.reason || error instanceof Error && error.name === 'AbortError');
-      result = fail(cancelled && !terminationFailed ? 'cancelled' : 'install_failed', error instanceof Error ? error.message : 'Agent installation failed.');
-    }
-    emit(job, { t: 'step', stepId, label, state: result.kind === 'succeeded' ? 'done' : 'failed' });
-    settle(job, result);
-  };
-
-  const run = async (job: JobRecord, input: DaemonAgentInstallStartRequest, registry: AgentInstallJobRegistry, agent: AgentInstallJobRegistry['agents'][number]) => {
-    const spec = agent.runtimeSpec;
-    if (!spec) return;
-    const signal = job.controller.signal;
-    let stepId = buildAgentInstallJobCliStepId({ agentId: agent.id });
-    let label = spec.title;
-    const begin = (id: string, title: string) => {
-      signal.throwIfAborted();
-      stepId = id;
-      label = title;
-      emit(job, { t: 'step', stepId, label, state: 'running' });
-    };
-    const done = () => emit(job, { t: 'step', stepId, label, state: 'done' });
-    const fail = (code: AgentInstallJobFailureCode, message: string): AgentInstallJobOutcome => ({
-      kind: 'failed', code, stepId, message,
-      ...(code === 'install_not_available' && (spec.installGuideUrl ?? spec.docsUrl)
-        ? { guideUrl: spec.installGuideUrl ?? spec.docsUrl ?? undefined } : {}),
-    });
-    let result: AgentInstallJobOutcome;
-    try {
-      begin(stepId, label);
-      if ((input.intent === 'update' || input.intent === 'uninstall' || input.force) && inUse(input)) {
-        result = fail('in_use', 'Stop the sessions using this Agent before changing its managed installation.');
-        emit(job, { t: 'step', stepId, label, state: 'failed' });
-        settle(job, result);
-        return;
-      }
-      if (input.intent === 'uninstall') {
-        const removed = spec.managedInstall ? await removeAgentCliManagedInstallForRuntime({ runtimeSpec: spec, env, signal })
-          : { ok: false as const, code: 'not_managed' as const };
-        result = removed.ok ? { kind: 'succeeded', version: null } : fail(removed.code, 'The Agent is not installed through Happier.');
-        if (removed.ok) done();
-        settle(job, result);
-        return;
-      }
-      const platform = resolvePlatformFromNodePlatform(host.platform);
-      if (!platform) {
-        result = fail('unsupported_platform', `Agent installation is not supported on ${host.platform}.`);
-      } else {
-        // Resolve all declared dependencies before any acquisition starts. A
-        // request-only or unsupported declaration cannot silently disappear.
-        const dependencyId = options.admittedOperation ? options.admittedOperation.runtimeManagedDependencyId : resolveAgentRuntimeManagedDependencyId(agent);
-        const required = new Set(dependencyId ? [dependencyId] : []);
-        const contributions = registry.managedDependencies ?? [];
-        const dependencyRegistry = resolveExecutableManagedDependenciesRegistry(contributions, host);
-        const declarations = options.admittedOperation ? contributions : contributions.filter((candidate) => candidate.pluginId
-          && required.has(buildQualifiedPluginContributionKey({ pluginId: candidate.pluginId, localId: candidate.definition.id })));
-        const support = resolveAgentSetupPlatform({
-          cli: agent.cliMetadata ?? { install: PluginAgentCliInstallMetadataSchema.parse({ managed: spec.managedInstall, manual: spec.manualInstallKind === 'none'
-            ? { kind: 'none' } : { kind: spec.manualInstallKind, recipes: spec.manualInstallRecipes ?? undefined } }) },
-          dependencies: declarations.flatMap((candidate) => 'version' in candidate.definition ? [] : [candidate.definition]),
-          platform: host.platform, arch: host.architecture,
-        });
-        const dependencies = selectExecutableManagedDependencies(declarations, host);
-        const unresolved = dependencyId && dependencies.length === 0 ? dependencyId : null;
-        if (!support.supported) {
-          result = fail('unsupported_platform', 'The agent or its required dependency does not support this host platform.');
-        } else if (unresolved) {
-          result = fail('install_not_available', `Required dependency ${unresolved} is not installable on this host.`);
-        } else if (input.intent === 'install' && inUse(input)
-          && (spec.managedInstall && await hasAgentCliManagedInstallForRuntime({ runtimeSpec: spec, env })
-            || await (async () => {
-              for (const dependency of dependencies) {
-                const descriptor = dependency.definition;
-                if (descriptor.source.kind === 'pinned_archive') {
-                  if (await hasPinnedArchiveManagedInstall({ installId: descriptor.capabilityId, env })) return true;
-                } else {
-                  const adapter = await getRuntimeInstallableAdapter(descriptor.key, { installablesRegistry: dependencyRegistry });
-                  const command = await adapter.resolveLaunchCommand?.({ env });
-                  if (command?.ok && command.source === 'managed') return true;
-                }
-              }
-              return false;
-            })())) {
-          result = fail('in_use', 'Stop the sessions using this Agent before replacing its managed installation.');
-        } else {
-          let cliFailure: AgentInstallJobOutcome | null = null;
-          if (input.intent === 'update') {
-            const capability = withAgentCliUpdates({
-              descriptor: { id: `cli.${agent.id}`, kind: 'cli', title: spec.title, methods: { install: { title: 'Install' } } },
-              detect: () => probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline,
-                sourcePolicy: options.admittedOperation ? 'member' : undefined }),
-            }, agent.id, {
-              env, nodePlatform: host.platform, signal, onProgress: progressFor(job, stepId), installerDeps,
-              sourcePolicy: options.admittedOperation ? 'member' : undefined,
-              resolveRuntimeSpec: () => spec,
-              buildContext: async () => ({ cliSnapshot: null }),
-            });
-            const updated = await capability.invoke?.({ method: 'install', params: { intent: 'update', allowVendorRecipeExecution: input.consent.vendorRecipe }, signal });
-            if (!updated?.ok) {
-              const code = updated?.error.code ?? 'install-failed';
-              if (code === 'termination-failed') job.cleanupError = new ExecFileTerminationError(new Error(updated?.error.message));
-              cliFailure = fail(failureCode(code), updated?.error.message ?? 'Agent update failed.');
-            }
-          } else {
-            const installed = await installAgentCliForRuntime({
-              runtimeSpec: spec, platform, env, skipIfInstalled: !input.force,
-              sourcePolicy: options.admittedOperation ? 'member' : undefined,
-              allowVendorRecipeExecution: input.consent.vendorRecipe, signal,
-              onProgress: progressFor(job, stepId), deps: installerDeps,
-            });
-            if (!installed.ok) {
-              if (installed.errorCode === 'termination-failed') job.cleanupError = new ExecFileTerminationError(new Error(installed.errorMessage));
-              cliFailure = fail(failureCode(installed.errorCode), installed.errorMessage);
-            }
-          }
-          if (cliFailure) {
-            result = cliFailure;
-          } else {
-            signal.throwIfAborted();
-            done();
-            for (const dependency of dependencies) {
-              const descriptor = dependency.definition;
-              begin(descriptor.capabilityId, descriptor.display.name);
-              const adapter = await getRuntimeInstallableAdapter(descriptor.key, { installablesRegistry: dependencyRegistry });
-              const installed = await adapter.installOrUpgrade({ signal, onProgress: progressFor(job, stepId), env });
-              if (!installed.ok) {
-                if (installed.errorCode === 'termination-failed') job.cleanupError = new ExecFileTerminationError(new Error(installed.errorMessage));
-                cliFailure = fail(failureCode(installed.errorCode ?? 'install-failed'), installed.errorMessage);
-                break;
-              }
-              signal.throwIfAborted();
-              const detected = await adapter.detectLaunchResolution({ env });
-              signal.throwIfAborted();
-              if (!detected.availability.ok) {
-                cliFailure = fail('verification_failed', detected.availability.errorMessage);
-                break;
-              }
-              done();
-            }
-            if (cliFailure) {
-              result = cliFailure;
-            } else {
-              begin(AGENT_INSTALL_JOB_VERIFY_STEP_ID, 'Check it runs');
-              invalidateCliSnapshots();
-              const verified = await probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline,
-                sourcePolicy: options.admittedOperation ? 'member' : undefined });
-              signal.throwIfAborted();
-              if (!verified.available || !verified.version) {
-                result = fail('verification_failed', 'The installed agent did not report a version.');
-              } else {
-                done();
-                result = { kind: 'succeeded', version: verified.version };
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      const terminationFailed = error instanceof ExecFileTerminationError;
-      if (terminationFailed) job.cleanupError = error;
-      const cancelled = signal.aborted && (error === signal.reason || (error instanceof Error && error.name === 'AbortError'));
-      result = fail(cancelled && !terminationFailed ? 'cancelled' : 'install_failed', error instanceof Error ? error.message : 'Agent installation failed.');
-    }
-    if (result.kind === 'failed') emit(job, { t: 'step', stepId, label, state: 'failed' });
-    settle(job, result);
-  };
-
   function read(input: DaemonAgentInstallReadRequest & { waitForTerminal: true }, requestedAccountId?: string): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
   function read(input: DaemonAgentInstallReadRequest & { waitForTerminal?: false }, requestedAccountId?: string): DaemonAgentInstallReadResponse;
   function read(input: DaemonAgentInstallReadRequest, requestedAccountId?: string): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
@@ -487,8 +232,16 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       // Start on the next microtask so admission publishes the active record
       // before even a synchronously rejected install can settle.
       job.completion = Promise.resolve().then(async () => {
-        if (!account?.executeMember) return request.definitionId === undefined ? run(job, request, registry, agent)
-          : runDefinition(job, request, definition);
+        if (!account?.executeMember) {
+          const result = await executeAgentInstall(request, job.controller.signal, {
+            accountId: requestedAccountId, registry, agent, definition, env,
+            platform: host.platform, arch: host.architecture, installerDeps: options.installerDeps,
+            isTargetInUse: () => inUse(request), onEvent: event => emit(job, event),
+          });
+          job.cleanupError = result.cleanupError;
+          settle(job, result.outcome);
+          return;
+        }
         try {
           const runtimeManagedDependencyId = resolveAgentRuntimeManagedDependencyId(agent);
           // Runtime declarations are trusted code. Private host access and plugin
