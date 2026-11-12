@@ -29,6 +29,7 @@ import { ArtifactCoarseKindV1Schema, decodeArtifactKindV1, type ArtifactCoarseKi
 import { resolveResourceGrantPageAccessWhere, resourceGrantAccessSqlPredicate } from '@/app/teams/resourceGrantAccess';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { artifactAccessFactsSelect, artifactGrantFacts, artifactGrantStorageAdapter, type ArtifactAccessFacts } from './artifactGrantStorageAdapter';
+import { withArtifactSourceReadersInTx } from './artifactSourceReaders';
 import { APPROVAL_ARTIFACT_KINDS_V1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import type { DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
@@ -307,7 +308,7 @@ export async function readArtifactHeaderForCallerInTx(tx: Tx, input: Readonly<{
 }>): Promise<ArtifactHeaderReadResult> {
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
         select: artifactReadAdmissionSelect(input.actorAccountId) });
-    return row ? projectArtifactAdmittedHeader(row, input.actorAccountId)
+    return row ? projectArtifactAdmittedHeader((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId)
         : { ok: false, error: "artifact_not_found" };
 }
 
@@ -349,7 +350,7 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
         ...artifactReadAdmissionSelect(input.actorAccountId), body: input.projection !== 'headers', bodyVersion: true, provenance: true,
     } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const header = projectArtifactAdmittedHeader(row, input.actorAccountId);
+    const header = projectArtifactAdmittedHeader((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
     if (!header.ok) return header;
     const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, row) : projectArtifactBody(header.artifact, row);
     if (!read.ok) return read;
@@ -362,14 +363,16 @@ export async function readArtifactContentAvailabilityForCallerInTx(tx: Tx, input
     actorAccountId: string; artifactIds: readonly string[];
 }>): Promise<ReadonlySet<string>> {
     const readable = new Set<string>();
+    const readRows = (ids: readonly string[]) => tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere }, select: {
+        ...artifactReadAdmissionSelect(input.actorAccountId), body: true, bodyVersion: true, provenance: true,
+    } });
+    const rows: Awaited<ReturnType<typeof readRows>> = [];
     for (const ids of portableQueryChunks({ values: [...new Set(input.artifactIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
-        const rows = await tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere }, select: {
-            ...artifactReadAdmissionSelect(input.actorAccountId), body: true, bodyVersion: true, provenance: true,
-        } });
-        for (const row of rows) {
-            const header = projectArtifactAdmittedHeader(row, input.actorAccountId);
-            if (header.ok && projectArtifactBody(header.artifact, row).ok) readable.add(row.id);
-        }
+        rows.push(...await readRows(ids));
+    }
+    for (const row of await withArtifactSourceReadersInTx(tx, rows, input.actorAccountId)) {
+        const header = projectArtifactAdmittedHeader(row, input.actorAccountId);
+        if (header.ok && projectArtifactBody(header.artifact, row).ok) readable.add(row.id);
     }
     return readable;
 }
@@ -392,9 +395,7 @@ function artifactRecipientReadSelect(actorAccountId?: string) {
 
 function artifactReadAdmissionSelect(actorAccountId?: string) {
     const facts = artifactAccessFactsSelect(actorAccountId);
-    return { ...facts, ...artifactRecipientReadSelect(actorAccountId),
-        teamGrants: { select: { ...facts.teamGrants.select, teamId: true } },
-    } as const;
+    return { ...facts, ...artifactRecipientReadSelect(actorAccountId) } as const;
 }
 
 function projectArtifactHeaderForRecipient(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactRecipientReadSelect> }>,
@@ -410,7 +411,8 @@ function projectArtifactHeaderForRecipient(row: Prisma.ArtifactGetPayload<{ sele
     return projected.ok ? { ok: true, artifact: { ...projected.artifact, ownerDisplayName: resolveAccountDisplayLabelV1(row.account) } } : projected;
 }
 
-function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactReadAdmissionSelect> }>, actorAccountId: string,
+function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactReadAdmissionSelect> }>
+    & Pick<ArtifactAccessFacts, 'sourceReaderAccounts'>, actorAccountId: string,
     recipientReadiness?: AccountRecipientEnvelopeReadiness): ArtifactHeaderReadResult {
     const access = resolveArtifactAccessFromFacts(row, actorAccountId);
     if (!access) return { ok: false, error: 'artifact_not_found' };
@@ -572,7 +574,7 @@ async function listArtifactHeaderSelectionInTx(tx: Tx, input: Parameters<typeof 
                 body: !input.unclassified && input.includeBody === true, bodyVersion: true, provenance: true,
                 publicShare: { select: { expiresAt: true } },
             } });
-        for (const row of rows) {
+        for (const row of await withArtifactSourceReadersInTx(tx, rows, input.actorAccountId)) {
             // MySQL's retained column collation is case-insensitive. Indexed SQL
             // narrows candidates; exact literal membership precedes private opening.
             if (storedKinds && (row.kind === null || (!storedKinds.has(row.kind)
@@ -664,10 +666,11 @@ async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
         fixedBindings: 2 })) {
         rows.push(...await readRows(ids));
     }
+    const admittedRows = await withArtifactSourceReadersInTx(tx, rows, input.actorAccountId);
     const accessByArtifact = new Map<string, ArtifactAccess>();
     const audienceByArtifact = new Map<string, string[]>();
     const fullAudienceIds: string[] = [];
-    for (const row of rows) {
+    for (const row of admittedRows) {
         const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
         if (!access) continue;
         accessByArtifact.set(row.id, access);
@@ -675,16 +678,18 @@ async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
         if (mayInspectArtifactAudience(row.kind, access)) fullAudienceIds.push(row.id);
         else audienceByArtifact.set(row.id, [input.actorAccountId]);
     }
-    const byId = new Map(rows.map(row => [row.id, row]));
+    const byId = new Map(admittedRows.map(row => [row.id, row]));
     // Only admitted full-inspection resources collect their complete audience.
     // Batch this phase so reads do not multiply with the selected Artifact count.
+    const readAudienceRows = (ids: readonly string[]) => tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere },
+        select: { ...artifactAccessFactsSelect(), keyEnvelopes: artifactRecipientReadSelect().keyEnvelopes } });
+    const audienceRows: Awaited<ReturnType<typeof readAudienceRows>> = [];
     for (const ids of portableQueryChunks({ values: fullAudienceIds, bindingsPerValue: 1, fixedBindings: 1 })) {
-        const audienceRows = await tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere },
-            select: { id: true, ...artifactAccessFactsSelect(), keyEnvelopes: artifactRecipientReadSelect().keyEnvelopes } });
-        for (const row of audienceRows) {
-            audienceByArtifact.set(row.id, resolveArtifactAudienceFromFacts(row));
-            byId.get(row.id)!.keyEnvelopes = row.keyEnvelopes;
-        }
+        audienceRows.push(...await readAudienceRows(ids));
+    }
+    for (const row of await withArtifactSourceReadersInTx(tx, audienceRows)) {
+        audienceByArtifact.set(row.id, resolveArtifactAudienceFromFacts(row));
+        byId.get(row.id)!.keyEnvelopes = row.keyEnvelopes;
     }
     const recipientIds = [...new Set([...audienceByArtifact.values()].flat())].sort();
     const readAccounts = (ids: readonly string[]) => tx.account.findMany({ where: { id: { in: [...ids] } },
@@ -701,7 +706,7 @@ async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
             publications.push(...await readPublications(ids));
         }
     }
-    return { rows, accessByArtifact, audienceByArtifact, accounts, publications };
+    return { rows: admittedRows, accessByArtifact, audienceByArtifact, accounts, publications };
 }
 
 type ArtifactBatchCapture = Awaited<ReturnType<typeof captureArtifactBatchInTx>>;
@@ -772,7 +777,7 @@ export async function listArtifactAccessGrantsInTx(tx: Tx, input: Readonly<{
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
         select: { ...artifactAccessFactsSelect(input.actorAccountId), kind: true } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
+    const access = resolveArtifactAccessFromFacts((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
     const selfAccountId = mayInspectArtifactAudience(row.kind, access) ? undefined : input.actorAccountId;
     const grants = await readArtifactAccessGrantsForAdmittedCustodyInTx(tx, input.artifactId, selfAccountId);
@@ -788,7 +793,7 @@ export async function reportArtifactTemplateAcceptedVersionInTx(tx: Tx,
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
         select: { ...artifactAccessFactsSelect(input.actorAccountId), kind: true } });
     if (!row) return { ok: false, error: 'artifact_not_found' };
-    const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
+    const access = resolveArtifactAccessFromFacts((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
     if (!access) return { ok: false, error: 'artifact_not_found' };
     if (decodeArtifactKindV1(row.kind).kindHint !== 'bot_template.v1') return { ok: false, error: 'artifact_kind_not_shareable' };
     return { ok: true, value: await writeAdmittedTemplateAcceptedVersionInTx(tx, { ...input, ownerAccountId: access.ownerAccountId }) };
@@ -937,7 +942,7 @@ export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ 
         ...artifactAccessFactsSelect(input.actorAccountId), kind: true, dataEncryptionKey: true, provenanceDataEncryptionKey: true,
     } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
+    const access = resolveArtifactAccessFromFacts((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!access.encryptionMode) return { ok: false, error: "artifact_content_unavailable" };
     const inspectAudience = mayInspectArtifactAudience(row.kind, access);

@@ -6,10 +6,15 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '
 import { createDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import nacl from 'tweetnacl';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1,
+    sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
+import { runArtifactRecipientKeyPreparationV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { createProjectSourceInTx, updateProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { createProjectSourceInTx, updateProjectSourceInTx, resolveProjectSourceAudiencesInTx,
+    resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
@@ -17,6 +22,10 @@ import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { listDeploymentEnvironmentsInTx } from './deploymentReadService';
 import { sealDeploymentReadCursor } from './deploymentReadCursor';
+import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
+import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx, readArtifactRecipientCensusInTx,
+    commitArtifactRecipientKeyEnvelopesInTx, setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 
 describe('deployment detail admission cost', () => {
     const serverId = `srv_${'d'.repeat(32)}`;
@@ -483,4 +492,127 @@ describe('deployment detail admission cost', () => {
             }
         });
     });
+    it.each(['plain', 'e2ee'] as const)('opens Account-owned Environment and Link content for a Team Source audience in %s mode', async mode => {
+        const ownerKey = nacl.box.keyPair();
+        const memberKey = nacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(ownerKey.publicKey) : {}) } });
+        const member = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(memberKey.publicKey) : {}) } });
+        const team = await db.team.create({ data: { name: 'Source content readers' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            { teamId: team.id, accountId: member.id, role: 'member' },
+        ] });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Source content readers', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
+            metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : '{}',
+            ...(mode === 'plain' ? { dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } : {}) } });
+        const contentKeys = new Map<string, { dataKey: Uint8Array<ArrayBuffer>; ownerEnvelope: Uint8Array<ArrayBuffer> }>();
+        async function content(kind: string, body: unknown) {
+            const dataKey = new Uint8Array(nacl.randomBytes(32));
+            const seal = async (value: unknown) => mode === 'plain'
+                ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(value))
+                : new Uint8Array(await sealSessionDataKeyBundleV0(value, dataKey));
+            const ownerEnvelope = mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
+                : new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerKey.publicKey, randomBytes: nacl.randomBytes }));
+            const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(), kind: `v1:other:${kind}`,
+                header: await seal({ kind, title: 'Source content readers' }),
+                body: await seal({ body: JSON.stringify(body) }), dataEncryptionKey: ownerEnvelope });
+            if (!artifact.ok) throw new Error(artifact.error);
+            if (mode === 'e2ee') contentKeys.set(artifact.artifact.id, { dataKey, ownerEnvelope: new Uint8Array(ownerEnvelope) });
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        }
+        const environmentContent = await content('deployment-environment.v1', createDeploymentEnvironmentDetailV1().content);
+        const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
+            serverId, projectSourceId: source.source.id, requestKey: randomUUID(), protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id, ...environmentContent,
+        }));
+        if (!environment.ok) throw new Error(environment.error);
+        const linkContent = await content('deployment-target-link.v1', {});
+        const link = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, { serverId,
+            environmentId: environment.environmentId, expectedRevision: environment.revision, requestKey: randomUUID(),
+            role: 'runtime', targetId: 'own-server', machines: [{ machineId: machine.id, installationId: machine.installationId! }],
+            ...linkContent }));
+        if (!link.ok) throw new Error(link.error);
+        const artifactIds = [environmentContent.contentArtifactId, linkContent.contentArtifactId];
+        const headers = (actorAccountId: string) => inTx(tx => readArtifactHeadersForCallerInTx(tx, { actorAccountId, artifactIds }));
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const read = (accountId: string) => app.inject({ method: 'GET',
+                url: `/v1/deployments/environments/${environment.environmentId}?serverId=${serverId}`,
+                headers: { 'x-test-user-id': accountId } });
+            expect((await read(owner.id)).statusCode).toBe(200);
+            expect((await headers(owner.id)).map(item => item.read.ok)).toEqual([true, true]);
+            expect((await read(member.id)).statusCode).toBe(404);
+            const shared = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId,
+                sourceId: source.source.id, expectedRevision: source.source.revision,
+                patch: { audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] } }));
+            expect(shared).toMatchObject({ ok: true });
+            if (!shared.ok) throw new Error(shared.error);
+            const readArtifact = (artifactId: string) => app.inject({ method: 'GET', url: `/v1/artifacts/${artifactId}`,
+                headers: { 'x-test-user-id': member.id } });
+            if (mode === 'e2ee') {
+                expect((await headers(member.id)).map(item => item.read.ok ? 'ok' : item.read.error))
+                    .toEqual(['artifact_content_unavailable', 'artifact_content_unavailable']);
+                expect((await read(member.id)).json()).toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
+                for (const [artifactId, keys] of contentKeys) {
+                    await runArtifactRecipientKeyPreparationV1({ artifactId, dataKey: keys.dataKey,
+                        openedDataEncryptionKey: privacyKit.encodeBase64(keys.ownerEnvelope), randomBytes: nacl.randomBytes,
+                        readCensus: async () => {
+                            const result = await inTx(tx => readArtifactRecipientCensusInTx(tx, { actorAccountId: owner.id, artifactId }));
+                            if (!result.ok) throw new Error(result.error);
+                            return result.value;
+                        },
+                        commit: async input => {
+                            const result = await inTx(tx => commitArtifactRecipientKeyEnvelopesInTx(tx, { ...input, actorAccountId: owner.id }));
+                            if (!result.ok) throw new Error(result.error);
+                            return result.value;
+                        },
+                    });
+                }
+            }
+            const observedHeaders = await headers(member.id);
+            for (const item of observedHeaders) {
+                const access = await inTx(tx => resolveArtifactAccessInTx(tx, { actorAccountId: member.id, artifactId: item.artifactId }));
+                expect.soft({ artifactId: item.artifactId, header: item.read.ok ? 'ok' : item.read.error,
+                    access: access?.level ?? null }).toMatchObject({ header: 'ok', access: 'view' });
+            }
+            const memberRead = await read(member.id);
+            const result = memberRead.json();
+            expect.soft({ status: memberRead.statusCode, result: result.ok ? 'ok' : result.error,
+                targetLinkIds: result.targetLinks?.map((target: { id: string }) => target.id) })
+                .toMatchObject({ status: 200, result: 'ok', targetLinkIds: [link.targetLinkId] });
+            expect(await db.artifactTeamGrant.count({ where: { artifactId: { in: artifactIds } } })).toBe(0);
+            for (const artifactId of artifactIds) expect((await readArtifact(artifactId)).statusCode).toBe(200);
+            expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: member.id,
+                artifactId: artifactIds[0]!, principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' })))
+                .toMatchObject({ ok: false, error: 'artifact_access_forbidden' });
+            const withdrawn = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId,
+                sourceId: source.source.id, expectedRevision: shared.source.revision, patch: { audience: [] } }));
+            if (!withdrawn.ok) throw new Error(withdrawn.error);
+            expect(await inTx(tx => resolveProjectSourceAudiencesInTx(tx, [shared.source, withdrawn.source])))
+                .toEqual([expect.arrayContaining([owner.id, member.id]), [owner.id]]);
+            expect(await inTx(tx => resolveProjectSourceAudienceInTx(tx, [shared.source, withdrawn.source])))
+                .toEqual(expect.arrayContaining([owner.id, member.id]));
+            expect((await read(member.id)).statusCode).toBe(404);
+            for (const artifactId of artifactIds) expect((await readArtifact(artifactId)).statusCode).toBe(404);
+            for (const artifactId of artifactIds) {
+                expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: owner.id, artifactId,
+                    principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' }))).toMatchObject({ ok: true });
+                expect((await readArtifact(artifactId)).statusCode).toBe(200);
+            }
+            expect((await read(member.id)).statusCode).toBe(404);
+            const restored = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId,
+                sourceId: source.source.id, expectedRevision: withdrawn.source.revision,
+                patch: { audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] } }));
+            if (!restored.ok) throw new Error(restored.error);
+            expect((await read(member.id)).statusCode).toBe(200);
+            expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: source.source.id,
+                expectedRevision: restored.source.revision, patch: { audience: [] } }))).toMatchObject({ ok: true });
+            for (const artifactId of artifactIds) expect((await readArtifact(artifactId)).statusCode).toBe(200);
+        });
+    });
+
 });

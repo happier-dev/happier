@@ -1,8 +1,7 @@
 import type { ProjectSourceV1, ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { readArtifactRecipientCensusInTx } from '@/app/artifacts/artifactAccessService';
 import { readProjectDeploymentDefaultsContentInTx } from '@/app/projects/projectDeploymentDefaultsService';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
-    DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForPrincipalInTx, validateSavedSecretResourceReferenceCapturesV1 } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { admitDeploymentMachinesInTx } from '@/app/deployments/deploymentAdmission';
@@ -13,6 +12,7 @@ import { readEnvironmentMachineSecretGrantsInTx } from '@/app/deployments/enviro
 import { admitDeploymentStoredContentsInTx } from '@/app/deployments/deploymentStoredContent';
 import type { Tx } from '@/storage/inTx';
 import { resolveProjectSourceAudienceInTx } from './projectSourceService';
+import { readProjectSourceContentReferencesInTx } from './projectSourceContentReferences';
 
 /** Artifact owns mode, keys and envelope currentness; Source only consumes its recipient facts. */
 async function recipientsReadyInTx(tx: Tx, actorAccountId: string, artifactId: string, audience: readonly string[]) {
@@ -32,28 +32,27 @@ async function recipientsReadyInTx(tx: Tx, actorAccountId: string, artifactId: s
 export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId: string,
     input: Readonly<{ source: ProjectSourceV1; owner: ProjectSourceOwnerV1 }>,
 ): Promise<boolean> {
-    const content = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
-    const [defaults, environments] = await Promise.all([
+    const [defaults, environments, references] = await Promise.all([
         readProjectDeploymentDefaultsContentInTx(tx, actorAccountId, input.source.id, input.owner),
         tx.deploymentEnvironment.findMany({ where: { projectSourceId: input.source.id }, select: {
             id: true, deletedAt: true, controllerMachineId: true, buildMachineId: true, edgeMachineId: true,
-            runtimeTargetLinkId: true, referencedSavedSecretRevisions: true, ...content,
+            runtimeTargetLinkId: true, referencedSavedSecretRevisions: true,
             targetLinks: { include: { machines: true } },
             deployments: { select: { state: true, acceptedControllerMachineId: true, acceptedControllerInstallationId: true,
-                acceptedBuildMachineId: true, acceptedBuildInstallationId: true, ...content } },
+                acceptedBuildMachineId: true, acceptedBuildInstallationId: true } },
         } }),
+        readProjectSourceContentReferencesInTx(tx, { sourceIds: [input.source.id] }),
     ]);
     if (!defaults.ok) return false;
     if (!defaults.content && !environments.length) return true;
     const audience = await resolveProjectSourceAudienceInTx(tx, [input.source]);
-    if (defaults.content && !await recipientsReadyInTx(tx, actorAccountId, defaults.content.contentArtifactId, audience)) return false;
-    const inputs: Parameters<typeof admitDeploymentStoredContentsInTx>[3][number][] = [];
+    const inputs: Parameters<typeof admitDeploymentStoredContentsInTx>[3][number][] = references
+        .filter(reference => reference.expectedStoredKind !== PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1)
+        .map(reference => ({ reference, expectedStoredKind: reference.expectedStoredKind, access: 'read' }));
     const machines: Parameters<typeof admitDeploymentMachinesInTx>[2][number][] = [];
     const active = new Set<string>(deploymentInProgressStates());
     for (const environment of environments) {
-        inputs.push({ reference: environment, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read' });
         for (const link of environment.targetLinks) {
-            inputs.push({ reference: link, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' });
             const retained = link.deletedAt !== null || link.detachedAt !== null || environment.deletedAt !== null;
             if (retained && await hasCompleteTeardownInTx(tx, link, undefined, environment.runtimeTargetLinkId)) continue;
             machines.push(...link.machines.map(member => ({ machineId: member.machineId,
@@ -62,7 +61,6 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
                 ...(link.installationId ? { installationId: link.installationId } : {}) });
         }
         for (const receipt of environment.deployments) {
-            inputs.push({ reference: receipt, expectedStoredKind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, access: 'read' });
             if (active.has(receipt.state)) {
                 const accepted = readDeploymentAcceptedExecution(receipt);
                 if (!accepted) return false;
@@ -95,7 +93,7 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
     }
     if (await admitDeploymentMachinesInTx(tx, input.owner, machines)) return false;
     if ((await admitDeploymentStoredContentsInTx(tx, actorAccountId, input.owner, inputs)).some(Boolean)) return false;
-    for (const artifactId of new Set(inputs.map(input => input.reference.contentArtifactId))) {
+    for (const artifactId of new Set(references.map(reference => reference.contentArtifactId))) {
         if (!await recipientsReadyInTx(tx, actorAccountId, artifactId, audience)) return false;
     }
     return true;

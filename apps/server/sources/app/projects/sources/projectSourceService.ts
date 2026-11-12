@@ -140,8 +140,8 @@ async function validateAudienceInTx(tx: Tx, actorAccountId: string, audience: re
     return true;
 }
 
-/** Source ownership and explicit grants share one current audience census for Source-owned records. */
-export async function resolveProjectSourceAudienceInTx(tx: Tx, sources: readonly ProjectSourceV1[]): Promise<string[]> {
+/** One membership census, with a result for every input (including old/new versions of the same Source). */
+export async function resolveProjectSourceAudiencesInTx(tx: Tx, sources: readonly ProjectSourceV1[]): Promise<string[][]> {
     const accountIds = new Set<string>();
     const teamIds = new Set<string>();
     const administratorTeamIds = new Set<string>();
@@ -161,6 +161,8 @@ export async function resolveProjectSourceAudienceInTx(tx: Tx, sources: readonly
     }
     // Old/new audiences share a fresh membership census. A full Team grant
     // already includes its administrators; Group-only Teams still notify them.
+    const teamAccounts = new Map<string, Set<string>>();
+    const administratorAccounts = new Map<string, Set<string>>();
     for (const ids of portableQueryChunks({ values: [...new Set([...teamIds, ...administratorTeamIds])],
         bindingsPerValue: 1, fixedBindings: 5 /* two statuses, two roles, offset */ })) {
         const fullTeams = ids.filter(id => teamIds.has(id));
@@ -168,22 +170,56 @@ export async function resolveProjectSourceAudienceInTx(tx: Tx, sources: readonly
         const audience: Prisma.TeamMembershipWhereInput[] = [];
         if (fullTeams.length) audience.push({ teamId: { in: fullTeams } });
         if (administratorTeams.length) audience.push({ teamId: { in: administratorTeams }, role: { in: ['owner', 'admin'] } });
-        const members = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, OR: audience }, select: { accountId: true } });
-        members.forEach(member => accountIds.add(member.accountId));
+        const members = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, OR: audience },
+            select: { accountId: true, teamId: true, role: true } });
+        for (const member of members) {
+            accountIds.add(member.accountId);
+            const accounts = teamAccounts.get(member.teamId) ?? new Set<string>();
+            accounts.add(member.accountId);
+            teamAccounts.set(member.teamId, accounts);
+            if (member.role === 'owner' || member.role === 'admin') {
+                const administrators = administratorAccounts.get(member.teamId) ?? new Set<string>();
+                administrators.add(member.accountId);
+                administratorAccounts.set(member.teamId, administrators);
+            }
+        }
     }
+    const groupAccounts = new Map<string, Set<string>>();
     for (const principals of portableQueryChunks({ values: [...groups.values()], bindingsPerValue: 2,
         fixedBindings: 3 /* two effective-membership statuses and offset */ })) {
         const members = await tx.teamGroupMembership.findMany({ where: { ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE,
             OR: principals.map(principal => ({ teamGroupId: principal.groupId, group: { teamId: principal.teamId } })),
-        }, select: { teamMembership: { select: { accountId: true } } } });
-        members.forEach(member => accountIds.add(member.teamMembership.accountId));
+        }, select: { teamGroupId: true, group: { select: { teamId: true } }, teamMembership: { select: { accountId: true } } } });
+        for (const member of members) {
+            accountIds.add(member.teamMembership.accountId);
+            const key = JSON.stringify([member.group.teamId, member.teamGroupId]);
+            const accounts = groupAccounts.get(key) ?? new Set<string>();
+            accounts.add(member.teamMembership.accountId);
+            groupAccounts.set(key, accounts);
+        }
     }
     const existingAccountIds: string[] = [];
     for (const ids of portableQueryChunks({ values: [...accountIds], bindingsPerValue: 1, fixedBindings: 1 /* offset */ })) {
         const existing = await tx.account.findMany({ where: { id: { in: [...ids] } }, select: { id: true } });
         existingAccountIds.push(...existing.map(account => account.id));
     }
-    return existingAccountIds;
+    const existing = new Set(existingAccountIds);
+    return sources.map(source => {
+        const audience = new Set<string>();
+        for (const principal of [sourceOwner(source), ...source.audience.map(grant => grant.principal)]) {
+            const accounts = principal.kind === 'account' ? [principal.accountId]
+                : principal.kind === 'team' ? teamAccounts.get(principal.teamId) ?? []
+                    : [...(groupAccounts.get(JSON.stringify([principal.teamId, principal.groupId])) ?? []),
+                        ...(administratorAccounts.get(principal.teamId) ?? [])];
+            for (const accountId of accounts) if (existing.has(accountId)) audience.add(accountId);
+        }
+        return [...audience];
+    });
+}
+
+/** Source ownership and explicit grants share one current audience census for Source-owned records. */
+export async function resolveProjectSourceAudienceInTx(tx: Tx, sources: readonly ProjectSourceV1[]): Promise<string[]> {
+    return [...new Set((await resolveProjectSourceAudiencesInTx(tx, sources)).flat())];
 }
 
 /** Content-free AccountChange invalidation reuses the existing commit-boundary publisher. */
@@ -248,10 +284,22 @@ export async function resolveProjectSourcesAccessInTx(tx: Tx, actorAccountId: st
 
 /** Internal Source facts only; installed consumers separately prove the owner's Machine grant. */
 export async function readProjectSourceCustodyInTx(tx: Tx, sourceId: string) {
-    const row = await tx.projectSource.findUnique({ where: { id: sourceId } });
-    if (!row) return null;
-    const source = sourceFromRow(row);
-    return source.success ? { source: source.data, owner: sourceOwner(source.data) } : null;
+    return (await readProjectSourcesCustodyInTx(tx, [sourceId], { includeDeleted: true })).get(sourceId) ?? null;
+}
+
+/** Exact internal parent facts; this does not grant the caller access to a Source. */
+export async function readProjectSourcesCustodyInTx(tx: Tx, sourceIds: readonly string[],
+    options: Readonly<{ includeDeleted?: boolean }> = {},
+) {
+    const result = new Map<string, { source: ProjectSourceV1; owner: ProjectSourceOwnerV1 }>();
+    for (const ids of portableQueryChunks({ values: [...new Set(sourceIds)], bindingsPerValue: 1, fixedBindings: 1 })) {
+        const rows = await tx.projectSource.findMany({ where: { id: { in: [...ids] }, ...(options.includeDeleted ? {} : { deletedAt: null }) } });
+        for (const row of rows) {
+            const source = sourceFromRow(row);
+            if (source.success) result.set(row.id, { source: source.data, owner: sourceOwner(source.data) });
+        }
+    }
+    return result;
 }
 
 /** Internal ownership fact only; this does not admit an Account to the Source. */

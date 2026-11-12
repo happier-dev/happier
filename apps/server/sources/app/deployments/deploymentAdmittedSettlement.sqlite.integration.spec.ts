@@ -116,7 +116,9 @@ describe('admitted deployment settlement', () => {
         let audienceReads = 0;
         const stop = observeSqliteRequests({ before(request) {
             if (request.model === 'TeamMembership' && request.action === 'findMany'
-                && JSON.stringify(Reflect.get(Object(request.args), 'select')) === JSON.stringify({ accountId: true })) audienceReads++;
+                // The Source audience census reads members with their Team and role.
+                && JSON.stringify(Reflect.get(Object(request.args), 'select'))
+                    === JSON.stringify({ accountId: true, teamId: true, role: true })) audienceReads++;
         } });
         try {
             let observedCursor = (await db.account.findUniqueOrThrow({ where: { id: f.requester.id } })).seq;
