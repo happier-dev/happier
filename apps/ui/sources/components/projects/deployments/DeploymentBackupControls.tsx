@@ -133,7 +133,6 @@ export function DeploymentBackupControls(props: Readonly<{
           <SectionActionButton testID={`${props.testID}.verify`} title={t('projects.deployments.backupVerify')}
             disabled={change.running} onPress={inspect} />
         } />
-      <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} />
       {change.running ? <Item title={t('projects.deployments.loading')} mode="info" /> : null}
       {result ? <Item testID={`${props.testID}.result`} title={result} mode="info" /> : null}
       {change.outcome ? <DeployOutcomeBanner controller={change.banner}
@@ -776,7 +775,8 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
 }
 
 /** The starter editor owns destination/check selection, grants and scheduling; opening it has no effects. */
-function DeploymentRestoreDrillRow(props: Readonly<{ serverId: string; testID: string }>) {
+/** The restore-drill door: one per surface, placed by the page that composes the backup rows. */
+export function DeploymentRestoreDrillRow(props: Readonly<{ serverId: string; testID: string }>) {
   const router = useRouter();
   const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'restore-drill');
   if (!starter) return null;
@@ -853,6 +853,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
     {failure ? <SurfaceStateCard testID={`${props.testID}.schedule.failed`} size="line" kind="error" title={failure.reason}
       diagnosticCode={failure.code} diagnosticDetail={failure.detail}
       action={{ label: t('common.retry'), onPress: () => setReads(count => count + 1) }} /> : null}
+    {/* Environment Settings' one restore-drill door (VISUAL-136 E3: Backup controls no longer draw a second one). */}
     <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} />
     </>
   );

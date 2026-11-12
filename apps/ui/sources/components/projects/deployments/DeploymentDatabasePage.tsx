@@ -45,7 +45,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
-import { DeploymentBackupControls, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
+import { DeploymentBackupControls, DeploymentRestoreDrillRow, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
 import { databaseEngineTitle } from './databasePresentation';
 import {
   DeployOutcomeBanner,
@@ -595,6 +595,7 @@ export function DeploymentDatabasePage(
                   testID={`${id}.controls`}
                 />
               ) : null}
+              {lifetime ? <DeploymentRestoreDrillRow serverId={detail.environment.serverId} testID={`${id}.controls.drill`} /> : null}
             </ItemGroup>
           ) : null}
 

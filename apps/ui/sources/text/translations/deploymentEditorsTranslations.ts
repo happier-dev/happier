@@ -11,7 +11,6 @@ type DeploymentEditorsTranslations = Readonly<{
   checkoutUnreadable: (params: { machine: string }) => string;
   openYourCheckout: string;
   compareInCheckout: string;
-  prNeedsCheckout: string;
   comparisonUnavailable: string;
   sameVersion: string;
   versionsDiffer: string;
@@ -107,7 +106,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Couldn’t read your checkout on ${machine}. Refresh once it’s answering.`,
     openYourCheckout: "Open your checkout",
     compareInCheckout: "Compare versions and load pull request heads from your checkout of this Source.",
-    prNeedsCheckout: "Pull request heads are read from a checkout of this Source.",
     comparisonUnavailable: "History is incomplete or unavailable. Refresh or choose a checkout containing both commits.",
     sameVersion: "Same version",
     versionsDiffer: "Versions differ",
@@ -203,7 +201,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Не удалось прочитать вашу рабочую копию на ${machine}. Обновите, когда машина ответит.`,
     openYourCheckout: "Открыть вашу рабочую копию",
     compareInCheckout: "Сравнивайте версии и читайте pull request в вашей рабочей копии этого источника.",
-    prNeedsCheckout: "Pull request читается из рабочей копии этого источника.",
     comparisonUnavailable: "История неполная или недоступна. Обновите или выберите копию с обоими коммитами.",
     sameVersion: "Та же версия",
     versionsDiffer: "Версии различаются",
@@ -300,7 +297,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Nie udało się odczytać Twojej kopii na ${machine}. Odśwież, gdy zacznie odpowiadać.`,
     openYourCheckout: "Otwórz swoją kopię",
     compareInCheckout: "Porównuj wersje i odczytuj pull requesty w swojej kopii tego źródła.",
-    prNeedsCheckout: "Pull requesty są odczytywane z kopii tego źródła.",
     comparisonUnavailable: "Historia jest niepełna lub niedostępna. Odśwież albo wybierz kopię z oboma commitami.",
     sameVersion: "Ta sama wersja",
     versionsDiffer: "Wersje się różnią",
@@ -396,7 +392,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `No se pudo leer tu copia en ${machine}. Actualiza cuando responda.`,
     openYourCheckout: "Abrir tu copia",
     compareInCheckout: "Compara versiones y lee pull requests desde tu copia de esta fuente.",
-    prNeedsCheckout: "Las pull requests se leen desde una copia de esta fuente.",
     comparisonUnavailable: "Historial incompleto o no disponible. Actualiza o elige una copia con ambos commits.",
     sameVersion: "Misma versión",
     versionsDiffer: "Las versiones difieren",
@@ -493,7 +488,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Impossible de lire votre copie sur ${machine}. Actualisez quand elle répond.`,
     openYourCheckout: "Ouvrir votre copie",
     compareInCheckout: "Comparez les versions et lisez les pull requests depuis votre copie de cette source.",
-    prNeedsCheckout: "Les pull requests sont lues depuis une copie de cette source.",
     comparisonUnavailable: "Historique incomplet ou indisponible. Actualisez ou choisissez une copie contenant les deux commits.",
     sameVersion: "Même version",
     versionsDiffer: "Les versions diffèrent",
@@ -590,7 +584,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Impossibile leggere la tua copia su ${machine}. Aggiorna quando risponde.`,
     openYourCheckout: "Apri la tua copia",
     compareInCheckout: "Confronta le versioni e leggi le pull request dalla tua copia di questa sorgente.",
-    prNeedsCheckout: "Le pull request vengono lette da una copia di questa sorgente.",
     comparisonUnavailable: "Cronologia incompleta o non disponibile. Aggiorna o scegli una copia con entrambi i commit.",
     sameVersion: "Stessa versione",
     versionsDiffer: "Le versioni differiscono",
@@ -687,7 +680,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Não foi possível ler sua cópia em ${machine}. Atualize quando ela responder.`,
     openYourCheckout: "Abrir sua cópia",
     compareInCheckout: "Compare versões e leia pull requests a partir da sua cópia desta fonte.",
-    prNeedsCheckout: "As pull requests são lidas de uma cópia desta fonte.",
     comparisonUnavailable: "Histórico incompleto ou indisponível. Atualize ou escolha uma cópia com os dois commits.",
     sameVersion: "Mesma versão",
     versionsDiffer: "As versões diferem",
@@ -783,7 +775,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `No s’ha pogut llegir la teva còpia a ${machine}. Actualitza quan respongui.`,
     openYourCheckout: "Obre la teva còpia",
     compareInCheckout: "Compara versions i llegeix pull requests des de la teva còpia d’aquesta font.",
-    prNeedsCheckout: "Les pull requests es llegeixen d’una còpia d’aquesta font.",
     comparisonUnavailable: "Historial incomplet o no disponible. Actualitza o tria una còpia amb tots dos commits.",
     sameVersion: "Mateixa versió",
     versionsDiffer: "Les versions difereixen",
@@ -880,7 +871,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `Dein Checkout auf ${machine} konnte nicht gelesen werden. Aktualisiere, sobald er antwortet.`,
     openYourCheckout: "Deinen Checkout öffnen",
     compareInCheckout: "Vergleiche Versionen und lies Pull Requests in deinem Checkout dieser Quelle.",
-    prNeedsCheckout: "Pull Requests werden aus einem Checkout dieser Quelle gelesen.",
     comparisonUnavailable: "Verlauf unvollständig oder nicht verfügbar. Aktualisiere oder wähle einen Checkout mit beiden Commits.",
     sameVersion: "Gleiche Version",
     versionsDiffer: "Versionen unterscheiden sich",
@@ -976,7 +966,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `无法读取你在 ${machine} 上的检出副本。等它响应后刷新。`,
     openYourCheckout: "打开你的检出副本",
     compareInCheckout: "在你的此来源检出副本中比较版本并读取拉取请求。",
-    prNeedsCheckout: "拉取请求从此来源的检出副本中读取。",
     comparisonUnavailable: "历史不完整或不可用。请刷新或选择包含两个提交的检出副本。",
     sameVersion: "相同版本",
     versionsDiffer: "版本不同",
@@ -1072,7 +1061,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `無法讀取你在 ${machine} 上的檢出副本。等它回應後重新整理。`,
     openYourCheckout: "開啟你的檢出副本",
     compareInCheckout: "在你的此來源檢出副本中比較版本並讀取提取要求。",
-    prNeedsCheckout: "提取要求會從此來源的檢出副本讀取。",
     comparisonUnavailable: "歷程不完整或無法使用。請重新整理或選擇包含兩個提交的檢出副本。",
     sameVersion: "相同版本",
     versionsDiffer: "版本不同",
@@ -1168,7 +1156,6 @@ export const deploymentEditorsTranslations = {
     checkoutUnreadable: ({ machine }) => `${machine} 上のチェックアウトを読み取れませんでした。応答したら更新してください。`,
     openYourCheckout: "自分のチェックアウトを開く",
     compareInCheckout: "このソースの自分のチェックアウトでバージョンを比較し、プルリクエストを読み取れます。",
-    prNeedsCheckout: "プルリクエストはこのソースのチェックアウトから読み取ります。",
     comparisonUnavailable: "履歴が不完全か利用できません。更新するか、両方のコミットを含むチェックアウトを選んでください。",
     sameVersion: "同じバージョン",
     versionsDiffer: "バージョンが異なります",

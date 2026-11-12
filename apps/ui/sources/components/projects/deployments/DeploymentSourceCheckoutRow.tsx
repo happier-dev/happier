@@ -3,6 +3,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { selectSourceCheckoutWorkspaceRefs } from '@/sync/domains/workspaces/workspaceRefs';
 import {
   useMachineDisplayNamesById,
+  useMachineField,
   useWorkspaceRefs,
 } from '@/sync/store/hooks';
 import { Item } from '@/components/ui/lists/Item';
@@ -47,8 +48,8 @@ export function DeploymentSourceCheckoutRow(
     projectSourceId: string;
     serverId: string;
     checkout: WorkspaceRefV1 | null;
-    /** Why a checkout is needed here, when the person has none yet. */
-    needsCheckout?: string;
+    /** What the checkout is for here. Without it, the row names where the person's checkout is. */
+    purpose?: string;
   }>,
 ) {
   const router = useRouter();
@@ -58,13 +59,15 @@ export function DeploymentSourceCheckoutRow(
     [props.checkout],
   );
   const machineNames = useMachineDisplayNamesById(machineIds);
+  const homeDir = useMachineField(props.checkout?.machineId ?? '', 'metadata', 'homeDir',
+    { enabled: props.checkout !== null, serverId: props.checkout?.serverId ?? null });
   const checkout = props.checkout;
   if (!checkout)
     return (
       <Item
         testID={props.testID}
         title={t('projects.deployments.editors.openSourceCheckout')}
-        subtitle={props.needsCheckout}
+        subtitle={props.purpose}
         onPress={() =>
           router.push(projectSourceRoute(props.projectSourceId) as never)
         }
@@ -75,7 +78,7 @@ export function DeploymentSourceCheckoutRow(
     <Item
       testID={props.testID}
       title={t('projects.deployments.editors.openYourCheckout')}
-      subtitle={[machine, formatPathRelativeToHome(checkout.rootPath)]
+      subtitle={props.purpose ?? [machine, formatPathRelativeToHome(checkout.rootPath, homeDir)]
         .filter(Boolean)
         .join(' · ')}
       onPress={() =>

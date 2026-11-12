@@ -13,6 +13,8 @@ import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
+import { StyleSheet } from 'react-native-unistyles';
+import { View } from 'react-native';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
@@ -143,6 +145,7 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
         finally { busy.current = false; props.onRunning(false); }
     };
     const editable = result === null || result.kind === 'refused' || result.kind === 'conflict';
+    // One row, one control: the label says what the row is, its button says the verb, never the label again (VISUAL-136 E2).
     const continuation = result && 'continuation' in result ? result.continuation : null;
     const pullRequest = result?.kind === 'pullRequestStatus' || result?.kind === 'reviewMerged'
         ? result.pullRequest ?? continuation?.pullRequest : continuation?.pullRequest;
@@ -169,38 +172,41 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
                     {selection.repository && !createRepository ? <Item title={selection.repository.repository} subtitle={selection.repository.deployment} showChevron={false} /> : null}
                     {!selection.source.repository ? <>
                         <Item title={t(`${COPY}.repositoryAddress`)} accessoryLayout="stacked" showChevron={false}
-                            rightElement={<FieldTextInput testID={`${ID}.repositoryAddress`} value={repositoryAddress}
-                                onChangeText={value => { setRepositoryAddress(value); address.withdrawRefusal(); }}
-                                editable={!running} accessibilityLabel={t(`${COPY}.repositoryAddress`)} />} />
-                        <Item title={t(`${COPY}.chooseRepository`)} showChevron={false} rightElement={<SectionActionButton
-                            testID={`${ID}.chooseRepository`} title={t(`${COPY}.chooseRepository`)} icon="git-branch"
-                            disabled={running || !repositoryAddress.trim()} onPress={() => { void address.resolve(repositoryAddress, selection.workspace?.machineId); }} />} />
+                            rightElement={<View style={styles.fieldWithVerb}>
+                                <View style={styles.fieldGrow}><FieldTextInput testID={`${ID}.repositoryAddress`} value={repositoryAddress}
+                                    onChangeText={value => { setRepositoryAddress(value); address.withdrawRefusal(); }}
+                                    editable={!running} accessibilityLabel={t(`${COPY}.repositoryAddress`)} /></View>
+                                <SectionActionButton testID={`${ID}.chooseRepository`} title={t(`${COPY}.chooseRepository`)}
+                                    disabled={running || !repositoryAddress.trim()} onPress={() => { void address.resolve(repositoryAddress, selection.workspace?.machineId); }} />
+                            </View>} />
                         {address.refusal ? <SurfaceStateCard size="line" kind="warning"
                             title={presentProjectSourceAddressRefusal(address.resolution, address.refusal, props.machineName)} /> : null}
                     </> : null}
-                    {!selection.source.repository ? <Item title={createRepository?.repositoryName ?? t(`${COPY}.createRepository`)} showChevron={false}
-                        rightElement={<SectionActionButton testID={`${ID}.createRepository`} title={t(`${COPY}.createRepository`)}
-                            icon="plus" disabled={running} onPress={chooseCreateRepository} />} /> : null}
+                    {!selection.source.repository ? <Item title={createRepository?.repositoryName ?? t(`${COPY}.newRepository`)}
+                        subtitle={createRepository ? undefined : t(`${COPY}.newRepositoryBody`)} showChevron={false}
+                        rightElement={<SectionActionButton testID={`${ID}.createRepository`} title={t(`${COPY}.create`)}
+                            disabled={running} onPress={chooseCreateRepository} />} /> : null}
                     <ProjectSourceWorkspaceChoice model={selection} value={workspaceKey} onChange={setWorkspaceKey}
                         disabled={running} showBase={!createRepository} testID={`${ID}.workspace`} />
-                    {createRepository ? <Item title={t(`${COPY}.chooseDestination`)} showChevron={false}
-                        rightElement={<SectionActionButton testID={`${ID}.chooseDestination`} title={t(`${COPY}.chooseDestination`)}
-                            icon="folder" disabled={running || !destinationMachineId} onPress={() => { void chooseDestination(); }} />} /> : null}
+                    {createRepository ? <Item title={t(`${COPY}.destination`)} showChevron={false}
+                        rightElement={<SectionActionButton testID={`${ID}.chooseDestination`} title={t(`${COPY}.choose`)}
+                            disabled={running || !destinationMachineId} onPress={() => { void chooseDestination(); }} />} /> : null}
                     <Item title={t(`${COPY}.path`)} accessoryLayout="stacked" showChevron={false}
                         rightElement={<FieldTextInput testID={`${ID}.path.input`} value={path} onChangeText={setPath}
                             editable={!running} accessibilityLabel={t(`${COPY}.path`)} />} />
-                    <Item title={t(`${COPY}.preview`)} showChevron={false} rightElement={<SectionActionButton
-                        testID={`${ID}.preview`} title={t(`${COPY}.preview`)} icon="git-diff" loading={running}
-                        disabled={running || !path.trim() || !selection.workspace || !createRepository && (!selection.repository || !selection.baseCommit || !selection.baseBranch)}
-                        onPress={() => preview()} />} />
+                    <Item title={t(`${COPY}.changes`)} subtitle={t(`${COPY}.changesBody`)} showChevron={false}
+                        rightElement={<SectionActionButton testID={`${ID}.preview`} title={t(`${COPY}.previewShort`)} icon="git-diff" loading={running}
+                            disabled={running || !path.trim() || !selection.workspace || !createRepository && (!selection.repository || !selection.baseCommit || !selection.baseBranch)}
+                            onPress={() => preview()} />} />
                     {!createRepository ? <>
                         <Item title={t(`${COPY}.existingPullRequest`)} accessoryLayout="stacked" showChevron={false}
-                            rightElement={<FieldTextInput testID={`${ID}.pullRequestUrl`} value={pullRequestUrl}
-                                onChangeText={setPullRequestUrl} editable={!running} accessibilityLabel={t(`${COPY}.existingPullRequest`)} />} />
-                        <Item title={t(`${COPY}.continueExisting`)} showChevron={false} rightElement={<SectionActionButton
-                            testID={`${ID}.continueExisting`} title={t(`${COPY}.continueExisting`)} icon="git-pull-request"
-                            disabled={running || !pullRequestUrl.trim() || !selection.workspace || !selection.repository || !selection.baseCommit || !selection.baseBranch}
-                            onPress={() => preview({ url: pullRequestUrl.trim() })} />} />
+                            rightElement={<View style={styles.fieldWithVerb}>
+                                <View style={styles.fieldGrow}><FieldTextInput testID={`${ID}.pullRequestUrl`} value={pullRequestUrl}
+                                    onChangeText={setPullRequestUrl} editable={!running} accessibilityLabel={t(`${COPY}.existingPullRequest`)} /></View>
+                                <SectionActionButton testID={`${ID}.continueExisting`} title={t('common.continue')}
+                                    disabled={running || !pullRequestUrl.trim() || !selection.workspace || !selection.repository || !selection.baseCommit || !selection.baseBranch}
+                                    onPress={() => preview({ url: pullRequestUrl.trim() })} />
+                            </View>} />
                     </> : null}
                 </>}
         </> : null}
@@ -209,7 +215,7 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
                 oldText={file.before ?? ''} newText={file.content} wrapLines />)}
             {existingPath ? <Item title={t(`${COPY}.confirmPath`)} subtitle={t(`${COPY}.sharedPath`)}
                 rightElement={<Switch testID={`${ID}.confirmPath`} value={confirmedPath} onValueChange={setConfirmedPath} disabled={running} />} /> : null}
-            <Item title={t(`${COPY}.review`)} showChevron={false} rightElement={<SectionActionButton
+            <Item title={t(`${COPY}.pullRequestRow`)} showChevron={false} rightElement={<SectionActionButton
                 testID={`${ID}.apply`} title={t(`${COPY}.review`)} icon="git-pull-request" loading={running}
                 disabled={running || existingPath && !confirmedPath}
                 onPress={() => {
@@ -228,7 +234,7 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
             subtitle={`${pullRequest.url}\n${t(`${COPY}.pullRequestBody`)}`}
             onPress={() => { void requestOpenExternalUrl(pullRequest.url); }} /> : null}
         {pullRequest && result?.kind !== 'reviewMerged' ? <>
-            <Item title={t(`${COPY}.continue`)} showChevron={false} rightElement={<SectionActionButton
+            <Item title={t(`${COPY}.finishMove`)} showChevron={false} rightElement={<SectionActionButton
                 testID={`${ID}.continue`} title={t(`${COPY}.continue`)} icon="arrow-right" disabled={running}
                 onPress={() => { if (captured) void run({ ...captured,
                     mode: captured.pullRequestReference ? 'preview' : 'apply', ...(continuation ? { continuation } : {}) }); }} />} />
@@ -240,8 +246,8 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
             {[...mergedFiles].map(([filePath, file]) => <DiffViewer
                 key={filePath} testID={`${ID}.mergedDiff.${filePath}`} mode="text" filePath={filePath}
                 oldText={file.before} newText={file.content} wrapLines />)}
-            <Item title={t(`${COPY}.useMerged`)} showChevron={false} rightElement={<SectionActionButton
-                testID={`${ID}.useMerged`} title={t(`${COPY}.useMerged`)} icon="git-merge" disabled={running}
+            <Item title={t(`${COPY}.mergedVersion`)} showChevron={false} rightElement={<SectionActionButton
+                testID={`${ID}.useMerged`} title={t(`${COPY}.useIt`)} icon="git-merge" disabled={running}
                 onPress={() => { void run({ ...captured, mode: 'apply',
                     ...(!captured.pullRequestReference && result.continuation ? { continuation: result.continuation } : {}),
                     useMergedVersion: result.review }); }} />} />
@@ -257,3 +263,9 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
             : failure?.kind === 'refused' ? <SurfaceStateCard size="line" kind="error" title={t(`${COPY}.refused`)} diagnosticCode={failure.code} /> : null}
     </>;
 }
+
+const styles = StyleSheet.create((theme) => ({
+    /** A field and the one verb that acts on its value share the row's control line. */
+    fieldWithVerb: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    fieldGrow: { flex: 1, minWidth: 0 },
+}));

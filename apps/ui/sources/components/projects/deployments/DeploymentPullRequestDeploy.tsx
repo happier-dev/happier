@@ -14,7 +14,6 @@ import { deploymentRevisionLabel } from './deploymentPresentation';
 import { machineScmPullRequestGet } from '@/sync/ops/scm/machineScm';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
-import { DeploymentSourceCheckoutRow, useOwnSourceCheckout } from './DeploymentSourceCheckoutRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getScmUserFacingError } from '@/scm/scmUserFacingErrors';
 
@@ -30,7 +29,6 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
   disabled: boolean;
   onDeploy(source: RepositorySource): Promise<void>;
 }>) {
-  const ownCheckout = useOwnSourceCheckout(props.projectSourceId, props.serverId);
   const { openResource } = useOpenResource({ serverId: props.serverId });
   const [reference, setReference] = React.useState('');
   const [candidate, setCandidate] = React.useState<Readonly<{ pullRequest: ScmPullRequestSummary; source: RepositorySource | null }> | null>(null);
@@ -80,6 +78,9 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
     }
     finally { if (!abort.signal.aborted) setPending(false); }
   };
+  // A pull request head is read from a checkout. Without one here, Version already says where it is and leads there,
+  // so this section doesn't repeat that row (VISUAL-136 D9).
+  if (!workspace) return null;
   // Reading the head is an operation beside its field; the pull request it finds is a row of this sheet, not a card in it.
   return <ItemGroup testID="project-deployments.pr" title={t('projects.deployments.editors.pullRequest')}>
     {workspace ? <>
@@ -111,8 +112,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
         title={t('projects.deployments.editors.prNotFound', { number: notFoundNumber })} /> : null}
       {candidate && exactSource === null ? <SurfaceStateCard testID="project-deployments.pr.sourceUnavailable" size="line" kind="unavailable"
         title={t('projects.deployments.editors.prUnavailable')} /> : null}
-    </> : <DeploymentSourceCheckoutRow testID="project-deployments.pr.checkout" projectSourceId={props.projectSourceId}
-      serverId={props.serverId} checkout={ownCheckout} needsCheckout={t('projects.deployments.editors.prNeedsCheckout')} />}
+    </> : null}
   </ItemGroup>;
 }
 
