@@ -1,4 +1,4 @@
-import { projectSessionSpawnNewActionResultV1, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionSpawnNewActionResultV1, type SessionSpawnNewActionResultV1, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ActionOperationScope } from './actionOperationTypes';
 import type { ActionOperationStore } from './actionOperationStore';
 
@@ -6,6 +6,10 @@ import type { ActionOperationStore } from './actionOperationStore';
 export function createPendingSessionBirth(store: ActionOperationStore, isActive: (id: string) => boolean) {
   const readers = new Map<string, () => Promise<SessionSpawnNewResultV1 | null>>();
   const pending = new Map<string, Promise<void>>();
+  const settleFailure = (id: string, result: Extract<SessionSpawnNewActionResultV1, { type: 'error' }>): void => {
+    if (result.code === 'cancelled') store.cancel(id);
+    else store.fail(id, { errorCode: result.code, error: result.code }, result);
+  };
   const reconcile = async (scope: ActionOperationScope, id: string): Promise<void> => {
     const read = readers.get(id);
     if (!read || isActive(id)) return;
@@ -23,11 +27,11 @@ export function createPendingSessionBirth(store: ActionOperationStore, isActive:
       if (isActive(id) || store.get(scope, id)?.state !== 'running' || !result || result.type === 'pending') return;
       const projected = projectSessionSpawnNewActionResultV1(result);
       if (result.type === 'success') store.succeed(id, projected);
-      else store.fail(id, { errorCode: result.code, error: result.code }, projected);
+      else if (projected.type === 'error') settleFailure(id, projected);
       readers.delete(id);
     }).finally(() => { pending.delete(id); });
     pending.set(id, observation);
     await observation;
   };
-  return { retain(id: string, read: () => Promise<SessionSpawnNewResultV1 | null>) { readers.set(id, read); }, reconcile };
+  return { retain(id: string, read: () => Promise<SessionSpawnNewResultV1 | null>) { readers.set(id, read); }, reconcile, settleFailure };
 }

@@ -986,7 +986,34 @@ describe('finite host operation custody', () => {
     expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'actual-spawn-operation'))
       .not.toHaveProperty('observation');
   });
-  it.each(['born', 'pending', 'refused'] as const)('observes uncertain Session birth on retirement and read: %s', async outcome => {
+  it('settles a cancelled pending Session spawn through the operation cancellation entry point', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
+      generateOperationId: () => 'cancelled-spawn', supportsCoreCancellation: () => true });
+    let admitted!: () => void;
+    const started = new Promise<void>(resolve => { admitted = resolve; });
+    const input = { executionTarget: { serverId: 'home', machineId: 'guest' }, directory: { kind: 'managed' as const },
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'coding' } } };
+    const execution = runtime.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'cancelled-creation',
+      // Construct the operation owner's typed completion input; cancellation
+      // request, receipt transition and RPC projection stay real.
+      execute: async ({ signal }) => {
+        admitted();
+        await new Promise<void>(resolve => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { ok: true, result: { type: 'error', code: 'cancelled', retryable: true } };
+      } });
+    await started;
+    expect(await runtime.handlers.cancel({ operationId: 'cancelled-spawn' })).toEqual({ kind: 'requested' });
+    expect(await execution).toMatchObject({ ok: true, result: { type: 'error', code: 'cancelled' } });
+    const cancelled = await runtime.handlers.getV2({ operationId: 'cancelled-spawn' });
+    expect(cancelled).toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+    if (cancelled.kind !== 'found') throw new Error('Expected the cancelled operation');
+    expect(cancelled.operation).not.toHaveProperty('result');
+    expect(await runtime.handlers.cancel({ operationId: 'cancelled-spawn' })).toEqual({ kind: 'already_settled' });
+  });
+  it.each(['born', 'pending', 'refused', 'cancelled'] as const)('observes uncertain Session birth on retirement and read: %s', async outcome => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'birth-observation' });
     let visible = false;
@@ -1000,6 +1027,7 @@ describe('finite host operation custody', () => {
         reads += 1;
         if (!visible || outcome === 'pending') return null;
         if (outcome === 'refused') return { type: 'error', code: 'spawn_failed', retryable: false };
+        if (outcome === 'cancelled') return { type: 'error', code: 'cancelled', retryable: true };
         return { type: 'success', disposition: 'rejoined', sessionId: 'born-before-failed-turn',
           executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
           initialInput: { status: 'notRequested' } };
@@ -1014,7 +1042,7 @@ describe('finite host operation custody', () => {
     const [read] = await Promise.all([runtime.handlers.getV2({ operationId: 'birth-observation' }),
       runtime.handlers.get({ operationId: 'birth-observation' })]);
     expect(read).toMatchObject({ kind: 'found', operation: {
-      state: outcome === 'born' ? 'succeeded' : outcome === 'refused' ? 'failed' : 'running',
+      state: outcome === 'born' ? 'succeeded' : outcome === 'refused' ? 'failed' : outcome === 'cancelled' ? 'cancelled' : 'running',
       ...(outcome === 'born' ? { result: { sessionId: 'born-before-failed-turn' } } : {}),
     } });
     expect(reads).toBe(2);

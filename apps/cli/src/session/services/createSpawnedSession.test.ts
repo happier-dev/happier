@@ -2770,6 +2770,7 @@ describe('createSpawnedSession replay-seeded creation', () => {
   });
 
   it.each([null, 123])('observes authenticated birth without restoring or delivering input (archivedAt=%s)', async archivedAt => {
+    const controller = new AbortController();
     const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'lost-birth' });
     const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag, recipe: {
       execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/repo' } },
@@ -2782,6 +2783,7 @@ describe('createSpawnedSession replay-seeded creation', () => {
     let observe: (() => Promise<import('@happier-dev/protocol').SessionSpawnNewResultV1 | null>) | undefined;
     lookupSessionsByTags.mockRejectedValueOnce(new Error('lost creation response'));
     await expect(createSpawnedSession({ credentials, directory: '/repo', serverId: 'home', machineId: 'machine-1',
+      signal: controller.signal,
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       sessionCreationTag, sessionCreationCorrespondence, initialInput: { text: 'Do not resend' },
       buildInitialInputHandoff: localId => buildSessionSpawnInitialInputAdmissionForLocalIdV1({
@@ -2789,6 +2791,7 @@ describe('createSpawnedSession replay-seeded creation', () => {
       observeSessionBirth: observer => { observe = observer; },
     })).rejects.toThrow('lost creation response');
     expect(observe).toBeDefined();
+    controller.abort(new Error('pending operation cancelled after the submitted attempt'));
     lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [sessionCreationTag], sessions: [{
       id: 'born-child', createdAt: 1, updatedAt: 1, active: false, archivedAt, latestTurnStatus: 'failed',
       activeAt: 1, pendingCount: 0, metadataVersion: 1, encryptionMode: 'plain', metadataLayoutVersion: 1,

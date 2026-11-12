@@ -18,6 +18,8 @@ import { listSessionMarkers } from '../sessionRegistry';
 import { listHappierProcessRoots } from '../processes/roots/listHappierProcessRoots';
 import { createProcessOwnershipRuntime } from '../processes/ownership/processOwnershipRuntime';
 import { createEndOwnerRemainder } from '../processes/endOwnerRemainder';
+import { createStopSession } from '../sessions/stopSession';
+import { createOnChildExited } from '../sessions/onChildExited';
 import { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
 import type { TrackedSession } from '../types';
 import { parseHappierLinuxScopeName } from '../platform/linux/systemdUserResourceGovernor';
@@ -146,6 +148,7 @@ describe('fresh Linux launch custody', () => {
   });
 
   it.each([
+    { kind: 'systemd', host: 'regular', ceiling: false, stopBeforeReady: true },
     { kind: 'systemd', host: 'regular', ceiling: false },
     { kind: 'fallback', host: 'regular', ceiling: false },
     { kind: 'systemd', host: 'tmux', ceiling: false },
@@ -160,7 +163,9 @@ describe('fresh Linux launch custody', () => {
     { kind: 'absent', host: 'regular', ceiling: true },
     { kind: 'absent', host: 'tmux', ceiling: true },
     { kind: 'absent', host: 'herdr', ceiling: true },
-  ] as const)('retains the exact $kind $host unit (ceiling=$ceiling) across canonical Session reporting', async ({ kind, host, ceiling }) => {
+  ] as const)('retains the exact $kind $host unit (ceiling=$ceiling) across canonical Session reporting ($stopBeforeReady)', async scenario => {
+    const { kind, host, ceiling } = scenario;
+    const stopBeforeReady = 'stopBeforeReady' in scenario;
     scratch = await mkdtemp(join(tmpdir(), 'happier-linux-launch-custody-'));
     const directory = scratch;
     vi.stubEnv('HAPPIER_HOME_DIR', join(scratch, 'home'));
@@ -185,7 +190,7 @@ describe('fresh Linux launch custody', () => {
     const daemonOwner = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'happier' } });
     // The live ceiling failure resumed an existing Session. Keep fresh-start
     // coverage for the hosted paths and exercise that exact regular entry.
-    const existingSessionId = ceiling && host === 'regular' ? 'canonical-session' : '';
+    const existingSessionId = (ceiling || stopBeforeReady) && host === 'regular' ? 'canonical-session' : '';
     const expectedOwner = existingSessionId
       ? formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'session', sessionId: existingSessionId } })
       : daemonOwner;
@@ -216,7 +221,9 @@ describe('fresh Linux launch custody', () => {
         ...(ceiling ? { memoryHighBytes: 1073741824 } : {}),
         pidToTrackedSession: tracked, pidToAwaiter: awaiters, pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
         resolveCanonicalTrackedSessionId: pid => tracked.get(pid)?.happySessionId ?? '',
-        onChildExited: () => {}, spawnLifecycleCallbacks: callbacks, cleanupSpawnResources: () => {}, logDebug: () => {}, warn: () => {},
+        onChildExited: stopBeforeReady ? createOnChildExited({ trackedSessionsByKey: tracked,
+          spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
+        }) : () => {}, spawnLifecycleCallbacks: callbacks, cleanupSpawnResources: () => {}, logDebug: () => {}, warn: () => {},
       } satisfies Parameters<typeof spawnRegularProcessAndWaitForWebhook>[0];
       const pending = host === 'regular' ? spawnRegularProcessAndWaitForWebhook(shared)
         : host === 'tmux' ? spawnTmuxHostedSessionAndWaitForWebhook({
@@ -258,6 +265,29 @@ describe('fresh Linux launch custody', () => {
       expect(record.processStartTimeMs).toEqual(expect.any(Number));
       const launch = osBoundary.launches[0]!;
       expect(record.happySessionId).toBe(existingSessionId || `PID-${record.pid}`);
+      if (stopBeforeReady) {
+        // No webhook or terminal descriptor exists: Stop must use the retained launch owner.
+        const stop = createStopSession({ trackedSessionsByKey: tracked,
+          readHostAttachmentState: async () => ({ status: 'unreadable', reason: 'io_error' }),
+        });
+        let result;
+        let runnerAliveAfterStop = true;
+        try {
+          result = await stop(record.happySessionId!);
+          const child = osBoundary.children.find(candidate => candidate.pid === record.pid)!;
+          runnerAliveAfterStop = child.exitCode === null && child.signalCode === null;
+        }
+        finally {
+          // Join the real cancellation owner even on RED; leave no live fixture or webhook timer.
+          await record.cancelStartupLaunchBeforeAck?.();
+          await pending;
+        }
+        expect(result).toEqual({ status: 'stopped' });
+        expect(runnerAliveAfterStop).toBe(false);
+        expect(await waitForProcessExit(record.pid)).toBe(true);
+        expect(tracked.size).toBe(0);
+        return;
+      }
       // Always settle the real startup owner before assertions, including RED.
       const report = createOnHappySessionWebhook({ pidToTrackedSession: tracked, pidToAwaiter: awaiters });
       await report('canonical-session', { hostPid: record.pid, path: scratch, startedBy: 'daemon' } as Metadata);

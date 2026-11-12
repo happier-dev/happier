@@ -295,6 +295,30 @@ export function createStopSession(params: Readonly<{
       }
     };
 
+    // Before readiness the launch owner retains exact process/host custody. Its
+    // cancellation also observes exit; terminal metadata need not exist yet.
+    if (!params.expectedTerminalAttachmentId && pidsToStop.length > 0
+      && [...expectedTrackedSessionsByPid.values()].every(session =>
+        session.startedBy === 'daemon' && session.cancelStartupLaunchBeforeAck)) {
+      for (const [pid, session] of expectedTrackedSessionsByPid) {
+        if (!isCapturedTrackedRunnerCurrent(pid)
+          || await options?.beforeSignalExactTrackedRunner?.(session) === false
+          || !isCapturedTrackedRunnerCurrent(pid)) return incompleteStopSession('runner_signal_incomplete');
+        session.stopRequestedAtMs ??= Date.now();
+        try {
+          const cancellation = await observeStopPhase('startup_launch_cancellation', () => session.cancelStartupLaunchBeforeAck!());
+          if (cancellation.status !== 'stopped') {
+            logWarning('[DAEMON RUN] Startup Stop incomplete', { sessionId: normalizedSessionId, reason: cancellation.reason });
+            return incompleteStopSession('runner_signal_incomplete');
+          }
+        } catch (error) {
+          logWarning('[DAEMON RUN] Startup Stop failed', error);
+          return incompleteStopSession('runner_signal_incomplete');
+        }
+      }
+      return await retireAbsentRunnerServiceability();
+    }
+
     const readHostAttachmentInfo = params.readHostAttachmentInfo ?? readTerminalHostAttachmentInfo;
     const readHostAttachmentState = params.readHostAttachmentState
       ?? (params.readHostAttachmentInfo
@@ -426,7 +450,7 @@ export function createStopSession(params: Readonly<{
       }) ?? Promise.resolve(null);
       return await terminalHostAdaptersPromise;
     };
-    const retireAbsentRunnerServiceability = async (): Promise<StopSessionResult> => {
+    async function retireAbsentRunnerServiceability(): Promise<StopSessionResult> {
       if (!isPidFallback && params.retireAbsentTerminalControlServiceability) {
         try {
           let retired = false;
@@ -460,7 +484,7 @@ export function createStopSession(params: Readonly<{
         }
       }
       return { status: 'stopped' };
-    };
+    }
     const retireLegacyAttachmentAfterPositiveDeath = async (
       evidence: NonNullable<typeof legacyRecoveryEvidence>,
       options: Readonly<{ runnerExitProven: boolean; trackedPids: readonly number[] }>,

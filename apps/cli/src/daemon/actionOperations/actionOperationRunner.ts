@@ -419,8 +419,7 @@ export function createActionOperationRunner(deps: Readonly<{
           if (action.actionId === 'session.spawn_new' && executionResult.ok) {
             const settlement = SessionSpawnNewActionResultV1Schema.safeParse(executionResult.result);
             if (settlement.success && settlement.data.type === 'error') {
-              const refusal = settlement.data;
-              deps.store.fail(operationId, { errorCode: refusal.code, error: refusal.code }, refusal);
+              sessionBirth.settleFailure(operationId, settlement.data);
               return executionResult;
             }
             if (settlement.success && settlement.data.type === 'pending') {

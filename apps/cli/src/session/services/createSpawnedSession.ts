@@ -1080,11 +1080,13 @@ export async function createSpawnedSession(
   params.signal?.throwIfAborted();
   const rejoinExistingCreation = async (afterSpawnFailure = false, observeBirthOnly = false): Promise<Awaited<ReturnType<typeof createSpawnedSession>> | null> => {
     if (!params.sessionCreationTag || !params.sessionCreationCorrespondence) return null;
+    // Passive birth observation outlives the execution whose cancellation it reconciles.
+    const signal = observeBirthOnly ? undefined : params.signal;
     const lookup = await lookupSessionsByTags({
       token: params.credentials.token,
       tags: [params.sessionCreationTag],
       ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
-      ...(params.signal ? { signal: params.signal } : {}),
+      ...(signal ? { signal } : {}),
     });
     if (lookup.state === 'unavailable') {
       throw createCodedError(
@@ -1105,7 +1107,8 @@ export async function createSpawnedSession(
     // initial input. Ordinary same-key preflight retains its identity contract.
     if (afterSpawnFailure && existing?.archivedAt !== null && existing?.archivedAt !== undefined) return null;
     if (existing) {
-      const accountEncryptionCurrentness = await readKnownSessionAccountEncryptionCurrentness(params);
+      const accountEncryptionCurrentness = await readKnownSessionAccountEncryptionCurrentness({ credentials: params.credentials,
+        accountEncryptionCurrentness: params.accountEncryptionCurrentness, signal });
       // A matching creation tag only finds a candidate. The immutable recipe
       // must be authenticated before this branch can rejoin it or attach input.
       if (!accountEncryptionCurrentness) {
