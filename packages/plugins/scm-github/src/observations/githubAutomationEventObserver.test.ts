@@ -1964,6 +1964,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
     const controller = new AbortController();
+    let invalidate = () => {};
+    const events = { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+      invalidate = () => listener(sourcesInvalidated()); return { dispose() {} };
+    } } };
     let now = 2_000;
     let stale = false;
     const statuses: AutomationEventSourceStatusReport[] = [];
@@ -1977,11 +1981,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     }) };
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
       sleep: async () => {
-        if (!stale) { stale = true; now = 63_000; http.request.mockClear(); statuses.length = 0; }
+        if (!stale) { stale = true; now = 63_000; invalidate(); http.request.mockClear(); statuses.length = 0; }
         else controller.abort();
       } });
     await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
-      http, signal: controller.signal })));
+      http, events, signal: controller.signal })));
     expect(http.request).not.toHaveBeenCalled();
     expect(checkpoints.put).toHaveBeenCalledTimes(1);
     expect(statuses).toEqual([expect.objectContaining({ kind: 'catalogReconciliation',
@@ -2914,7 +2918,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           if (request.knownRevision === '7') return { kind: 'unchanged', revision: '7' };
           sourceListCalls += 1;
           expect(request).toEqual(sourceListCalls === 1
-            ? { transport: { kind: 'checkpointedPull' } }
+            ? { transport: { kind: 'checkpointedPull' }, catalogRefresh: { kind: 'refresh' } }
             : { transport: { kind: 'checkpointedPull' }, cursor: `page-${sourceListCalls - 1}` });
           return {
             kind: 'page',
@@ -3662,6 +3666,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const checkpoints = createCheckpointCollection([checkpointRow({ automationId: source.automationId,
       sourceSelectorId: source.sourceSelectorId })]);
     const controller = new AbortController();
+    let invalidate = () => {};
+    const events = { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+      invalidate = () => listener(sourcesInvalidated()); return { dispose() {} };
+    } } };
     let now = 2_000;
     let revision = '7';
     const actions = { execute: vi.fn(async (action: string, input: unknown) => {
@@ -3674,11 +3682,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       sleep: async delay => {
         waits += 1;
         if (waits <= 3) expect(checkpoints.query).toHaveBeenCalledTimes(1);
-        if (waits === 3) revision = '8';
+        if (waits === 3) { revision = '8'; invalidate(); }
         if (waits === 4) controller.abort(); else now += delay;
       } });
     await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
-      signal: controller.signal })));
+      events, signal: controller.signal })));
     expect(checkpoints.query).toHaveBeenCalledTimes(2);
     expect(checkpoints.put).toHaveBeenCalledTimes(4);
   });
@@ -3756,6 +3764,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
     const controller = new AbortController();
+    let invalidate = () => {};
+    const events = { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+      invalidate = () => listener(sourcesInvalidated()); return { dispose() {} };
+    } } };
     let now = 1_000;
     let churn = false;
     let waits = 0;
@@ -3770,12 +3782,12 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       body: new TextEncoder().encode('[]') })) };
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
       sleep: async () => {
-        if (++waits === 1) { now = 2_000; churn = true; }
+        if (++waits === 1) { now = 2_000; churn = true; invalidate(); }
         else if (waits === 2) now = 62_000;
         else controller.abort();
       } });
     await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
-      http, signal: controller.signal })));
+      http, events, signal: controller.signal })));
     expect(catalogStatuses(statuses)).toEqual(expect.arrayContaining([
       expect.objectContaining({ observedRevision: '8', adoptedRevision: '7', state: 'reconciling', scanStartedAt: 2_000 }),
     ]));
@@ -3908,6 +3920,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
     const controller = new AbortController();
+    let invalidate = () => {};
+    const events = { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+      invalidate = () => listener(sourcesInvalidated()); return { dispose() {} };
+    } } };
     let now = 1_000;
     let sourceListCalls = 0;
     let failNextRead = false;
@@ -3939,7 +3955,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
-        actions,
+        actions, events,
         connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
         http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
@@ -3950,7 +3966,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       sleep: async (delayMs) => {
         waits.push(delayMs);
         now += delayMs;
-        if (waits.length === 1) failNextRead = true;
+        if (waits.length === 1) { failNextRead = true; invalidate(); }
         if (waits.length === 3) controller.abort();
       },
     });
@@ -3983,7 +3999,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           sourceListCalls += 1;
           const request = input as PluginActionInputById['automation.event.sources.list'];
           if (sourceListCalls === 1) {
-            expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
+            expect(request).toEqual({ transport: { kind: 'checkpointedPull' }, catalogRefresh: { kind: 'refresh' } });
             return sourceListResult(input, '7', [source]);
           }
           expect(request).toEqual({ transport: { kind: 'checkpointedPull' }, knownRevision: '7' });
@@ -4337,7 +4353,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(harness.http.request).toHaveBeenCalledTimes(2);
   });
 
-  it('caps a usable long GitHub Retry-After hint at the provider wait ceiling', async () => {
+  it('honors a usable long GitHub Retry-After hint without a provider wait ceiling', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
     const controller = new AbortController();
@@ -4379,9 +4395,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await observer.run(sourceAttemptContext(observer, context));
 
-    expect(waits).toEqual([86_400_000]);
+    expect(waits).toEqual([90_000_000]);
     expect(statuses).toContainEqual(expect.objectContaining({
-      kind: 'source', state: 'backingOff', code: 'rateLimited', nextRetryAt: 86_401_000,
+      kind: 'source', state: 'backingOff', code: 'rateLimited', nextRetryAt: 90_001_000,
     }));
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { waitGithubChecksSource } from './githubChecksWait.js';
 import { createGithubAutomationEventCheckpointRowId, createGithubAutomationEventCheckpointRowV1 } from './githubAutomationEventCheckpoint.js';
@@ -49,7 +49,7 @@ function harness(state: GithubChecksConditionSnapshotV1['state'] = 'pending', fa
     duringWatch: (callback: () => void) => { onWatch = callback; }, revoke: () => { admitted = false; listener?.(); } };
 }
 async function untilSubscribed(fixture: ReturnType<typeof harness>) {
-  for (let attempt = 0; attempt < 20 && !fixture.hasListener(); attempt += 1) await Promise.resolve();
+  await vi.waitFor(() => expect(fixture.hasListener()).toBe(true));
 }
 function genericWait(fixture: ReturnType<typeof harness>, durationMs?: number) {
   // The contributed-Action RPC is the boundary fixture. The real checkpoint

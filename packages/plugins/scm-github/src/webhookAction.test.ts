@@ -647,7 +647,7 @@ describe('GitHub webhook Action', () => {
     ]);
   });
 
-  it('uses the canonical backing-off status when the admission the delivery needs is unavailable', async () => {
+  it('uses the canonical attention status when the admission the delivery needs is unavailable', async () => {
     const reports: unknown[] = [];
     const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
       if (actionId === 'automation.event.sources.list') {
@@ -682,7 +682,7 @@ describe('GitHub webhook Action', () => {
     expect(reports).toContainEqual(expect.objectContaining({
       kind: 'source',
       automationId: 'automation-1',
-      state: 'backingOff',
+      state: 'attention',
       code: 'admissionUnavailable',
       // A retried delivery is re-observed, so the terminal counters stay put
       // rather than double counting the same occurrence on every attempt.
