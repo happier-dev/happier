@@ -74,7 +74,11 @@ No entitlement probe participates in admission. Token-kind compatibility is
 decided by GitHub's materializer, while native acceptance determines usability.
 SCM identity and Copilot refusal remain separate outcomes. Copilot's ChatGPT and
 Provider choices retain their own explicit routes. Neither source adds a gateway
-family, secret store, native credential-file writer or background quota probe.
+family, secret store, native credential-file writer or independent quota scheduler.
+Cursor subscription usage reads the DashboardService current-period usage RPC
+with the stored OAuth access token through the existing daemon quota coordinator.
+API-key mode remains unavailable. This RPC is undocumented and may change without
+notice; failures use the existing typed quota-fetch errors.
 
 ### Kimi connected accounts (0.3 development)
 
@@ -112,6 +116,11 @@ supplied window/reset and separate extra-usage money. Missing allowance stays
 unavailable. Request auth produces selected headers, actual expiry and scalar
 base/domain/device facts for the gateway adapter; it adds no executor or refresh
 scheduler. Manual keys retain token kind and have no OAuth expiry or refresh.
+
+The connected-account quota reader also reads Moonshot platform-key balances
+through the stored regional API base at `/users/me/balance`. It reports the
+available balance once (USD globally, CNY in China), with no inferred cap or
+reset, using the existing daemon quota coordinator and typed fetch failures.
 
 ### Oh My Pi native account delivery (0.3 development)
 
