@@ -193,6 +193,10 @@ describe('mapSaplingScmErrorCode', () => {
 });
 
 describe('mapGitScmErrorCode', () => {
+    it('classifies a native Git HTTP403 write denial as remote authorization', () => {
+        expect(mapGitScmErrorCode("fatal: unable to access 'https://github.com/octocat/Hello-World.git/': The requested URL returned error: 403"))
+            .toBe(SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED);
+    });
     it('maps common git remote errors deterministically', () => {
         expect(mapGitScmErrorCode('fatal: not a git repository')).toBe(
             SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY

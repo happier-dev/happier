@@ -1077,6 +1077,7 @@ export function mapGitScmErrorCode(stderr: string): ScmOperationErrorCode {
   if (
     lower.includes('authentication failed') ||
     lower.includes('permission denied') ||
+    lower.includes('the requested url returned error: 403') ||
     lower.includes('could not read username') ||
     lower.includes('terminal prompts disabled') ||
     lower.includes('support for password authentication was removed')
