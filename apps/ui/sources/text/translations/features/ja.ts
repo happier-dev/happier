@@ -6132,6 +6132,7 @@ const ja: typeof en = {
         description: '完了したセッションとフレンドリクエストがここに届きます。',
     },
     stale: { reason: 'ワークフロー実行を更新できませんでした', sources: '一部の項目が表示されていない可能性があります。', sourcesTitle: 'すべてを読み込めませんでした', retry: '再試行' },
+    loadingRest: '残りを読み込み中です。',
     settleFailed: 'このセッションを完了にできませんでした',
     detail: {
         openApproval: 'リクエストを開く',

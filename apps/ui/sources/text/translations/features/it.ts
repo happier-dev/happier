@@ -6137,6 +6137,7 @@ const it: typeof en = {
         description: 'Qui arrivano le sessioni terminate e le richieste di amicizia.',
     },
     stale: { reason: 'Impossibile aggiornare le esecuzioni dei workflow', sources: 'Alcuni elementi potrebbero mancare.', sourcesTitle: 'Impossibile caricare tutto', retry: 'Riprova' },
+    loadingRest: 'Caricamento del resto in corso.',
     settleFailed: 'Impossibile chiudere questa sessione',
     detail: {
         openApproval: 'Apri la richiesta',

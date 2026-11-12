@@ -6137,6 +6137,7 @@ const es: typeof en = {
         description: 'Aquí llegan las sesiones terminadas y las solicitudes de amistad.',
     },
     stale: { reason: 'No se pudieron actualizar las ejecuciones de flujos de trabajo', sources: 'Puede que falten algunos elementos.', sourcesTitle: 'No se pudo cargar todo', retry: 'Reintentar' },
+    loadingRest: 'Aún se carga el resto.',
     settleFailed: 'No se pudo cerrar esta sesión',
     detail: {
         openApproval: 'Abrir solicitud',

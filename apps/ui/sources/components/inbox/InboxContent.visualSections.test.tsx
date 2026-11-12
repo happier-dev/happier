@@ -902,6 +902,18 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         expect(needsYou.findByTestId('inbox.artifacts_unavailable')).toBeNull();
     });
 
+    it('says the list is not whole yet while sources still load under rows already read, and drops it once settled', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const loading = await renderScreen(<InboxContent model={{ ...createModel(), isLoading: true }} view="needs_you" />,
+            { wrapper: PagePresentation });
+        expect(loading.findByTestId('inbox.type.decision')).not.toBeNull();
+        expect(loading.findByTestId('inbox.loading_rest')).not.toBeNull();
+        await loading.unmount();
+
+        const settled = await renderScreen(<InboxContent model={createModel()} view="needs_you" />, { wrapper: PagePresentation });
+        expect(settled.findByTestId('inbox.loading_rest')).toBeNull();
+    });
+
     it('does not call an Updates view caught up while a followed Run could not be read (BI1 round 3)', async () => {
         const { InboxContent } = await import('./InboxContent');
         const model = { ...createModel({ needsYou: false }), items: [], friendRequests: [], openUsageNotices: [],

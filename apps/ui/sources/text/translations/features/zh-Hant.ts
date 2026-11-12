@@ -6127,6 +6127,7 @@ const zhHant: typeof en = {
         description: '已完成的工作階段和好友邀請會出現在這裡。',
     },
     stale: { reason: '無法重新整理工作流程執行', sources: '部分項目可能遺漏。', sourcesTitle: '無法載入全部內容', retry: '重試' },
+    loadingRest: '仍在載入其餘內容。',
     settleFailed: '無法結束此工作階段',
     detail: {
         openApproval: '開啟請求',

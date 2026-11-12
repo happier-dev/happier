@@ -6135,6 +6135,7 @@ const fr: typeof en = {
         description: 'Les sessions terminées et les demandes d’ami arrivent ici.',
     },
     stale: { reason: 'Impossible d’actualiser les exécutions de workflow', sources: 'Certains éléments peuvent manquer.', sourcesTitle: 'Impossible de tout charger', retry: 'Réessayer' },
+    loadingRest: 'Chargement du reste en cours.',
     settleFailed: 'Impossible de clore cette session',
     detail: {
         openApproval: 'Ouvrir la demande',

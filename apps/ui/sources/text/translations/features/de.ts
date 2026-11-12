@@ -6129,6 +6129,7 @@ const de: typeof en = {
         description: 'Fertige Sitzungen und Freundschaftsanfragen landen hier.',
     },
     stale: { reason: 'Workflow-Ausführungen konnten nicht aktualisiert werden', sources: 'Einige Einträge fehlen möglicherweise.', sourcesTitle: 'Nicht alles konnte geladen werden', retry: 'Erneut versuchen' },
+    loadingRest: 'Der Rest wird noch geladen.',
     settleFailed: 'Diese Sitzung konnte nicht abgeschlossen werden',
     detail: {
         openApproval: 'Anfrage öffnen',

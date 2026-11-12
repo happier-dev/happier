@@ -6137,6 +6137,7 @@ const ca: typeof en = {
         description: 'Aquí arriben les sessions acabades i les sol·licituds d’amistat.',
     },
     stale: { reason: 'No s’han pogut actualitzar les execucions de fluxos de treball', sources: 'Pot ser que falten alguns elements.', sourcesTitle: 'No s’ha pogut carregar tot', retry: 'Torna-ho a provar' },
+    loadingRest: 'Encara es carrega la resta.',
     settleFailed: 'No s’ha pogut tancar aquesta sessió',
     detail: {
         openApproval: 'Obre la sol·licitud',

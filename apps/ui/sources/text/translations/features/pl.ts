@@ -6155,6 +6155,7 @@ const pl: typeof en = {
         description: 'Tu trafiają zakończone sesje i zaproszenia do znajomych.',
     },
     stale: { reason: 'Nie udało się odświeżyć uruchomień przepływów pracy', sources: 'Niektórych elementów może brakować.', sourcesTitle: 'Nie udało się wczytać wszystkiego', retry: 'Spróbuj ponownie' },
+    loadingRest: 'Reszta wciąż się wczytuje.',
     settleFailed: 'Nie udało się zamknąć tej sesji',
     detail: {
         openApproval: 'Otwórz prośbę',

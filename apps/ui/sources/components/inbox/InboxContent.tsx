@@ -476,7 +476,12 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                             action={sourcesRetry && { ...sourcesRetry, testID: 'inbox.artifacts_retry' }} />
                     </FreshnessSlot>
                 )
-            ) : null}
+            ) : loading || !model.isLoading ? null : (
+                // Rows already read stay put while the rest arrives; one quiet line says the list is not whole yet.
+                <FreshnessSlot page={page}>
+                    <SurfaceFreshnessLine testID="inbox.loading_rest" busy reason={t('inbox.work.loadingRest')} />
+                </FreshnessSlot>
+            )}
             {view === 'needs_you' ? (
                 <>
                     {workflowStale ? (

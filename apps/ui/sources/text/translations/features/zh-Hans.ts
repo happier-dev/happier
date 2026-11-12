@@ -6127,6 +6127,7 @@ const zhHans: typeof en = {
         description: '已完成的会话和好友请求会出现在这里。',
     },
     stale: { reason: '无法刷新工作流运行', sources: '部分项目可能缺失。', sourcesTitle: '无法加载全部内容', retry: '重试' },
+    loadingRest: '仍在加载其余内容。',
     settleFailed: '无法结束此会话',
     detail: {
         openApproval: '打开请求',

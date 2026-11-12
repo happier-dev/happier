@@ -13909,17 +13909,21 @@ function DaemonChannelsSurface(props: Readonly<{
 
   return (
     <Screen testID="channels-surface" safeArea>
-      <ScrollArea contentContainerStyle={{ padding: theme.spacing.large, paddingBottom: theme.spacing.large * 2 }}>
+      {/* The host page column owns the side and top edges, so the header sits where the page's loading identity drew it. */}
+      <ScrollArea contentContainerStyle={{ paddingBottom: theme.spacing.large * 2 }}>
         <Stack gap="large" testID="channels-settings-content">
-          <Stack gap="small">
-            <Heading level={1} value={t('plugins.channels.surface.title', 'Conversation Channels')} />
-            <Text
-              value={t(
-                'plugins.channels.settings.description',
-                'Each connection is one bot, used by every conversation linked through it. Linked conversations are managed in Channels.',
-              )}
-            />
-          </Stack>
+          {/* The page names itself the way Settings and its loading identity do (the mark, the page title, Run on in
+              its row), so nothing moves or renames when the surface arrives. */}
+          <PageHeader
+            testID="channels-settings-header"
+            title={t('plugins.channels.page.title', 'Channels')}
+            description={t(
+              'plugins.channels.settings.description',
+              'Each connection is one bot, used by every conversation linked through it. Linked conversations are managed in Channels.',
+            )}
+            leading={<BrandMark size="medium" externallyLabelled />}
+            actionsLayout="hang"
+          />
           <ConnectionsContent
             connections={channels.connections}
             bindingPresentations={channels.presentations}

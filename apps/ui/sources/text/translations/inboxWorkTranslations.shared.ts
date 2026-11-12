@@ -63,6 +63,7 @@ export const en = {
         sourcesTitle: "Couldn't load everything",
         retry: 'Try again',
     },
+    loadingRest: 'Still loading the rest.',
     settleFailed: "Couldn't settle this session",
     detail: {
         openApproval: 'Open request',

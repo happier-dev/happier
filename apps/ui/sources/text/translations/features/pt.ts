@@ -6137,6 +6137,7 @@ const pt: typeof en = {
         description: 'Sessões concluídas e pedidos de amizade chegam aqui.',
     },
     stale: { reason: 'Não foi possível atualizar as execuções de fluxos de trabalho', sources: 'Alguns itens podem estar faltando.', sourcesTitle: 'Não foi possível carregar tudo', retry: 'Tentar novamente' },
+    loadingRest: 'Ainda carregando o restante.',
     settleFailed: 'Não foi possível encerrar esta sessão',
     detail: {
         openApproval: 'Abrir solicitação',
