@@ -1,3 +1,4 @@
+import { readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins/http';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderConnectionId } from '@happier-dev/protocol';
@@ -196,7 +197,7 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
             ...(request.body ? { body: new Uint8Array(request.body) } : {}), signal,
           }, input.fetchImpl, new Set(Object.keys(binding.headers).map(name => name.toLowerCase())));
           return Object.freeze({ ok: response.ok, status: response.status, statusText: response.statusText,
-            headers: Object.freeze(Object.fromEntries(response.headers)), body: response.body });
+            headers: readDecodedFetchResponseHeaders(response), body: response.body });
         },
       }),
       cleanup,

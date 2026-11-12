@@ -722,6 +722,9 @@ export function classifyPrimarySessionRuntimeIssue(
         failureReason: source === 'dependency_failure' ? 'unknown' : 'unclassified_provider_error',
         ...(source === 'agent_session_error' && (!startupFailureCode || (input.error instanceof Error && input.error.cause !== undefined)) ? nativeStartupDetail : {}),
         ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) },
+    } : typedDiagnostic && source === 'agent_session_error' ? {
+      failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error',
+        providerErrorCode: typedDiagnostic.code },
     } : {}),
     ...(agentProcessExitAfterSwitch === undefined ? {} : { agentProcessExitAfterSwitch }),
   };

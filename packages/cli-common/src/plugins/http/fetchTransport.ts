@@ -1,7 +1,7 @@
 import { PluginError } from '../errors.js';
 import type { HttpRequest, HttpStreamResponse } from './contracts.js';
 import type { PluginHttpRuntimeAdapter } from './service.js';
-import { readBoundedPluginHttpResponseBody } from './responseBody.js';
+import { readBoundedPluginHttpResponseBody, readDecodedFetchResponseHeaders } from './responseBody.js';
 
 type FetchInit = NonNullable<Parameters<typeof globalThis.fetch>[1]>;
 type Fetch = (input: string, init?: FetchInit) => Promise<Response>;
@@ -24,7 +24,7 @@ export function createFetchPluginHttpRuntime(fetch: Fetch): PluginHttpRuntimeAda
         return response;
     };
     const metadata = (response: Response, url: string) => ({ status: response.status,
-        finalUrl: response.url || url, headers: Object.freeze(Object.fromEntries(response.headers.entries())) });
+        finalUrl: response.url || url, headers: readDecodedFetchResponseHeaders(response) });
     return Object.freeze({
         async request(request, options = {}) {
             const controller = new AbortController();

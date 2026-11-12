@@ -1,3 +1,4 @@
+import { readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins/http';
 import { resolveProjectManagedService } from './projectServiceResolution';
 import { createHash, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -161,7 +162,7 @@ export type EnvironmentProjectManagedServiceWitness = Readonly<{
     environmentInstanceId: string;
     environmentId: string;
     deploymentId: string;
-    release: import('@happier-dev/plugin-sdk/services').DeploymentSourceMaterializationV1;
+    release: import('@happier-dev/plugin-sdk').DeploymentSourceMaterializationV1;
     composeService: string;
     serviceId: string;
 }>;
@@ -2234,7 +2235,7 @@ function readManagedServiceResponseHeaders(
     const headers: Record<string, string> = Object.create(null);
     let count = 0;
     let bytes = 0;
-    response.headers.forEach((value, rawName) => {
+    Object.entries(readDecodedFetchResponseHeaders(response)).forEach(([rawName, value]) => {
         const name = rawName.toLowerCase();
         if (
             name === 'authorization'

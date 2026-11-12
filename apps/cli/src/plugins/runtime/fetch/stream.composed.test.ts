@@ -1,3 +1,5 @@
+import { gzipSync } from 'node:zlib';
+import { createFetchPluginHttpRuntime } from '@happier-dev/cli-common/plugins/http';
 import { createServer, type ServerResponse } from 'node:http';
 import { setImmediate as nextIoTurn } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,6 +50,36 @@ async function fixture(declaredOrigin?: string) {
 }
 
 describe('admitted HTTP streaming through the native transport', () => {
+    it.each(['native-finite', 'native-stream', 'portable-finite', 'portable-stream'] as const)('keeps decoded response headers consistent (%s)', async mode => {
+        const text = 'data: QA_OK\n\n';
+        const compressed = gzipSync(text);
+        const server = createServer((_request, response) => {
+            response.writeHead(200, { 'content-type': 'text/event-stream',
+                'content-encoding': 'gzip', 'content-length': String(compressed.length) });
+            response.end(compressed);
+        });
+        servers.push(server);
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing loopback endpoint');
+        const runtime = mode.startsWith('native') ? createGlobalFetchRuntime()
+            : createFetchPluginHttpRuntime(globalThis.fetch.bind(globalThis));
+        const request = { url: `http://127.0.0.1:${address.port}/v1/responses`, redirect: 'error' as const };
+        if (mode.endsWith('finite')) {
+            const result = await runtime.request(request);
+            expect(new TextDecoder().decode(result.body)).toBe(text);
+            expect(result.headers['content-encoding']).toBeUndefined();
+            expect(result.headers['content-length']).toBeUndefined();
+        } else {
+            const result = await runtime.requestStream!(request);
+            let decoded = '';
+            try { for await (const chunk of result.chunks) decoded += new TextDecoder().decode(chunk); }
+            finally { await result.dispose(); }
+            expect(decoded).toBe(text);
+            expect(result.headers['content-encoding']).toBeUndefined();
+            expect(result.headers['content-length']).toBeUndefined();
+        }
+    });
     afterEach(async () => {
         await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => {
             server.closeAllConnections();

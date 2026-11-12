@@ -77,6 +77,12 @@ cause to the Session issue and Pending input settlement. Preparing input before
 dispatch does not turn an identified native configuration refusal into a
 document or Home dependency failure.
 
+Unclassified typed native turn errors retain `failureCause.phase: turn`,
+`failureReason: unclassified_provider_error` and their diagnostic code through
+the shared Session classifier. An explicit native cause or known startup phase
+takes precedence; the classifier does not infer a transport or authentication
+cause from a generic termination message.
+
 Native startup failures retain a redacted native code and the first message line
 through the shared startup diagnostic projection. The classifier publishes these
 as `failureCause.providerErrorCode` and `providerErrorMessage`; the construction

@@ -1,5 +1,7 @@
+import { startProviderBrokerApplicationServer } from '@/providers/broker/providerBrokerApplicationServer';
 import { readManagedServiceResponseJson, readManagedServiceResponseText } from '@/plugins/testkit/managedServiceResponse';
 import { Buffer } from 'node:buffer';
+import { gzipSync, zstdCompressSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createServer, type ServerResponse } from 'node:http';
@@ -4241,6 +4243,68 @@ describe('managed-services SVC09 owner', () => {
             await lifecycle?.owner.dispose();
             server.closeAllConnections();
             await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+    });
+
+    it.each(['gzip', 'zstd', 'identity'] as const)('forwards decoded managed Provider responses with matching headers (%s)', async encoding => {
+        const text = 'event: response.completed\ndata: {"text":"QA_OK"}\n\n';
+        const encoded = encoding === 'gzip' ? gzipSync(text)
+            : encoding === 'zstd' ? zstdCompressSync(text) : Buffer.from(text);
+        const upstream = createServer((request, response) => {
+            request.resume();
+            response.writeHead(200, { 'content-type': 'text/event-stream',
+                'content-encoding': encoding, 'content-length': String(encoded.length) });
+            response.end(encoded);
+        });
+        const harness = createHarness();
+        let handle: ManagedServiceHandle | undefined;
+        let broker: Awaited<ReturnType<typeof startProviderBrokerApplicationServer>> | undefined;
+        try {
+            await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+            const address = upstream.address();
+            if (!address || typeof address === 'string') throw new Error('Missing loopback endpoint');
+            harness.moveHealthyEndpoint(`http://127.0.0.1:${address.port}`, address.port);
+            handle = await harness.owner.bindScope(harness.scope, exec, {
+                managedProvider: createManagedProviderBinding(),
+            }).supervise({ id: 'gateway',
+                mode: { kind: 'spawn', launch: { executable: {} as never },
+                    endpoint: { kind: 'assignAndInject', port: { kind: 'fixed', port: address.port } } },
+            });
+            const projection = await harness.owner.projectManagedProviderEndpointAccess!({
+                service: handle, endpoints: [{ endpointTemplateId: 'responses', servicePath: '/v1' }],
+                signal: new AbortController().signal, isCurrent: () => true,
+            });
+            if (!projection) throw new Error('Expected admitted endpoint');
+            const response = await projection.access.request({ pathAndQuery: '/v1/responses', method: 'POST',
+                headers: { 'accept-encoding': 'gzip' } });
+            expect(await readManagedServiceResponseText(response)).toBe(text);
+            expect(response.headers['content-type']).toBe('text/event-stream');
+            if (encoding !== 'identity') {
+                expect(response.headers['content-encoding']).toBeUndefined();
+                expect(response.headers['content-length']).toBeUndefined();
+            } else {
+                expect(response.headers['content-length']).toBe(String(encoded.length));
+            }
+            broker = await startProviderBrokerApplicationServer({
+                handler: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
+                localConsumer: { authorize: () => true, request: async request => ({
+                    ok: true, response: await projection.access.request({
+                        pathAndQuery: request.pathAndQuery, method: request.method, signal: request.signal,
+                    }),
+                }) },
+            });
+            if (!broker.localConsumerEndpointUrl) throw new Error('Missing broker listener');
+            const consumer = await fetch(new URL('/v1/responses', broker.localConsumerEndpointUrl), { method: 'POST' });
+            expect(consumer.status).toBe(200);
+            expect(await consumer.text()).toBe(text);
+            if (encoding !== 'identity') expect(consumer.headers.get('content-encoding')).toBeNull();
+            await projection.cleanup();
+        } finally {
+            await broker?.close();
+            await handle?.dispose();
+            await harness.owner.dispose();
+            upstream.closeAllConnections();
+            await new Promise<void>(resolve => upstream.close(() => resolve()));
         }
     });
 

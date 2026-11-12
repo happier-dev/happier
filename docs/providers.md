@@ -1213,6 +1213,12 @@ Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplie
 the Muse client identity. The adopted source is omitted from native credential
 materialization and follows the existing managed endpoint custody lifecycle.
 
+In 0.3 development, managed Provider and plugin Fetch transports project headers
+for the decoded response body. Standard compressed responses omit their wire
+`Content-Encoding` and compressed `Content-Length` before forwarding to native
+Agents; identity and unsupported encodings retain their metadata. Direct managed
+Connected Account sources and saved gateway connections share this transport.
+
 The stored native model intent retains its Agent namespace. The shared native
 runtime projection configures the admitted binding's canonical model id and
 maps that exact model's readback to the original intent; other observed models

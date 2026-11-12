@@ -1,5 +1,6 @@
 import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { once } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -201,7 +202,7 @@ describe('personal connection broker consumer', () => {
       await Promise.all(listeners.map(close => close()));
     }
   });
-  it('publishes only the exact admitted source and forwards streamed bytes without replay', async () => {
+  it('publishes only the exact admitted source and forwards decoded streamed bytes without replay', async () => {
     let effects = 0;
     let admitted = true;
     let openReads = 0;
@@ -213,8 +214,10 @@ describe('personal connection broker consumer', () => {
       }
       if (!admitted) { response.writeHead(403).end(); return; }
       effects++;
-      response.writeHead(200, { 'content-type': 'text/event-stream' });
-      response.end('data: admitted\n\n');
+      const encoded = gzipSync('data: admitted\n\n');
+      response.writeHead(200, { 'content-type': 'text/event-stream',
+        'content-encoding': 'gzip', 'content-length': String(encoded.length) });
+      response.end(encoded);
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -246,6 +249,8 @@ describe('personal connection broker consumer', () => {
           close: async () => { carrierClosed = true; } }) });
       const result = await access.access.request({ method: 'POST', pathAndQuery: '/v1/messages', body: new TextEncoder().encode('{}') });
       expect(await new Response(await readProviderBrokerResponseBody(result.body)).text()).toBe('data: admitted\n\n');
+      expect(result.headers['content-encoding']).toBeUndefined();
+      expect(result.headers['content-length']).toBeUndefined();
       expect(effects).toBe(1);
       // The Home-issued open and target per-request admission are the owners;
       // reading this local binding must not add another Home round trip.

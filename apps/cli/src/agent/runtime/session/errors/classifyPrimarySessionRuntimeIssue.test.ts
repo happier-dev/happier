@@ -13,6 +13,18 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { StructuredInputComposerAttachmentResolutionError, StructuredInputComposerAttachmentUnavailableError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it.each(['pi_provider_session_error', 'opencode_provider_session_error'])('retains native turn failure provenance for %s', code => {
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100,
+      error: { code, severity: 'error', message: 'terminated', details: { source: 'agent_session_error' } } });
+    expect(issue).toMatchObject({ source: 'agent_session_error', code,
+      failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error', providerErrorCode: code } });
+    const classified = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100,
+      error: { code, severity: 'error', details: { failureCause: {
+        phase: 'turn_start', failureReason: 'permission_denied', code: 'client_attestation_denied',
+      } } } });
+    expect(classified.failureCause).toMatchObject({ phase: 'turn_start', failureReason: 'permission_denied',
+      code: 'client_attestation_denied' });
+  });
   it.each([
     ['Authentication required PRIVATE_DEVICE_CODE', 'acp_session_start_failed', 'provider_endpoint_auth_required', 'authentication_required'],
     ['FX requires an access token with a known, current expiry. Refresh the Connected Account and retry. PRIVATE_TOKEN', 'fx_connected_account_expiry_unavailable', 'provider_endpoint_auth_required', 'auth_expired'],

@@ -62,3 +62,16 @@ export async function readBoundedPluginHttpResponseBody(
   }
   return body;
 }
+
+/** Fetch decodes standard content codings but retains their wire metadata. */
+export function readDecodedFetchResponseHeaders(response: Pick<Response, 'headers' | 'body'>): Readonly<Record<string, string>> {
+  const encoding = response.headers.get('content-encoding');
+  const decoded = response.body !== null && encoding !== null
+    && encoding.split(',').every(value => /^(?:gzip|x-gzip|deflate|br|zstd)$/iu.test(value.trim()));
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, name) => {
+    if (decoded && (name === 'content-encoding' || name === 'content-length')) return;
+    headers[name] = value;
+  });
+  return Object.freeze(headers);
+}

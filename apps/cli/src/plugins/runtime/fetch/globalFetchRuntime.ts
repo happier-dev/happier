@@ -1,4 +1,4 @@
-import { readBoundedPluginHttpResponseBody } from '@happier-dev/cli-common/plugins/http';
+import { readBoundedPluginHttpResponseBody, readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins/http';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { HttpService, HttpResponse } from '@happier-dev/plugin-sdk/http';
 import {
@@ -10,17 +10,6 @@ import { loadUndici } from '@/utils/loadUndici';
 import { snapshotPluginHttpStreamRequest, wrapPluginHttpStream } from './stream';
 
 let httpDispatcher: import('undici').Agent | undefined;
-
-function headersToRecord(headers: Headers | undefined): Readonly<Record<string, string>> {
-  if (!headers || typeof headers.forEach !== 'function') {
-    return Object.freeze({});
-  }
-  const out: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    out[key] = value;
-  });
-  return Object.freeze(out);
-}
 
 type FetchInit = NonNullable<Parameters<typeof globalThis.fetch>[1]>;
 type FetchBody = FetchInit['body'];
@@ -154,7 +143,7 @@ export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
         return Object.freeze({
           status: response.status,
           finalUrl: response.url || request.url,
-          headers: headersToRecord(response.headers),
+          headers: readDecodedFetchResponseHeaders(response),
           body,
           ...(tlsPeer ? { tlsPeer } : {}),
         });
@@ -173,7 +162,7 @@ export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
         finally { reader?.releaseLock(); await disposeRequest(); }
       })();
       return wrapPluginHttpStream({
-        status: response.status, finalUrl: response.url || request.url, headers: headersToRecord(response.headers),
+        status: response.status, finalUrl: response.url || request.url, headers: readDecodedFetchResponseHeaders(response),
         chunks: { [Symbol.asyncIterator]: () => ({
           next: async (): Promise<IteratorResult<Uint8Array>> => {
             if (!reader) return { done: true, value: undefined };
