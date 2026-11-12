@@ -135,7 +135,9 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
         acceptedControllerMachineId: binding.machineId, acceptedControllerInstallationId: binding.installationId,
         // Keep the active-job lookup in this same query for Workflow roots.
         ...(workflowRun && !observing ? { requestedByAccount: { automationRuns: { some: workflowRun } } } : {}),
-    }] }, select: { id: true, environmentId: true, targetLinkId: true, operation: true, teardownProof: true } });
+    }] }, select: { id: true, environmentId: true, targetLinkId: true, operation: true, teardownProof: true,
+        acceptedControllerMachineId: true, acceptedControllerInstallationId: true,
+        acceptedBuildMachineId: true, acceptedBuildInstallationId: true } });
 }
 
 /** Boolean callers consume the same captured-receipt authority as typed continuations. */

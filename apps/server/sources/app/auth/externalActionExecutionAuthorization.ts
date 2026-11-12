@@ -460,22 +460,24 @@ function projectAcceptedDeploymentPrincipal(binding: ExternalActionExecutionAuth
 }
 
 /**
- * A step inside the one admitted finite native operation (restart, restore,
- * backup) that is already running on the daemon carries the identity its mint
- * admitted: its signed, installation-bound calls (verification, declared reads)
- * skip per-step principal, Session-source, Source, Team and Machine re-admission,
- * and the executor's local cancel signal bounds them. The root token has no
- * expiry and the admission no deadline, so this never covers presenting the root
- * to the Home again: every relay, daemon-signed or person-presented, is new work
- * that the relay route re-admits in full. Workflow roots keep their active-Run lookup.
+ * Signed steps of an admitted finite native operation retain the mint's identity.
+ * Receipt-backed operations consume the existing accepted-job lookup; other native
+ * operations retain their signed admission and the executor's local cancel signal.
+ * Every daemon-signed or person-presented root relay is new work and re-enters
+ * full admission. A Workflow receipt keeps its active-Run lookup in the job owner.
  */
 export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
-    authorityCeiling?: ExternalActionServerPrincipalV1['authority']): VerifiedExternalActionPrincipal | null {
+    authorityCeiling?: ExternalActionServerPrincipalV1['authority'],
+    acceptedDeployment?: NonNullable<Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>>,
+): VerifiedExternalActionPrincipal | null {
     const native = binding.deploymentNativeAdmission;
-    if (binding.workflowActionOrigin || binding.handoffAdmission || !native || !('kind' in native)
-        || native.kind !== 'restart' && native.kind !== 'restore' && native.kind !== 'backup'
-        || binding.actionId !== native.actionId || native.environmentId !== binding.environmentId
-        || native.machineId !== binding.machineId || native.installationId !== binding.installationId
+    if (binding.handoffAdmission
+        || !acceptedDeployment && (binding.workflowActionOrigin || !native
+            || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
+        || native && (native.environmentId !== binding.environmentId
+            || 'actionId' in native && binding.actionId !== native.actionId
+            || 'machineId' in native && native.machineId !== binding.machineId
+            || 'installationId' in native && native.installationId !== binding.installationId)
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
     const captured = projectAcceptedDeploymentPrincipal(binding);
     const principal = captured && projectExternalActionBoundPrincipal(binding, captured, authorityCeiling);
@@ -1539,7 +1541,6 @@ async function verifyCommon(
             : retainedDiscussionSource ? { kind: 'retained-discussion-publication', source: retainedDiscussionSource } : undefined;
     const domainContinuation = domainPurpose && domainPurpose.kind !== 'admission' && binding.actionId !== 'deployments.domains.verify'
         ? domainPurpose : null;
-    const admittedFiniteOperation = readAdmittedFiniteOperationPrincipal(binding);
     const machine = await db.machine.findFirst({
         where: { id: binding.machineId, accountId: binding.custodianAccountId, installationId: binding.installationId },
         select: {
@@ -1690,9 +1691,10 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
     }
 
+    const admittedFiniteOperation = readAdmittedFiniteOperationPrincipal(binding, undefined, acceptedDeployment || undefined);
     if (acceptedDeployment) {
         if (proof.reviewedChild && proof.reviewedChild.actionId !== effectActionId.data) return null;
-        const principal = projectAcceptedDeploymentPrincipal(binding);
+        const principal = admittedFiniteOperation;
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
             acceptedDeploymentReceipt: { environmentId: acceptedDeployment.environmentId,

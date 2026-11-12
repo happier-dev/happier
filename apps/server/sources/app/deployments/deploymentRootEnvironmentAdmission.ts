@@ -244,9 +244,9 @@ export async function admitDeploymentRootBindingInTx(
 }
 
 /**
- * A person-presented root re-enters the same admission its mint ran: the native
- * Environment owner above, then the binding admission owner. Daemon-signed
- * relays and signed child calls of admitted work do not repeat it.
+ * Every root relay, daemon-signed or person-presented, re-enters the admission
+ * its mint ran: the native Environment owner, then the binding admission owner.
+ * Signed child calls within admitted work retain that job's admission.
  */
 export async function hasCurrentDeploymentRootEnvironmentAdmissionInTx(
   tx: Tx,

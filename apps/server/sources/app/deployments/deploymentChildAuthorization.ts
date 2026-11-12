@@ -11,10 +11,10 @@ import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, projectDeploymentControllerPlacementFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentForInstalledMachineInTx, readCreatedDeploymentEnvironmentIdInTx } from './deploymentEnvironmentService';
+import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, readCreatedDeploymentEnvironmentIdInTx } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx } from './deploymentStoredContent';
 import { resolveMachineAdmissionInTx, resourceContentMatchesMode } from '@/app/machines/machineAccess';
-import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
+import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { readProjectSourceCustodyInTx } from '@/app/projects/sources/projectSourceService';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
@@ -30,6 +30,8 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 
 export type DeploymentChildAdmission = Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1; routing: DeploymentChildRoutingV1;
+    /** Captured placements from this request's single accepted-job lookup. */
+    acceptedReceipt?: NonNullable<Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>>;
     domainJob?: DeploymentDomainJobAdmission;
     /** Requester Use and the destination codec are admitted together once per child. */
     destinationCodecAdmission?: SocketRpcMachineAdmissionContextV1;
@@ -114,10 +116,9 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
             ? { binding, routing } : null;
     }
     const current = await isCurrentDeploymentChildRoutingInTx(tx, binding, routing, authentication);
-    if (typeof current !== 'boolean') return current;
-    if (!current) return null;
-    if (routing.kind !== 'prepare' && routing.kind !== 'review' && routing.kind !== 'domainDiscover' && routing.kind !== 'domain') {
-        return { binding, routing };
+    if (current === null || current === false) return null;
+    if (typeof current !== 'boolean') {
+        return 'ok' in current ? current : { binding, routing, acceptedReceipt: current };
     }
     // These destinations are selected after mint. Source custody alone never grants the requester Use.
     const destination = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
@@ -169,9 +170,13 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
     if (preparation && binding.actionId === 'deployments.environments.create' && !allocated) return null;
     const environment = allocated ? { ok: true as const, row: allocated.row, owner: allocated.owner } : preparation
         ? await loadDeploymentEnvironmentInTx(tx, binding.accountId, routing.input.serverId, routing.input.environmentId, authentication)
-        : await loadDeploymentEnvironmentForInstalledMachineInTx(tx, { serverId: routing.input.serverId,
-            environmentId: routing.input.environmentId, machineId: routing.machineId, installationId: routing.installationId });
+        // The signed child already passed the accepted-receipt active-job lookup.
+        // Withdrawal applies to new admission, not reads within this finite job.
+        : await loadDeploymentEnvironmentCustodyInTx(tx, routing.input);
     if (!environment.ok) return null;
+    const accepted = admitted.acceptedReceipt ? readDeploymentAcceptedExecution(admitted.acceptedReceipt) : null;
+    const capturedMachines = [{ machineId: routing.machineId, installationId: routing.installationId },
+        accepted?.controller, accepted?.builder];
     let owner = 'admission' in environment ? environment.admission.owner : environment.owner;
     if (archiveOrigin) {
         if (routing.kind !== 'member' && routing.kind !== 'build' || routing.kind === 'member' && routing.phase === 'cleanup') return null;
@@ -204,21 +209,27 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
             deploymentId = receipt.operation === 'rollback' ? receipt.rollbackOfDeploymentId : promotedFrom;
             expectedEnvironmentId = receipt.operation === 'rollback' ? receipt.environmentId : undefined;
         }
-        if (!found || await admitDeploymentMachinesInTx(tx, owner, [{ machineId: archiveOrigin.holderMachineId,
+        const capturedHolder = capturedMachines.some(machine => machine?.machineId === archiveOrigin.holderMachineId
+            && machine.installationId === archiveOrigin.holderInstallationId);
+        // A holder outside this job's captured placements is a new admission.
+        if (!found || !capturedHolder && await admitDeploymentMachinesInTx(tx, owner, [{ machineId: archiveOrigin.holderMachineId,
             installationId: archiveOrigin.holderInstallationId, role: 'target' }])) return null;
     } else {
         // Origin-free reads are only the existing installed setup roles, not archive-holder discovery.
-        const receipt = routing.kind !== 'prepare' && routing.kind !== 'review'
-            ? await tx.deployment.findUnique({ where: { id: routing.deploymentId } }) : null;
-        const accepted = receipt ? readDeploymentAcceptedExecution(receipt) : null;
-        if (![routing.machineId, preparation ? environment.row.controllerMachineId : accepted?.controller.machineId,
-            preparation ? environment.row.buildMachineId : accepted?.builder?.machineId].includes(machineId)
-            || await admitDeploymentMachinesInTx(tx, owner, [{ machineId, role: 'target' }])) return null;
+        const selected = preparation
+            ? [routing.machineId, environment.row.controllerMachineId, environment.row.buildMachineId].includes(machineId)
+            : capturedMachines.some(machine => machine?.machineId === machineId);
+        if (!selected
+            || preparation && await admitDeploymentMachinesInTx(tx,
+                'admission' in environment ? environment.admission.owner : environment.owner,
+                [{ machineId, role: 'target' }])) return null;
     }
     const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true,
         metadata: true, daemonState: true, dataEncryptionKey: true,
         revokedAt: true, replacedByMachineId: true, account: { select: { encryptionMode: true } } } });
-    if (!machine?.installationId || machine.revokedAt || machine.replacedByMachineId) return null;
+    if (!machine?.installationId || machine.revokedAt || machine.replacedByMachineId
+        || archiveOrigin && machineId === archiveOrigin.holderMachineId
+            && machine.installationId !== archiveOrigin.holderInstallationId) return null;
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
     if (mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)) return null;
     const admittedCodec = preparation
@@ -236,7 +247,7 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
 async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, routing: Exclude<DeploymentChildRoutingV1, { kind: 'dataRole' | 'snapshot' }>,
     authentication: DeploymentAuthentication = {},
-): Promise<boolean | ActionExecuteFailure> {
+): Promise<boolean | ActionExecuteFailure | Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>> {
     if (routing.kind === 'domain' || routing.kind === 'domainDiscover') {
         if (binding.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
             && await readTemplateDeploymentEnvironmentIdInTx(tx, binding) !== routing.input.environmentId) return false;
@@ -275,7 +286,7 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
             { machineId: routing.machineId, installationId: routing.installationId, role: 'target' },
         ]);
     }
-    if (routing.kind !== 'prepare' && routing.kind !== 'review') return isAcceptedDeploymentChildInTx(tx, binding, routing);
+    if (routing.kind !== 'prepare' && routing.kind !== 'review') return readAcceptedDeploymentChildInTx(tx, binding, routing);
     if (binding.actionId === 'deployments.templates.instantiate'
         && await readTemplateDeploymentEnvironmentIdInTx(tx, binding) !== routing.input.environmentId) return false;
     if (binding.actionId === 'deployments.environments.create' && routing.kind === 'review'
@@ -334,10 +345,10 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
         binding.accountId, owner, routing.input, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, 'read');
 }
 
-/** One relational existence lookup; no requester, Team or Source permission evaluation after admission. */
-async function isAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+/** One relational lookup retains captured placements without reevaluating requester, Team or Source permission. */
+async function readAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     routing: Exclude<DeploymentChildRoutingV1, { kind: 'prepare' | 'review' | 'domain' | 'domainDiscover' | 'dataRole' | 'snapshot' }>,
-): Promise<boolean> {
+): ReturnType<typeof readAcceptedDeploymentReceiptInTx> {
     const member: Prisma.DeploymentTargetLinkWhereInput = { machines: { some: {
         machineId: routing.machineId, installationId: routing.installationId,
     } } };
@@ -350,12 +361,12 @@ async function isAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionExec
     const environment: Prisma.DeploymentEnvironmentWhereInput = { deletedAt: null, runtimeTargetLinkId: routing.input.targetLinkId };
     if (routing.kind === 'member') {
         if (routing.phase === 'cleanup') {
-            if (routing.selectedDeploymentId !== routing.deploymentId) return false;
+            if (routing.selectedDeploymentId !== routing.deploymentId) return null;
             link.activeDeploymentId = null;
         } else if (routing.phase === 'restore' || routing.phase === 'observe') {
             link.activeDeploymentId = routing.selectedDeploymentId;
             link.activeDeployment = { environmentId: routing.input.environmentId, state: { in: ['succeeded', 'running_unverified'] } };
-        } else if (routing.selectedDeploymentId !== routing.deploymentId) return false;
+        } else if (routing.selectedDeploymentId !== routing.deploymentId) return null;
     }
     if (routing.kind === 'retention') {
         link.activeDeploymentId = routing.activeDeploymentId;
@@ -363,7 +374,7 @@ async function isAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionExec
     }
     const custody: Prisma.DeploymentWhereInput = routing.kind === 'member' || routing.kind === 'teardown' ? { targetLink: member }
         : routing.kind === 'build' ? builder : { OR: [builder, { targetLink: member }] };
-    return hasAcceptedDeploymentReceiptInTx(tx, binding, { deploymentId: routing.deploymentId,
+    return readAcceptedDeploymentReceiptInTx(tx, binding, { deploymentId: routing.deploymentId,
         environmentId: routing.input.environmentId, actionOperationId: routing.actionOperationId,
         installationId: binding.installationId }, {
         targetLinkId: routing.input.targetLinkId, requestKey: routing.input.requestKey,
