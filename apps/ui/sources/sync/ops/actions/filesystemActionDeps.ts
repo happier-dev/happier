@@ -7,7 +7,7 @@ import type { FilesystemActionId } from '@happier-dev/protocol/actions/filesyste
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { acknowledgeWorkspaceFileWrites } from '@/sync/domains/workspaces/files/workspaceFileAcknowledgements';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
@@ -73,16 +73,13 @@ export async function executeOriginalAccountFilesystemAction(
         || context.runtimeAccountId && context.runtimeAccountId !== account.accountId) {
         return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     }
-    const invocation = ExternalActionRequesterInvocationV1Schema.safeParse({
-        caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface ?? 'rpc',
-        authority: context.authority ?? 'account_automation', callerPermissionMode: context.callerPermissionMode,
-        callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
-        ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
-    });
-    if (!invocation.success) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    const invocation = projectExternalActionRequesterInvocationV1({ actionId, account, target,
+        context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' },
+            surface: context.surface ?? 'rpc', authority: context.authority ?? 'account_automation' } });
+    if (!invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     const result = await withActionAccountRequestSignal(account, context.signal, signal => executeOriginalAccountMachineAction({
         account, actionId, input, machineId: target.machineId, machineTarget: target,
-        requestId, authority: invocation.data.authority, invocation: invocation.data,
+        requestId, authority: invocation.authority, invocation,
         ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(signal ? { signal } : {}),
     }));
     account.assertResultCurrent(getActionSpec(actionId).sideEffectClass);

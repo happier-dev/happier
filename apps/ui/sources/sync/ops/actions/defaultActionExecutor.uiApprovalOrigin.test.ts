@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { ACCOUNT_ERASURE_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountErasure';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -9,6 +10,7 @@ import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema, ProjectTrustReadResponseV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -38,9 +40,25 @@ const carriedMachineReview = (result: unknown) => {
 };
 
 describe('present-user UI approval origin at the Action host', () => {
+    const shownReviews: Array<Parameters<typeof Modal.show>[0]> = [];
+    let confirmationAnswer = false;
+    let beforeConfirmationAnswer: (() => void) | null = null;
     beforeEach(async () => {
         await harness.reset();
-        vi.mocked(Modal.confirm).mockClear().mockResolvedValue(false);
+        confirmationAnswer = false;
+        beforeConfirmationAnswer = null;
+        shownReviews.length = 0;
+        vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
+        vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+            shownReviews.push(config);
+            // The modal host is the platform boundary; all approval owners remain real.
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => {
+                beforeConfirmationAnswer?.();
+                props.onAnswer(confirmationAnswer);
+            });
+            return 'action-review';
+        });
     });
     afterEach(() => { setPreferredLanguageFromSettings('en'); standardCleanup(); });
 
@@ -58,7 +76,7 @@ describe('present-user UI approval origin at the Action host', () => {
                 raw = request.content.v;
                 return { body: { success: true, version: ++version } };
             } });
-            vi.mocked(Modal.confirm).mockResolvedValue(true);
+            confirmationAnswer = true;
             const executor = createDefaultActionExecutor();
             const context = { surface: 'ui', authority: 'present_user', serverId, actionCaller: { kind: 'host' } } as const;
             const target = { actionId: 'usage.prices.refresh', audience: 'ui' } as const;
@@ -171,11 +189,31 @@ describe('present-user UI approval origin at the Action host', () => {
         const result = await createDefaultActionExecutor().execute('session.draft.delete', { draftId: '4135b238-607a-458d-b96c-7877d8076877' },
             { surface: 'ui', authority: 'present_user', serverId });
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[0]).toBeTruthy();
-        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toBe('');
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shownReviews).toHaveLength(1);
+        expect(shownReviews[0]?.chrome).toMatchObject({ kind: 'card', title: expect.any(String) });
+        expect(shownReviews[0]?.chrome).not.toHaveProperty('subtitle');
         // The confirm button carries the approval presentation's verb and destructive styling, never a bare OK (5b4ff8f3a5).
-        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[2]).toEqual({ confirmText: 'Delete', destructive: true });
+        expect(shownReviews[0]?.props).toMatchObject({ confirmLabel: 'Delete', irreversible: true });
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+    });
+
+    it('keeps the Account Delete review and typed challenge in one dialog before any deletion', async () => {
+        const serverId = await harness.addHome({ name: 'Delete Home', serverUrl: 'https://delete-review.test', accountId: 'alice' });
+        await harness.requireUiApproval(serverId, 'account.delete');
+        vi.mocked(Modal.prompt).mockClear();
+        const input = getActionSpec('account.delete').inputSchema.parse({ serverId, accountId: 'alice' });
+        const result = await createDefaultActionExecutor().execute('account.delete', input,
+            { surface: 'ui', authority: 'present_user', serverId });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(Modal.prompt).not.toHaveBeenCalled();
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shownReviews).toHaveLength(1);
+        expect(shownReviews[0]?.props).toMatchObject({ actionId: 'account.delete', actionArgs: input,
+            irreversible: true, preview: expect.any(Object), typedConfirmation: {
+                text: 'DELETE', placeholder: 'DELETE', instruction: t('settingsAccount.deleteAccountConfirmBody'),
+            } });
+        expect(harness.requestsFor(ACCOUNT_ERASURE_HTTP_PATH_V1)).toEqual([]);
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
@@ -192,7 +230,9 @@ describe('present-user UI approval origin at the Action host', () => {
         const before = harness.requests.length;
         const result = await executor.execute('roles.override.reset', { roleId }, { surface: 'ui', serverId });
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-        const [title, summary] = vi.mocked(Modal.confirm).mock.calls.at(-1)!;
+        const chrome = shownReviews.at(-1)?.chrome;
+        if (chrome?.kind !== 'card') throw new Error('Expected the common review card');
+        const { title, subtitle: summary } = chrome;
         for (const copy of [title, summary]) {
             expect(copy).toContain('Payments reviewer');
             expect(copy).toContain(t('roles.settings.sourceYours'));
@@ -288,9 +328,70 @@ describe('present-user UI approval origin at the Action host', () => {
                 : { kind: 'managed_service', managedServiceId: 'managed-a', machineId: 'machine-a' } });
         const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', authority: 'present_user', serverId });
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shownReviews).toHaveLength(1);
         expect(harness.requests.filter(({ path }) => path.includes('/project-trust/') || path.includes('/actions/execute'))).toEqual([]);
         expect(harness.artifacts(serverId).list()).toEqual([]);
+    });
+
+    it.each([
+        ['daemon.filesystem.delete', { rootPath: '/tmp', path: 'fin-qa-variants-a-1112-repo', recursive: true }],
+        ['daemon.filesystem.writeFile', { rootPath: '/tmp', path: 'reviewed.txt', content: 'bmV3' }],
+        ['daemon.filesystem.rename', { rootPath: '/tmp', from: 'before.txt', to: 'after.txt', overwrite: false }],
+    ] as const)('carries the one in-flow confirmation through the real receiving executor for %s', async (actionId, input) => {
+        const machineId = 'filesystem-machine';
+        const serverIdentityId = 'srv_filesystem_review';
+        const serverId = await harness.addHome({ name: 'Filesystem Home', serverUrl: 'https://filesystem-review.test',
+            accountId: 'alice', serverIdentityId, currentAccount: true });
+        let effects = 0;
+        // Only the native filesystem effect and HTTP transport are replaced.
+        const receiver = createActionExecutor({ filesystemActionExecute: async () => {
+            effects++;
+            return actionId === 'daemon.filesystem.writeFile' ? { success: true, hash: 'a'.repeat(64) } : { success: true };
+        } });
+        await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0,
+            requesterInvocation: 'optional',
+            failure: result => {
+                if (typeof result !== 'object' || result === null || !('ok' in result) || result.ok !== false) return null;
+                return result as { errorCode: string; error: string; details?: unknown };
+            },
+            execute: async (received, context) => {
+                const invocation = context.invocation;
+                expect(invocation?.presentUserConfirmation).toBeDefined();
+                const receiverContext = {
+                    surface: invocation?.surface, authority: invocation?.authority, actionCaller: invocation?.caller,
+                    presentUserConfirmation: invocation?.presentUserConfirmation,
+                    serverId, serverIdentityId, runtimeAccountId: 'alice', actionRequestId: context.requestId,
+                    externalActionTarget: context.target, externalActionExecutionAuthorization: context.authorization,
+                    interactivePresentation: 'unavailable' as const,
+                };
+                if (actionId === 'daemon.filesystem.delete' && invocation?.presentUserConfirmation) {
+                    expect(await receiver.execute(actionId, received, { ...receiverContext, presentUserConfirmation: undefined }))
+                        .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+                    const changed = { ...input, path: 'unreviewed.txt' };
+                    expect(await receiver.execute(actionId, changed, { ...receiverContext,
+                        presentUserConfirmation: { ...invocation.presentUserConfirmation } }))
+                        .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+                    expect(effects).toBe(0);
+                }
+                const result = await receiver.execute(actionId, received, receiverContext);
+                return result.ok ? result.result : result;
+            } });
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui', serverId, externalActionTarget: { kind: 'machine', machineId } } as const;
+        if (actionId === 'daemon.filesystem.delete') {
+            confirmationAnswer = false;
+            expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(effects).toBe(0);
+            shownReviews.length = 0;
+        }
+        confirmationAnswer = true;
+        // Write/rename have a designed direct confirmation; Delete presents it at admission.
+        const result = actionId === 'daemon.filesystem.delete' ? await executor.execute(actionId, input, context)
+            : await executor.executeConfirmed(actionId, input, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { success: true } });
+        expect(effects).toBe(1);
+        expect(shownReviews).toHaveLength(actionId === 'daemon.filesystem.delete' ? 1 : 0);
     });
 
     it('confirms a native Restart with the Machine\'s own review, then restarts exactly that Service once', async () => {
@@ -357,7 +458,14 @@ describe('present-user UI approval origin at the Action host', () => {
                     : refuseWithReview(received, 'Install 53 updates as the administrator you name');
             } });
         vi.mocked(Modal.confirm).mockReset();
-        vi.mocked(Modal.confirm).mockResolvedValue(choice === 'confirms');
+        vi.mocked(Modal.confirm).mockResolvedValue(false);
+        const shown: unknown[] = [];
+        vi.mocked(Modal.show).mockImplementationOnce(config => {
+            const props = config.props as { preview: unknown; onAnswer(confirmed: boolean): void };
+            shown.push(props.preview);
+            queueMicrotask(() => props.onAnswer(choice === 'confirms'));
+            return 'updates-review';
+        });
         const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', serverId });
         if (choice === 'confirms') {
             expect(result, JSON.stringify({ result, dispatched })).toMatchObject({ ok: true, result: { operationId: 'updates-operation' } });
@@ -366,8 +474,9 @@ describe('present-user UI approval origin at the Action host', () => {
             expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
             expect(dispatched).toEqual([{ input, confirmed: false }]);
         }
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('Install 53 updates');
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shown).toEqual([{ summary: 'Install 53 updates as the administrator you name' }]);
+        vi.mocked(Modal.show).mockReset();
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
@@ -436,10 +545,11 @@ describe('present-user UI approval origin at the Action host', () => {
             content: { t: 'plain', v: { project, reviewedEffectDigest: 'effect-a', approvedAtMs: 1 } },
         }) });
         harness.answer(serverId, `${PROJECT_TRUST_ROUTE_V1}/mutate`, { body: { status: 'updated', revision: 2, cursor: 1 } });
-        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        confirmationAnswer = true;
         const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', authority: 'present_user', serverId });
         expect(result).toMatchObject({ ok: true, result: { project, status: 'removed' } });
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shownReviews).toHaveLength(1);
         expect(harness.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`).map(({ input: mutation }) => ProjectTrustMutationRequestV1Schema.parse(mutation)))
             .toEqual([{ project, expectedRevision: 1, content: null }]);
         expect(harness.artifacts(serverId).list()).toEqual([]);
@@ -449,14 +559,13 @@ describe('present-user UI approval origin at the Action host', () => {
         const serverId = await harness.addHome({ name: 'Canceled Home', serverUrl: 'https://canceled-origin.test', accountId: 'alice' });
         await harness.requireUiApproval(serverId, 'projects.trust.revoke');
         const controller = new AbortController();
-        vi.mocked(Modal.confirm).mockImplementation(async () => {
-            controller.abort();
-            return true;
-        });
+        confirmationAnswer = true;
+        beforeConfirmationAnswer = () => controller.abort();
         await expect(createDefaultActionExecutor().execute('projects.trust.revoke', {
             project: { serverId, projectId: 'project-a' }, expectedRevision: 1, expectedEffectDigest: 'effect-a',
         }, { surface: 'ui', serverId, signal: controller.signal })).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shownReviews).toHaveLength(1);
         expect(harness.requests.filter(({ path }) => path.includes('/project-trust/'))).toEqual([]);
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
@@ -586,10 +695,15 @@ describe('present-user UI approval origin at the Action host', () => {
         const serverId = await harness.addHome({ name: 'Prepared Home', serverUrl: 'https://prepared-origin.test', accountId: 'alice' });
         await harness.requireUiApproval(serverId, 'roles.create');
         const executor = createDefaultActionExecutor();
-        // Preparation has no mounted presenter: a saved UI Ask refuses rather than minting an Artifact.
-        await expect(executor.prepare('roles.create', { roleId: 'prepared-role', role: BUILT_IN_ROLES_V1.builder },
-            { serverId, actionRequestId: 'stable-human-request' })).resolves.toMatchObject({ kind: 'settled',
-            result: { ok: false, errorCode: 'action_interactive_review_required' } });
+        // Preparation retains admission; the mounted native host asks only when the person runs it.
+        const role = await executor.prepare('roles.create', { roleId: 'prepared-role', role: BUILT_IN_ROLES_V1.builder },
+            { serverId, actionRequestId: 'stable-human-request' });
+        expect(role.kind).toBe('ready');
+        expect(shownReviews).toHaveLength(0);
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+        if (role.kind !== 'ready') throw new Error(JSON.stringify(role));
+        expect(await role.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(shownReviews).toHaveLength(1);
         expect(harness.artifacts(serverId).list()).toEqual([]);
         const prepared = await executor.prepare('approval.request.create', { actionId: 'roles.create',
             actionArgs: { roleId: 'prepared-role', role: BUILT_IN_ROLES_V1.builder }, summary: 'Create a role',
