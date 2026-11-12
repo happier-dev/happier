@@ -1780,29 +1780,7 @@ describe("workflowRunService (integration)", () => {
             expect(contextTargets()).toMatchObject([{ managedId: managed.id, enrolledMachineId: seeded.machineId,
                 origin: { kind: "context-delivery", session: { homeId, sessionId: seeded.sessionId },
                     delivery: { runId: seeded.runId, revision: 2 } } }]);
-            const { readWorkflowRunOriginWakeCandidatesInTx } = await import('./workflowRunAttention');
-            const { resolveCurrentMachineRecipientAccountIdsInTx } = await import('@/app/machines/machineAccess');
-            console.info('W1_WAKE_DIAGNOSTIC', JSON.stringify(await inTx(async tx => ({
-                audience: await resolveCurrentMachineRecipientAccountIdsInTx(tx, controller.id),
-                candidates: await readWorkflowRunOriginWakeCandidatesInTx(tx, { originSessionId: seeded.sessionId }),
-                session: await tx.session.findUnique({ where: { id: seeded.sessionId }, select: { runtimeMachineTarget: true } }),
-                run: await tx.automationRun.findUnique({ where: { id: seeded.runId }, select: { originSessionId: true,
-                    workflowCustodyState: true, revision: true,
-                    workflowInvocations: { select: { lifecycle: true } } } }),
-            }))));
-            const { readCurrentCommittedSessionInputMachineTargetInTx } = await import('@/app/session/messages/sessionInputAdmission');
-            const { resolveMachineAdmissionInTx } = await import('@/app/machines/machineAccess');
-            const { resolveManagedWakeTargetInTx } = await import('@/app/machines/managed/managedWake');
-            console.info('W1_WAKE_PREREQUISITE', JSON.stringify(await inTx(async tx => ({
-                candidates: (await readWorkflowRunOriginWakeCandidatesInTx(tx, { accountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, controller.id) })).length,
-                placement: Boolean(await readCurrentCommittedSessionInputMachineTargetInTx(tx, seeded.sessionId)),
-                admission: await resolveMachineAdmissionInTx(tx, { actorAccountId: seeded.accountId, machineId: seeded.machineId }),
-                binding: Boolean(await resolveManagedWakeTargetInTx(tx, { actorAccountId: seeded.accountId, machineId: seeded.machineId,
-                    origin: { kind: 'context-delivery', session: { homeId, sessionId: seeded.sessionId }, delivery: { runId: seeded.runId, revision: 2 } } })),
-            }))));
-            const directReconnect = await readManagedWakeTargets({ actorAccountId: seeded.accountId, request });
             const admitted = await measureReconnect();
-            console.info('W1_WAKE_RECONNECT', JSON.stringify({ direct: directReconnect, measured: admitted }));
             expect(admitted.value.targets)
                 .toContainEqual(expect.objectContaining({ origin: expect.objectContaining({ kind: 'context-delivery' }) }));
             // managedWake.ts reads only actual origin work; its canonical committed
@@ -3468,6 +3446,25 @@ describe("workflowRunService (integration)", () => {
             pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
         expect(Object.keys(named.acceptedEnvelopesByRunId).sort()).toEqual([...summarized, presummary].sort());
         expect(named.displayEnvelopesByRunId).toBeUndefined();
+    });
+
+    it("lists an attention page by its display summaries and held progress, without the frozen program", async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        const sealed = sealWorkflowRunAcceptedEnvelopesV1({ mode: "plain", accountId: seeded.accountId, runId,
+            acceptedSnapshot: await acceptedSnapshotFixture(seeded) });
+        await admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct" }, machineId: seeded.machineId, ...sealed });
+        const rootId = randomUUID();
+        await initializeWorkflowRunExecution({ accountId: seeded.accountId, runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 1n),
+            rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
+        const heldId = randomUUID();
+        await db.workflowRunInvocation.create({ data: { id: heldId, runId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n, attempt: 0n, lifecycle: "waiting_for_review",
+            contentEnvelope: progressEnvelope({ ...seeded, runId, id: heldId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n }) } });
+        const attention = await listWorkflowRuns({ accountId: seeded.accountId, attention: "required", pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
+        // The Inbox names the held step from the summary's step names: the page ships no frozen program.
+        expect({ runs: attention.runs.map(run => run.id), programs: Object.keys(attention.acceptedEnvelopesByRunId),
+            summaries: Object.keys(attention.displayEnvelopesByRunId ?? {}), held: Object.keys(attention.heldProgressByRunId ?? {}) })
+            .toEqual({ runs: [runId], programs: [], summaries: [runId], held: [runId] });
     });
 
     it("shortens Run and invocation pages for the complete external Action response envelope", async () => {

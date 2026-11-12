@@ -1908,7 +1908,7 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
             : provider === "postgres" || provider === "pglite"
                 ? prismaRuntime.sql`${id("parentRecordId")} = ANY(${[...parentRecordIds]}::text[])`
                 : provider === "mysql"
-                    ? prismaRuntime.sql`${id("parentRecordId")} IN (SELECT selected.id FROM JSON_TABLE(${JSON.stringify(parentRecordIds)}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) selected)`
+                    ? prismaRuntime.sql`${id("parentRecordId")} IN (SELECT selected.id COLLATE utf8mb4_unicode_ci FROM JSON_TABLE(${JSON.stringify(parentRecordIds)}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) selected)`
                     : prismaRuntime.sql`${id("parentRecordId")} IN (SELECT value FROM json_each(${JSON.stringify(parentRecordIds)}))`;
         for (;;) {
             const batchSize = Math.min(wanted - collected.length, WORKFLOW_PAGE_DATABASE_BATCH_ROWS);
