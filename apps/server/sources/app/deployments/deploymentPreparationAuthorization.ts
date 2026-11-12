@@ -44,7 +44,7 @@ import { PROJECT_SOURCE_READ_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } 
 import { ProjectSourcesReadInputV1Schema, ProjectSourcesUpdateInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1 } from '@happier-dev/protocol/scm/repositoryFilesPullRequestActionIds';
 import { DeploymentEnvironmentContentCasV1Schema } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
-import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectSourceOwnerV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readProjectDeploymentDefaultsContentInTx } from '@/app/projects/projectDeploymentDefaultsService';
 import { readArtifactAccessGrantsForAdmittedCustodyInTx,
     type ArtifactMutationTransactionGuard } from '@/app/artifacts/artifactAccessService';
@@ -621,7 +621,7 @@ export function createDeploymentCandidateArtifactMutationGuard(input: Readonly<{
 
 async function readCreateSource(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: CreateAdmission, authentication: DeploymentAuthentication) {
-    if (binding.actionId !== 'deployments.environments.create') return null;
+    if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'create') return null;
     const source = admission.source ? await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.source.id, authentication) : null;
     const owner = admission.newProject?.owner ?? (source?.ok ? source.owner : null);
     if (!owner || (admission.newProject ? !await canManageProjectSourceOwnerInTx(tx, binding.accountId, owner, authentication)
@@ -667,6 +667,14 @@ export async function readDeploymentLinkAdmissionInTx(tx: Tx,
         ? { environmentId: loaded.row.id, owner: loaded.admission.owner } : null;
 }
 
+/** A target-link inventory read stays inside the one owner its root admitted. */
+function isOwnerTargetLinkListHttpPurpose(serverIdentityId: string, owner: ProjectSourceOwnerV1,
+    proof: Readonly<{ method: string; body?: unknown; routeInput?: unknown }>): boolean {
+    if (proof.method.toUpperCase() !== 'POST' || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, proof.body)) return false;
+    const input = DeploymentTargetLinksListInputV1Schema.safeParse(proof.body);
+    return input.success && input.data.serverId === serverIdentityId && sameStrictJsonValue(input.data.scope, owner);
+}
+
 /** One purpose owner confines Link preparation reads and mutation to its signed admission. */
 export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
@@ -681,10 +689,8 @@ export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: 
                 undefined, undefined, effectActionId) === true;
     }
     if (proof.path === '/v1/deployments/targets/list') {
-        if (!admission || effectActionId !== binding.actionId || proof.method.toUpperCase() !== 'POST'
-            || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, proof.body)) return false;
-        const input = DeploymentTargetLinksListInputV1Schema.safeParse(proof.body);
-        return input.success && input.data.serverId === binding.serverIdentityId && sameStrictJsonValue(input.data.scope, admission.owner);
+        return admission !== undefined && effectActionId === binding.actionId
+            && isOwnerTargetLinkListHttpPurpose(binding.serverIdentityId, admission.owner, proof);
     }
     const method = proof.method.toUpperCase();
     const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
@@ -1026,7 +1032,7 @@ export function isDeploymentPreviewPreparationReadEffect(binding: ExternalAction
 
 /** The signed create projection has one finite effect family, shared by HTTP admission and purpose binding. */
 export function isDeploymentCreateHttpEffect(binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string): boolean {
-    return binding.actionId === 'deployments.environments.create' && binding.deploymentPreparationAdmission?.operation === 'create'
+    return deploymentPreparationOperationForActionV1(binding.actionId) === 'create' && binding.deploymentPreparationAdmission?.operation === 'create'
         && (isDeploymentPreviewPreparationReadEffect(binding, effectActionId)
             || effectActionId === binding.actionId || effectActionId === 'projects.sources.read'
             || effectActionId === 'deployments.environments.get' || effectActionId === 'deployments.bindings.set'
@@ -1054,6 +1060,11 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
         ? { rootActionId: 'deployments.environments.create', effectActionId } : null;
     if (await isDeploymentPreparationMachineReadHttpPurposeInTx(tx, binding, effectActionId, proof)) {
         return { rootActionId: 'deployments.environments.create', effectActionId };
+    }
+    if (proof.path === '/v1/deployments/targets/list') {
+        const owner = await readCreateAdmissionOwnerInTx(tx, admission);
+        return effectActionId === binding.actionId && owner && isOwnerTargetLinkListHttpPurpose(binding.serverIdentityId, owner, proof)
+            ? { rootActionId: 'deployments.environments.create', effectActionId } : null;
     }
     const domainEffect = effectActionId === 'deployments.domains.add';
     const deployEffect = effectActionId === 'deployments.deploy';
@@ -1160,7 +1171,8 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     }
     if (method === 'POST' && proof.path === '/v1/deployments/environments') {
         const parsed = DeploymentEnvironmentCreateStorageInputV1Schema.safeParse(proof.body);
-        return admit(!childEffect && admission.mode === 'apply' && parsed.success && parsed.data.serverId === binding.serverIdentityId
+        return admit(binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+            && !childEffect && admission.mode === 'apply' && parsed.success && parsed.data.serverId === binding.serverIdentityId
             && parsed.data.projectSourceId === admission.source?.id && sameStrictJsonValue(parsed.data.newProject, admission.newProject)
             && parsed.data.requestKey === admission.requestKey
             && parsed.data.protection === admission.protection && parsed.data.purpose === admission.purpose
@@ -1212,7 +1224,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (childEffect && await tx.deploymentEnvironment.findFirst({ where: {
         id: { not: environmentId! }, contentArtifactId: artifactId,
     }, select: { id: true } })) return null;
-    const owner = admission.newProject?.owner ?? (admission.source ? await readProjectSourceOwnerInTx(tx, admission.source.id) : null);
+    const owner = await readCreateAdmissionOwnerInTx(tx, admission);
     if (owner?.kind !== 'team') return null;
     const artifact = await tx.artifact.findUnique({ where: { id: artifactId }, select: { kind: true, accountId: true } });
     if (!artifact || artifact.accountId !== binding.accountId
@@ -1279,6 +1291,10 @@ async function readTemplateEnvironmentId(tx: Tx, binding: Pick<ExternalActionExe
 }
 
 /** Reuse the admitted exact preview relation for both retained and newly allocated children. */
+async function readCreateAdmissionOwnerInTx(tx: Tx, admission: CreateAdmission): Promise<ProjectSourceOwnerV1 | null> {
+    return admission.newProject?.owner ?? (admission.source ? await readProjectSourceOwnerInTx(tx, admission.source.id) : null);
+}
+
 async function readPreviewCreateEnvironmentIdInTx(tx: Tx, binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId'>,
     admission: CreateAdmission): Promise<string | null> {
     if (!admission.preview || !admission.source) return readCreatedDeploymentEnvironmentIdInTx(tx, binding.accountId, admission.requestKey);

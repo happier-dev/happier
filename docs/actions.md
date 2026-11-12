@@ -3258,6 +3258,18 @@ creation and any completed record references; resume the same operation with
 the same `requestKey` to finish its missing step without creating another
 Environment. The reviewed digest must still match the target capture.
 
+Apply is an Environment-creating root. Its signed binding carries Create's
+`deploymentPreparationAdmission` (`operation: 'create'`), bound at issuance from
+the reviewed `destination` and `requestKey`; Home admits it only when the
+requester can manage the destination Project owner. The daemon signs create
+preparation (Project defaults, the existing native target-link lookup, content
+Artifacts) with the adopt root, and Home spends that admission through the same
+create-preparation purpose owner as Create. The native lookup lists only the
+destination owner's target links. The Environment row itself is written only by
+the reviewed `deployments.environments.create` child. Review issues no create
+admission. A Home refusal of the native lookup surfaces as its typed
+authorization refusal, not a list-schema failure.
+
 Adoption performs no native start, stop or Compose up. The existing watch stays
 available until the first normal deploy transfers the native project's custody
 to the Environment. These are unreleased development-source contracts;

@@ -116,6 +116,7 @@ else process.exit(23);
             environment.environment.owner = { kind: 'account', accountId: 'owner' };
             let creates = 0;
             let loseBindingResponse = true;
+            let refuseNativeLookup = false;
             const writes: string[] = [];
             vi.spyOn(axios, 'get').mockImplementation(async url => {
                 const path = new URL(String(url)).pathname;
@@ -142,6 +143,8 @@ else process.exit(23);
                     data: { ok: true, projectSourceId: 'source', sourceRevision: 1, revision: 0, content: null } };
                 if (request.method === 'GET' && path === '/v1/deployments/environments/adopted-environment') return { status: 200,
                     data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(row => row.targetLink) } };
+                if (request.method === 'POST' && path === '/v1/deployments/targets/list' && refuseNativeLookup) return { status: 401,
+                    data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
                 if (request.method === 'POST' && path === '/v1/deployments/targets/list') return { status: 200, data: { ok: true,
                     items: creates ? [{ environment: environment.environment, targetLink: environment.targetLinks[0]!.targetLink }] : [],
                     nextCursor: null, coverage: 'complete' } };
@@ -227,6 +230,13 @@ else process.exit(23);
                 .toMatchObject({ ok: false, errorCode: 'secret_binding_required' });
             expect(await executor.execute('machines.services.adopt', { ...apply, bindingsConfirmed: false }, context))
                 .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+            expect(creates).toBe(0);
+            phase = 'Home refuses the native lookup';
+            refuseNativeLookup = true;
+            // A refusal body is Home's typed authorization result, never a list-schema parse failure.
+            expect(await executor.execute('machines.services.adopt', { ...apply, requestKey: 'refused-lookup' }, context))
+                .toMatchObject({ ok: false, errorCode: 'action_home_signed_out' });
+            refuseNativeLookup = false;
             expect(creates).toBe(0);
             phase = 'apply and lost binding response';
             const composeCalls = async () => (await readFile(callsPath, 'utf8')).trim().split('\n')

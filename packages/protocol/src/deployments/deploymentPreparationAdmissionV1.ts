@@ -9,11 +9,13 @@ import { DeploymentEnvironmentCopySourceV1Schema } from './deploymentEnvironment
 import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupPlanInputV1Schema } from '../machines/managed/actionsV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '../local/services/actionIdsV1.js';
 import { DeploymentNewProjectV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
 
 export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
+  // Adopting a watched service is an Environment-creating root: it spends Create's preparation admission.
   return value === 'deployments.prepare' ? 'prepare'
-    : value === 'deployments.environments.create' ? 'create'
+    : value === 'deployments.environments.create' || value === MACHINE_SERVICE_ADOPT_ACTION_ID ? 'create'
     : value === 'deployments.publish.prepare' ? 'catalog'
     : value === 'deployments.templates.instantiate' ? 'template'
       : value === 'machines.setup.plan' || value === 'machines.setup.apply' ? 'setup' : undefined;
@@ -71,6 +73,16 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
   const operation = deploymentPreparationOperationForActionV1(actionId);
   if (operation === undefined) return undefined;
   const value = readRecord(input);
+  // Adoption binds its reviewed destination at apply; the review step creates nothing.
+  if (actionId === MACHINE_SERVICE_ADOPT_ACTION_ID) {
+    if (value.mode !== 'apply') return undefined;
+    const destination = readRecord(value.destination);
+    return DeploymentPreparationAdmissionV1Schema.parse({ operation, mode: 'apply',
+      ...(destination.newProject ? { newProject: destination.newProject } : { source: { id: destination.projectSourceId } }),
+      requestKey: value.requestKey, protection: destination.protection, purpose: destination.purpose,
+      deployerMode: destination.deployerMode,
+      ...(destination.deployerPrincipals === undefined ? {} : { deployerPrincipals: destination.deployerPrincipals }) });
+  }
   // Ordinary prepared creates retain their existing root. Copy and preview
   // preparation capture their exact read references in the same finite carrier.
   if (operation === 'create') return value.preview === undefined && value.copyFrom === undefined && value.newProject === undefined

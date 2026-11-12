@@ -3,9 +3,10 @@ import type { RuntimeActionIdV1 } from '../../actions/actionIds.js';
 import type { LocalServiceActionKindV1 } from './actions/v1.js';
 
 /** Schema-free ids: Action identity must not initialize its own spec graph. */
+export const MACHINE_SERVICE_ADOPT_ACTION_ID = 'machines.services.adopt' as const;
 export const MACHINE_SERVICE_FRONTDOOR_ACTION_IDS = [
   'machines.services.list', 'machines.services.discovery', 'machines.services.detail',
-  'machines.services.watch', 'machines.services.unwatch', 'machines.services.adopt',
+  'machines.services.watch', 'machines.services.unwatch', MACHINE_SERVICE_ADOPT_ACTION_ID,
 ] as const;
 export const MACHINE_SERVICE_LOGS_READ_ACTION_ID = 'machines.services.logs.read' as const;
 export const MACHINE_SERVICE_CONTROL_ACTION_ID = 'machines.services.control' as const;

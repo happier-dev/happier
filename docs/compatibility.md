@@ -8988,6 +8988,12 @@ coordinated unreleased 0.3 source contract, not ignorable presentation fields or
 a new version, epoch, migration or compatibility gate. Older origin leaves
 without `capture` retain their original physical project/engine semantics.
 
+Adopt apply envelopes now carry the create `deploymentPreparationAdmission`.
+Earlier development Homes refuse that field on this root, and earlier daemons
+sign adopt preparation with the Create effect, so matching Protocol, UI, CLI
+and Home source reload together. This direct development cut adds no wire
+epoch, persisted format or predecessor adapter.
+
 The existing host-only Environment create preparer accepts the captured origin
 and writes it in the first target-link Artifact through the existing mode-aware
 Account Artifact owner. Public create/storage requests contain only the Artifact
