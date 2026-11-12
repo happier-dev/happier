@@ -2307,7 +2307,7 @@ describe('deployment children retain their controller Action authority', () => {
         await expect(mint('deployments.cancel', f.environment.id, 'foreign-environment')).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
-    it('spends signed restart admission without post-mint Source, Team or Machine permission reads', async () => {
+    it('refuses a re-presented restart root after withdrawal while its in-operation steps need no permission reads', async () => {
         const f = await fixture('team');
         const actionId = 'deployments.restart' as const;
         const target = { kind: 'machine' as const, machineId: f.member.id };
@@ -2360,21 +2360,12 @@ describe('deployment children retain their controller Action authority', () => {
             const relayPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`;
             const relayBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
                 machineId: f.member.id, envelope, executionAuthorization: authorization });
-            const relayQueries: string[] = [];
-            const machineGrantReads: string[] = [];
-            const stopRelay = observeSqliteRequests({ before: query => {
-                if (query.model) relayQueries.push(query.model);
-                if (query.model === 'Machine' && /"(?:accountGrants|teamGrants|groupGrants)"/u.test(JSON.stringify(query.args))) {
-                    machineGrantReads.push(query.action);
-                }
-            } });
+            // Presenting the root to the Home again, even daemon-signed, is new work:
+            // full admission refuses the suspended member and nothing is dispatched.
             const relay = await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
-                headers: headers('POST', relayPath, relayBody) }).finally(stopRelay);
-            expect(relayQueries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant', 'Account', 'ApiToken'].includes(model))).toEqual([]);
-            expect(machineGrantReads).toEqual([]);
-            // The real dispatcher reaches its Socket.IO boundary and reports no connected daemon.
-            expect(roomDiscoveries).toBeGreaterThan(0);
-            expect(relay.json()).toMatchObject({ actionId, execution: { ok: false, errorCode: 'target_unavailable' } });
+                headers: headers('POST', relayPath, relayBody) });
+            expect(relay.statusCode, relay.body).not.toBe(200);
+            expect(roomDiscoveries).toBe(0);
             const substituted = { ...relayBody, envelope: { ...envelope, input: { ...input, deploymentId: crypto.randomUUID() } } };
             expect((await app.inject({ method: 'POST', url: relayPath, payload: substituted,
                 headers: headers('POST', relayPath, substituted) })).statusCode).toBe(401);
@@ -2427,7 +2418,7 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it('re-admits a person-presented restart relay as new work while the daemon step stays bound to its Machine', async () => {
+    it('re-admits every re-presented restart root as new work while in-operation steps stay bound to their Machine', async () => {
         const f = await fixture('team');
         const other = await fixture('team');
         const actionId = 'deployments.restart' as const;
@@ -2471,12 +2462,18 @@ describe('deployment children retain their controller Action authority', () => {
                 headers: { authorization: `Bearer ${bearer}` } });
             expect(replay.statusCode, replay.body).not.toBe(200);
             expect(forwarded).toBe(0);
-            // The daemon's own step of the admitted root continues.
-            const step = await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
+            // A daemon-signed re-presentation is new work too.
+            const daemonReplay = await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
                 headers: signed('POST', relayPath, relayBody) });
-            expect(step.json()).toMatchObject({ actionId, execution: { ok: false, errorCode: 'target_unavailable' } });
-            expect(forwarded).toBeGreaterThan(0);
-            // That step cannot move to another Machine, installation or Environment.
+            expect(daemonReplay.statusCode, daemonReplay.body).not.toBe(200);
+            expect(forwarded).toBe(0);
+            // A step inside the running operation still verifies without re-admission.
+            const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
+            const verifyBody = { v: 1, admittedMachineRole: 'use' };
+            const step = await app.inject({ method: 'POST', url: verifyPath, payload: verifyBody,
+                headers: signed('POST', verifyPath, verifyBody) });
+            expect(step.statusCode, step.body).toBe(200);
+            // No presentation can move to another Machine, installation or Environment.
             const elsewhere = { ...relayBody, machineId: other.member.id };
             expect((await app.inject({ method: 'POST', url: relayPath, payload: elsewhere,
                 headers: signed('POST', relayPath, elsewhere) })).statusCode).not.toBe(200);

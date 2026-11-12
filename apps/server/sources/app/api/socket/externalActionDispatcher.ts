@@ -764,8 +764,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let admittedFiniteOperation: ReturnType<typeof readAdmittedFiniteOperationPrincipal> = null;
         if (executionAuthorization) {
             // Dispatch is also an internal ingress: prove its supplied root token.
-            // Its only producer, the relay route, already decided admission once:
-            // fresh for a person-presented relay, the signed step for the daemon's.
+            // Its only producer, the relay route, already ran full admission for
+            // this presentation; dispatch consumes that one decision.
             const root = await auth.verifyExternalActionExecutionAuthorization(executionAuthorization.token);
             admittedFiniteOperation = root && readAdmittedFiniteOperationPrincipal(root, request.principal.authority);
             const current = admittedFiniteOperation ?? (root ? await verifyCurrentExternalActionPrincipalInTx(db, root) : null);

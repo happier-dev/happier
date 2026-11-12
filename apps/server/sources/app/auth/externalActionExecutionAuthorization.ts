@@ -451,14 +451,14 @@ function projectAcceptedDeploymentPrincipal(binding: ExternalActionExecutionAuth
 }
 
 /**
- * A later step of an admitted finite native operation (restart, restore, backup)
- * carries the identity its mint admitted. Home keeps no job row for these, so the
- * signed root (exact Action, Environment, Machine, installation and envelope; the
- * persistent root token has no expiry and the native admission no deadline) and
- * the executor's local cancel signal are the whole authority: no per-step
- * principal, Session-source, Source, Team or Machine re-admission. A Workflow
- * root keeps its active-Run lookup instead, and a person-presented relay is new
- * work that the relay route re-admits before dispatch.
+ * A step inside the one admitted finite native operation (restart, restore,
+ * backup) that is already running on the daemon carries the identity its mint
+ * admitted: its signed, installation-bound calls (verification, declared reads)
+ * skip per-step principal, Session-source, Source, Team and Machine re-admission,
+ * and the executor's local cancel signal bounds them. The root token has no
+ * expiry and the admission no deadline, so this never covers presenting the root
+ * to the Home again: every relay, daemon-signed or person-presented, is new work
+ * that the relay route re-admits in full. Workflow roots keep their active-Run lookup.
  */
 export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
     authorityCeiling?: ExternalActionServerPrincipalV1['authority']): VerifiedExternalActionPrincipal | null {

@@ -57,7 +57,7 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     readCurrentExternalActionHandoffBindingInTx, hasCurrentExternalActionSessionSource,
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal,
     readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
-    verifyWorkflowExternalActionRequesterAuthorization, readAdmittedFiniteOperationPrincipal,
+    verifyWorkflowExternalActionRequesterAuthorization,
     type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { ManagedMachineError, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
@@ -291,14 +291,8 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: body.machineId, envelope: body.envelope })
         || request.externalActionExecutionAuthorized === true
             && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token) return null;
-    // The daemon's own signed relay of an admitted finite native root is a step
-    // of that operation: its authentication already spent the signed admission.
-    // A person-presented relay is new work and falls through to full admission.
-    if (request.externalActionExecutionAuthorized === true) {
-        const admitted = readAdmittedFiniteOperationPrincipal(root, request.authAuthority);
-        const principal = admitted && projectExternalActionBoundPrincipal(root, admitted, request.authAuthority);
-        if (principal) return { principal, authorization };
-    }
+    // Every presentation of a root to the Home, daemon-signed or person-presented,
+    // is new work: it passes full admission here before any dispatch.
     // This front door has already authenticated this Account and checked login
     // eligibility. Re-enter the existing root through current rows, not another
     // provider HTTP request after the origin's source check.
