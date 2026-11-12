@@ -92,7 +92,7 @@ export const cursorSubscriptionMode = {
       return { status: 'rejected', diagnostic: cursorDiagnostic('cursor_poll_invalid') };
     }
   },
-  async cancel(context, options) { await context.attemptCredentials.delete(POLL_KEY, options); },
+  async cancel(context) { await context.attemptCredentials.delete(POLL_KEY); },
 } satisfies ConnectedAccountPortableRuntime['authentication']['modes'][string];
 
 export const refreshCursorSubscription: ConnectedAccountRuntime['refresh'] = async (context, options) => {

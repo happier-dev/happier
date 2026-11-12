@@ -37,7 +37,8 @@ const materialize: NonNullable<ConnectedAccountPortableRuntime['materialize']> =
     if (!token) throw new Error('Cursor subscription credentials are unavailable');
     if (request.kind === 'httpHeaders') {
       if (request.origin !== 'https://api2.cursor.sh') throw new Error('Cursor bearer origin is unsupported');
-      return { kind: 'httpHeaders', headers: request.headerNames.some(name => name.toLowerCase() === 'authorization') ? { Authorization: `Bearer ${token}` } : {} };
+      const headers: Readonly<Record<string, string>> = request.headerNames.some(name => name.toLowerCase() === 'authorization') ? { Authorization: `Bearer ${token}` } : {};
+      return { kind: 'httpHeaders', headers };
     }
     if (request.kind !== 'environment') throw new Error('Unsupported Cursor subscription materialization');
     // The CLI otherwise persists injected authentication into the user native store.
