@@ -51,11 +51,11 @@ describe('managed acquire review', () => {
 
   it.each([
     [{ kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' },
-      ['Runs as a dedicated user on the machine', 'Each person you share it with gets their own Linux user'], 'approvalServer'],
+      ['Runs as a dedicated user on the machine', 'Agents share a Linux user until separate users are enabled in Security'], 'approvalServer'],
     [{ kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'ask', administrator: { username: 'maintainer' } },
-      ['Runs as a dedicated user on the machine', 'Each person you share it with gets their own Linux user'], 'approvalDeployTarget'],
+      ['Runs as a dedicated user on the machine', 'Agents share a Linux user until separate users are enabled in Security'], 'approvalDeployTarget'],
     [{ kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
-      ['Runs as a dedicated user on the machine', 'Each person you share it with gets their own Linux user'], 'approvalServer'],
+      ['Runs as a dedicated user on the machine', 'Agents share a Linux user until separate users are enabled in Security'], 'approvalServer'],
     [{ kind: 'existingUser', role: 'personal' }, ['Runs as your existing account on your personal machine'], 'approvalPersonal'],
     [{ kind: 'existingUser', role: 'adopted' }, ['Runs as the existing account on the adopted machine'], 'approvalAdopted'],
     [{ kind: 'guestProcess', role: 'sandbox' }, ['Runs as a process inside the sandbox'], 'approvalSandbox'],

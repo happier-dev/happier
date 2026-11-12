@@ -4,7 +4,7 @@ import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema,
   MachineSetupPlanInputV1Schema } from '../machines/managed/actionsV1.js';
 
 describe('managed continuation and sealed deployment preparation', () => {
-  it('keeps scalar Plan, combined Plan and Apply without reviewed operands free of preparation authority', () => {
+  it('keeps Plan free of preparation authority and binds Apply to its reviewed Machine targets', () => {
     const target = { homeId: 'home', machineId: 'machine' };
     for (const input of [MachineSetupPlanInputV1Schema.parse(target),
       MachineSetupCombinedPlanInputV1Schema.parse({ ...target, targets: [target] })]) {
@@ -13,7 +13,9 @@ describe('managed continuation and sealed deployment preparation', () => {
     const input = MachineSetupApplyInputV1Schema.parse({ ...target, targets: [{ ...target,
       sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, recipePlans: [],
     }] });
-    expect(api.projectDeploymentPreparationAdmissionV1('machines.setup.apply', input)).toBeUndefined();
+    expect(api.projectDeploymentPreparationAdmissionV1('machines.setup.apply', input)).toEqual({
+      operation: 'setup', machineTargets: ['machine'], deployments: [],
+    });
   });
 
   it('accepts a controllerless continuation while validating supplied controller identity', () => {
