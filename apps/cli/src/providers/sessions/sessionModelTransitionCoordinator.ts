@@ -144,6 +144,19 @@ function readTeamRoute(target: AuthorizedSessionModelTransitionTarget) {
   return target.readAppliedTeamCredentialModel ? target.readAppliedTeamCredentialModel() : null;
 }
 
+function sameTeamResourceBinding(
+  desired: Extract<SessionModelSelectionV2['ref'], { source: 'team_resource' }>,
+  applied: TeamCredentialProviderModelSelectionV1 | null | undefined,
+): boolean {
+  return applied != null
+    && desired.agentTargetKey === applied.agentTargetKey
+    && desired.resourceId === applied.resourceId
+    && desired.teamId === applied.teamId
+    && desired.expectedResourceRevision === applied.expectedResourceRevision
+    && desired.deliveryMode === applied.deliveryMode
+    && isDeepStrictEqual(desired.nativeDelivery ?? null, applied.nativeDelivery ?? null);
+}
+
 function sameTeamRoute(
   left: AuthorizedSessionModelTransitionTarget,
   right: AuthorizedSessionModelTransitionTarget,
@@ -340,7 +353,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   ) => Promise<void>;
   readActiveTarget: () => AuthorizedSessionModelTransitionTarget;
   readReplacementTarget: () => AuthorizedSessionModelTransitionTarget;
-  /** A command-armed selection that still needs the next prompt's transition custody. */
+  /** Pending command or Team model intent that needs the next prompt's transition custody. */
   readArmedSelection: () => ProviderBoundModelRef | null;
   /** Restore applied intent through this same command queue; callers never guess the active route. */
   unarm: (callerInputConstraints?: CallerInputConstraintsV1) => Promise<SessionModelTransitionResultV1>;
@@ -971,9 +984,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     let target: AuthorizedSessionModelTransitionTarget;
-    // A prompt carries the selected model as a V1 projection, which cannot
-    // express its Team source. Reusing that exact opened target is input
-    // dispatch, not a request to replace the source with native authentication.
+    // A prompt carries a model tuple without its Team source. Keep the
+    // opened source, and reopen its model-specific materialization when only
+    // the brokered model changed. The broker still admits that exact model.
     const desiredModel = proposal.source === 'prompt' ? params.readModelSelectionIntent() : null;
     const activeTeam = readTeamRoute(activeTarget);
     let carriesActiveTeamSelection = false;
@@ -982,12 +995,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       && desiredModel?.ref.source === 'team_resource'
       && desiredModel.ref.agentTargetKey === proposal.selection.agentTargetKey
       && desiredModel.ref.modelId === proposal.selection.modelId) {
-      if (!sameSelection(activeTarget.selection, proposal.selection)
-        || activeTeam == null
-        || desiredModel.ref.resourceId !== activeTeam.resourceId
-        || desiredModel.ref.teamId !== activeTeam.teamId
-        || desiredModel.ref.deliveryMode !== activeTeam.deliveryMode
-        || !isDeepStrictEqual(desiredModel.ref.nativeDelivery ?? null, activeTeam.nativeDelivery ?? null)) {
+      if (!sameTeamResourceBinding(desiredModel.ref, activeTeam)
+        || (!sameSelection(activeTarget.selection, proposal.selection)
+          && desiredModel.ref.deliveryMode !== 'brokered')) {
         // A newly selected Team source is waiting for restart. Its V1 prompt
         // projection cannot authorize either the old source or native execution.
         await settleBeforeRuntimeEffect(proposal, failure('restart_required', activeTarget.selection,
@@ -1005,8 +1015,14 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       && sameSelection(activeTarget.selection, proposal.selection)
       && proposal.callerInputConstraints === undefined;
     try {
-      target = carriesActiveTeamSelection || carriesOpenedProviderSelection ? activeTarget
+      target = (carriesActiveTeamSelection && sameSelection(activeTarget.selection, proposal.selection))
+        || carriesOpenedProviderSelection ? activeTarget
         : await params.authorize(proposal.selection, proposal.callerInputConstraints);
+      if (carriesActiveTeamSelection && target !== activeTarget) {
+        // The broker materialization is model-bound even when the Agent can
+        // otherwise update native models live. Reopen it at this turn boundary.
+        target = { ...target, policy: 'restart_session', readAppliedTeamCredentialModel: activeTarget.readAppliedTeamCredentialModel };
+      }
     } catch (error) {
       if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
       await settleBeforeRuntimeEffect(proposal, failure(
@@ -1981,7 +1997,15 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     admitReplacementTarget,
     readActiveTarget: () => activeTarget,
     readReplacementTarget: () => runtimeReplacementTarget ?? activeTarget,
-    readArmedSelection: () => armedSelection,
+    readArmedSelection: () => {
+      if (armedSelection) return armedSelection;
+      const intent = params.readModelSelectionIntent();
+      if (intent?.ref.source !== 'team_resource') return null;
+      const selection = { agentTargetKey: intent.ref.agentTargetKey,
+        providerConnectionId: null, modelId: intent.ref.modelId };
+      return sameSelection(activeTarget.selection, selection)
+        && sameTeamResourceBinding(intent.ref, readTeamRoute(activeTarget)) ? null : selection;
+    },
     readAppliedTarget,
     runWithStableActiveTarget,
     dispose,

@@ -449,6 +449,63 @@ describe('createSessionModelTransitionCoordinator', () => {
     await harness.coordinator.dispose();
   });
 
+  it.each([['brokered', 0, true], ['brokered', 1, false], ['vendor-native', 0, false]] as const)(
+    'reopens the same Team broker binding for a carried model change before dispatching the next prompt (%s, revision %s)', async (deliveryMode, expectedResourceRevision, canApply) => {
+    const selection = native('muse-spark-1.2');
+    const next = native('muse-spark-1.3');
+    let appliedTeam = { kind: 'team_credential_provider_model' as const,
+      resourceId: 'qa-team-delivery-2-1112-muse', teamId: 'team-1', expectedResourceRevision: 0,
+      deliveryMode, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId };
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => appliedTeam };
+    const candidate = createModelIntentV2MetadataCasCandidate({ selection: { v: 2, updatedAt: 0, ref: {
+      source: 'team_resource', resourceId: appliedTeam.resourceId, teamId: appliedTeam.teamId,
+      expectedResourceRevision, deliveryMode, agentTargetKey: selection.agentTargetKey, modelId: next.modelId,
+    } } });
+    const metadata = candidate.update({});
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => harness.coordinator.readActiveTarget() });
+    const harness = createHarness({ initialTarget, authorize,
+      readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(metadata) });
+    let restarts = 0;
+    let dispatched = false;
+    try {
+      const requested = harness.coordinator.readArmedSelection();
+      expect(requested).toEqual(next);
+      if (!requested) throw new Error('Expected pending Team model intent for the next prompt');
+      const result = await harness.coordinator.submit(requested, { source: 'prompt',
+        restartRuntime: { required: false, run: async () => {
+          restarts++;
+          // The process boundary opens the replacement with the requested model.
+          expect(harness.coordinator.readReplacementTarget().selection).toEqual(next);
+          appliedTeam = { ...appliedTeam, modelId: next.modelId };
+        } },
+        runWithActiveSelection: async transfer => {
+          await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {
+            dispatched = true;
+            expect(harness.coordinator.readActiveTarget().readAppliedTeamCredentialModel?.())
+              .toEqual(appliedTeam);
+          } });
+        },
+      });
+      if (!canApply) {
+        expect(result).toMatchObject({ ok: false, status: 'restart_required', reason: 'team_resource_binding_changed' });
+        expect(restarts).toBe(0);
+        expect(dispatched).toBe(false);
+        expect(harness.publishIntent).not.toHaveBeenCalled();
+        return;
+      }
+      expect(result).toMatchObject({ ok: true, status: 'applied', activeSelection: next });
+      expect(restarts).toBe(1);
+      expect(dispatched).toBe(true);
+      expect(harness.coordinator.readArmedSelection()).toBeNull();
+      expect(harness.publishIntent).not.toHaveBeenCalled();
+      expect(readSessionModelSelectionV2FromMetadata(metadata)?.ref).toMatchObject({
+        source: 'team_resource', resourceId: appliedTeam.resourceId, modelId: next.modelId,
+      });
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it.each(['brokered', 'vendor-native'] as const)('retains a %s Team model intent through repeated carried prompts and a failed turn, while explicit native selection replaces it', async deliveryMode => {
     const selection = native('same-model');
     const nativeDelivery = deliveryMode === 'vendor-native' ? { managedId: 'managed', controllerInstallationId: 'controller-installation',

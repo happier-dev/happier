@@ -312,7 +312,10 @@ export async function setSessionModel(params: Readonly<{
           reason: 'session_activated_before_team_resource_commit',
         };
       }
-      if (observedActive) {
+      const appliesOnNextPrompt = params.teamCredentialModel === undefined
+        && requested.deliveryMode === 'brokered'
+        && params.applyTiming === 'next_prompt';
+      if (observedActive && !appliesOnNextPrompt) {
         return {
           ok: false,
           status: 'restart_required',

@@ -15,7 +15,7 @@ import {
 const agentId = 'acme-model-choice';
 const selection = { agentTargetKey: `backend:${agentId}`, providerConnectionId: null, modelId: 'custom/unlisted' } as const;
 
-async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' | 'team' | 'attached-team' = 'factory') {
+async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' | 'team' | 'attached-team' = 'factory', replaceTeamModel = false) {
     const contributions = createExternalContributionFixtures(agentId);
     const teamBinding: SessionTeamCredentialBindingIntentV1 = {
         v: 1, slot: { kind: 'provider_model' }, resourceId: 'shared-resource',
@@ -62,8 +62,11 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
         createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
         // Runner credential materialization crosses a process boundary; the native host path stays real.
         ...(providerBinding && (delivery === 'team' || delivery === 'attached-team') ? {
-            prepareTeamCredentialProviderBinding: async () => ({
-                providerBinding, environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined,
+            prepareTeamCredentialProviderBinding: async request => ({
+                providerBinding: replaceTeamModel
+                    ? { ...providerBinding, model: { ...providerBinding.model, id: request.modelId } }
+                    : providerBinding,
+                environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined,
             }),
         } : {}),
         sessionInput: buildPluginSessionBindingInput({
@@ -88,15 +91,33 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
         }),
     });
     if (!plan.config.createSessionRuntime) throw new Error('Expected native Session factory');
+    const sessionClient = createNativeSessionClientTestPort('model-choice');
     const created = await plan.config.createSessionRuntime({
         directory: '/tmp/model-choice', metadata, machineId: 'machine-1',
-        session: createNativeSessionClientTestPort('model-choice'), transcriptSession: {}, messageBuffer: {},
+        session: sessionClient, transcriptSession: {}, messageBuffer: {},
         mcpServers: {}, permissionHandler: {}, getPermissionMode: () => 'default', setThinking: () => undefined,
         memoryRecallGuidanceEnabled: false,
         ...(delivery === 'factory' && providerBinding ? { providerBinding } : {}),
     } as never);
     try {
         expect(opens).toHaveLength(1);
+        if (replaceTeamModel) {
+            const nextModelId = 'muse-spark-1.3';
+            const candidate = createModelIntentV2MetadataCasCandidate({ selection: { v: 2, updatedAt: 8, ref: {
+                source: 'team_resource', resourceId: 'shared-resource', teamId: 'shared-team',
+                expectedResourceRevision: 3, deliveryMode: 'brokered',
+                agentTargetKey: selection.agentTargetKey, modelId: nextModelId,
+            } } });
+            await sessionClient.updateMetadata(candidate.update);
+            await created.operations.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+            expect(opens).toHaveLength(2);
+            expect(opens[1]!.configuration?.model.value).toBe(nextModelId);
+            expect(opens[1]!.providerBinding).toMatchObject({ source: providerBinding!.source, model: { id: nextModelId } });
+            expect(created.operations.readAppliedTeamCredentialModel?.()).toMatchObject({
+                resourceId: 'shared-resource', expectedResourceRevision: 3, modelId: nextModelId,
+            });
+            return AgentSessionConfigurationSnapshotV1Schema.parse(opens[1]!.configuration);
+        }
         if (providerBinding) {
             expect(opens[0]!.providerBinding).toEqual(providerBinding);
             expect(created.operations.models?.read().currentModelId).toBe(selection.modelId);
@@ -145,6 +166,14 @@ describe('native model selection provenance', () => {
         expect((await readOpenedConfiguration({}, true, binding, delivery)).model).toEqual({
             value: binding.model.id, updatedAtMs: 7, selectionSource: 'explicit',
         });
+    });
+    it.each(['team', 'attached-team'] as const)('reopens %s custody with the new model through the native factory', async delivery => {
+        const binding: AgentSessionProviderBinding = {
+            source: { kind: 'team_resource', resourceId: 'shared-resource', resourceRevision: 3 },
+            upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:8741/v1', credential: 'apiKey' },
+            model: { id: selection.modelId, name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
+        };
+        expect((await readOpenedConfiguration({}, true, binding, delivery, true)).model.value).toBe('muse-spark-1.3');
     });
     it('preserves an exact target-qualified launch choice as explicit', async () => {
         expect((await readOpenedConfiguration({}, true)).model).toEqual({

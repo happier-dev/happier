@@ -1372,19 +1372,42 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         expect(rpc.session).not.toHaveBeenCalled();
     });
 
-    it.each([true, false])('retains the Team binding for a model-only Action (active=%s)', async active => {
+    it.each([true, false])('records next-prompt Team model intent without claiming application (active=%s)', async active => {
         const ref = { source: 'team_resource' as const, resourceId: 'resource-1', teamId: 'team-1',
-            expectedResourceRevision: 7, deliveryMode: 'brokered' as const,
+            expectedResourceRevision: 0, deliveryMode: 'brokered' as const,
             agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'muse-spark-1.2' };
         const remote = serveSession(seedSession(active, { modelSelectionIntentV2: { v: 2, updatedAt: 10, ref } }));
-        const result = await executeModel(modelInput('muse-spark-1.3'));
-        expect(result).toMatchObject(active ? { ok: false, errorCode: 'restart_required' }
-            : { ok: true, result: { status: 'intent_updated' } });
+        const result = await createDefaultActionExecutor().execute('session.model.set', {
+            ...modelInput('muse-spark-1.3'), applyTiming: 'next_prompt',
+        }, { serverId, surface: 'ui' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'intent_updated',
+            selection: { v: 2, ref: { ...ref, modelId: 'muse-spark-1.3' } } } });
         expect(remote.readMetadata().modelSelectionIntentV2?.ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
         expect(remote.writes.map(input => SessionTeamCredentialBindingMetadataPatchV1Schema.parse(input)))
             .toEqual([expect.objectContaining({ teamCredentialBindings: [expect.objectContaining({
                 resourceId: ref.resourceId, teamId: ref.teamId, deliveryMode: ref.deliveryMode,
             })] })]);
+        expect(rpc.session).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { deliveryMode: 'brokered', applyTiming: 'next_prompt', explicit: true },
+        { deliveryMode: 'brokered', applyTiming: 'immediate', explicit: false },
+        { deliveryMode: 'direct', applyTiming: 'next_prompt', explicit: false },
+        { deliveryMode: 'vendor-native', applyTiming: 'next_prompt', explicit: false },
+    ] as const)('requires restart for an active Team change: %j', async ({ deliveryMode, applyTiming, explicit }) => {
+        const ref = { source: 'team_resource' as const, resourceId: 'resource-1', teamId: 'team-1',
+            expectedResourceRevision: 0, deliveryMode,
+            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'muse-spark-1.2' };
+        const remote = serveSession(seedSession(true, { modelSelectionIntentV2: { v: 2, updatedAt: 10, ref } }));
+        const { source: _source, ...retainedSelection } = ref;
+        const result = await createDefaultActionExecutor().execute('session.model.set', {
+            sessionId: 'session_1', applyTiming,
+            ...(explicit ? { teamCredentialModel: { kind: 'team_credential_provider_model' as const,
+                ...retainedSelection, modelId: 'muse-spark-1.3' } } : { modelId: 'muse-spark-1.3' }),
+        }, { serverId, surface: 'ui' });
+        expect(result).toMatchObject({ ok: false, errorCode: 'restart_required' });
+        expect(remote.readMetadata().modelSelectionIntentV2?.ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
         expect(rpc.session).not.toHaveBeenCalled();
     });
 

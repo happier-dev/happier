@@ -10,6 +10,9 @@ import type {
     HostSessionRuntimeStartupSeed,
     HostSessionRuntimeRunOptions,
 } from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import { isDeepStrictEqual } from 'node:util';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { readRequiredStartupMachineId } from '@/agent/runtime/startup/readRequiredStartupMachineId';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
@@ -725,7 +728,9 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
     sessionInput: PluginSessionBindingInput;
     metadata: Readonly<Record<string, unknown>>;
 }>): SessionModelSelectionV1 | undefined {
-    const hasMetadataIntent = Object.prototype.hasOwnProperty.call(params.metadata, 'modelSelectionIntentV1')
+    const intentV2 = readSessionModelSelectionV2FromMetadata(params.metadata);
+    const hasMetadataIntent = intentV2 !== null
+        || Object.prototype.hasOwnProperty.call(params.metadata, 'modelSelectionIntentV1')
         || Object.prototype.hasOwnProperty.call(params.metadata, 'modelOverrideV1');
     if (!hasMetadataIntent) return params.sessionInput.runtimePreferences.modelSelection;
 
@@ -737,6 +742,26 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
         : params.sessionInput.runtimePreferences.modelSelection?.ref.agentTargetKey ?? null;
     if (!targetKey) {
         throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+    }
+    if (intentV2?.ref.source === 'team_resource') {
+        if (intentV2.ref.agentTargetKey !== targetKey) {
+            throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+        }
+        const accepted = params.sessionInput.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model')
+            ?? params.sessionInput.resume.sessionAttachSecret?.snapshot?.acceptedTeamCredentialBinding;
+        const requested = intentV2.ref;
+        // A model tuple cannot grant a different source. This generation may
+        // open only the Team binding accepted by its launch/attach handoff.
+        if (!accepted || accepted.slot.kind !== 'provider_model' || accepted.resourceId === null
+            || accepted.resourceId !== requested.resourceId
+            || (accepted.teamId ?? params.sessionInput.primaryTeamId) !== requested.teamId
+            || accepted.expectedResourceRevision !== requested.expectedResourceRevision
+            || accepted.deliveryMode !== requested.deliveryMode
+            || !isDeepStrictEqual(accepted.nativeDelivery ?? null, requested.nativeDelivery ?? null)) {
+            throw new SessionTeamCredentialLaunchUnavailableError();
+        }
+        return SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: intentV2.updatedAt,
+            ref: { agentTargetKey: requested.agentTargetKey, providerConnectionId: null, modelId: requested.modelId } });
     }
     const intent = resolveModelSelectionIntentFromSessionMetadata(params.metadata, targetKey);
     return intent?.selection
@@ -1115,7 +1140,7 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                                         : Object.freeze({ kind: 'create',
                                             ...(intent.startupInstructions !== undefined ? { startupInstructions: intent.startupInstructions } : {}),
                                         }),
-                                    runtimeParams,
+                                    { ...runtimeParams, metadata: runtimeParams.session.getMetadataSnapshot() ?? runtimeParams.metadata },
                                 ),
                             );
                         },

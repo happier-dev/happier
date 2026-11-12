@@ -16,9 +16,15 @@ vi.mock('@/api/client/connectedServiceCredentialApi', async importOriginal => ({
 vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Unexpected ordinary model RPC'); } }));
 import { setSessionModel } from './setSessionModel';
 
-it.each([true, false])('retains the Team source on a model-only change (active=%s)', async active => {
+it.each([
+  { active: true, applyTiming: 'next_prompt' as const, explicit: false, deliveryMode: 'brokered' as const, expectedStatus: 'intent_updated' },
+  { active: false, applyTiming: 'next_prompt' as const, explicit: false, deliveryMode: 'brokered' as const, expectedStatus: 'intent_updated' },
+  { active: true, applyTiming: 'immediate' as const, explicit: false, deliveryMode: 'brokered' as const, expectedStatus: 'restart_required' },
+  { active: true, applyTiming: 'next_prompt' as const, explicit: true, deliveryMode: 'brokered' as const, expectedStatus: 'restart_required' },
+  { active: true, applyTiming: 'next_prompt' as const, explicit: false, deliveryMode: 'vendor-native' as const, expectedStatus: 'restart_required' },
+])('retains Team intent and reports $expectedStatus (active=$active, timing=$applyTiming, explicit=$explicit, delivery=$deliveryMode)', async ({ active, applyTiming, explicit, deliveryMode, expectedStatus }) => {
   const ref = { source: 'team_resource' as const, resourceId: 'team-muse', teamId: 'team-1',
-    expectedResourceRevision: 0, deliveryMode: 'brokered' as const,
+    expectedResourceRevision: 0, deliveryMode,
     agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'muse-spark-1.2' };
   const converted = createSessionOwnerMetadataV1({ metadata: { flavor: 'claude',
     modelSelectionIntentV2: { v: 2, updatedAt: 10, ref } } });
@@ -34,9 +40,13 @@ it.each([true, false])('retains the Team source on a model-only change (active=%
   patchSessionMetadataEnvelopeTuple.mockReset();
   patchSessionMetadataEnvelopeTuple.mockResolvedValue({ success: true,
     sharedMetadata: { version: 2 }, ownerMetadata: { version: 2 }, agentState: { version: 1 } });
+  const { source: _source, ...teamRef } = ref;
   const result = await setSessionModel({ credentials: { token: 'fixture', encryption: null },
-    idOrPrefix: raw.id, modelId: 'muse-spark-1.3', applyTiming: 'immediate' });
-  expect(result).toMatchObject({ status: active ? 'restart_required' : 'intent_updated' });
+    idOrPrefix: raw.id, modelId: 'muse-spark-1.3', applyTiming,
+    ...(explicit ? { teamCredentialModel: { kind: 'team_credential_provider_model' as const,
+      ...teamRef, modelId: 'muse-spark-1.3' } } : {}),
+  });
+  expect(result).toMatchObject({ status: expectedStatus });
   const patch = patchSessionMetadataEnvelopeTuple.mock.calls[0]?.[0]?.patch;
   expect(patch).toMatchObject({ mode: 'owner_team_credential_binding', teamCredentialBindings: [{
     resourceId: ref.resourceId, teamId: ref.teamId, deliveryMode: ref.deliveryMode,
