@@ -71,6 +71,7 @@ import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
 import { WorkflowRunStateMark } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
+import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 import { readPressFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
@@ -881,6 +882,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // A phone page keeps what needs you in a dock in thumb reach instead of a section above the Map (phone-P1).
     const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
     const [dockHeightPx, setDockHeightPx] = React.useState(0);
+    // The page ends above the phone's floating bottom chrome instead of under it.
+    const chromeClearance = useFloatingChromeClearance();
     const firstAttentionLabel = firstAttention === undefined ? null : invocationLabel(firstAttention);
     const firstAttentionOccurrence = firstAttention === undefined ? null : invocationOccurrenceLabel(firstAttention);
     const failureInvocation = props.firstFailedInvocationResolution === 'resolved'
@@ -1761,8 +1764,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
-            {/* The scroll content clears the dock and the safe area, so the last Map row is never covered. */}
-            {phoneDock ? <View style={{ height: dockHeightPx }} /> : null}
             {technicalOpen ? (
             <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
                 <Text style={styles.sectionLabel}>{t('workflows.run.technicalDetails')}</Text>
@@ -1809,6 +1810,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     </>
             </View>
             ) : null}
+            {/* The page's last content (the Map, or technical details when open) scrolls clear of the dock,
+                which already rides above the floating bottom chrome, or else of that chrome itself. */}
+            {phoneDock ? <View style={{ height: dockHeightPx }} />
+                : chromeClearance > 0 ? <View style={{ height: chromeClearance }} /> : null}
         </View>
     );
 

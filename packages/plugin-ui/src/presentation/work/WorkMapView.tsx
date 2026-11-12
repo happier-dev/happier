@@ -143,6 +143,8 @@ const LANE_GAP = 8;
 /** The width of the dashed rule and its word between two alternatives. */
 const ALTERNATIVE_RULE_WIDTH = 20;
 const CARD_BORDER_WIDTH = 1;
+/** A header or lane caption's glyph slot, at least; an ordinal before the glyph widens it. */
+const GLYPH_MIN_WIDTH = 18;
 
 const DEFAULT_PRESENTATION: HappierWorkMapNodePresentation = Object.freeze({});
 
@@ -195,7 +197,7 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
     // (a Run's map, numbered as the editor numbers it) widens it instead of running into the title.
     mark: { minWidth: g.mark, height: g.mark, alignItems: 'center', justifyContent: 'center' },
     // A frame caption's glyph slot widens the same way when the ordinal leads it (a Run's group step).
-    glyph: { minWidth: 18, alignItems: 'center', justifyContent: 'center' },
+    glyph: { minWidth: GLYPH_MIN_WIDTH, alignItems: 'center', justifyContent: 'center' },
     copy: { flex: 1, minWidth: 0 },
     rowWrap: { flexWrap: 'wrap', alignContent: 'center' },
     subtitle: { marginTop: 1 },
@@ -359,23 +361,14 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     const rowPadding = appearance === 'card'
       ? g.markX - g.mark / 2 + g.cardPaddingRight + 2 * CARD_BORDER_WIDTH
       : appearance === 'lane' ? 2 * theme.spacing.small : g.markX - 9 + theme.spacing.xsmall;
-    const leadingWidth = leading ? (appearance === 'card' ? g.mark + g.cardGap
-      : 18 + (appearance === 'lane' ? theme.spacing.xsmall : theme.spacing.small)) : 0;
-    // A card keeps its mark (and ordinal) beside its title at every width; its copy shrinks and the
-    // title wraps instead. Only a frame or lane caption lets its trailing fact wrap under the name.
-    const wrapRow = !compact && appearance !== 'card';
-    // A trailing fact wraps below the name instead of taking its readable-width budget.
-    const copyMinWidth = rowWidth === null ? 0
-      : Math.min(HAPPIER_WORK_MAP_LANE_MIN_WIDTH, Math.max(0, rowWidth - rowPadding - leadingWidth));
+    // The row's own padding and border are this renderer's; the leading slot's width is the producer's,
+    // and the row reads it as drawn (`WorkMapItem`) to decide whether the name keeps its readable width.
+    const copyRoom = rowWidth === null ? null : Math.max(0, rowWidth - rowPadding);
+    const leadingGap = appearance === 'card' ? g.cardGap : appearance === 'lane' ? theme.spacing.xsmall : theme.spacing.small;
     // A compact map keeps each node to its title and state (lab `.wm.sm` hides the second line), and so
     // does a lane: its card is narrow, so the fact line would only truncate (lab `map-M2`). Stacked
     // lanes (a phone, `phone-P5m`) are full width again and keep it.
     const subtitle = compact || inLane ? null : props.renderSubtitle?.(node) ?? null;
-    // A full-width card trails its status on the title's row, so states line up down the map's right
-    // edge (lab `map-M1`, `session-A2`); only a narrow lane card or a compressed one stacks it under
-    // the title instead of squeezing the name.
-    const stackStatus = appearance === 'card' && (inLane || compressedNode);
-
 
     const children = node.childNodeIds.length === 0 ? null : lanes ? (
       <WorkMapLanes
@@ -462,9 +455,11 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         testIDPrefix={testIDPrefix}
         compact={compact}
         inLane={inLane}
-        wrapRow={wrapRow}
-        copyMinWidth={copyMinWidth}
-        stackStatus={stackStatus}
+        compressed={compressedNode}
+        copyRoom={copyRoom}
+        copyFloor={HAPPIER_WORK_MAP_LANE_MIN_WIDTH}
+        leadingGap={leadingGap}
+        leadingMinWidth={appearance === 'card' ? g.mark : GLYPH_MIN_WIDTH}
         framePadding={framePadding}
         scale={scale}
         rootSequencePosition={rootSequencePosition}

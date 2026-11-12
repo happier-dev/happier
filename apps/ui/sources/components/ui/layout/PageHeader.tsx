@@ -1,6 +1,6 @@
 import { PaneMainHideButton, usePaneMainHideAvailable } from '@/components/appShell/panes/mainColumn/PaneMainColumnControls';
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Dimensions, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HAPPIER_BALANCED_TEXT_WRAP,
@@ -197,9 +197,22 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     }, [BackControl, publishesBack, setChromeBack]);
     // Navigation owns ordinary page actions; an entity can retain its frequent operations by its identity.
 
-    const pageButtons = !chromeShowsTitle && (props.primaryAction || props.cancelAction) ? (
+    // A phone bar too narrow to draw the primary whole (large text) hands it back: it sits under the title,
+    // as on a wide layout, until the window grows past the width where it did not fit.
+    // Only a handed-back primary listens to the window, so ordinary pages never re-render on a resize.
+    const [primaryDidNotFitAt, setPrimaryDidNotFitAt] = React.useState<number | null>(null);
+    const primaryInPage = chromeShowsTitle && primaryDidNotFitAt !== null && props.primaryAction != null;
+    const onPrimaryDoesNotFit = React.useCallback(() => setPrimaryDidNotFitAt(Dimensions.get('window').width), []);
+    React.useEffect(() => {
+        if (primaryDidNotFitAt === null) return undefined;
+        const subscription = Dimensions.addEventListener('change', ({ window }) => {
+            if (window.width > primaryDidNotFitAt) setPrimaryDidNotFitAt(null);
+        });
+        return () => subscription.remove();
+    }, [primaryDidNotFitAt]);
+    const pageButtons = (!chromeShowsTitle || primaryInPage) && (props.primaryAction || props.cancelAction) ? (
         <>
-            {props.cancelAction ? <PageHeaderActionButton action={props.cancelAction} quiet /> : null}
+            {props.cancelAction && !chromeShowsTitle ? <PageHeaderActionButton action={props.cancelAction} quiet /> : null}
             {props.primaryAction ? <PageHeaderActionButton action={props.primaryAction} /> : null}
         </>
     ) : null;
@@ -248,8 +261,8 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     return (
         <>
         {props.primaryAction || props.cancelAction || props.actions ? (
-            <NavigationHeaderActions primary={props.primaryAction ?? null} cancel={props.cancelAction ?? null}
-                actions={props.actionsPlacement === 'page' ? undefined : props.actions} />
+            <NavigationHeaderActions primary={primaryInPage ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
+                actions={props.actionsPlacement === 'page' ? undefined : props.actions} onPrimaryDoesNotFit={onPrimaryDoesNotFit} />
         ) : null}
         <HappierPageHeader
             title={titleNode}

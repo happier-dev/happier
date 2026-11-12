@@ -191,6 +191,11 @@ export function useNavigationHeaderActions(input: Readonly<{
      * trailing edge after the folded menu. Pass a stable element: a new one re-publishes the bar.
      */
     trailing?: React.ReactNode;
+    /**
+     * The bar is too narrow to draw the primary whole (a phone at large text): it is not clipped there,
+     * and the page that owns it takes it back (`PageHeader` draws it under its title instead).
+     */
+    onPrimaryDoesNotFit?: () => void;
 }>) {
     const routeContextActions = React.useContext(PageNavigationContextActions);
     const navigation = useNavigation() as unknown as
@@ -201,6 +206,8 @@ export function useNavigationHeaderActions(input: Readonly<{
     primaryRef.current = input.primary;
     const cancelRef = React.useRef(input.cancel);
     cancelRef.current = input.cancel;
+    const primaryDoesNotFitRef = React.useRef(input.onPrimaryDoesNotFit);
+    primaryDoesNotFitRef.current = input.onPrimaryDoesNotFit;
     const primary = input.enabled ? input.primary ?? null : null;
     const cancel = input.enabled ? input.cancel ?? null : null;
     const actions = input.enabled ? input.actions : null;
@@ -217,24 +224,26 @@ export function useNavigationHeaderActions(input: Readonly<{
         if (primary || actions || trailing) {
             // The bar's controls carry their own chrome, so iOS's shared item glass stays off (one chrome).
             Object.assign(options, ownChromeHeaderRight(() => (
-                <RoundButtonSizeScope size="normal"><View style={stylesheet.actions}>
+                <RoundButtonSizeScope size="normal"><HeaderActionsRow onPrimaryDoesNotFit={primaryDoesNotFitRef}>
                     {routeContextActions?.actions}
                     {foldedActions.barControls}
                     {actions && (foldedActions.operations.length > 0 || foldedActions.content) ? <PageHeaderMenu actions={foldedActions.operations} content={foldedActions.content}
                         openRequested={foldedActions.openRequested} testID="page-header-actions"
                         interactiveTargetGapPx={HEADER_ACTIONS_GAP_PX} /> : null}
                     {primary ? (
-                        <RoundButton
-                            testID={primary.testID}
-                            title={primary.title}
-                            accessibilityLabel={primary.title}
-                            disabled={primary.disabled}
-                            loading={primary.loading}
-                            action={() => Promise.resolve(primaryRef.current?.onPress())}
-                        />
+                        <HeaderPrimarySlot>
+                            <RoundButton
+                                testID={primary.testID}
+                                title={primary.title}
+                                accessibilityLabel={primary.title}
+                                disabled={primary.disabled}
+                                loading={primary.loading}
+                                action={() => Promise.resolve(primaryRef.current?.onPress())}
+                            />
+                        </HeaderPrimarySlot>
                     ) : null}
                     {trailing}
-                </View></RoundButtonSizeScope>
+                </HeaderActionsRow></RoundButtonSizeScope>
             )));
         }
         if (cancel) {
@@ -281,12 +290,15 @@ export const NavigationHeaderActions = React.memo(function NavigationHeaderActio
     actions?: React.ReactNode;
     /** A menu trigger kept at the bar's trailing edge (see `useNavigationHeaderActions`). */
     trailing?: React.ReactNode;
+    /** The bar cannot draw the primary whole (see `useNavigationHeaderActions`). */
+    onPrimaryDoesNotFit?: () => void;
 }>) {
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     // Navigation is read only while there is something to hand over, so a page (or a harness) with
     // nothing for the native header never touches the navigator.
     return chromeShowsTitle && (props.primary || props.cancel || props.actions || props.trailing)
-        ? <NavigationHeaderActionsPublisher primary={props.primary} cancel={props.cancel ?? null} actions={props.actions} trailing={props.trailing} />
+        ? <NavigationHeaderActionsPublisher primary={props.primary} cancel={props.cancel ?? null} actions={props.actions} trailing={props.trailing}
+            onPrimaryDoesNotFit={props.onPrimaryDoesNotFit} />
         : null;
 });
 
@@ -295,14 +307,71 @@ const NavigationHeaderActionsPublisher = React.memo(function NavigationHeaderAct
     cancel: NavigationHeaderAction | null;
     actions?: React.ReactNode;
     trailing?: React.ReactNode;
+    onPrimaryDoesNotFit?: () => void;
 }>) {
-    useNavigationHeaderActions({ enabled: true, primary: props.primary, cancel: props.cancel, actions: props.actions, trailing: props.trailing });
+    useNavigationHeaderActions({ enabled: true, primary: props.primary, cancel: props.cancel, actions: props.actions, trailing: props.trailing,
+        onPrimaryDoesNotFit: props.onPrimaryDoesNotFit });
     return null;
 });
+
+type PrimaryFitReport = (edge: Readonly<{ right: number }>) => void;
+const HeaderPrimaryFitContext = React.createContext<PrimaryFitReport | null>(null);
+
+/**
+ * The bar's action row. It reads where its primary is drawn against its own width: a primary that runs
+ * past the row (the bar holds Back, a title and the overflow before it) is reported once to the page that
+ * owns it, rather than drawn cut off.
+ */
+function HeaderActionsRow(props: Readonly<{
+    onPrimaryDoesNotFit: React.RefObject<(() => void) | undefined>;
+    children: React.ReactNode;
+}>) {
+    const rowWidthRef = React.useRef<number | null>(null);
+    const primaryRightRef = React.useRef<number | null>(null);
+    const reportedRef = React.useRef(false);
+    const { onPrimaryDoesNotFit } = props;
+    const check = React.useCallback(() => {
+        const rowWidth = rowWidthRef.current;
+        const primaryRight = primaryRightRef.current;
+        if (reportedRef.current || rowWidth === null || primaryRight === null) return;
+        // Sub-pixel rounding is not a cut; a whole pixel is.
+        if (primaryRight - rowWidth < 1) return;
+        reportedRef.current = true;
+        onPrimaryDoesNotFit.current?.();
+    }, [onPrimaryDoesNotFit]);
+    const reportPrimary = React.useCallback<PrimaryFitReport>((edge) => {
+        primaryRightRef.current = edge.right;
+        check();
+    }, [check]);
+    return (
+        <HeaderPrimaryFitContext.Provider value={reportPrimary}>
+            <View style={stylesheet.actions} onLayout={(event) => {
+                rowWidthRef.current = event.nativeEvent.layout.width;
+                check();
+            }}>
+                {props.children}
+            </View>
+        </HeaderPrimaryFitContext.Provider>
+    );
+}
+
+/** Holds the bar's primary at its own width (it never shrinks its words) and reports its trailing edge. */
+function HeaderPrimarySlot(props: Readonly<{ children: React.ReactNode }>) {
+    const report = React.useContext(HeaderPrimaryFitContext);
+    return (
+        <View style={stylesheet.primary} onLayout={(event) => {
+            const { x, width } = event.nativeEvent.layout;
+            report?.({ right: x + width });
+        }}>
+            {props.children}
+        </View>
+    );
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     foldedControls: { flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' },
     actions: { flexDirection: 'row', alignItems: 'center', gap: HEADER_ACTIONS_GAP_PX, minWidth: 0, maxWidth: '100%' },
+    primary: { flexShrink: 0 },
     cancel: {
         paddingHorizontal: theme.space.s8,
         paddingVertical: theme.space.s6,

@@ -1,6 +1,6 @@
-import { memo, type ReactElement, type ReactNode } from 'react';
+import { memo, useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import { Platform, Pressable, View, type ViewStyle } from 'react-native';
-import type { HappierGestureResponderEvent, HappierPortableStyle } from '../portableTypes.js';
+import type { HappierGestureResponderEvent, HappierLayoutChangeEvent, HappierPortableStyle } from '../portableTypes.js';
 import type { HappierWorkMapNode } from './workMap.js';
 import { resolveHappierWorkStatusSurfaceStyle, softenHappierWorkColor, type HappierWorkStatusTone } from './workStatus.js';
 import type { HappierWorkColors, HappierWorkHost, HappierWorkTextRole, HappierWorkTheme } from './workTheme.js';
@@ -50,9 +50,15 @@ type WorkMapItemProps<TNode extends HappierWorkMapNode> = Readonly<{
   testIDPrefix: string;
   compact: boolean;
   inLane: boolean;
-  wrapRow: boolean;
-  copyMinWidth: number;
-  stackStatus: boolean;
+  /** The structure squeezed this node's insets (deep nesting): its card stacks its status. */
+  compressed: boolean;
+  /** The row's width inside its own padding and border; null until the map is measured. */
+  copyRoom: number | null;
+  /** The renderer's gap after the leading slot, and that slot's least width before it is measured. */
+  leadingGap: number;
+  leadingMinWidth: number;
+  /** The readable width a name keeps beside its leading (the map's lane floor). */
+  copyFloor: number;
   framePadding: number;
   scale: number;
   rootSequencePosition: number | undefined;
@@ -68,11 +74,33 @@ type WorkMapItemProps<TNode extends HappierWorkMapNode> = Readonly<{
 function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapItemProps<TNode>,
   'children' | 'joinCaption' | 'detail' | 'framePadding' | 'scale' | 'rootSequencePosition'>): ReactElement {
   const { node, presentation, readOnly, disabled, theme, Text, styles, testIDPrefix,
-    compact, inLane, wrapRow, copyMinWidth, stackStatus, leading, subtitle } = props;
+    compact, inLane, compressed, copyRoom, leading, subtitle } = props;
   const selected = useMapNodeSelected(props.selection, node.nodeId);
   const resolveMaterialColor = useHappierMaterialColorResolver();
   const surfaceColor = resolveMaterialColor(theme.colors.surface, theme.colors.border);
   const appearance = presentation.appearance ?? 'card';
+  // The producer's leading is read at its drawn width (an ordinal before an Agent mark is wider than
+  // one mark), so whether the name still has its readable width beside it is decided from the real slot.
+  const [leadingWidth, setLeadingWidth] = useState<number | null>(null);
+  const onLeadingLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    setLeadingWidth((current) => (current === next ? current : next));
+  }, []);
+  const { copyFloor } = props;
+  const leadingSpan = leading ? (leadingWidth ?? props.leadingMinWidth) + props.leadingGap : 0;
+  const besideLeading = copyRoom === null ? null : copyRoom - leadingSpan;
+  // A card keeps its mark beside its name while the name has its readable width there. Short of that
+  // (a phone at large text, a narrow lane, deep nesting) the name drops under the mark at the row's full
+  // width and its state stacks under it, rather than wrapping a word per line or clipping one.
+  const cardAtFloor = appearance === 'card' && besideLeading !== null && besideLeading < copyFloor;
+  // A frame or lane caption always lets its trailing fact wrap under the name.
+  const wrapRow = !compact && (appearance !== 'card' || cardAtFloor);
+  const copyMinWidth = copyRoom === null ? 0 : cardAtFloor
+    ? Math.min(copyFloor, copyRoom)
+    : Math.min(copyFloor, Math.max(0, besideLeading ?? 0));
+  // A full-width card trails its status on the name's row, so states line up down the map's right edge
+  // (lab `map-M1`, `session-A2`); a narrow lane card, a compressed one or one at the floor stacks it.
+  const stackStatus = appearance === 'card' && (inLane || compressed || wrapRow);
   const tone = presentation.tone ?? 'neutral';
   const role = labelRole(appearance, compact);
   return (
@@ -97,6 +125,7 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
           style={appearance === 'card' ? styles.mark : styles.glyph}
+          onLayout={onLeadingLayout}
         >
           {leading}
         </View>

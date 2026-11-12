@@ -130,7 +130,7 @@ describe('Flow readability in the actual browser layout (FF-N3DEEP)', () => {
             expect(row.right, node.label).toBeLessThanOrEqual(pane.right - 12);
             const text = layout.textRects(node.label);
             expect(text, node.label).toHaveLength(1);
-            expect(text[0].clipped, node.label).toBe(false);
+            expect(text[0].clipped, `${node.label}: ${JSON.stringify(text[0])}`).toBe(false);
         }
         for (let level = 2; level <= 20; level++) {
             const rail = layout.rect(`flow-rail-loop-${level}`);
@@ -222,5 +222,29 @@ describe('Flow readability in the actual browser layout (FF-N3DEEP)', () => {
         for (const label of ['Review the changelog draft', 'Check the fix', 'Confirm the test run']) {
             for (const text of layout.textRects(label)) expect(text.clipped, label).toBe(false);
         }
+    });
+
+    it.each([200, 240])('drops a numbered step\'s name under its ordinal and mark rather than clip a word (%spx map, large text)', async mapWidth => {
+        // A phone at 200% text gives the Run map about this width. Beside the step's ordinal and Agent mark
+        // the name would have less than its readable width, so it takes the card's full width under them.
+        const name = 'Internationalization';
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'i18n', name,
+            document: { text: name, references: [], attachments: [] }, input: [], result: { kind: 'text' } }] };
+        const projection = projectWorkflowFlow(definition);
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => root!.render(<View testID="flow-pane" style={{ width: mapWidth }}>
+            <WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow" />
+        </View>));
+        const layout = await measureWebLayout(host, { viewport: { width: 1440, height: 600 },
+            texts: [name], settle: replay => act(replay) });
+        const card = layout.rect('flow-node-i18n');
+        expect(card.right).toBeLessThanOrEqual(layout.rect('flow-pane').right);
+        const texts = layout.textRects(name);
+        expect(texts).toHaveLength(1);
+        expect(texts[0].clipped, JSON.stringify(texts[0])).toBe(false);
+        // The name keeps the readable width the map promises a lane, never a sliver beside the mark.
+        expect(texts[0].width + 1, JSON.stringify(texts[0])).toBeGreaterThanOrEqual(Math.min(HAPPIER_WORK_MAP_LANE_MIN_WIDTH, card.width - 24));
     });
 });
