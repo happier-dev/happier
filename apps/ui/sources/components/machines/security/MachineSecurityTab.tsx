@@ -7,7 +7,7 @@ import type { MachinePageTabBodyProps } from '@/components/machines/page/machine
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
 import { describeMachineSetupRowSummary, describeMachineSharingSummary } from '@/components/machines/page/machineThisMachineSummaries';
 import { MachineNetworkSection } from '@/components/machines/security/network/MachineNetworkSection';
-import { describeNetworkRowSummary, useMachineNetworkHeadline, useMachineNetworkLead } from '@/components/machines/security/network/useMachineNetworkLead';
+import { describeNetworkRowSummary, useMachineNetworkLead, useMachineNetworkRowFacts } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
 import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
@@ -111,13 +111,13 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
 function MachineSecurityReach(props: Readonly<{
   serverId: string; machine: Machine; machineName: string; needsManage: boolean; onOpen: (page: SecurityPage) => void;
 }>) {
-  const headline = useMachineNetworkHeadline({ serverId: props.serverId, machineId: props.machine.id,
+  const row = useMachineNetworkRowFacts({ serverId: props.serverId, machineId: props.machine.id,
     machineName: props.machineName, enabled: true, needsManage: props.needsManage });
   return (
     <ItemGroup title={t('machineDetailPage.security.accessTitle')}
       description={t('machineDetailPage.security.accessDescription', { machine: props.machineName })}>
       <Item testID="machine-security-row-network" title={t('machineDetailPage.subPages.network')}
-        subtitle={describeNetworkRowSummary(headline)}
+        subtitle={describeNetworkRowSummary(row)}
         icon={<Icon name="tree-structure" />} showChevron onPress={() => props.onOpen('network')} />
       <Item testID="machine-security-row-sharing" title={t('machineDetailPage.subPages.sharing')}
         subtitle={describeMachineSharingSummary(props.machine)}

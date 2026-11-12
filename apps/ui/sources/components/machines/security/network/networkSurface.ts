@@ -103,6 +103,29 @@ export function presentNetworkHeadline(facts: MachineNetworkFacts, providerTitle
   return { kind: 'open', ports, ssh, services };
 }
 
+/**
+ * What the Security tab's Network row can say from the published observation alone: whether one exists, what is
+ * open, whether SSH is observed closed, and Happier's own firewall table. Absent facts stay absent, never "closed".
+ */
+export type MachineNetworkRowFacts = Readonly<{
+  observed: boolean;
+  headline: MachineNetworkHeadline | null;
+  sshClosed: boolean;
+  /** Happier's owned table only; `null` when the Machine publishes no firewall fact. */
+  firewall: 'present' | 'absent' | 'unreadable' | null;
+}>;
+
+export function presentNetworkRowFacts(facts: MachineNetworkFacts, providerTitle?: MachineNetworkProviderTitle): MachineNetworkRowFacts {
+  const observation = facts.observation;
+  const firewall = observation?.nativeFirewall;
+  return {
+    observed: observation !== null,
+    headline: observation ? presentNetworkHeadline(facts, providerTitle) : null,
+    sshClosed: observation?.management.publicSsh === 'closed',
+    firewall: !firewall ? null : firewall.status === 'available' ? firewall.ownedTable : 'unreadable',
+  };
+}
+
 /** Both preview and refresh use the same host inspect Action. */
 export function buildNetworkInspectInput(
   target: Readonly<{ serverId: string; machineId: string }>,
