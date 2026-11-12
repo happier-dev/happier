@@ -20,6 +20,7 @@ import {
   type WorkflowInputDefinition,
 } from '@happier-dev/protocol/workflows/workflowV1';
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
+import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import type { InputOptionsConsumerV1 } from '@happier-dev/protocol/inputs';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import {
@@ -236,6 +237,8 @@ export type WorkflowRunComposerProps = Readonly<{
   autoFocusComposer?: boolean;
   /** A host with its own gutter (the Start pane and phone sheet) sets the column's side inset; defaults to the conversation's. */
   contentPaddingHorizontal?: number;
+  /** A host whose section sizes the card (Docked) passes `null`, as it does to its own composer. */
+  maxWidthCap?: number | null;
   /** Hangs from the control that already names the run key (Run now): Start does not repeat it. */
   triggerNamesShortcut?: boolean;
   testIDPrefix?: string;
@@ -261,6 +264,8 @@ export type WorkflowRunComposerProps = Readonly<{
   statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
   /** The host's own status-row actions (a docked composer's new draft, collapse and close): kept in every mode. */
   statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
+  /** The host's own status line (a docked draft's "New session"): kept in every mode. */
+  connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
   workflowChip?: AgentInputExtraActionChip;
   /** Retained, but never submitted, when the selection has no text input. */
   retainedText?: string;
@@ -373,6 +378,7 @@ export function WorkflowRunComposer(
     ...(props.contentPaddingHorizontal === undefined
       ? {}
       : { contentPaddingHorizontal: props.contentPaddingHorizontal }),
+    ...(props.maxWidthCap === undefined ? {} : { maxWidthCap: props.maxWidthCap }),
   });
   const columnStyle = [
     styles.column,
@@ -925,6 +931,7 @@ export function WorkflowRunComposer(
       ) : null}
     </View>
   );
+  const workflowSource = props.sourceArtifactId ? 'artifact' : parseWorkflowDefinitionRefV1(props.optionsConsumer?.workflow)?.kind;
   return (
     <View testID={prefix} style={[styles.root, phoneSheet ? styles.rootFill : null]}>
       <View testID={`${prefix}-${main === null ? 'preview' : 'main'}`}>
@@ -934,9 +941,9 @@ export function WorkflowRunComposer(
                 steps, inputs); a second header above the composer would repeat it (owner 08). */}
             {props.definition && props.workflowName && !composerHosted ? <WorkflowStartDetailsLead
               name={props.workflowName} description={main === null ? undefined : props.preview} summary={summary}
-              source={props.sourceArtifactId ? t('workflows.start.library')
-                : props.optionsConsumer?.workflow ? (props.optionsConsumer.workflow.startsWith('builtin:')
-                  ? t('workflows.start.builtin') : t('workflows.plugins.fromPlugins')) : undefined}
+              source={workflowSource === 'artifact' ? t('workflows.start.library')
+                : workflowSource === 'builtin' ? t('workflows.start.builtin')
+                  : workflowSource === 'plugin' ? t('workflows.plugins.fromPlugins') : undefined}
               inputs={personFields.map(field => inputTitle(field.definition))}>
               {props.leadContent}
             </WorkflowStartDetailsLead> : null}
@@ -1012,6 +1019,8 @@ export function WorkflowRunComposer(
             extraActionChips={chips}
             statusBadges={statusBadges}
             statusTrailingActions={props.statusTrailingActions}
+            connectionStatus={props.connectionStatus}
+            {...(props.maxWidthCap === undefined ? {} : { maxWidthCap: props.maxWidthCap })}
           />
         </PluginContextualResourceStoreProvider>
         <WorkflowRequesterDisclosureView model={requesterDisclosure} />

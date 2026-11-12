@@ -188,6 +188,21 @@ describe('workflow composer admission', () => {
         expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
         await screen.unmount();
     });
+    it.each([
+        ['80fbf0c7-2af4-4314-9776-59100c92f362', 'workflows.start.library'],
+        ['builtin:review-and-converge', 'workflows.start.builtin'],
+        ['plugin:happier.workflows/prepare-release', 'workflows.plugins.fromPlugins'],
+    ])('identifies the source of a retained workflow reference %s', async (workflow, source) => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
+            workflowName="Retained workflow" optionsConsumer={{ kind: 'workflow', workflow }}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(screen.getTextContent()).toContain(source);
+        if (source !== 'workflows.plugins.fromPlugins') {
+            expect(screen.getTextContent()).not.toContain('workflows.plugins.fromPlugins');
+        }
+        await screen.unmount();
+    });
     let restorePopoverGlobals: (() => void) | undefined;
     let disposeLoader: (() => void) | undefined;
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
