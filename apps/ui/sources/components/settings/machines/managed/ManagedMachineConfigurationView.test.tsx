@@ -446,6 +446,41 @@ describe('mounted managed configurator', () => {
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
     } finally { await screen.unmount(); }
   });
+  it.each(['credential_unavailable', 'unavailable'])('presents the options failure %s in the shared form summary', async (code) => {
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-summary.example.test',
+      serverIdentityId: 'srv_options_summary', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
+      id: defaultController.machineId, installationId: defaultController.installationId,
+    })]);
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
+        execution: { ok: false, errorCode: code, error: code } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const { resolveActionExecutionFailureMessage } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
+      const expected = code === 'credential_unavailable'
+        ? resolveActionExecutionFailureMessage({ ok: false, errorCode: code }, t('managedMachines.options.unavailable'))
+        : t('managedMachines.options.unavailable');
+      expect(screen.findByTestId('managed-config.summary')?.props).toBeDefined();
+      expect(screen.findByTestId('managed-config.summary')?.props.accessibilityLabel).toContain(expected);
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+    } finally { await screen.unmount(); }
+  });
   it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
       serverIdentityId: 'srv_options_retry', accountId: 'owner', currentAccount: true });

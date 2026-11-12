@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { showManagedGetTheAppModal } from './ManagedGetTheAppModal';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePresentation';
 import { randomUUID } from '@/platform/randomUUID';
@@ -211,10 +212,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const [teamId, setTeamId] = React.useState('');
     const [limit, setLimit] = React.useState<number | undefined>();
     // One failure line for the page; it names the operation that failed so a refused Create or Save isn't told as a read.
-    const [error, setErrorState] = React.useState<Readonly<{ code: string; during: 'read' | 'create' | 'save' }> | null>(null);
-    const setError = React.useCallback((code: string | null, during: 'read' | 'create' | 'save' = 'read') =>
-        setErrorState(current => current?.code === code && current.during === during ? current
-            : code === null ? null : { code, during }), []);
+    const [error, setErrorState] = React.useState<Readonly<{ code: string; during: 'read' | 'create' | 'save'; reason?: string }> | null>(null);
+    const setError = React.useCallback((code: string | null, during: 'read' | 'create' | 'save' = 'read', reason?: string) =>
+        setErrorState(current => current?.code === code && current.during === during && current.reason === reason ? current
+            : code === null ? null : { code, during, ...(reason ? { reason } : {}) }), []);
     const [readRevision, bumpReadRevision] = React.useReducer((value: number) => value + 1, 0);
     const [saved, setSaved] = React.useState<Readonly<{ id: string; name: string; serverId: string }> | null>(null);
     const continuation = props.presetContinuation;
@@ -558,7 +559,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             setDraft(current => current ? settleManagedConfiguratorRead(current, result, readSelectors ?? undefined,
                 optionsInput.kind === 'loading' ? 'loading' : 'unavailable') : current);
             setError(result.failure ? describeManagedNativeFailureDiagnostic(result.failure.code, result.failure.nativeCause)
-                : optionsInput.kind === 'unavailable' ? optionsInput.error : null);
+                : optionsInput.kind === 'unavailable' ? optionsInput.error : null, 'read', result.failure
+                    ? resolveActionExecutionFailureMessage({ ok: false, errorCode: result.failure.code, details: result.failure.details },
+                        t('managedMachines.options.unavailable')) ?? undefined : undefined);
         });
     }, [props.presetOnly, catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,
         draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedAcquire, pooledDraft, accountHostPending, accountHostUnreadable, needsApp]);
@@ -664,6 +667,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             ? localized(catalogProvisioner.contribution.pluginId, draft.check.status) : t('managedMachines.providers.unavailable')
         : draft?.check?.available !== true ? t('managedMachines.options.loading', { provider: title })
         : launchRefusal ? localized(catalogProvisioner.contribution.pluginId, launchRefusal.status)
+        : error?.during === 'read' && error.reason ? error.reason
         : !facts ? missingLaunchField ? t('session.actionsDraft.validation.requiredField', { field: missingLaunchField.title })
             : missingDimension ? t('session.actionsDraft.validation.requiredField', {
                 field: missingDimension === 'duration' ? t('managedRetention.ends') : t(`managedMachines.config.${missingDimension}`),
