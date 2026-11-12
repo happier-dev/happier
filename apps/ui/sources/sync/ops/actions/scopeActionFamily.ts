@@ -339,7 +339,9 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
     if (update.tab !== undefined) {
       if (!column.selectTab || !column.tabs?.includes(update.tab)
         || column.items?.some(item => item.id === update.tab && !item.available)) return unavailable('client_control_unavailable');
-      column.selectTab(update.tab);
+      // Main-page selection is route state: reselecting the active page would clear its nested params.
+      // Side companion selection remains an effect because repeated selection may toggle that pane.
+      if (columnId !== 'main' || column.activeTab !== update.tab) column.selectTab(update.tab);
     } else {
       column.setVisible(update.visible);
     }
