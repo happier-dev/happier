@@ -7,9 +7,9 @@ import { readHomeConfigSnapshot } from './homeSettings';
 import { readHomeConfigSnapshotFlag } from './requestHomeEnv';
 
 /**
- * The authentication decorator's diagnostics toggle (`HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS`).
+ * Authentication and socket-message diagnostic toggles share one refreshed Home snapshot.
  *
- * Every authenticated request consults it, so it must not cost a Home settings read per request.
+ * Every authenticated request and transcript message consults them without a Home read per event.
  * This server instance reads it once at startup and again after its own committed Home settings
  * write: the server is the writer of that row, so it knows when the value changes. Another server
  * instance sees a change at its next restart or its own next Home settings write. That lag is
@@ -19,11 +19,16 @@ import { readHomeConfigSnapshotFlag } from './requestHomeEnv';
  * Each read applies the committed snapshot it observed, keyed by the Home settings revision, so
  * concurrent writes on one instance converge on the latest commit regardless of completion order.
  */
-const entry = SERVER_CONFIG.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS;
-let admitted: Readonly<{ revision: number; enabled: boolean }> | null = null;
+const authEntry = SERVER_CONFIG.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS;
+const socketEntry = SERVER_CONFIG.HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS;
+let admitted: Readonly<{ revision: number; authEnabled: boolean; socketEnabled: boolean }> | null = null;
 
 export function readAuthDiagnosticsLogsEnabled(): boolean {
-    return admitted?.enabled ?? readServerConfig(process.env, entry);
+    return admitted?.authEnabled ?? readServerConfig(process.env, authEntry);
+}
+
+export function readSocketMessageDiagnosticsLogsEnabled(): boolean {
+    return admitted?.socketEnabled ?? readServerConfig(process.env, socketEntry);
 }
 
 /**
@@ -36,9 +41,13 @@ export async function refreshAuthDiagnosticsLogsFlag(): Promise<void> {
         const snapshot = await readHomeConfigSnapshot(process.env);
         const revision = snapshot.record.revision;
         if (admitted && revision < admitted.revision) return;
-        admitted = { revision, enabled: readHomeConfigSnapshotFlag(snapshot, entry) };
+        admitted = {
+            revision,
+            authEnabled: readHomeConfigSnapshotFlag(snapshot, authEntry),
+            socketEnabled: readHomeConfigSnapshotFlag(snapshot, socketEntry),
+        };
     } catch (error) {
         log({ module: 'home-settings', level: 'warn' },
-            `Authentication diagnostics flag refresh failed; keeping the previous value (${error instanceof Error ? error.name : 'error'})`);
+            `Diagnostics flags refresh failed; keeping the previous value (${error instanceof Error ? error.name : 'error'})`);
     }
 }

@@ -315,7 +315,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         section: 'server',
         group: 'sockets',
         aliases: ['HAPPY_SOCKET_MESSAGE_DIAGNOSTIC_LOGS'],
-        description: 'Logs socket message diagnostics. Only the value `1` turns it on.',
+        description: 'Logs socket message diagnostics. Only the value `1` turns it on. A Home settings change applies live on the server instance that saves it and at restart on other instances.',
         docs: 'self-hosting/env#advanced--debug-controls',
     },
     METRICS_ENABLED: {

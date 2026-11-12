@@ -1,111 +1,71 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
-import { db } from "@/storage/db";
+// Each case is a new process lifetime over a disposable real database.
+const output = vi.hoisted(() => ({ log: vi.fn<(meta: Record<string, unknown>, message?: string) => void>() }));
+// Count the existing query instrumentation at the logging IO boundary, including snapshot clients.
+vi.mock("@/utils/logging/log", async importOriginal => ({
+    ...await importOriginal<typeof import("@/utils/logging/log")>(), ...output,
+}));
+const identityOperations = () => output.log.mock.calls.filter(([meta]) =>
+    typeof meta.phase === "string" && meta.phase.startsWith("db.SimpleCache."));
+let harness: LightSqliteHarness;
+let identity: typeof import("./serverIdentity");
+let db: typeof import("@/storage/db")["db"];
+beforeEach(async () => {
+    vi.resetModules();
+    const kit = await import("@/testkit/lightSqliteHarness");
+    harness = await kit.createLightSqliteHarness({ tempDirPrefix: "happier-server-identity-",
+        env: { HAPPIER_WEB_LATENCY_TRACE: "1" } });
+    vi.spyOn((await import("@/utils/logging/log")).logger, "isLevelEnabled").mockReturnValue(true);
+    output.log.mockClear();
+    db = (await import("@/storage/db")).db;
+    identity = await import("./serverIdentity");
+}, 60_000);
+afterEach(async () => { vi.restoreAllMocks(); await harness?.close(); });
 
-import { getOrCreateServerIdentityId } from "./serverIdentity";
-
-type ServerIdentityCacheModule = {
-    initializeServerIdentityCache?: (env?: NodeJS.ProcessEnv) => Promise<string | null>;
-    readCachedServerIdentityIdForHotPath?: (env?: NodeJS.ProcessEnv) => string | null;
-};
-
-async function loadServerIdentityCacheModule(): Promise<ServerIdentityCacheModule> {
-    const loaded: unknown = await import("./serverIdentity");
-    return loaded as ServerIdentityCacheModule;
-}
-
-describe("serverIdentity", () => {
-    let harness: LightSqliteHarness;
-
-    beforeAll(async () => {
-        harness = await createLightSqliteHarness({
-            tempDirPrefix: "happier-server-identity-",
-        });
-    }, 60_000);
-
-    afterAll(async () => {
-        await harness.close();
-    });
-
-    it("generates one stable identity under concurrent cold reads", async () => {
-        await db.simpleCache.deleteMany({ where: { key: "server.identity.v1" } });
-
-        const identities = await Promise.all(
-            Array.from({ length: 8 }, () => getOrCreateServerIdentityId({} as NodeJS.ProcessEnv)),
-        );
-
+describe("server identity process lifetime", () => {
+    it("generates one stable identity under concurrent cold reads, then performs no identity storage operations", async () => {
+        const identities = await Promise.all(Array.from({ length: 100 }, () => identity.getOrCreateServerIdentityId({})));
         expect(new Set(identities).size).toBe(1);
         expect(identities[0]).toMatch(/^srv_[A-Za-z0-9]{24,}$/);
-        await expect(db.simpleCache.count({ where: { key: "server.identity.v1" } })).resolves.toBe(1);
+        await expect(db.simpleCache.count({ where: { key: identity.SERVER_IDENTITY_CACHE_KEY } })).resolves.toBe(1);
+        expect(identityOperations().length).toBeGreaterThan(0);
+        output.log.mockClear();
+        for (let i = 0; i < 100; i++) {
+            expect(await identity.getOrCreateServerIdentityId({})).toBe(identities[0]);
+            expect(await identity.readCurrentServerIdentityId({})).toBe(identities[0]);
+        }
+        expect(identityOperations()).toHaveLength(0);
     });
 
-    it("honors and persists an env-pinned identity", async () => {
-        await db.simpleCache.deleteMany({ where: { key: "server.identity.v1" } });
-
-        const identity = await getOrCreateServerIdentityId({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_envPinned123",
-        } as NodeJS.ProcessEnv);
-
-        expect(identity).toBe("srv_envPinned123");
-        await expect(
-            db.simpleCache.findUnique({
-                where: { key: "server.identity.v1" },
-                select: { value: true },
-            }),
-        ).resolves.toEqual({ value: "srv_envPinned123" });
+    it("persists a pinned identity once and shares it with every getter for the process lifetime", async () => {
+        const env = { HAPPIER_SERVER_IDENTITY_ID: "srv_startupPinned123" };
+        expect(await identity.initializeServerIdentityCache(env)).toBe(env.HAPPIER_SERVER_IDENTITY_ID);
+        await expect(db.simpleCache.findUnique({ where: { key: identity.SERVER_IDENTITY_CACHE_KEY }, select: { value: true } }))
+            .resolves.toEqual({ value: env.HAPPIER_SERVER_IDENTITY_ID });
+        expect(identityOperations().length).toBeGreaterThan(0);
+        output.log.mockClear();
+        const later = { HAPPIER_SERVER_IDENTITY_ID: "srv_laterPinned123" };
+        for (let i = 0; i < 100; i++) {
+            expect(await identity.getOrCreateServerIdentityId(later)).toBe(env.HAPPIER_SERVER_IDENTITY_ID);
+            expect(await identity.readCurrentServerIdentityId(later)).toBe(env.HAPPIER_SERVER_IDENTITY_ID);
+            expect(identity.readCachedServerIdentityIdForHotPath(later)).toBe(env.HAPPIER_SERVER_IDENTITY_ID);
+        }
+        expect(identityOperations()).toHaveLength(0);
     });
 
-    it("initializes, persists, and serves one process identity without storage on the hot path", async () => {
-        await db.simpleCache.deleteMany({ where: { key: "server.identity.v1" } });
-        const identityModule = await loadServerIdentityCacheModule();
-        expect(typeof identityModule.initializeServerIdentityCache).toBe("function");
-        expect(typeof identityModule.readCachedServerIdentityIdForHotPath).toBe("function");
-
-        const initialized = await identityModule.initializeServerIdentityCache!({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_startupPinned123",
-        } as NodeJS.ProcessEnv);
-        const second = await identityModule.initializeServerIdentityCache!({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_secondPinned123",
-        } as NodeJS.ProcessEnv);
-
-        expect(initialized).toBe("srv_startupPinned123");
-        expect(second).toBe("srv_startupPinned123");
-        expect(identityModule.readCachedServerIdentityIdForHotPath!({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_secondPinned123",
-        } as NodeJS.ProcessEnv)).toBe("srv_startupPinned123");
-        await expect(
-            db.simpleCache.findUnique({
-                where: { key: "server.identity.v1" },
-                select: { value: true },
-            }),
-        ).resolves.toEqual({ value: "srv_startupPinned123" });
-
-        await db.simpleCache.deleteMany({ where: { key: "server.identity.v1" } });
-        expect(identityModule.readCachedServerIdentityIdForHotPath!({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_thirdPinned123",
-        } as NodeJS.ProcessEnv)).toBe("srv_startupPinned123");
+    it.each(["srv/unsafe", "envPinned123"])("rejects an invalid pinned identity before publication: %s", async value => {
+        await expect(identity.getOrCreateServerIdentityId({ HAPPIER_SERVER_IDENTITY_ID: value }))
+            .rejects.toThrow("HAPPIER_SERVER_IDENTITY_ID");
+        expect(identity.readCachedServerIdentityIdForHotPath({})).toBeNull();
     });
 
-    it("rejects env-pinned identities that are unsafe for storage keys", async () => {
-        await expect(getOrCreateServerIdentityId({
-            HAPPIER_SERVER_IDENTITY_ID: "srv/unsafe",
-        } as NodeJS.ProcessEnv)).rejects.toThrow("HAPPIER_SERVER_IDENTITY_ID");
-    });
-
-    it("rejects env-pinned identities that do not use the server-issued prefix", async () => {
-        await expect(getOrCreateServerIdentityId({
-            HAPPIER_SERVER_IDENTITY_ID: "envPinned123",
-        } as NodeJS.ProcessEnv)).rejects.toThrow("HAPPIER_SERVER_IDENTITY_ID");
-    });
-
-    it("rejects persisted identities that do not use the server-issued prefix", async () => {
-        await db.simpleCache.upsert({
-            where: { key: "server.identity.v1" },
-            create: { key: "server.identity.v1", value: "envPinned123" },
-            update: { value: "envPinned123" },
-        });
-
-        await expect(getOrCreateServerIdentityId({} as NodeJS.ProcessEnv)).rejects.toThrow("server.identity.v1");
+    it("rejects an invalid persisted identity, then admits a valid persisted identity", async () => {
+        await db.simpleCache.create({ data: { key: identity.SERVER_IDENTITY_CACHE_KEY, value: "envPinned123" } });
+        await expect(identity.getOrCreateServerIdentityId({})).rejects.toThrow("server.identity.v1");
+        await db.simpleCache.update({ where: { key: identity.SERVER_IDENTITY_CACHE_KEY }, data: { value: "srv_restoredValid123" } });
+        expect(await identity.getOrCreateServerIdentityId({})).toBe("srv_restoredValid123");
+        expect(await identity.readCurrentServerIdentityId({})).toBe("srv_restoredValid123");
     });
 });

@@ -29,9 +29,7 @@ import { AsyncLock, isLockAdmissionDeadlineExceededError } from "@/utils/runtime
 import { debug, error as logError, log } from "@/utils/logging/log";
 import { randomUUID } from 'node:crypto';
 import { recordWebLatencyPhase, timeWebLatencyPhase, withWebLatencyTrace } from '@/utils/webLatencyTrace';
-import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
-import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
-import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
+import { readSocketMessageDiagnosticsLogsEnabled } from '@/app/home/settings/authDiagnosticsFlag';
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import { z } from 'zod/mini';
@@ -2099,7 +2097,7 @@ export function sessionUpdateHandler(
                     return;
                 }
 
-                if (readServerConfig(await readHomeConfigEnv(), SERVER_CONFIG.HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS)) {
+                if (readSocketMessageDiagnosticsLogsEnabled()) {
                     const loggedLength = (() => {
                         if (content.t === "encrypted") return content.c.length;
                         try {

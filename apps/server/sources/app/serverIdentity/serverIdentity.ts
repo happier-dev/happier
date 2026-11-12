@@ -8,7 +8,7 @@ export const SERVER_IDENTITY_CACHE_KEY = "server.identity.v1";
 export const SERVER_IDENTITY_ENV_KEY = "HAPPIER_SERVER_IDENTITY_ID";
 
 let cachedServerIdentityId: string | null = null;
-let initializeServerIdentityCacheInFlight: Promise<string | null> | null = null;
+let serverIdentityInFlight: Promise<string> | null = null;
 
 function assertValidServerIdentityId(value: string, sourceLabel: string): string {
     if (SERVER_IDENTITY_ID_PATTERN.test(value)) return value;
@@ -55,17 +55,15 @@ async function readPersistedServerIdentityId(reader: Pick<Tx, "simpleCache"> = d
     return value ? assertValidServerIdentityId(value, SERVER_IDENTITY_CACHE_KEY) : null;
 }
 
-/** Reads the current identity without opening an out-of-transaction writer. */
+/** Reads the process identity without opening an out-of-transaction writer during cold composition. */
 export async function readCurrentServerIdentityId(
     env: NodeJS.ProcessEnv = process.env,
     reader: Pick<Tx, "simpleCache"> = db,
 ): Promise<string | null> {
-    return readPinnedServerIdentityId(env) ?? await readPersistedServerIdentityId(reader);
+    return readCachedServerIdentityIdForHotPath(env) ?? await readPersistedServerIdentityId(reader);
 }
 
-export async function getOrCreateServerIdentityId(
-    env: NodeJS.ProcessEnv = process.env,
-): Promise<string> {
+async function resolveServerIdentityId(env: NodeJS.ProcessEnv): Promise<string> {
     const pinned = readPinnedServerIdentityId(env);
     if (pinned) {
         await persistPinnedServerIdentityId(pinned);
@@ -92,29 +90,30 @@ export async function getOrCreateServerIdentityId(
     }
 }
 
-export async function initializeServerIdentityCache(
+/** One persisted identity per process; all callers share cold initialization and warm reads. */
+export async function getOrCreateServerIdentityId(
     env: NodeJS.ProcessEnv = process.env,
-): Promise<string | null> {
+): Promise<string> {
     if (cachedServerIdentityId) return cachedServerIdentityId;
-    const pinned = readPinnedServerIdentityId(env);
-    if (pinned) {
-        cachedServerIdentityId = pinned;
-    }
-    initializeServerIdentityCacheInFlight ??= getOrCreateServerIdentityId(env)
+    serverIdentityInFlight ??= resolveServerIdentityId(env)
         .then((serverIdentityId) => {
             cachedServerIdentityId = serverIdentityId;
             return serverIdentityId;
         })
-        .catch((error: unknown) => {
-            if (isServerIdentityStorageUnavailableError(error)) {
-                return cachedServerIdentityId;
-            }
-            throw error;
-        })
-        .finally(() => {
-            initializeServerIdentityCacheInFlight = null;
-        });
-    return initializeServerIdentityCacheInFlight;
+        .finally(() => { serverIdentityInFlight = null; });
+    return serverIdentityInFlight;
+}
+
+export async function initializeServerIdentityCache(
+    env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+    try {
+        return await getOrCreateServerIdentityId(env);
+    } catch (error) {
+        if (!isServerIdentityStorageUnavailableError(error)) throw error;
+        cachedServerIdentityId ??= readPinnedServerIdentityId(env);
+        return cachedServerIdentityId;
+    }
 }
 
 export function readCachedServerIdentityIdForHotPath(
