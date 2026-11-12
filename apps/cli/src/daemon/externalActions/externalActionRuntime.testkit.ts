@@ -39,6 +39,7 @@ export function createExternalActionRuntime(
     onInput?: (input: JsonValue) => void;
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
     confirmation?: PluginActionContributionV2['confirmation'];
+    sessionTarget?: PluginActionContributionV2['sessionTarget'];
     placementBindings?: PluginActionContributionV2['placementBindings'];
     executionTarget?: 'account';
     hostAccess?: readonly PluginHostAccessRequestV2[];
@@ -77,6 +78,7 @@ export function createExternalActionRuntime(
             ? { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } }
             : { target: 'daemon' },
           dangerLevel,
+          ...(actionOptions.sessionTarget ? { sessionTarget: actionOptions.sessionTarget } : {}),
           ...(actionOptions.placementBindings === undefined ? {} : { placementBindings: actionOptions.placementBindings }),
           ...(actionOptions.overlappingTool && id === 'actions/inspect'
             ? { tool: { name: 'acme_inspect', title: 'Inspect nested Action' }, toolExposure: { cli: 'direct' } } : {}),

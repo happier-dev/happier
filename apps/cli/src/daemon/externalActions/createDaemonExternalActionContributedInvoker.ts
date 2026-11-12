@@ -323,6 +323,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               actionCaller: origin.caller,
               callerPermissionMode: origin.callerPermissionMode,
               causalPermissionAuthority: origin.causalPermissionAuthority,
+              sessionTargetsV1: origin.sessionTargetsV1,
               sessionInputSource: origin.sessionInputSource,
               sessionAgentSpawnPolicyV1: origin.sessionAgentSpawnPolicyV1,
               workspaceWrites: sourceSession?.workspaceWrites,

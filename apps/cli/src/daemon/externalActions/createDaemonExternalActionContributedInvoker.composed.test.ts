@@ -1,3 +1,4 @@
+import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { createExternalActionRuntime } from './externalActionRuntime.testkit';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
@@ -119,6 +120,7 @@ import {
 } from '@/plugins/runtime/invocation/services/unavailable';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import type { PluginActionsServiceSeed } from '@/plugins/runtime/invocation/services/actions';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -316,6 +318,111 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  it.each(['admitted', 'missing', 'other-account'] as const)('retains admitted Session targets through durable replay and nested child admission (%s)', async scenario => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {
+      'acme.managed/actions/inspect': { approvalRequiredSurfaces: ['cli'] },
+    } });
+    const address = { serverId: 'server-external', sessionId: 'admitted-session' };
+    let seed: PluginActionsServiceSeed | undefined;
+    let handlerCalls = 0;
+    let childCalls = 0;
+    let stored: TargetActionApprovalRequestV1 | null = null;
+    // Only Home transport facts are supplied: the real executor owns target admission.
+    const resolveSessionReference: NonNullable<ActionExecutorDeps['resolveSessionReference']> = async ({ sessionId }) => (
+      sessionId === address.sessionId ? { kind: 'unique', address } : { kind: 'none' }
+    );
+    const runtime = createExternalActionRuntime('global', 'acme.managed', async context => {
+      handlerCalls++;
+      if (!seed) throw new Error('Expected real handler service seed');
+      if (seed.contribution.id === 'actions/inspect') {
+        childCalls++;
+        expect(context.sessionTargetsV1).toMatchObject({ actionId: 'action.invoke', field: 'input.recipient.sessionId', targets: [address] });
+        return;
+      }
+      expect(context.sessionTargetsV1).toEqual(stored?.executionOriginV1?.sessionTargetsV1);
+      const actions = createPluginInvocationActionsService({ seed,
+        actionExecutor: executor,
+        invokeContributedAction: async () => { throw new Error('Unexpected non-executor dispatch'); },
+      });
+      const child = { pluginId: 'acme.managed', localId: 'actions/inspect' };
+      const childInput = { recipient: { sessionId: address.sessionId } };
+      // Routing evidence cannot supply an unadmitted address or override the child's operand.
+      await expect(actions.execute(child, childInput, { sessionAddress: { ...address, sessionId: 'unadmitted' } }))
+        .rejects.toMatchObject({ code: 'session_address_unsupported' });
+      await expect(actions.execute(child, { recipient: { sessionId: 'unadmitted' } }, { sessionAddress: address }))
+        .rejects.toMatchObject({ code: scenario === 'missing' ? 'session_address_unsupported' : 'session_address_mismatch' });
+      if (scenario === 'missing') {
+        await expect(actions.execute(child, childInput, { sessionAddress: address }))
+          .rejects.toMatchObject({ code: 'session_address_unsupported' });
+      } else {
+        await actions.execute(child, childInput, { sessionAddress: address });
+      }
+    }, undefined, undefined, value => { seed = value; }, undefined, 'safe', undefined,
+    { overlappingTool: true, surfaces: ['cli', 'plugin'],
+      inputSchema: { type: 'object', properties: { recipient: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'] } }, required: ['recipient'] },
+      sessionTarget: { field: 'recipient.sessionId', cardinality: 'one' } });
+    const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {} };
+    const invoker = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: async () => lease,
+      requestCurrentIntent: createTargetActionCurrentIntentAdapter({
+        create: async request => { stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request))); return { artifactId: 'session-replay' }; },
+        read: async () => stored,
+      }),
+    });
+    const list = createDaemonExternalActionContributedDefinitionLister({ tryAcquireRuntimeRegistryLease: () => lease });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
+      resolveSessionReference, invokeContributedAction: invoker,
+    });
+    try {
+      const actionInput = { recipient: { sessionId: address.sessionId } };
+      const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+        serverId: address.serverId, runtimeAccountId: 'account-1', expectedSessionAddress: address };
+      const targets = await resolveActionSessionTargets({ ...createUnavailableActionTransportDeps(), resolveSessionReference }, {
+        actionId: 'action.invoke', declaration: { field: 'input.recipient.sessionId', cardinality: 'one' },
+        input: { input: actionInput }, context,
+      });
+      if (!targets || 'ok' in targets) throw new Error('Expected host Session admission');
+      const { principalId: _principal, credentialId: _credential, ...hostOrigin } = createApiActionApprovalOrigin();
+      const admitted = await invoker({ action: { pluginId: 'acme.managed', localId: 'inspect' }, input: actionInput,
+        context: { ...context, sessionTargetsV1: targets },
+        approvalExecutionOrigin: { ...hostOrigin, surface: 'cli', sessionTargetsV1: targets }, signal: new AbortController().signal });
+      expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(handlerCalls).toBe(0);
+      if (!stored) throw new Error('Expected durable approval');
+      const retained: TargetActionApprovalRequestV1 = stored;
+      expect(retained.executionOriginV1?.sessionTargetsV1).toMatchObject({ targets: [address] });
+      if (scenario === 'missing') {
+        if (!retained.executionOriginV1) throw new Error('Expected retained origin');
+        const { sessionTargetsV1: _targets, ...withoutTargets } = retained.executionOriginV1;
+        stored = { ...retained, executionOriginV1: withoutTargets };
+      }
+      const replay = createDaemonExternalActionContributedApprovalReplay({ credentials: { token: 'fixture', encryption: null },
+        acquireRuntimeRegistryLease: async () => lease,
+        isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+          accountId: scenario === 'other-account' ? 'account-2' : 'account-1', machineId: 'machine-local', serverId: address.serverId,
+          resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-local', serverIdentityId: 'server-external' }),
+          resolveTarget: createCanonicalSessionTargetResolver(),
+          isAccountCurrent: async () => true, listAccountApiTokens: async () => { throw new Error('Host has no PAT'); },
+        }),
+        targetActionApprovals: { targetActionApprovalsGet: async () => stored,
+          targetActionApprovalsUpdate: async ({ request }) => { stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request))); return { ok: true }; } },
+      });
+      const result = await replay({ artifactId: 'session-replay', decision: 'approve', context: {
+        // Decider-supplied targets must never replace the Artifact's admitted targets.
+        sessionTargetsV1: { actionId: 'action.invoke', field: 'input.recipient.sessionId', selector: false, targets: [{ ...address, sessionId: 'unadmitted' }] },
+      } });
+      expect(result, JSON.stringify(result)).toMatchObject(scenario === 'other-account'
+        ? { ok: false, errorCode: 'approval_stale' } : { ok: true, result: { status: 'executed', execution: { ok: true } } });
+      expect(handlerCalls).toBe(scenario === 'other-account' ? 0 : scenario === 'missing' ? 1 : 2);
+      expect(childCalls).toBe(scenario === 'admitted' ? 1 : 0);
+    } finally {
+      await runtime.dispose();
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
   it.each(['custodian', 'nested-custodian', 'foreign', 'agent', 'cloned', 'cloned-child'] as const)(
     'preserves replay requester custody through a reviewed Plugin Action source read (%s)', async scenario => {
       const environment = createDeploymentEnvironmentDetailV1();
