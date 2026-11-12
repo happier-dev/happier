@@ -4,7 +4,7 @@ import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
 import type { ComputerClipboardOperationV1, ComputerClipboardResultV1, ComputerProviderIdV1, ComputerSourceIdentityV1 } from '@happier-dev/protocol/computer/v1';
 import { createManagedComputerDriver } from './driver/managedComputerDriver';
-import { createSurfaceInputControl } from '../surfaces/inputControl';
+import { createSurfaceInputControl, type SurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
 import type { MachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/captureAdapter';
 
@@ -13,7 +13,7 @@ export const computerTargetKey = computerTargetKeyV1;
 export type ComputerCaptureSource = ReturnType<typeof createComputerCaptureSource>;
 
 /** One native producer per exact source owner/provider/target, retained by the capture registry. */
-export function createComputerCaptureSource(input: Readonly<({
+export function createComputerCaptureSource({ previousInputControl, ...input }: Readonly<({
   sourceIdentity: ComputerSourceIdentityV1; sessionId?: never;
 } | { sessionId: string; sourceIdentity?: never }) & {
   target: ComputerTargetV1;
@@ -26,12 +26,14 @@ export function createComputerCaptureSource(input: Readonly<({
   /** Private desktop scope retained by the Computer route owner. */
   desktopKey?: string;
   createDriver?: () => ReturnType<typeof createManagedComputerDriver>;
+  previousInputControl?: SurfaceInputControl;
 }>) {
   const sourceIdentity: ComputerSourceIdentityV1 = input.sourceIdentity ?? { kind: 'session', sessionId: input.sessionId };
   // A stream source is one selection lifetime; revoked approvals cannot bind a later reselection.
   const sourceId = `computer:${randomUUID()}`;
   const provider = input.provider ?? 'cua';
-  const control = createSurfaceInputControl({ requireObservation: true, onStatusChange: publishStatus });
+  const control = createSurfaceInputControl({ requireObservation: true, onStatusChange: publishStatus,
+    previousControl: previousInputControl });
   let driver: ReturnType<typeof createManagedComputerDriver> | null = null;
   const getDriver = () => driver ??= input.createDriver?.()
     ?? createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath, environment: input.environment, provider });

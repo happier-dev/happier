@@ -249,15 +249,10 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       if (actionId === 'computer.target.select') {
         const request = ComputerTargetSelectRequestV1Schema.parse(parsed.data);
         const access = resolveComputerAccess(request.access);
-        let existing = selected(provider);
+        const existing = selected(provider);
         if (request.target && conflictingSelection(sourceIdentity, provider, request.target)) return failure('computer_target_in_use');
-        if (existing && (existing.status().uncertain || existing.isClosed())) {
-          try { await closeSource(existing); } catch (error) { return nativeFailure(error); }
-          if (selected(provider) !== existing) return failure('computer_target_selection_changed');
-          input.registry.unregister(existing.sourceId);
-          existing = undefined;
-        }
-        if (request.target && existing && access === existing.access && computerTargetKey(request.target) === computerTargetKey(existing.target)) return selection(provider);
+        if (request.target && existing && !existing.status().uncertain && !existing.isClosed()
+          && access === existing.access && computerTargetKey(request.target) === computerTargetKey(existing.target)) return selection(provider);
         let connection: Awaited<ReturnType<typeof resolveConnection>>;
         let driver: Awaited<ReturnType<typeof createManagedComputerDriver>>;
         try {
@@ -296,7 +291,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         if (selected(provider)) return failure('computer_target_selection_changed');
         if (conflictingSelection(sourceIdentity, provider, target)) return failure('computer_target_in_use');
         const source = createComputerCaptureSource({ sourceIdentity, target, title, appName, access, executablePath, provider,
-          environment: connection.environment, desktopKey,
+          environment: connection.environment, desktopKey, previousInputControl: existing?.inputControl,
           ...(scope.kind === 'personal' ? { createDriver: () => createDriver(connection) } : {}) });
         const sourceId = source.sourceId;
         input.registry.register({ sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,

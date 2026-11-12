@@ -42,9 +42,14 @@ type ActiveInput = Readonly<{
 }>;
 
 /** One instance belongs to one actual input target. The transport owns target lookup and authority. */
-export function createSurfaceInputControl(options: Readonly<{ requireObservation?: boolean; onStatusChange?: () => void }> = {}): SurfaceInputControl {
+export function createSurfaceInputControl({ previousControl, ...options }: Readonly<{
+  requireObservation?: boolean;
+  onStatusChange?: () => void;
+  /** Replacing a drained source is not Hand back. Only its human hold survives. */
+  previousControl?: SurfaceInputControl;
+}> = {}): SurfaceInputControl {
   let controlEpoch = 0;
-  let humanHeld = false;
+  let humanHeld = previousControl?.getStatus().controller === 'human';
   let closed = false;
   let uncertain = false;
   let observationRequirement: 'required' | 'hand_back' | null = options.requireObservation ? 'required' : null;

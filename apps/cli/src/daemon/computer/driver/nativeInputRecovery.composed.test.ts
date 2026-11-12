@@ -150,6 +150,7 @@ describe.skipIf(process.platform !== 'linux')('native input settlement and recov
       expect(hook.getCurrent().failure).toBeNull();
       expect(hook.getCurrent().canInput).toBe(true);
       expect(fresh.status().uncertain).toBe(false);
+      expect(fresh.status().controller).toBe('human');
       expect(actions.slice(recoveryStart)).toContain('computer.target.select');
       expect(actions.slice(recoveryStart).indexOf('computer.target.select')).toBeLessThan(actions.slice(recoveryStart).indexOf('computer.capture'));
       expect(physicalInputs).toBe(1);

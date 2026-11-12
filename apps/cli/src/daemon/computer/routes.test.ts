@@ -65,6 +65,51 @@ function selectUnsupportedTarget(registry: ReturnType<typeof createMachineLiveSt
 }
 
 describe('native computer route authority', () => {
+  it.skipIf(process.platform !== 'linux').each(['uncertain', 'switch', 'reconnect'] as const)(
+    'retains the human hold until Hand back after %s selection', async recovery => {
+      const nextTarget = { ...cuaTarget, windowId: 456 };
+      native.call.mockImplementation(async ({ name, arguments: args }) => {
+        if (name === 'list_windows') return { structuredContent: { windows: [cuaTarget, nextTarget].map(target => ({
+          pid: target.pid, window_id: target.windowId, title: 'Fixture',
+        })) } };
+        if (name === 'get_window_state') {
+          const capture = captureResult();
+          return { ...capture, structuredContent: { ...capture.structuredContent, window_id: args.window_id } };
+        }
+        if (name === 'drag') throw new Error('lost native drag acknowledgement');
+        return { structuredContent: { x11: true, xsend_event: true } };
+      });
+      const registry = createMachineLiveStreamCaptureRegistry();
+      const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver', defaultDisplayId: ':73' });
+      const human = { ...agentContext, authority: 'present_user' as const };
+      const request = { machineId: 'machine' };
+      try {
+        await routes.dispatch('computer.target.select', { ...request, target: cuaTarget }, human);
+        await routes.dispatch('computer.control.interrupt', request, human);
+        if (recovery === 'uncertain') {
+          const before = await registry.list()[0]!.computer!.observe('human');
+          expect(await routes.dispatch('computer.input', { ...request, captureId: before.captureId,
+            operation: { kind: 'drag', fromX: 1, fromY: 1, toX: 5, toY: 5 } }, human))
+            .toMatchObject({ status: 'interrupted', completion: 'unknown' });
+          expect(await routes.dispatch('computer.control.status', request, human)).toMatchObject({ controller: 'human', uncertain: true });
+        }
+        const originalId = registry.list()[0]!.sourceId;
+        // Reconnect resolves the retained registry; it must not recreate control.
+        if (recovery === 'reconnect') await routes.dispatch('computer.target.get', request, human);
+        await routes.dispatch('computer.target.select', { ...request, target: recovery === 'switch' ? nextTarget : cuaTarget }, human);
+        const source = registry.list()[0]!.computer!;
+        expect(source.sourceId === originalId).toBe(recovery === 'reconnect');
+        expect(await routes.dispatch('computer.control.status', request, human)).toMatchObject({ controller: 'human', uncertain: false });
+        // Observe the new target, then prove agent admission still honors the hold.
+        const capture = await source.observe();
+        expect(await routes.dispatch('computer.input', { ...request, captureId: capture.captureId,
+          operation: { kind: 'click', x: 1, y: 1 } }, { ...agentContext, bypassApprovals: true }))
+          .toMatchObject({ status: 'failed', code: 'human_interrupted' });
+        expect(await routes.dispatch('computer.control.handBack', request, human)).toMatchObject({ status: 'dispatched' });
+        expect(await routes.dispatch('computer.control.status', request, human)).toMatchObject({ controller: 'idle' });
+      } finally { await routes.dispose(); }
+    });
+
   it.each([false, true])('binds the approval picture to its persisted capture when a newer media write fails (%s)', async failNextWrite => {
     const home = await mkdtemp(join(tmpdir(), 'computer-approval-capture-'));
     const homeDescriptor = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
