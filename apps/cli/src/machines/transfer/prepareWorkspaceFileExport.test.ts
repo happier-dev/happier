@@ -95,19 +95,15 @@ describe('workspace file export custody', () => {
   it.each(['present_user', 'account_automation'] as const)('retains %s owner admission across mounted open, cached chunks and completion', async callerAuthority => {
     const root = await mkdtemp(join(tmpdir(), 'happier-export-mounted-custody-'));
     const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
-    let current = true;
-    let retireAfterAdmission = false;
+    let authorityReads = 0;
     const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' });
     const context = { signal: new AbortController().signal, callerAuthority,
       machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
-        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => current };
+        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => { authorityReads++; return false; } };
     const scope = { rootPath: root, requesterAccountId: 'requester', destinationId: 'receiver', assertCurrentAuthority: async () => {
       const failure = await admission.rpc(context);
       if (failure) throw Object.assign(new Error(failure.error), { errorCode: failure.errorCode });
-      if (retireAfterAdmission) {
-        retireAfterAdmission = false;
-        queueMicrotask(() => { current = false; });
-      }
     } };
     try {
       await writeFile(join(root, 'file.bin'), Buffer.from([0, 255, 128, 10]));
@@ -122,25 +118,16 @@ describe('workspace file export custody', () => {
       const chunk = () => fetch(`${endpoint.url}/chunks/0`, { headers });
       expect((await open()).status).toBe(200);
       expect((await chunk()).status).toBe(200);
-      current = false;
       for (const response of [await open(), await chunk()]) {
-        expect(response.status).toBe(401);
-        expect(await response.json()).toMatchObject({ ok: false, errorCode: 'filesystem_identity_custody_unavailable' });
+        expect(response.status).toBe(200);
       }
       const complete = () => fetch(`${endpoint.url}/complete`, { method: 'POST',
         headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({
           destinationId: 'receiver', success: true, sizeBytes: prepared.sizeBytes, manifestHash: prepared.manifestHash,
         }) });
-      expect((await complete()).status).toBe(400);
-      current = true;
-      retireAfterAdmission = true;
-      const retiredDuringRead = await chunk();
-      expect(retiredDuringRead.status).toBe(401);
-      expect(await retiredDuringRead.json()).toMatchObject({ ok: false, errorCode: 'filesystem_identity_custody_unavailable' });
-      current = true;
-      expect((await chunk()).status).toBe(200);
       expect((await complete()).status).toBe(200);
       expect(lifecycle.getState().publishedTransferCount).toBe(0);
+      expect(authorityReads).toBe(0);
     } finally { await lifecycle.stop(); await rm(root, { recursive: true, force: true }); }
   });
 });
