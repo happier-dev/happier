@@ -8,6 +8,7 @@ import {
     TextStyle,
     findNodeHandle,
     type LayoutChangeEvent,
+    type GestureResponderEvent,
     Platform,
 } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -23,6 +24,9 @@ import {
 import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from './largeTextInputPolicy';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from './multiTextInputTypography';
 
+
+// How far a finger may travel and still be a tap rather than a scroll (the platforms' own slop is 8-10pt).
+const TAP_SLOP = 10;
 
 export type { SupportedKey } from '@/keyboard/events';
 
@@ -345,6 +349,21 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }
     }, [onChangeText, onStateChange, onSelectionChange]);
 
+    // React Native's TextInput focuses itself on "press", which it reports when the finger lifts, even after
+    // that finger scrolled the field: the cursor then jumps to the end and moves the text. Once a touch travels
+    // past tap slop, the wrapper takes the JS touch from the field, cancelling that press. The field's own
+    // native scrolling and text selection are not JS touches, so they carry on; a tap still focuses.
+    const touchStartRef = React.useRef<Readonly<{ x: number; y: number }> | null>(null);
+    const handleWrapperTouchStart = React.useCallback((e: GestureResponderEvent) => {
+        touchStartRef.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+    }, []);
+    const claimScrollingTouch = React.useCallback((e: GestureResponderEvent) => {
+        const start = touchStartRef.current;
+        if (!start) return false;
+        return Math.hypot(e.nativeEvent.pageX - start.x, e.nativeEvent.pageY - start.y) > TAP_SLOP;
+    }, []);
+    const releaseScrollingTouch = React.useCallback(() => true, []);
+
     const handleContentSizeChange = React.useCallback((e: NativeTextInputContentSizeChangeEvent) => {
         const measuredHeight = e.nativeEvent.contentSize?.height;
         if (typeof measuredHeight !== 'number' || !Number.isFinite(measuredHeight)) {
@@ -496,9 +515,18 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     }), [onChangeText, onStateChange, onSelectionChange, value]);
 
     return (
-        <View style={{ width: '100%' }} onLayout={props.onLayout}>
+        <View
+            style={{ width: '100%' }}
+            onLayout={props.onLayout}
+            onTouchStart={handleWrapperTouchStart}
+            onMoveShouldSetResponderCapture={claimScrollingTouch}
+            onResponderTerminationRequest={releaseScrollingTouch}
+        >
             <TextInput
                 ref={inputRef}
+                // Lets the wrapper above cancel the field's press-to-focus once a touch becomes a scroll (iOS
+                // rejects that by default; Android already allows it).
+                rejectResponderTermination={false}
                 testID={props.testID}
                 style={{
                     width: '100%',

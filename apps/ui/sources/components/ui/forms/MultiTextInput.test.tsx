@@ -134,6 +134,21 @@ describe('MultiTextInput', () => {
         expect(input.props.scrollEnabled).toBe(true);
     });
 
+    it('focuses on a tap but not when the finger scrolled the field', async () => {
+        // React Native's TextInput focuses itself on "press" at lift; a scroll inside the field must not count.
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const screen = await renderScreen(<MultiTextInput testID="composer-input" value="long" maxHeight={144} onChangeText={() => {}} />);
+        const input = screen.tree.findByType('TextInput' as any);
+        const wrapper = screen.tree.root.findAll((node) => typeof node.props.onMoveShouldSetResponderCapture === 'function')[0]!;
+        const at = (pageX: number, pageY: number) => ({ nativeEvent: { pageX, pageY, touches: [{}] } });
+        expect(input.props.rejectResponderTermination).toBe(false);
+
+        wrapper.props.onTouchStart(at(100, 100));
+        expect(wrapper.props.onMoveShouldSetResponderCapture(at(102, 104))).toBe(false);
+        expect(wrapper.props.onMoveShouldSetResponderCapture(at(100, 160))).toBe(true);
+        expect(wrapper.props.onResponderTerminationRequest()).toBe(true);
+    });
+
     it('records native large-text changes with selection metadata only', async () => {
         const { MultiTextInput } = await import('./MultiTextInput');
         const screen = await renderScreen(<MultiTextInput
