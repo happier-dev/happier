@@ -49,7 +49,7 @@ describe('Sapling SCM plugin runtime', () => {
     it('rejects root-equivalent selected mutation paths', () => {
         const cwd = process.cwd();
 
-        for (const path of ['', ' ', '.', './', ':', ':(top)*', '-path']) {
+        for (const path of ['', '.', './', ':', ':(top)*', '-path']) {
             expect(normalizePathspec(path, cwd).ok).toBe(false);
         }
 
@@ -57,5 +57,6 @@ describe('Sapling SCM plugin runtime', () => {
             ok: true,
             pathspec: 'src/a.ts',
         });
+        expect(normalizePathspec(' ', cwd)).toMatchObject({ ok: true, pathspec: ' ' });
     });
 });

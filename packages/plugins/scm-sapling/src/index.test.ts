@@ -16,7 +16,7 @@ describe('scm-sapling public API', () => {
 
     it('declares the strict target backend and exact executable access', () => {
         expect(publicApi.PLUGIN_MANIFEST).toMatchObject({
-            entrypoints: { daemon: './.happier-plugin/daemon.js' },
+            entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
             hostAccess: { required: [{ capability: 'process', scope: { executables: [{ kind: 'managedDependency', id: 'sapling-cli' }] } }], optional: [] },
             contributes: {
                 scmBackends: [{ id: 'sapling', title: 'Sapling', kind: 'sapling', capabilities: expect.arrayContaining(['detect', 'status', 'diff', 'commit']) }],
