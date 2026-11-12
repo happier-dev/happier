@@ -189,7 +189,9 @@ const HOST_SLOTS: HappierCapabilityAddHost<IconName> = {
     // listing page the column is the page's reading column, so the identity's action lines up with the header and
     // sections instead of the pane's edge (STORE-UI-R2 N3); in a dialog or pane the column is the body.
     <ListPresentationProvider value="page" pageInsets="contained">
-      <PageFrame content="column" style={{ flexGrow: 1, minHeight: 0 }}>{children}</PageFrame>
+      {/* It also shrinks to the dialog's body, so a hosted editor's list scrolls under its pinned footer instead of
+          pushing Save below the card's edge (AddDialogEditorPage). */}
+      <PageFrame content="column" style={{ flexGrow: 1, flexShrink: 1, minHeight: 0 }}>{children}</PageFrame>
     </ListPresentationProvider>
   ),
   useDismissDetail,
