@@ -565,7 +565,7 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
           : {}),
         permissionIntent: voiceAgent.permissionIntent,
-        start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
+        start: { intent: 'voice_agent' },
         ...(voiceAgent.connectedServices !== undefined ? { connectedServices: voiceAgent.connectedServices } : {}),
       });
       if (replacementBackend === previousBackend) {
@@ -731,7 +731,7 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
           : {}),
         permissionIntent: voiceAgent.permissionIntent,
-        start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
+        start: { intent: 'voice_agent' },
         ...(connectedServices !== undefined ? { connectedServices } : {}),
       });
       // Publish the provisional runtime to the unpublished instance before the
@@ -880,7 +880,7 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
           : {}),
         permissionIntent: params.permissionIntent,
-        start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
+        start: { intent: 'voice_agent' },
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
       }));
       startOccurrence.runtime = chatBackend;

@@ -1810,7 +1810,7 @@ describe('VoiceAgentManager', () => {
     expect(manager.getResumeHandle('voice-agent-bootstrap-fail')).toBeNull();
   });
 
-  it('passes the canonical backend target, model ids, permission policy, and voice_agent start intent to the backend factory', async () => {
+  it('passes the canonical backend target, model ids, and selected permission intent without a Voice tool ceiling', async () => {
 
     const seen: Array<{
       backendTarget: Parameters<BackendFactory>[0]['backendTarget'];
@@ -1846,7 +1846,7 @@ describe('VoiceAgentManager', () => {
       backendId: 'external-voice-agent',
       modelId: 'chat-model',
       permissionIntent: 'read-only',
-      start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
+      start: { intent: 'voice_agent' },
     }]);
     expect(manager.getResumeHandle(started.voiceAgentId)?.backendTarget).toMatchObject({
       kind: 'backend',
@@ -1858,8 +1858,8 @@ describe('VoiceAgentManager', () => {
     await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
 
     expect(seen).toEqual([
-      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' } },
-      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' } },
+      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
+      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
     ]);
     expect(manager.getResumeHandle(started.voiceAgentId)).toMatchObject({
       kind: 'voice_agent_sessions.v1',

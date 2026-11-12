@@ -1173,6 +1173,12 @@ ceiling. Canonical Action effect approval remains owned by the Action executor;
 an explicitly selected read-only intent still applies. Existing daemons need a
 reload to consume this change.
 
+In 0.3 development source, Voice chat, isolated commit, and replacement runtimes
+use the selected ordinary permission intent without a Voice-only native tool
+ceiling. Canonical Action effect approval remains owned by the Action executor;
+an explicitly selected read-only intent still applies. Existing daemons need a
+reload to consume this change.
+
 The Voice settings schema owns the idle lifetime default for both clients and
 the CLI. A confirmed primary Run Stop remains successful if the optional sweep
 for other matching Runs cannot load its inventory; that failure emits a cleanup

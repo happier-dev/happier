@@ -47,7 +47,7 @@ const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import
 afterEach(async () => { resetVoiceSessionStoreForTests(); await home.reset(); });
 
 describe('Voice Manager output through canonical client Action approval', () => {
-  it('delivers two native function Actions from one confined Home conversation and refuses the carrier as a target', async () => {
+  it('starts with ordinary permissions, delivers two native function Actions, and refuses the carrier as a target', async () => {
     await home.reset();
     const serverId = await home.addHome({ name: 'Structured Voice Home', serverUrl: 'https://structured-voice.test',
       accountId: 'alice', currentAccount: true });
@@ -57,15 +57,16 @@ describe('Voice Manager output through canonical client Action approval', () => 
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
       functionTools: options.functionTools,
       start: options.start,
-      configuration: buildExecutionRunConfiguration({ backendTarget: readBackendTargetRefV2(options.backendTarget),
+      configuration: buildExecutionRunConfiguration({ ...options.start, backendTarget: readBackendTargetRefV2(options.backendTarget),
         modelId: options.modelId, permissionMode: options.permissionIntent, updatedAtMs: 1,
-        allowedTools: options.start?.allowedTools, unlistedTools: options.start?.unlistedTools,
       }).configuration,
     }) });
     try {
       const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        chatModelId: 'fixture', commitModelId: 'fixture', permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '' });
-      expect(native.opens[0]?.configuration).toMatchObject({ allowedTools: [], unlistedTools: 'deny' });
+        chatModelId: 'fixture', commitModelId: 'fixture', permissionIntent: 'default', idleTtlSeconds: 60, initialContext: '' });
+      expect(native.opens[0]?.configuration).toMatchObject({ permissionIntent: { value: 'default' } });
+      expect(native.opens[0]?.configuration?.allowedTools).toBeUndefined();
+      expect(native.opens[0]?.configuration?.unlistedTools).toBeUndefined();
       const carrier = { serverId, sessionId: 'structured-voice-carrier' };
       const { storage } = await import('../../../../../ui/sources/sync/domains/state/storage');
       const carrierSession = createSessionFixture({ id: carrier.sessionId, serverId,

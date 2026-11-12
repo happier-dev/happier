@@ -116,8 +116,7 @@ export type BackendFactory = (opts: {
   modelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   permissionIntent: PermissionIntent;
-  start?: Readonly<{ intent: 'voice_agent' }> & Pick<import('@/agent/executionRuns/registry/executionRunBackendTypes').ExecutionRunBackendStartContext,
-    'allowedTools' | 'unlistedTools'>;
+  start?: Readonly<{ intent: 'voice_agent' }>;
   connectedServices?: ConnectedServiceBindingsV2 | null;
 }) => ExecutionRunHostRuntime;
 
