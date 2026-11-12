@@ -5,6 +5,9 @@ import { renderScreen } from '@/dev/testkit';
 import { createPlainArtifactHomeFixture, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { projectBotTemplateArtifactHeaderV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { StoredContentPublicShareCreateRequestV1Schema } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -21,28 +24,40 @@ vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/moc
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 afterEach(async () => { await home?.dispose(); home = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe('approved Agent template sharing delivery', () => {
-    it('reviews the original CLI request and privately delivers its signed link through the answering UI', async () => {
+describe('approved Agent document sharing delivery', () => {
+    it('admits public-link create at the existing answering-client boundary', () => {
+        expect(UiActionDispatchRequestV1Schema.safeParse({ v: 1, actionId: 'artifact.public_link.create',
+            input: { artifactId: 'document', audience: 'anonymous' },
+            context: { surface: 'agent', authority: 'account_automation' } }).success).toBe(true);
+    });
+    it.each(['template', 'anonymous', 'signed_in', 'no_client'] as const)('reviews and privately delivers %s exactly once, or refuses without a client', async mode => {
+        const artifactLink = mode !== 'template';
         const draftId = '7e23f798-230a-42f3-931f-e38b20736333';
         const releaseId = '84a6bc9c-0418-44f6-a593-8a751bde13e0';
         const content = { v: 1 as const, identity: { name: 'Garden', description: 'Garden advice' }, instructions: { markdown: 'Grow herbs' },
             skills: [], memoryRules: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } };
         const draft = { v: 1 as const, state: 'draft' as const, sourceSessionRef: { serverId: 'home', sessionId: 'bot-session' },
             releaseArtifactId: releaseId, content, candidates: { skills: [], memoryRules: [] } };
+        const answerLinkRequest = async (path: string, init?: RequestInit) => {
+                if (!['/v1/artifact-signed-in-links', '/v1/public-shares'].includes(path) || init?.method !== 'POST') return null;
+                const raw: unknown = JSON.parse(String(init.body));
+                const signed = path === '/v1/artifact-signed-in-links';
+                const request = signed ? ArtifactSignedInLinkCreateRequestV1Schema.parse(raw)
+                    : StoredContentPublicShareCreateRequestV1Schema.parse(raw);
+                const artifactId = 'artifactId' in request ? request.artifactId : request.subject.id;
+                return Response.json({ publicShare: { id: artifactId, subject: { kind: 'artifact', id: artifactId },
+                    ...(signed ? { audience: 'signed_in' } : {}), expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false,
+                    networkOff: false, keyDerivation: 'fragment_v1', createdAt: 1, updatedAt: 1 }, viewerOrigin: signed ? 'https://agent-template-share.test/ui' : 'https://agent-template-share.test',
+                    ...('preserveExisting' in request && request.preserveExisting ? { created: true } : {}) });
+            };
         home = await createPlainArtifactHomeFixture('https://agent-template-share.test', { currentAccount: true,
-            handleRequest: async (path, init) => {
-                if (path !== '/v1/artifact-signed-in-links' || init?.method !== 'POST') return null;
-                const request = ArtifactSignedInLinkCreateRequestV1Schema.parse(JSON.parse(String(init.body)));
-                return Response.json({ publicShare: { id: request.artifactId, subject: { kind: 'artifact', id: request.artifactId },
-                    audience: 'signed_in', expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false,
-                    networkOff: false, keyDerivation: 'fragment_v1', createdAt: 1, updatedAt: 1 }, viewerOrigin: 'https://agent-template-share.test/ui',
-                    ...(request.preserveExisting ? { created: true } : {}) });
-            } });
+            handleRequest: answerLinkRequest });
         home.boundary.replaceStoredRow(createPlainArtifactHttpFixture({ id: draftId, isDecrypted: true, title: 'Garden',
-            header: projectBotTemplateArtifactHeaderV1(draft), body: JSON.stringify(draft), access: 'owner', publicAudience: 'none',
+            header: artifactLink ? { kind: 'markdown' } : projectBotTemplateArtifactHeaderV1(draft), body: artifactLink ? '# Garden' : JSON.stringify(draft), access: 'owner', publicAudience: 'none',
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, 'artifact-account'));
-        const { ModalProvider } = await import('@/modal');
+        const { Modal, ModalProvider } = await import('@/modal');
         const screen = await renderScreen(<ModalProvider />);
+        try {
         const receive = createUiClientActionReverseHandler({ serverId: home.home.id, accountId: 'artifact-account', isCurrent: () => true });
         const clientResponses: unknown[] = [];
         // Only authenticated HTTP and the daemon-to-App network hop are
@@ -50,6 +65,7 @@ describe('approved Agent template sharing delivery', () => {
         const dispatch = createClientActionReverseDispatcher(() => ({
             hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
             callConnectedClientRpc: async (_method, payload, options) => {
+                if (mode === 'no_client') return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
                 options.onIssued();
                 const result = await receive(payload, { signal: options.signal ?? new AbortController().signal });
                 clientResponses.push({ payload, result });
@@ -66,6 +82,8 @@ describe('approved Agent template sharing delivery', () => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
             if (path === '/v1/account/settings' || path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
+            const linkResponse = await answerLinkRequest(path, init);
+            if (linkResponse) return linkResponse;
             const response = await home!.boundary.handle(`${path}${new URL(url).search}`, init);
             if (!response) throw new Error(`Unexpected CLI HTTP ${init?.method ?? 'GET'} ${path}`);
             return response;
@@ -84,10 +102,11 @@ describe('approved Agent template sharing delivery', () => {
         const cli = createCliActionExecutorFromCredentials({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
             serverId: home.home.id, serverApiUrl: endpoint, serverIdentityId: 'srv_signed_link', clientActionExecute: dispatch,
             resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }) });
-        const input = { draftArtifactId: draftId,
+        const actionId = artifactLink ? 'artifact.public_link.create' as const : 'template.release' as const;
+        const input = artifactLink ? { artifactId: draftId, audience: mode === 'signed_in' ? 'signed_in' : 'anonymous' } : { draftArtifactId: draftId,
             expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '',
             share: { recipients: [], signedInLink: true } };
-        const proposed = await cli.execute('template.release', input, { surface: 'agent', authority: 'account_automation',
+        const proposed = await cli.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
             actionCaller: { kind: 'host' }, actionRequestId: 'agent-template-share' });
         expect(proposed, JSON.stringify(proposed)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
         if (!proposed.ok) throw new Error('Missing reviewed proposal');
@@ -95,15 +114,27 @@ describe('approved Agent template sharing delivery', () => {
         expect(home.boundary.readPlainBody(releaseId)).toBeNull();
         const result = await cli.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
             surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
-        expect(result, JSON.stringify({ result, clientResponses, requests: home.requests.map(request => request.path) })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { artifactId: releaseId } } } });
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('/ui/share/artifact/'));
-        const issuedUrl = screen.getTextContent().match(/https:\/\/agent-template-share\.test\/ui\/share\/artifact\/[^\s]+/u)?.[0];
+        if (mode === 'no_client') {
+            expect(result).toMatchObject({ ok: true, result: { execution: { ok: false, errorCode: 'unavailable' } } });
+            expect(clientResponses).toHaveLength(0);
+            expect(home.requests.filter(request => request.path === '/v1/public-shares')).toHaveLength(0);
+            return;
+        }
+        expect(result, JSON.stringify(result, (key, value) => key === 'url' ? '[private]' : value)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: artifactLink ? { status: 'public_link_created' } : { artifactId: releaseId } } } });
+        const replayed = await cli.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
+        expect(replayed).toMatchObject({ ok: true });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('#k='));
+        const issuedUrl = screen.getTextContent().match(/https:\/\/[^\s]+#k=[^\s]+/u)?.[0];
         expect(issuedUrl).toContain('#k=');
         expect(JSON.stringify(result)).not.toContain('#k=');
+        expect(JSON.stringify(result)).not.toContain('https://agent-template-share.test');
         expect(JSON.stringify(proposed)).not.toContain('#k=');
-        expect(home.requests.filter(request => request.path === '/v1/artifact-signed-in-links')).toHaveLength(1);
-        expect(home.boundary.readPlainBody(releaseId)).not.toContain('#k=');
-        expect(screen.findByTestId('document-share-signed-in-link-copy')).not.toBeNull();
-        await screen.unmount();
+        expect(clientResponses).toHaveLength(1);
+        expect(home.requests.filter(request => request.path === (mode === 'anonymous' ? '/v1/public-shares' : '/v1/artifact-signed-in-links'))).toHaveLength(1);
+        expect(JSON.stringify(home.boundary.list())).not.toContain('#k=');
+        expect(screen.findByTestId('document-share-signed-in-link-copy')).toBeTruthy();
+        expect(Boolean(screen.findByTestId('document-share-signed-in-link'))).toBe(mode !== 'anonymous');
+        } finally { Modal.hideAll(); await screen.unmount(); }
     });
 });

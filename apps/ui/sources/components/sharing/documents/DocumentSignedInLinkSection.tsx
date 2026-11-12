@@ -11,11 +11,13 @@ import { t } from '@/text';
 export function DocumentSignedInLinkSection(props: Readonly<{
     value: boolean; onChange(value: boolean): void | Promise<void>; disabled?: boolean; shareUrl: string | null;
     scope: ServerAccountScope; idPrefix: string; onReplace?: () => Promise<void>;
+    audience?: 'anonymous' | 'signed_in';
 }>) {
     const [pending, setPending] = React.useState(false);
     const [failed, setFailed] = React.useState(false);
     const [copied, setCopied] = React.useState(false);
     const copy = useClipboardWrite(props.scope);
+    const signedIn = props.audience !== 'anonymous';
     const perform = async (operation: () => void | Promise<void>, requiresEdit = true) => {
         if ((requiresEdit && props.disabled) || pending) return;
         setPending(true); setFailed(false); setCopied(false);
@@ -23,10 +25,11 @@ export function DocumentSignedInLinkSection(props: Readonly<{
         finally { setPending(false); }
     };
     return <View>
-        <Item title={t('botTemplates.signedInLink')} subtitle={t('botTemplates.signedInLinkDescription')}
-            rightElement={<Switch testID={`${props.idPrefix}document-share-signed-in-link`} value={props.value}
-                disabled={props.disabled || pending} onValueChange={value => { void perform(() => props.onChange(value)); }} />} />
-        <Text variant="meta">{t('botTemplates.signedInLinkKeepsAccess')}</Text>
+        <Item title={t(signedIn ? 'botTemplates.signedInLink' : 'session.sharing.publicLink')}
+            subtitle={t(signedIn ? 'botTemplates.signedInLinkDescription' : 'shareSheet.publicLink.description')}
+            rightElement={signedIn ? <Switch testID={`${props.idPrefix}document-share-signed-in-link`} value={props.value}
+                disabled={props.disabled || pending} onValueChange={value => { void perform(() => props.onChange(value)); }} /> : undefined} />
+        {signedIn ? <Text variant="meta">{t('botTemplates.signedInLinkKeepsAccess')}</Text> : null}
         {props.shareUrl ? <>
             <Text selectable variant="body">{props.shareUrl}</Text>
             <RoundButton size="small" display="secondary" title={t(copied ? 'shareSheet.linkCopied' : 'shareSheet.copyLink')}

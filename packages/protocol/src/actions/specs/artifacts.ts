@@ -93,6 +93,10 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     }, executionPlacements: ['client', 'machine'] as const,
       executionPlacementForInput: (input: unknown) => isAnsweringClientArtifactExport(input) ? 'client' as const : 'machine' as const } : {}),
     ...(id === 'artifact.public_link.audit' ? { approvalPolicy: { agentDefault: 'egress' as const } } : {}),
+    // Issuance delivers capability material privately to the answering App.
+    // Management stays Account-placed; creation reuses ordinary client approval/replay.
+    ...(id === 'artifact.public_link.create' ? { executionPlacements: ['client'] as const,
+      executionPlacementForInput: () => 'client' as const } : {}),
     // Opening the share sheet reads the document's links; a present-user read is not confirmed.
     ...(id === 'artifact.public_link.list' || id === 'artifact.public_link.join' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     // Both create a new private Account document (artifactActionDeps#createDocument).

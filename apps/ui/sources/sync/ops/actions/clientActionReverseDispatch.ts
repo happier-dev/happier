@@ -3,6 +3,7 @@ import {
     parseClientActionDispatchResult,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/protocol/actions/accountAuthorityRetirement';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
@@ -26,11 +27,12 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
         const readOnly = spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none';
         const parentRequestId = admitted.actionRequestId;
         const executor = createDefaultActionExecutor({ admittedClientActionId: actionId,
-            ...(actionId === 'template.release' ? { onPublicLinkIssued: async (issued: Readonly<{ url: string }>) => {
+            ...(actionId === 'template.release' || actionId === 'artifact.public_link.create' ? { onPublicLinkIssued: async (issued: Readonly<{ url: string }>) => {
                 if (!binding.isCurrent() || context.signal.aborted) return;
-                const { showIssuedDocumentSignedInLink } = await import('@/components/sharing/documents/showDocumentShareSheet');
+                const { showIssuedDocumentLink } = await import('@/components/sharing/documents/showDocumentShareSheet');
                 if (!binding.isCurrent() || context.signal.aborted) return;
-                showIssuedDocumentSignedInLink({ shareUrl: issued.url,
+                showIssuedDocumentLink({ shareUrl: issued.url,
+                    audience: actionId === 'template.release' || readRecord(input).audience === 'signed_in' ? 'signed_in' : 'anonymous',
                     scope: { serverId: binding.serverId, accountId: binding.accountId } });
             } } : {}),
             ...(binding.machineId && parentRequestId

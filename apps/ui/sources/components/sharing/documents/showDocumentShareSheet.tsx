@@ -53,13 +53,16 @@ export function showDocumentShareSheet(params: Omit<DocumentShareSheetProps, 'on
         title: t('shareSheet.documents.shareTitle', { name }), subtitle: identity, ...(anchor ? { anchor } : {}) });
 }
 
-function IssuedSignedInLinkModal(props: CustomModalInjectedProps & Readonly<{ shareUrl: string; scope: ServerAccountScope }>) {
+type IssuedDocumentLink = Readonly<{ shareUrl: string; scope: ServerAccountScope; audience: 'anonymous' | 'signed_in' }>;
+
+function IssuedDocumentLinkModal(props: CustomModalInjectedProps & IssuedDocumentLink) {
     return <DocumentSignedInLinkSection value disabled onChange={() => {}} shareUrl={props.shareUrl}
-        scope={props.scope} idPrefix="" />;
+        scope={props.scope} audience={props.audience} idPrefix="" />;
 }
 
 /** Agent replies retain only the release receipt; the answering App receives the capability privately. */
-export function showIssuedDocumentSignedInLink(params: Readonly<{ shareUrl: string; scope: ServerAccountScope }>): void {
-    presentShareSheet({ component: IssuedSignedInLinkModal, props: params, title: t('botTemplates.signedInLink'),
-        testID: 'document-issued-signed-in-link', fit: 'content' });
+export function showIssuedDocumentLink(params: IssuedDocumentLink): void {
+    presentShareSheet({ component: IssuedDocumentLinkModal, props: params,
+        title: t(params.audience === 'signed_in' ? 'botTemplates.signedInLink' : 'session.sharing.publicLink'),
+        testID: 'document-issued-link', fit: 'content' });
 }
