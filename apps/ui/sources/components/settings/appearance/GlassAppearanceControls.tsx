@@ -72,13 +72,6 @@ function GlassStagePreview(props: GlassPresetPreviewProps) {
 }
 
 const presetOptions = GLASS_PRESETS;
-const surfaceSettings = [
-    { group: 'content', setting: APPEARANCE_SETTINGS.settings.glassWindow },
-    { group: 'chrome', setting: APPEARANCE_SETTINGS.settings.glassChrome },
-    { group: 'sidebar', setting: APPEARANCE_SETTINGS.settings.glassSidebar },
-    { group: 'card', setting: APPEARANCE_SETTINGS.settings.glassElements },
-    { group: 'floating', setting: APPEARANCE_SETTINGS.settings.glassFloating },
-] as const;
 
 /**
  * The page, the Appearance popover and the Look panel share this live control owner. `tiles` is the
@@ -86,6 +79,13 @@ const surfaceSettings = [
  * Look panel's blocks, which say only what constrains the choice and leave the desktop app to Settings.
  */
 export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' | 'compact' | 'panel' }>) {
+    const surfaceSettings = [
+        { group: 'content', setting: APPEARANCE_SETTINGS.settings.glassWindow },
+        { group: 'chrome', setting: APPEARANCE_SETTINGS.settings.glassChrome },
+        { group: 'sidebar', setting: APPEARANCE_SETTINGS.settings.glassSidebar },
+        { group: 'card', setting: APPEARANCE_SETTINGS.settings.glassElements },
+        { group: 'floating', setting: APPEARANCE_SETTINGS.settings.glassFloating },
+    ] as const;
     const { theme } = useUnistyles();
     const appearance = useGlassAppearance();
     const previewTint = useSettingPreview('glassTintIntensity');
