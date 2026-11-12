@@ -525,13 +525,13 @@ describe('SkillDetailScreen over the real skills Actions', () => {
       await vi.waitFor(() => expect(author.getCurrent().ready).toBe(true));
       const input = { skillId: 'release-notes', change: { kind: 'replace' as const,
         rules: [{ target: { t: 'allMachines' as const }, enabled: true }] } };
-      expect(await retrySkillRules(author.getCurrent().execute, input)).toBe(false);
+      expect(await retrySkillRules(author.getCurrent().execute, input)).toMatchObject({ ok: false, code: 'conflict' });
       expect(refusedWrites).toBeGreaterThan(0);
       expect(home.catalog.read('skill-rules').value).not.toMatchObject({ rules: expect.arrayContaining([expect.objectContaining({ skillId: 'release-notes' })]) });
       refuse = false;
       await act(async () => { author.getCurrent().retry(); });
       await vi.waitFor(() => expect(getPromptLibraryCatalogValue(storage.getState().settingsScope, 'skill-rules').status).toBe('ready'));
-      expect(await retrySkillRules(author.getCurrent().execute, input)).toBe(true);
+      expect(await retrySkillRules(author.getCurrent().execute, input)).toMatchObject({ ok: true });
       expect(home.boundary.list()).toHaveLength(1);
       expect(home.catalog.read('skill-rules').value).toMatchObject({ rules: expect.arrayContaining([expect.objectContaining({ skillId: 'release-notes', enabled: true })]) });
     } finally { modalSpies.confirm.mockResolvedValue(false); await author.unmount(); await home.dispose(); }
@@ -629,7 +629,7 @@ describe('SkillDetailScreen over the real skills Actions', () => {
       }));
       retirePresentationNotice();
       refuse = true;
-      await act(async () => { expect(await author.getCurrent().change({ kind: 'replace', rules: [{ target: { t: 'allMachines' }, enabled: true }] })).toEqual({ ok: false, message: 'conflict' }); });
+      await act(async () => { expect(await author.getCurrent().change({ kind: 'replace', rules: [{ target: { t: 'allMachines' }, enabled: true }] })).toEqual({ ok: false, code: 'conflict', message: 'conflict' }); });
       await vi.waitFor(() => expect(reader.getCurrent().rules).toEqual([]));
       await vi.waitFor(() => expect(library.getCurrent().items.find(item => item.skillId === 'release-notes')?.rules).toEqual([]));
       expect(readPresentationNotice()?.undo).toBeUndefined();
