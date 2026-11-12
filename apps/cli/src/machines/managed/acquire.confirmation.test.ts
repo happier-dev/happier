@@ -45,11 +45,13 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { AccountSettingsSchema, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createLiveRemoteSshBootstrapTaskKind } from '@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap';
 import { encodeStoredCredentials } from '@/persistence';
 
@@ -124,7 +126,8 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     input = ManagedAcquireInputV1Schema.parse({ ...input, reviewedFacts });
     const activated = await activateContributionModule({ pluginId: provider.pluginId,
         occurrenceId: createPluginRuntimeOccurrenceId(provider.pluginId), manifest,
-        moduleNamespace: { activate: HETZNER_PLUGIN.activate }, isOccurrenceCurrent: () => true });
+        moduleNamespace: { activateAccount: HETZNER_PLUGIN.activateAccount },
+        target: { realm: 'account', artifactId: 'account-runtime', exportName: 'activateAccount' }, isOccurrenceCurrent: () => true });
     const actionHandlers = new Map(activated.registrations.flatMap((registration): [string, TargetActionInvocationRegistration['handler']][] =>
         registration.family === 'actions' ? [[registration.localId, (body, context) => Reflect.apply(registration.value, undefined, [body, context])]] : []));
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -139,6 +142,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     const homeRequests: string[] = [];
     const guestResults: unknown[] = [];
     const guestNativeActions: string[] = [];
+    const guestConfirmations: string[] = [];
     const systemTools = createPluginExecSystemToolResolver({
         definitions: projectPluginSystemToolContributions(manifest.contributes.systemTools),
         registerGrant() {},
@@ -158,7 +162,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
                 body: new TextEncoder().encode(JSON.stringify({ server: { id: 41, status: 'running', labels: {}, volumes: [],
                     public_net: { ipv4: { id: 9, ip: '203.0.113.10' }, ipv6: null } } })) };
         } } }) });
-    const native = fixture({ fixtureManifest: manifest, actionHandlers, credentialOwner,
+    const native = fixture({ fixtureManifest: manifest, actionHandlers, credentialOwner, executionRealm: 'account',
         credentialPurposes: [{ purpose: 'cloud-api', service }],
         createServices: serviceOwners.createServices, resolveHostBinding: serviceOwners.resolveHostBinding });
     const authority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(), purposeBindingOwner: credentialOwner,
@@ -264,7 +268,8 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
         };
         const actionId = path.startsWith('/v1/actions/machines.setup.adminAccess.set') ? 'machines.setup.adminAccess.set'
             : path.startsWith('/v1/actions/machines.agentIsolation.preview') ? 'machines.agentIsolation.preview'
-            : path.startsWith('/v1/actions/machines.agentIsolation.set') ? 'machines.agentIsolation.set' : null;
+            : path.startsWith('/v1/actions/machines.agentIsolation.set') ? 'machines.agentIsolation.set'
+            : path.startsWith('/v1/actions/machines.roles.set') ? 'machines.roles.set' : null;
         if (actionId) {
             const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
             const envelope = carrier.success ? carrier.data.envelope : ExternalActionRequestEnvelopeV1Schema.parse(body);
@@ -282,6 +287,9 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
                 executionAuthorization: carrier.success && carrier.data.executionAuthorization ? carrier.data.executionAuthorization : admitted,
                 principal: { accountId, authority: 'present_user', authentication: { kind: 'terminal', tokenEpoch: 2 } },
                 currentMachineId: guestRow.id, currentAccountId: accountId, currentServerId: homeId, currentServerHttpBaseUrl: 'https://home.example',
+                machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: accountId,
+                    custodianAccountId: accountId, machineId: guestRow.id, installationId: guestRow.installationId,
+                    role: guestRow.access.role, encryptionMode: guestRow.access.resourceMode }),
                 currentInstallationId: guestRow.installationId, externalActionMachineRequestPrivateKey: guestKeys.secretKey,
                 verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
                     privateKey: guestKeys.secretKey, installationId: guestRow.installationId, serverHttpBaseUrl: 'https://home.example' }),
@@ -320,7 +328,10 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     let additionalConsent = () => {};
     const consentPresented = new Promise<void>(resolve => { additionalConsent = resolve; });
     let lastOperation: unknown;
-    onTestFailed(() => console.error('Managed confirmation boundary progress', { lastOperation, remoteStages, vendorRequests, homeRequests, guestResults }));
+    let adminPhase = 'not_started';
+    let lastGuestOperation: Readonly<{ state: string; errorCode?: string }> | undefined;
+    onTestFailed(() => console.error('Managed confirmation boundary progress', { lastOperation, adminPhase, lastGuestOperation,
+        remoteStages, vendorRequests, homeRequests, guestResults, guestConfirmations, guestNativeActions }));
     const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => accountId,
         generateOperationId: () => 'mac36-create', publishSnapshot: snapshot => {
             const task = snapshot.domainRef?.kind === 'managedMachine' ? snapshot.domainRef.bootstrapTask : undefined;
@@ -339,7 +350,11 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     let entered: Promise<unknown> | undefined;
     let guestOperationSequence = 0;
     const guestOperations = createHostActionOperationRuntime({ machineId: guestRow.id, resolveAccountId: async () => accountId,
-        generateOperationId: () => `mac36-guest-policy-${++guestOperationSequence}` });
+        generateOperationId: () => `mac36-guest-policy-${++guestOperationSequence}`, publishSnapshot: snapshot => {
+            const errorCode = snapshot.error && Reflect.get(snapshot.error, 'errorCode');
+            lastGuestOperation = { state: snapshot.state,
+                ...(typeof errorCode === 'string' && /^[a-zA-Z0-9_.:-]+$/u.test(errorCode) ? { errorCode } : {}) };
+        } });
     const guest = createCliActionExecutorHarness({ token, credentials, mode: 'plain', ctx: null, sessionId: '', serverId: homeId,
         serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example', externalActionMachineInstallationId: guestRow.installationId,
         externalActionMachineRequestPrivateKey: guestKeys.secretKey,
@@ -352,6 +367,8 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
         machineActionDirectTargetTransport: { machineId: guestRow.id, invoke: async method => {
             guestNativeActions.push(method);
             if (method === 'machines.setup.adminAccess.set') return { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 1 };
+            // Machine roles (OWNER-RULINGS 2026-11-12): a managed server seeds its reviewed role set.
+            if (method === 'machines.roles.set') return { status: 'applied', policy: { active: ['sessions', 'broker', 'workspaces', 'relay'] }, metadataVersion: 1 };
             if (method === 'machines.agentIsolation.preview') return { kind: 'ready', policy: { enabled: false }, metadataVersion: 1,
                 status: { kind: 'unavailable', code: 'provisioning_unavailable' }, plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0,
                     requiresAdmin: false, planDigest: 'physical-guest-plan' } };
@@ -361,6 +378,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
         } },
     }, {
         runActionOperation: guestOperations.runActionOperation,
+        presentUserActionConfirmation: async request => { guestConfirmations.push(request.actionId); return true; },
         approvalsCreate: async ({ request }) => {
             const artifactId = `mac36-approval-${approvals.size + 1}`;
             approvals.set(artifactId, StoredApprovalRequestSchema.parse(request));
@@ -377,6 +395,16 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
             machineId: guestRow.id, serverId: homeId, serverApiUrl: 'https://home.example',
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: guestRow.id }) }),
     });
+    if (entry === 'admin') {
+        // Standalone UI requests cross Home's authenticated Machine RPC boundary;
+        // the direct installed adapter above is reserved for receiving admission.
+        vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+            expect(request.machineId).toBe(guestRow.id);
+            expect(request.method).toBe('machines.setup.adminAccess.set');
+            guestNativeActions.push(request.method);
+            return { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 1 };
+        });
+    }
     const executor = createActionExecutor({
         runActionOperation: operations.runActionOperation,
         managedMachineAction: async ({ actionId, input, context }) => {
@@ -425,16 +453,21 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     if (entry === 'admin') {
         const directContext = { ...context, surface: 'ui' as const, defaultSessionMachineId: guestRow.id,
             externalActionTarget: { kind: 'machine' as const, machineId: guestRow.id }, actionRequestId: 'standalone-admin' };
-        expect(await guest.executor.execute('machines.setup.adminAccess.set', { serverId: homeId, machineId: guestRow.id,
+        adminPhase = 'execute';
+        const result = await guest.executor.execute('machines.setup.adminAccess.set', { serverId: homeId, machineId: guestRow.id,
             expectedMetadataVersion: 0, expectedAdminAccess: { version: 1, mode: 'none' },
-            adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field' }, directContext)).toMatchObject({ ok: true,
-                result: { kind: 'approval_request_created', artifactId: 'mac36-approval-1' } });
-        expect(guestNativeActions).toEqual([]);
-        expect(await guest.executor.execute('approval.request.decide', { artifactId: 'mac36-approval-1', decision: 'approve' },
-            { ...directContext, actionRequestId: 'standalone-admin-decision' })).toMatchObject({ ok: true, result: { status: 'executed' } });
-        expect(await guestOperations.handlers.getV2({ operationId: 'mac36-guest-policy-1', waitForTerminal: true }))
-            .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
-        expect(approvals.size).toBe(1);
+            adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field' }, directContext);
+        adminPhase = 'execute_settled';
+        if (!result.ok) throw new Error(JSON.stringify(result));
+        expect(result).toMatchObject({ ok: true, result: { status: 'applied',
+            policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 1 } });
+        adminPhase = 'wait_for_terminal';
+        const settled = await guestOperations.handlers.getV2({ operationId: 'mac36-guest-policy-1', waitForTerminal: true });
+        adminPhase = 'terminal_observed';
+        expect(settled).toMatchObject({ kind: 'found', operation: {
+            operationId: 'mac36-guest-policy-1', state: 'succeeded' } });
+        expect(guestConfirmations).toEqual(['machines.setup.adminAccess.set']);
+        expect(approvals.size).toBe(0);
         expect(guestNativeActions).toEqual(['machines.setup.adminAccess.set']);
         return;
     }
@@ -455,4 +488,5 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     expect(vendorCreates).toBe(alreadyEnrolled ? 0 : 1);
     expect(machine.enrolledMachineId).toBe('mac36-guest');
     expect(guestNativeActions).toEqual(expect.arrayContaining(['machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set']));
+    expect(guestConfirmations).toEqual([]);
 }
