@@ -23,6 +23,7 @@ import {
   HappierToggle,
   HappierValidationMessage,
   planHappierSelectOptions,
+  resolveHappierFieldTextColors,
   useHappierFormSubmission,
   useHappierIsWithinField,
 } from '../presentation/form/Fields.js';
@@ -228,14 +229,7 @@ function TextFieldControl(props: Omit<TextFieldProps, 'dictation'>): ReactElemen
     );
   }
   if (presentation === 'field' && palette !== null) {
-    const fieldColors = {
-      borderColor: palette.controlBorder,
-      backgroundColor: palette.fieldBackground,
-      edge: palette.controlEdge,
-      valueColor: theme.colors.text,
-      placeholderColor: palette.placeholder,
-      errorColor: theme.colors.danger,
-    };
+    const fieldColors = resolveHappierFieldTextColors(palette, theme);
     if (onCommit !== undefined) {
       return (
         <CommittingFieldTextField

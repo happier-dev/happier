@@ -280,7 +280,7 @@ export function StoreKindFrame(
           trailing={props.filter?.filterButton}
           {...(stacked ? {} : { accessory })}
         />
-        {props.filter?.tokenRow}
+        {props.filter?.tokenRow ? <View style={styles.tokenRow}>{props.filter.tokenRow}</View> : null}
         {props.children}
       </PageContentColumn>
     </ItemList>
@@ -629,7 +629,7 @@ const PickerQuery = React.memo(function PickerQuery(props: Readonly<{ demand: Re
             <View testID={props.testID}>
               <CompactSearchField placement="page" testID={`${props.testID}.search`} value={state.query}
                 onChangeText={state.setQuery} placeholder={copy.search} trailing={state.filter.filterButton} />
-              {state.filter.tokenRow}
+              {state.filter.tokenRow ? <View style={styles.tokenRow}>{state.filter.tokenRow}</View> : null}
               {state.lists.app ? <RegistryDirectory kind="app" list={{ ...state.lists.app, curation: [...props.curation, ...state.lists.app.curation],
                 items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={false} />
                 : <SkeletonRows testID={`${props.testID}.loading`} rows={5} accessibilityLabel={t('common.loading')} />}
@@ -1031,4 +1031,6 @@ const styles = StyleSheet.create((theme) => ({
   more: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s12,
     paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
   moreNote: { color: theme.colors.text.secondary, flexShrink: 1 },
+  // The condition chips stand on the search field's inset, not on the sheet's edge (VISUAL-136 D4).
+  tokenRow: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
 }));

@@ -1,5 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
-import { captureServerProfileScopeResolver, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { WorkspaceRefV1WriteSchema, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, createWorkspaceRefResolverV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, projectWorkspaceRefV1, normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
@@ -67,6 +67,16 @@ export function resolveProjectCheckoutWorkspaceRef(
         serverId: projectRef.serverId, machineId: projectRef.machineId, rootPath,
     });
     return selected.kind === 'resolved' && sameWorkspaceProject(selected.ref, projectRef) ? selected.ref : null;
+}
+
+/** The person's checkouts of one Source on one Home: the Project checkouts that Source was opened into. */
+export function selectSourceCheckoutWorkspaceRefs(
+    workspaceRefs: readonly WorkspaceRefV1[],
+    sourceId: string,
+    serverId: string,
+): WorkspaceRefV1[] {
+    return workspaceRefs.filter((ref) => ref.source?.sourceId === sourceId
+        && areServerProfileIdentifiersEquivalent(ref.serverId, serverId));
 }
 
 export function resolveWorkspaceRefById(workspaceRefs: readonly WorkspaceRefV1[], id: string, serverId?: string) {

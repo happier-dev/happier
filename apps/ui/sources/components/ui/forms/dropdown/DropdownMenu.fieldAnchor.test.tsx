@@ -125,3 +125,36 @@ it('marks the current value of a select as its one checked choice', async () => 
   expect(checked('web')).toBe(false);
   expect(checked('mail')).toBe(false);
 });
+
+it('checks a searchable select’s current value, including an explicit None choice', async () => {
+  const { DropdownMenu } = await import('./DropdownMenu');
+  const { ListPresentationProvider } =
+    await import('@/components/ui/lists/listPresentation');
+  const screen = await renderScreen(
+    <ListPresentationProvider value="page">
+      <DropdownMenu
+        open
+        search
+        onOpenChange={() => {}}
+        items={[{ id: '', title: 'None', testID: 'member:none' }, ...MEMBERS]}
+        selectedId=""
+        onSelect={() => {}}
+        itemTrigger={{ title: 'App', placeholder: 'None' }}
+      />
+    </ListPresentationProvider>,
+  );
+  await vi.waitFor(() =>
+    expect(screen.findAllHostsByTestId('member:none').length).toBeGreaterThan(0),
+  );
+  const checked = (id: string) =>
+    screen
+      .findAllHostsByTestId(`member:${id}`)
+      .map(
+        (node) =>
+          (node.props.accessibilityState as { checked?: boolean } | undefined)
+            ?.checked ?? node.props['aria-checked'],
+      )
+      .find((value) => value !== undefined);
+  expect(checked('none')).toBe(true);
+  expect(checked('web')).toBe(false);
+});

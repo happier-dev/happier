@@ -18,7 +18,7 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 // Triage is not installed on this Home harness, so its contributed Actions are the realm boundary: the
 // configured-action catalog answers the person's records and the configured run records what a press starts.
 // Every other Action keeps the real front door.
-const triage = vi.hoisted(() => ({ runs: [] as unknown[] }));
+const triage = vi.hoisted(() => ({ runs: [] as unknown[], readGate: null as Promise<void> | null }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
   const selection = (configuredActionId: string) => ({ configuredActionId,
@@ -28,6 +28,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
     const execute = (async (actionId, input, context) => {
       const action = (input as { action?: { pluginId?: string; localId?: string } } | undefined)?.action;
       if (actionId !== 'action.invoke' || action?.pluginId !== 'happier.triage') return real(actionId, input, context);
+      if (action.localId === 'actions/read-v1') await triage.readGate;
       if (action.localId === 'actions/read-v1') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [
         { label: 'Investigate', selection: selection('investigate'), launchMode: 'start', startable: true },
         { label: 'Fix this deploy', selection: selection('deployments.fix-deploy'), launchMode: 'review', startable: true, forSubject: true },
@@ -49,7 +50,7 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 const snapshotId = 'c'.repeat(64);
 
 describe('failed deployment migration recovery', () => {
-  beforeEach(async () => { await homes.reset(); triage.runs.length = 0; });
+  beforeEach(async () => { await homes.reset(); triage.runs.length = 0; triage.readGate = null; });
   afterEach(standardCleanup);
 
   it.each([
@@ -120,6 +121,9 @@ describe('failed deployment migration recovery', () => {
       runtime.publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://migration-recovery.test',
         generation: previousRuntime.generation }, true);
     }
+    // The person's records are read after the receipt paints; until they answer, the banner already holds its settled row.
+    let answerRecords = () => {};
+    if (choice === 'unavailable') triage.readGate = new Promise<void>(resolve => { answerRecords = resolve; });
     try {
       for (const [row, kind, document] of [
         [detail.environment, 'deployment-environment.v1', detail.content],
@@ -158,6 +162,10 @@ describe('failed deployment migration recovery', () => {
         () => screen.findByTestId('project-deployments.receipt.outcome.failed'), value => value !== null); });
       const offered = () => screen.findAllByType(AgentActionButton);
       if (choice === 'unavailable') {
+        // Before the records answer, the receipt's own agent actions stand in, waiting, where they will settle: no control
+        // arrives later and pushes the row (VISUAL-136 D1).
+        expect(offered().map(button => [button.props.title, button.props.disabled])).toEqual([['Investigate', true], ['Fix this deploy', true]]);
+        await act(async () => { answerRecords(); });
         // The receipt offers the person's own records for it, one shared agent-action control each, in their words
         // and launch modes.
         await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 2); });
@@ -187,6 +195,7 @@ describe('failed deployment migration recovery', () => {
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(actionId), value => value !== null); });
       // Recovery leads; the agent action stays beside it (without an Account catalog, the default Investigate stands
       // in), and nothing has started an agent.
+      await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 1); });
       expect(offered().map(button => button.props.title)).toEqual(['Investigate']);
       expect(triage.runs).toEqual([]);
       await screen.pressByTestIdAsync(actionId);

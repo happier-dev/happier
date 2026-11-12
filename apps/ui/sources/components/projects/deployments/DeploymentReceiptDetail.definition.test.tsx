@@ -256,6 +256,38 @@ describe('retained stored deployment source', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it('says an existing checkout could not be read, with Refresh, instead of asking for a checkout', async () => {
+    const serverId = await homes.addHome({ name: 'Unreadable checkout', serverUrl: 'https://unreadable-checkout.test',
+      serverIdentityId: `srv_${'f'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const receipt = createDeploymentReceiptDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner', projectSourceId: environment.environment.projectSourceId }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    // The checkout's Machine is not answering: its SCM read fails at the Machine RPC boundary.
+    rpc.mockImplementation(async () => ({ success: false, errorCode: 'MACHINE_UNREACHABLE', error: 'Machine is not answering' }));
+    const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller} environmentId={environment.environment.id}
+      deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+      workspaceRef={{ id: 'checkout-a', serverId, machineId: 'source-machine', rootPath: '/source', label: null,
+        createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId: environment.environment.projectSourceId, revision: 1 } }}
+      accountId="account-owner" serverId={serverId} readLogs={null} onBack={() => {}} rollback={null}
+      cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+    await waitForReceipt(screen);
+    // The checkout's own Machine is named (or its path, when this Home doesn't list it); only the sentence around it is fixed.
+    const [unreadableLead] = t('projects.deployments.editors.checkoutUnreadable', { machine: '\u0000' }).split('\u0000');
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(rpc.mock.calls.some(([input]) => input.method === RPC_METHODS.SCM_LOG_LIST)).toBe(true);
+      expect(screen.getTextContent()).toContain(unreadableLead);
+    });
+    expect(screen.getTextContent()).not.toContain(t('projects.deployments.editors.comparisonNeedsCheckout'));
+    expect(screen.findByTestId('project-deployments.comparison.checkout')).toBeNull();
+    expect(screen.findByTestId('project-deployments.comparison.refresh')).not.toBeNull();
+  });
+
   it('deploys the displayed exact PR head through the existing deployment Action and refreshes only on request', async () => {
     const homeId = `srv_${'d'.repeat(32)}`;
     const serverId = await homes.addHome({ name: 'PR deploy', serverUrl: 'https://pr-deploy.test',

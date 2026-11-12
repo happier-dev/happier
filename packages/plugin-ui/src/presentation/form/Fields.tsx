@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 
-import type { HappierUiTheme } from '../../environment/types.js';
+import type { HappierUiPalette, HappierUiTheme } from '../../environment/types.js';
 import type { HappierFocusable } from '../portableTypes.js';
 import {
   useOptionalHappierUiAccessibility,
@@ -471,6 +471,21 @@ export type HappierTextFieldProps = Readonly<{
   testID?: string;
 }>;
 
+
+/**
+ * The configuration field box a typed value sits in: the border, fill and raised edge a choice field's
+ * trigger draws, so a text field and a select in one form read as the same kind of box.
+ */
+export function resolveHappierFieldTextColors(palette: HappierUiPalette, theme: HappierUiTheme): NonNullable<HappierTextFieldProps['fieldColors']> {
+  return {
+    borderColor: palette.controlBorder,
+    backgroundColor: palette.fieldBackground,
+    edge: palette.controlEdge,
+    valueColor: theme.colors.text,
+    placeholderColor: palette.placeholder,
+    errorColor: theme.colors.danger,
+  };
+}
 
 /** The key cap and the field's own control share the well's end, a small step apart. */
 const SEARCH_FIELD_END_STYLE = { flexDirection: 'row', alignItems: 'center', gap: 6 } as const;

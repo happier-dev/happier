@@ -8,7 +8,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildProjectRouteHref } from '@/components/projects/detail/projectRouteState';
-import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { DeploymentSourceCheckoutRow, useOwnSourceCheckout } from './DeploymentSourceCheckoutRow';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { storedComposeDocumentText } from './storedComposeDocumentText';
@@ -80,10 +81,17 @@ export function DeploymentRepositoryComparisonView(props: DeploymentRepositoryCo
   comparisonState: DeploymentRepositoryComparisonState;
 }>) {
   const router = useRouter();
-  const { comparison, history, proven, pending, unavailable, newerCommitCount, refresh } = props.comparisonState;
+  const { comparison, history, proven, pending, unavailable, unreadable, newerCommitCount, refresh } = props.comparisonState;
   const workspace = props.workspaceRef;
+  const ownCheckout = useOwnSourceCheckout(props.source.projectSourceId, props.serverId);
+  const machineIds = React.useMemo(() => workspace ? [workspace.machineId] : [], [workspace]);
+  const machineName = useMachineDisplayNamesById(machineIds)[workspace?.machineId ?? ''];
   const sourceRef = props.current?.kind === 'repository' ? props.current.ref : null;
-  const subtitle = unavailable || !workspace || !sourceRef ? t('projects.deployments.editors.comparisonNeedsCheckout')
+  // A page opened without a checkout says where one is; a checkout that exists but can't be read says so, with Refresh,
+  // never "open a checkout" (VISUAL-136 D9).
+  const subtitle = !workspace ? (ownCheckout ? t('projects.deployments.editors.compareInCheckout') : t('projects.deployments.editors.comparisonNeedsCheckout'))
+    : unreadable ? t('projects.deployments.editors.checkoutUnreadable', { machine: machineName ?? workspace.rootPath })
+    : !sourceRef ? (props.current === null ? t('common.loading') : t('projects.deployments.editors.comparisonUnavailable'))
     : proven && history?.graphRelation === 'forward' && newerCommitCount !== null
       ? t('projects.deployments.editors.commitsNewer', { count: newerCommitCount })
       : proven && history?.graphRelation === 'equal' ? t('projects.deployments.editors.sameVersion')
@@ -97,7 +105,7 @@ export function DeploymentRepositoryComparisonView(props: DeploymentRepositoryCo
       onPress={comparison && workspace ? () => router.push(buildProjectRouteHref({ workspaceRefId: workspace.id,
         serverId: props.serverId, segment: 'changes', activeRootPath: workspace.rootPath, defaultRootPath: workspace.rootPath,
         details: { kind: 'scmReview', comparison: comparison.range, view: 'files', explain: false } }) as never) : undefined} />
-    {unavailable || !workspace ? <Item testID="project-deployments.comparison.checkout" title={t('projects.deployments.editors.openSourceCheckout')}
-      onPress={() => router.push(projectSourceRoute(props.source.projectSourceId) as never)} /> : null}
+    {!workspace || (unavailable && !unreadable) ? <DeploymentSourceCheckoutRow testID="project-deployments.comparison.checkout"
+      projectSourceId={props.source.projectSourceId} serverId={props.serverId} checkout={workspace ? null : ownCheckout} /> : null}
   </ItemGroup>;
 }

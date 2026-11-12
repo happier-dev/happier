@@ -1071,9 +1071,16 @@ export const DeploymentEnvironmentDetail = React.memo(
                   } : undefined} />
               ) : null}
               {detail.environment.purpose !== 'preview' ? (
-                <ItemGroup header="none">
+                // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
+                <ItemGroup testID="project-deployments.environment.overview.previewsSection"
+                  title={t('projects.deployments.sectionPreviews')}
+                  description={t('projects.deployments.sectionPreviewsDescription')}>
                   <Item testID="project-deployments.environment.overview.previews"
+                    icon={<Icon name="git-pull-request" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     title={t('projects.deployments.settingsSections.previewEditor.configure')}
+                    subtitle={detail.content.previewTemplate?.enabled
+                      ? t('projects.deployments.settingsSections.previewsOn')
+                      : t('projects.deployments.settingsSections.previewsOff')}
                     onPress={() => openTab('settings', 'previews')} />
                 </ItemGroup>
               ) : null}
@@ -1621,6 +1628,8 @@ function DeploymentHistoryPage(
     readMeaningfulActivityAt: receipt => receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs }), [receipts]);
   return (
     <>
+      {/* The filter line stands on the list's column, the same inset as the day sections below it. */}
+      <ItemGroup surface="none" header="none">
       <View style={styles.historyFilters}>
         <View style={styles.historyTokens}>
           <SegmentedTabBar<HistoryOutcome> role="radiogroup" segmentSizing="content"
@@ -1637,6 +1646,7 @@ function DeploymentHistoryPage(
         {header.filterButton}
       </View>
       {header.tokenRow ? <View style={styles.historyTokenRow}>{header.tokenRow}</View> : null}
+      </ItemGroup>
       {header.editorOverlay}
       {days.map((day) => (
         <ItemGroup key={day.dateKey} testID={`project-deployments.environment.history.day.${day.dateKey}`} title={day.title}>

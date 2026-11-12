@@ -44,7 +44,7 @@ import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessi
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
+import { resolveWorkspaceRefByAddress, selectSourceCheckoutWorkspaceRefs } from '@/sync/domains/workspaces/workspaceRefs';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { ProjectRefSelect } from '../ProjectRefSelect';
@@ -129,8 +129,7 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
   const { theme } = useUnistyles();
   const refs = useWorkspaceRefs();
   const [open, setOpen] = React.useState(false);
-  const checkouts = React.useMemo(() => refs.filter(ref => ref.source?.sourceId === props.sourceId
-      && areServerProfileIdentifiersEquivalent(ref.serverId, props.serverId))
+  const checkouts = React.useMemo(() => selectSourceCheckoutWorkspaceRefs(refs, props.sourceId, props.serverId)
       .filter(ref => resolveWorkspaceRefByAddress(refs, workspaceAddressFromRefV1(ref)).kind === 'resolved'),
     [props.serverId, props.sourceId, refs]);
   const elsewhere =
@@ -228,11 +227,7 @@ const SourceCheckouts = React.memo(function SourceCheckouts(
   const refs = useWorkspaceRefs();
   const machines = useActiveMachineFacts();
   const rows = React.useMemo(() => {
-    const list = (Array.isArray(refs) ? refs : []).filter(
-      (ref) =>
-        ref.source?.sourceId === props.sourceId &&
-        areServerProfileIdentifiersEquivalent(ref.serverId, props.serverId),
-    );
+    const list = selectSourceCheckoutWorkspaceRefs(Array.isArray(refs) ? refs : [], props.sourceId, props.serverId);
     // The machine-name owner names each checkout's Machine, telling same-named ones apart and saying
     // when this Home no longer lists one; never its raw id.
     const names = resolveMachineDisplayNames([

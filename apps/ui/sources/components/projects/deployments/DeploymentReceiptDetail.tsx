@@ -21,6 +21,7 @@ import {
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
+import { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1 } from '@happier-dev/triage-protocol/v1';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
@@ -85,6 +86,8 @@ import type { DeploymentReadLogs } from './useDeploymentStepLog';
  */
 /** The receipt draws the person's Investigate plus its own records; an unresolved placement opens the composer. */
 const RECEIPT_AGENT_ACTIONS = { agentActions: 'withDefault' } as const;
+/** The receipt's own agent records (Triage's subject declarations), drawn waiting until the person's catalog answers. */
+const RECEIPT_SUBJECT_ACTIONS = TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1.filter(declaration => declaration.appliesTo.includes('deploymentReceipt'));
 
 export const DeploymentReceiptDetail = React.memo(
   function DeploymentReceiptDetail(
@@ -170,6 +173,11 @@ export const DeploymentReceiptDetail = React.memo(
     const fallbackInvestigate = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [{
       label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
     }], []);
+    // Until the catalog answers, the default Investigate and this receipt's own records stand in, waiting: the row they
+    // settle into is the row drawn at first paint, so nothing arrives later and pushes the page (VISUAL-136 D1).
+    const waitingAgentActions = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [...fallbackInvestigate,
+      ...RECEIPT_SUBJECT_ACTIONS.map(declaration => ({ actionId: declaration.actionId, label: declaration.label,
+        launchMode: declaration.launchMode ?? 'review', startable: true }))], [fallbackInvestigate]);
     const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome, investigationOptions);
     const outcomeInput = React.useMemo(() => persistedInvestigation && investigateSubject ? {
       subject: investigateSubject,
@@ -299,12 +307,10 @@ export const DeploymentReceiptDetail = React.memo(
     });
     // The shared agent-action control (DEPLOY-COMPOSE R4) for each of the person's records: its face launches in the
     // record's own mode, the chevron offers the other. When the catalog cannot answer, the default Investigate stands in.
-    // Until it first answers, the banner's row keeps its place unseen, so no control arrives and pushes the others aside.
+    // Until it first answers, the receipt's known records wait in their settled place beside the banner's own buttons.
     const agentActionsPending = investigation.actions === undefined;
     const investigateControl = agentActionsPending ? (
-      <View style={styles.reservedActions} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        <InvestigationAgentActionButtons actions={fallbackInvestigate} pending compact={phone} onLaunch={() => {}} />
-      </View>
+      <InvestigationAgentActionButtons actions={waitingAgentActions} pending compact={phone} onLaunch={() => {}} />
     ) : (
       <InvestigationAgentActionButtons
         actions={investigation.actions ?? fallbackInvestigate}
@@ -470,9 +476,9 @@ export const DeploymentReceiptDetail = React.memo(
                 // What is serving now (the receipt's own facts), then the canonical remedy for its recorded cause.
                 description={[failureConsequence(facts, firstMachine), recovery?.remedy ?? null]
                   .filter(Boolean).join(' ') || undefined}
-                // The row's place is settled from first paint: the buttons beside the agent control appear with it.
+                // The row's place is settled from first paint: the banner's own buttons are known then, beside the agent control.
                 actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || (recovery && props.onOpenRecoveryDestination) ? 'below' : undefined}
-                action={agentActionsPending ? undefined : rollbackTarget ? {
+                action={rollbackTarget ? {
                   label: backupTarget ? t(migrationPolicy === 'ask' ? 'projects.deployments.chooseRecovery' : 'projects.deployments.restoreBackupAndCode')
                     : migrationRan ? t('projects.deployments.rollbackCodeOnly')
                       : t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(rollbackTarget.revision) }),
@@ -497,7 +503,7 @@ export const DeploymentReceiptDetail = React.memo(
                 // Recovery leads when there is one; finding out why is the way forward beside it.
                 control={investigateControl}
                 // The canonical next action opens where the cause is fixed; it never retries anything.
-                moreActions={!agentActionsPending && recovery && props.onOpenRecoveryDestination ? [{
+                moreActions={recovery && props.onOpenRecoveryDestination ? [{
                   label: recovery.nextAction.label,
                   testID: 'project-deployments.receipt.outcome.failed.recovery',
                   // The build Machine's setup, or this receipt itself for its failed step's logs.
@@ -592,7 +598,7 @@ export const DeploymentReceiptDetail = React.memo(
               current={environmentValue?.content.definition ?? null} workspaceRef={props.workspaceRef}
               serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
             {content.buildMachineId !== undefined && deployment.operation !== 'teardown' ? <ItemGroup testID="project-deployments.receipt.storage"
-              title={t('projects.deployments.editors.sharedData')} description={t('projects.deployments.editors.retention')}>
+              title={t('projects.deployments.editors.runtimeData')} description={t('projects.deployments.editors.runtimeDataDescription')}>
               <Item title={t('projects.deployments.review.engineNative')} subtitle={t('projects.deployments.editors.survival')} showChevron={false} />
               {content.ownServer?.sources?.flatMap(source => source.sharedBinds?.map(bind => <Item
                 key={`${source.machineId}:${source.installationId}:${source.deploymentId}:${bind.relativePath}`}
@@ -847,7 +853,6 @@ function restorationLabel(
 const NO_IMAGES: readonly never[] = Object.freeze([]);
 
 const styles = StyleSheet.create((theme) => ({
-  reservedActions: { opacity: 0 },
   mono: Typography.mono(),
   page: { flex: 1, minHeight: 0 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

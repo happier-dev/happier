@@ -8,6 +8,10 @@ type DeploymentEditorsTranslations = Readonly<{
   versionDeployed: string;
   versionCurrent: string;
   comparisonNeedsCheckout: string;
+  checkoutUnreadable: (params: { machine: string }) => string;
+  openYourCheckout: string;
+  compareInCheckout: string;
+  prNeedsCheckout: string;
   comparisonUnavailable: string;
   sameVersion: string;
   versionsDiffer: string;
@@ -20,8 +24,8 @@ type DeploymentEditorsTranslations = Readonly<{
   prNotFound: (params: { number: number }) => string;
   prUnavailable: string;
   survival: string;
-  retention: string;
-  sharedData: string;
+  runtimeData: string;
+  runtimeDataDescription: string;
   commitsNewer: (params: { count: number }) => string;
   approvalsTitle: string;
   approvalsDescription: string;
@@ -100,6 +104,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Deployed definition",
     versionCurrent: "Current definition",
     comparisonNeedsCheckout: "Open a checkout for this Source to compare versions or load a pull request head.",
+    checkoutUnreadable: ({ machine }) => `Couldn’t read your checkout on ${machine}. Refresh once it’s answering.`,
+    openYourCheckout: "Open your checkout",
+    compareInCheckout: "Compare versions and load pull request heads from your checkout of this Source.",
+    prNeedsCheckout: "Pull request heads are read from a checkout of this Source.",
     comparisonUnavailable: "History is incomplete or unavailable. Refresh or choose a checkout containing both commits.",
     sameVersion: "Same version",
     versionsDiffer: "Versions differ",
@@ -112,8 +120,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `No pull request #${number} found. Check the number.`,
     prUnavailable: "The exact pull request head is unavailable. Read latest head to try again.",
     survival: "Apps keep running when Happier stops. Restarting after a reboot follows the Compose restart policy.",
-    retention: "Keeping fewer versions removes old source, logs and images. Shared data and volumes remain until you explicitly delete data.",
-    sharedData: "Shared data",
+    runtimeData: "Runtime and data",
+    runtimeDataDescription: "How this version runs, and the folders its services share. Shared data stays until you delete it.",
     commitsNewer: ({ count }) => `${count} commits newer`,
     approvalsTitle: 'Approvals',
     approvalsDescription:
@@ -192,6 +200,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Развёрнутое определение",
     versionCurrent: "Текущее определение",
     comparisonNeedsCheckout: "Откройте рабочую копию этого источника для сравнения версий или чтения pull request.",
+    checkoutUnreadable: ({ machine }) => `Не удалось прочитать вашу рабочую копию на ${machine}. Обновите, когда машина ответит.`,
+    openYourCheckout: "Открыть вашу рабочую копию",
+    compareInCheckout: "Сравнивайте версии и читайте pull request в вашей рабочей копии этого источника.",
+    prNeedsCheckout: "Pull request читается из рабочей копии этого источника.",
     comparisonUnavailable: "История неполная или недоступна. Обновите или выберите копию с обоими коммитами.",
     sameVersion: "Та же версия",
     versionsDiffer: "Версии различаются",
@@ -204,8 +216,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `Pull request #${number} не найден. Проверьте номер.`,
     prUnavailable: "Точная версия pull request недоступна. Нажмите «Прочитать последнюю версию», чтобы повторить.",
     survival: "Приложения работают после остановки Happier. После перезагрузки действует политика restart из Compose.",
-    retention: "Уменьшение числа версий удаляет старые исходники, журналы и образы. Общие данные и тома остаются до явного удаления данных.",
-    sharedData: "Общие данные",
+    runtimeData: "Среда и данные",
+    runtimeDataDescription: "Как работает эта версия и какие папки делят её сервисы. Общие данные остаются, пока вы их не удалите.",
     commitsNewer: ({ count }) => `${count} новых коммитов`,
     approvalsTitle: 'Подтверждения',
     approvalsDescription:
@@ -285,6 +297,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Wdrożona definicja",
     versionCurrent: "Bieżąca definicja",
     comparisonNeedsCheckout: "Otwórz kopię tego źródła, aby porównać wersje lub odczytać pull request.",
+    checkoutUnreadable: ({ machine }) => `Nie udało się odczytać Twojej kopii na ${machine}. Odśwież, gdy zacznie odpowiadać.`,
+    openYourCheckout: "Otwórz swoją kopię",
+    compareInCheckout: "Porównuj wersje i odczytuj pull requesty w swojej kopii tego źródła.",
+    prNeedsCheckout: "Pull requesty są odczytywane z kopii tego źródła.",
     comparisonUnavailable: "Historia jest niepełna lub niedostępna. Odśwież albo wybierz kopię z oboma commitami.",
     sameVersion: "Ta sama wersja",
     versionsDiffer: "Wersje się różnią",
@@ -297,8 +313,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `Nie znaleziono pull requesta #${number}. Sprawdź numer.`,
     prUnavailable: "Dokładna wersja pull requesta jest niedostępna. Użyj „Odczytaj najnowszą wersję”, aby spróbować ponownie.",
     survival: "Aplikacje działają dalej po zatrzymaniu Happier. Po ponownym uruchomieniu obowiązuje polityka restart z Compose.",
-    retention: "Mniej zachowanych wersji usuwa stare źródła, logi i obrazy. Dane współdzielone i wolumeny pozostają do ich jawnego usunięcia.",
-    sharedData: "Dane współdzielone",
+    runtimeData: "Środowisko i dane",
+    runtimeDataDescription: "Jak działa ta wersja i jakie foldery współdzielą jej usługi. Dane współdzielone zostają, dopóki ich nie usuniesz.",
     commitsNewer: ({ count }) => `${count} nowszych commitów`,
     approvalsTitle: 'Zatwierdzenia',
     approvalsDescription:
@@ -377,6 +393,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Definición desplegada",
     versionCurrent: "Definición actual",
     comparisonNeedsCheckout: "Abre una copia de esta fuente para comparar versiones o leer una pull request.",
+    checkoutUnreadable: ({ machine }) => `No se pudo leer tu copia en ${machine}. Actualiza cuando responda.`,
+    openYourCheckout: "Abrir tu copia",
+    compareInCheckout: "Compara versiones y lee pull requests desde tu copia de esta fuente.",
+    prNeedsCheckout: "Las pull requests se leen desde una copia de esta fuente.",
     comparisonUnavailable: "Historial incompleto o no disponible. Actualiza o elige una copia con ambos commits.",
     sameVersion: "Misma versión",
     versionsDiffer: "Las versiones difieren",
@@ -389,8 +409,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `No se encontró el pull request #${number}. Comprueba el número.`,
     prUnavailable: "La revisión exacta no está disponible. Usa «Leer la última revisión» para reintentar.",
     survival: "Las aplicaciones siguen funcionando cuando Happier se detiene. Tras reiniciar, se aplica la política restart de Compose.",
-    retention: "Conservar menos versiones elimina fuentes, registros e imágenes antiguos. Los datos compartidos y volúmenes permanecen hasta que los elimines explícitamente.",
-    sharedData: "Datos compartidos",
+    runtimeData: "Ejecución y datos",
+    runtimeDataDescription: "Cómo se ejecuta esta versión y qué carpetas comparten sus servicios. Los datos compartidos permanecen hasta que los elimines.",
     commitsNewer: ({ count }) => `${count} commits más recientes`,
     approvalsTitle: 'Aprobaciones',
     approvalsDescription:
@@ -470,6 +490,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Définition déployée",
     versionCurrent: "Définition actuelle",
     comparisonNeedsCheckout: "Ouvrez une copie de cette source pour comparer les versions ou lire une pull request.",
+    checkoutUnreadable: ({ machine }) => `Impossible de lire votre copie sur ${machine}. Actualisez quand elle répond.`,
+    openYourCheckout: "Ouvrir votre copie",
+    compareInCheckout: "Comparez les versions et lisez les pull requests depuis votre copie de cette source.",
+    prNeedsCheckout: "Les pull requests sont lues depuis une copie de cette source.",
     comparisonUnavailable: "Historique incomplet ou indisponible. Actualisez ou choisissez une copie contenant les deux commits.",
     sameVersion: "Même version",
     versionsDiffer: "Les versions diffèrent",
@@ -482,8 +506,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `Aucune pull request #${number} trouvée. Vérifie le numéro.`,
     prUnavailable: "La révision exacte est indisponible. Utilise « Lire la dernière révision » pour réessayer.",
     survival: "Les applications continuent lorsque Happier s’arrête. Après un redémarrage, la politique restart de Compose s’applique.",
-    retention: "Réduire les versions conservées supprime les anciennes sources, journaux et images. Les données partagées et volumes restent jusqu’à leur suppression explicite.",
-    sharedData: "Données partagées",
+    runtimeData: "Exécution et données",
+    runtimeDataDescription: "Comment cette version s’exécute et les dossiers que ses services partagent. Les données partagées restent jusqu’à ce que vous les supprimiez.",
     commitsNewer: ({ count }) => `${count} commits plus récents`,
     approvalsTitle: 'Approbations',
     approvalsDescription:
@@ -563,6 +587,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Definizione distribuita",
     versionCurrent: "Definizione attuale",
     comparisonNeedsCheckout: "Apri una copia di questa sorgente per confrontare le versioni o leggere una pull request.",
+    checkoutUnreadable: ({ machine }) => `Impossibile leggere la tua copia su ${machine}. Aggiorna quando risponde.`,
+    openYourCheckout: "Apri la tua copia",
+    compareInCheckout: "Confronta le versioni e leggi le pull request dalla tua copia di questa sorgente.",
+    prNeedsCheckout: "Le pull request vengono lette da una copia di questa sorgente.",
     comparisonUnavailable: "Cronologia incompleta o non disponibile. Aggiorna o scegli una copia con entrambi i commit.",
     sameVersion: "Stessa versione",
     versionsDiffer: "Le versioni differiscono",
@@ -575,8 +603,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `Nessuna pull request #${number} trovata. Controlla il numero.`,
     prUnavailable: "La revisione esatta non è disponibile. Usa «Leggi ultima revisione» per riprovare.",
     survival: "Le app continuano quando Happier si arresta. Dopo il riavvio si applica la politica restart di Compose.",
-    retention: "Conservare meno versioni elimina sorgenti, log e immagini precedenti. Dati condivisi e volumi restano fino alla loro eliminazione esplicita.",
-    sharedData: "Dati condivisi",
+    runtimeData: "Esecuzione e dati",
+    runtimeDataDescription: "Come viene eseguita questa versione e le cartelle condivise dai suoi servizi. I dati condivisi restano finché non li elimini.",
     commitsNewer: ({ count }) => `${count} commit più recenti`,
     approvalsTitle: 'Approvazioni',
     approvalsDescription:
@@ -656,6 +684,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Definição implantada",
     versionCurrent: "Definição atual",
     comparisonNeedsCheckout: "Abra uma cópia desta fonte para comparar versões ou ler uma pull request.",
+    checkoutUnreadable: ({ machine }) => `Não foi possível ler sua cópia em ${machine}. Atualize quando ela responder.`,
+    openYourCheckout: "Abrir sua cópia",
+    compareInCheckout: "Compare versões e leia pull requests a partir da sua cópia desta fonte.",
+    prNeedsCheckout: "As pull requests são lidas de uma cópia desta fonte.",
     comparisonUnavailable: "Histórico incompleto ou indisponível. Atualize ou escolha uma cópia com os dois commits.",
     sameVersion: "Mesma versão",
     versionsDiffer: "As versões diferem",
@@ -668,8 +700,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `Nenhum pull request #${number} encontrado. Confira o número.`,
     prUnavailable: "A revisão exata está indisponível. Use “Ler a revisão mais recente” para tentar novamente.",
     survival: "Os apps continuam quando o Happier para. Após reiniciar, aplica-se a política restart do Compose.",
-    retention: "Manter menos versões remove fontes, logs e imagens antigos. Dados compartilhados e volumes permanecem até a exclusão explícita dos dados.",
-    sharedData: "Dados compartilhados",
+    runtimeData: "Execução e dados",
+    runtimeDataDescription: "Como esta versão é executada e as pastas que os serviços compartilham. Os dados compartilhados permanecem até você excluí-los.",
     commitsNewer: ({ count }) => `${count} commits mais recentes`,
     approvalsTitle: 'Aprovações',
     approvalsDescription:
@@ -748,6 +780,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Definició desplegada",
     versionCurrent: "Definició actual",
     comparisonNeedsCheckout: "Obre una còpia d’aquesta font per comparar versions o llegir una pull request.",
+    checkoutUnreadable: ({ machine }) => `No s’ha pogut llegir la teva còpia a ${machine}. Actualitza quan respongui.`,
+    openYourCheckout: "Obre la teva còpia",
+    compareInCheckout: "Compara versions i llegeix pull requests des de la teva còpia d’aquesta font.",
+    prNeedsCheckout: "Les pull requests es llegeixen d’una còpia d’aquesta font.",
     comparisonUnavailable: "Historial incomplet o no disponible. Actualitza o tria una còpia amb tots dos commits.",
     sameVersion: "Mateixa versió",
     versionsDiffer: "Les versions difereixen",
@@ -760,8 +796,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `No s’ha trobat cap pull request #${number}. Comprova el número.`,
     prUnavailable: "La revisió exacta no està disponible. Fes servir «Llegeix l’última revisió» per tornar-ho a provar.",
     survival: "Les aplicacions continuen quan Happier s’atura. Després de reiniciar s’aplica la política restart de Compose.",
-    retention: "Conservar menys versions elimina fonts, registres i imatges antics. Les dades compartides i volums es mantenen fins que els eliminis explícitament.",
-    sharedData: "Dades compartides",
+    runtimeData: "Execució i dades",
+    runtimeDataDescription: "Com s’executa aquesta versió i les carpetes que comparteixen els seus serveis. Les dades compartides es mantenen fins que les eliminis.",
     commitsNewer: ({ count }) => `${count} commits més recents`,
     approvalsTitle: 'Aprovacions',
     approvalsDescription:
@@ -841,6 +877,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "Bereitgestellte Definition",
     versionCurrent: "Aktuelle Definition",
     comparisonNeedsCheckout: "Öffne einen Checkout dieser Quelle, um Versionen zu vergleichen oder einen Pull Request zu lesen.",
+    checkoutUnreadable: ({ machine }) => `Dein Checkout auf ${machine} konnte nicht gelesen werden. Aktualisiere, sobald er antwortet.`,
+    openYourCheckout: "Deinen Checkout öffnen",
+    compareInCheckout: "Vergleiche Versionen und lies Pull Requests in deinem Checkout dieser Quelle.",
+    prNeedsCheckout: "Pull Requests werden aus einem Checkout dieser Quelle gelesen.",
     comparisonUnavailable: "Verlauf unvollständig oder nicht verfügbar. Aktualisiere oder wähle einen Checkout mit beiden Commits.",
     sameVersion: "Gleiche Version",
     versionsDiffer: "Versionen unterscheiden sich",
@@ -853,8 +893,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `Kein Pull Request #${number} gefunden. Prüfe die Nummer.`,
     prUnavailable: "Der genaue Pull-Request-Stand ist nicht verfügbar. Wähle „Neuesten Stand lesen“, um es erneut zu versuchen.",
     survival: "Apps laufen weiter, wenn Happier stoppt. Nach einem Neustart gilt die restart-Richtlinie von Compose.",
-    retention: "Weniger aufbewahrte Versionen entfernen alte Quellen, Logs und Images. Gemeinsame Daten und Volumes bleiben bis zur ausdrücklichen Datenlöschung.",
-    sharedData: "Gemeinsame Daten",
+    runtimeData: "Laufzeit und Daten",
+    runtimeDataDescription: "Wie diese Version läuft und welche Ordner ihre Dienste teilen. Gemeinsame Daten bleiben, bis du sie löschst.",
     commitsNewer: ({ count }) => `${count} neuere Commits`,
     approvalsTitle: 'Freigaben',
     approvalsDescription:
@@ -933,6 +973,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "已部署的定义",
     versionCurrent: "当前定义",
     comparisonNeedsCheckout: "打开此来源的检出副本以比较版本或读取拉取请求。",
+    checkoutUnreadable: ({ machine }) => `无法读取你在 ${machine} 上的检出副本。等它响应后刷新。`,
+    openYourCheckout: "打开你的检出副本",
+    compareInCheckout: "在你的此来源检出副本中比较版本并读取拉取请求。",
+    prNeedsCheckout: "拉取请求从此来源的检出副本中读取。",
     comparisonUnavailable: "历史不完整或不可用。请刷新或选择包含两个提交的检出副本。",
     sameVersion: "相同版本",
     versionsDiffer: "版本不同",
@@ -945,8 +989,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `未找到拉取请求 #${number}。请检查编号。`,
     prUnavailable: "无法获取确切的拉取请求提交。请点击“读取最新提交”重试。",
     survival: "Happier 停止后应用仍会运行。重启后遵循 Compose 的 restart 策略。",
-    retention: "减少保留版本会删除旧源码、日志和镜像。共享数据和卷会保留，直到你明确删除数据。",
-    sharedData: "共享数据",
+    runtimeData: "运行与数据",
+    runtimeDataDescription: "此版本的运行方式，以及其服务共享的文件夹。共享数据会保留，直到你删除。",
     commitsNewer: ({ count }) => `比当前新 ${count} 个提交`,
     approvalsTitle: '审批',
     approvalsDescription:
@@ -1025,6 +1069,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "已部署的定義",
     versionCurrent: "目前定義",
     comparisonNeedsCheckout: "開啟此來源的檢出副本以比較版本或讀取提取要求。",
+    checkoutUnreadable: ({ machine }) => `無法讀取你在 ${machine} 上的檢出副本。等它回應後重新整理。`,
+    openYourCheckout: "開啟你的檢出副本",
+    compareInCheckout: "在你的此來源檢出副本中比較版本並讀取提取要求。",
+    prNeedsCheckout: "提取要求會從此來源的檢出副本讀取。",
     comparisonUnavailable: "歷程不完整或無法使用。請重新整理或選擇包含兩個提交的檢出副本。",
     sameVersion: "相同版本",
     versionsDiffer: "版本不同",
@@ -1037,8 +1085,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `找不到提取要求 #${number}。請檢查編號。`,
     prUnavailable: "無法取得確切的提取要求提交。請點選「讀取最新提交」重試。",
     survival: "Happier 停止後應用程式仍會執行。重新啟動後遵循 Compose 的 restart 原則。",
-    retention: "減少保留版本會刪除舊原始碼、記錄和映像。共用資料和磁碟區會保留，直到你明確刪除資料。",
-    sharedData: "共用資料",
+    runtimeData: "執行與資料",
+    runtimeDataDescription: "此版本的執行方式，以及其服務共用的資料夾。共用資料會保留，直到你刪除。",
     commitsNewer: ({ count }) => `比目前新 ${count} 個提交`,
     approvalsTitle: '審核',
     approvalsDescription:
@@ -1117,6 +1165,10 @@ export const deploymentEditorsTranslations = {
     versionDeployed: "デプロイした定義",
     versionCurrent: "現在の定義",
     comparisonNeedsCheckout: "このソースのチェックアウトを開くと、バージョンの比較やプルリクエストの読み取りができます。",
+    checkoutUnreadable: ({ machine }) => `${machine} 上のチェックアウトを読み取れませんでした。応答したら更新してください。`,
+    openYourCheckout: "自分のチェックアウトを開く",
+    compareInCheckout: "このソースの自分のチェックアウトでバージョンを比較し、プルリクエストを読み取れます。",
+    prNeedsCheckout: "プルリクエストはこのソースのチェックアウトから読み取ります。",
     comparisonUnavailable: "履歴が不完全か利用できません。更新するか、両方のコミットを含むチェックアウトを選んでください。",
     sameVersion: "同じバージョン",
     versionsDiffer: "バージョンが異なります",
@@ -1129,8 +1181,8 @@ export const deploymentEditorsTranslations = {
     prNotFound: ({ number }) => `プルリクエスト #${number} が見つかりません。番号を確認してください。`,
     prUnavailable: "正確なコミットを取得できません。「最新のコミットを読み取る」で再試行してください。",
     survival: "Happier が停止してもアプリは動作します。再起動後は Compose の restart ポリシーに従います。",
-    retention: "保持数を減らすと古いソース、ログ、イメージが削除されます。共有データとボリュームは明示的にデータを削除するまで残ります。",
-    sharedData: "共有データ",
+    runtimeData: "実行とデータ",
+    runtimeDataDescription: "このバージョンの実行方法と、サービスが共有するフォルダー。共有データは削除するまで残ります。",
     commitsNewer: ({ count }) => `${count} コミット新しい`,
     approvalsTitle: '承認',
     approvalsDescription:

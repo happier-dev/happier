@@ -11,6 +11,7 @@ import {
   HappierToggle,
   HappierValidationMessage,
   planHappierSelectOptions,
+  resolveHappierFieldTextColors,
   type HappierSelectOption,
 } from './Fields.js';
 import { HappierChoiceField } from './ChoiceField.js';
@@ -210,6 +211,9 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
     control = (
       <HappierTextField
         label={label}
+        // The same field box as a choice field's trigger beside it, never a borderless well.
+        appearance="field"
+        fieldColors={resolveHappierFieldTextColors(palette, theme)}
         testID={props.controlTestID}
         placeholder={field.placeholder}
         required={field.required}

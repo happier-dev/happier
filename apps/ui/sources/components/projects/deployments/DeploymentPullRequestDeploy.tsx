@@ -14,8 +14,7 @@ import { deploymentRevisionLabel } from './deploymentPresentation';
 import { machineScmPullRequestGet } from '@/sync/ops/scm/machineScm';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
+import { DeploymentSourceCheckoutRow, useOwnSourceCheckout } from './DeploymentSourceCheckoutRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getScmUserFacingError } from '@/scm/scmUserFacingErrors';
 
@@ -31,7 +30,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
   disabled: boolean;
   onDeploy(source: RepositorySource): Promise<void>;
 }>) {
-  const router = useRouter();
+  const ownCheckout = useOwnSourceCheckout(props.projectSourceId, props.serverId);
   const { openResource } = useOpenResource({ serverId: props.serverId });
   const [reference, setReference] = React.useState('');
   const [candidate, setCandidate] = React.useState<Readonly<{ pullRequest: ScmPullRequestSummary; source: RepositorySource | null }> | null>(null);
@@ -112,8 +111,8 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
         title={t('projects.deployments.editors.prNotFound', { number: notFoundNumber })} /> : null}
       {candidate && exactSource === null ? <SurfaceStateCard testID="project-deployments.pr.sourceUnavailable" size="line" kind="unavailable"
         title={t('projects.deployments.editors.prUnavailable')} /> : null}
-    </> : <Item testID="project-deployments.pr.checkout" title={t('projects.deployments.editors.openSourceCheckout')}
-      subtitle={t('projects.deployments.editors.comparisonNeedsCheckout')} onPress={() => router.push(projectSourceRoute(props.projectSourceId) as never)} />}
+    </> : <DeploymentSourceCheckoutRow testID="project-deployments.pr.checkout" projectSourceId={props.projectSourceId}
+      serverId={props.serverId} checkout={ownCheckout} needsCheckout={t('projects.deployments.editors.prNeedsCheckout')} />}
   </ItemGroup>;
 }
 

@@ -438,9 +438,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
         return { vertical: 8, horizontal: 8 } as const;
     }, [matchTriggerWidth, props.connectToTrigger, requestedPlacement]);
 
-    // A select (an item trigger naming a value) checks its current value as the one choice among its rows.
-    const selectCheckedId = props.itemTrigger && typeof props.selectedId === 'string' && props.selectedId.trim()
-        ? props.selectedId.trim() : null;
+    // A select (an item trigger naming a value) checks its current value as the one choice among its rows, searched or
+    // not. An empty value is a choice too when a row stands for it (an explicit "None"); otherwise it means nothing is chosen.
+    const selectValue = props.itemTrigger && typeof props.selectedId === 'string' ? props.selectedId.trim() : null;
+    const selectCheckedId = selectValue !== null && (selectValue !== '' || findMenuItem('') !== undefined) ? selectValue : null;
     const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
             const hasSubmenu = Boolean(item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent));
             return {
