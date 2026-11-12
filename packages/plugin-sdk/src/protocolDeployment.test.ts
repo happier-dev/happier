@@ -63,7 +63,10 @@ describe.each([
             targetLinks: [targetLink],
         });
         expect(parsed.success).toBe(true);
-        if (parsed.success) expect(parsed.data.secretScope?.status).toBe('ready');
+        if (parsed.success) {
+            expect(parsed.data.ok).toBe(true);
+            if (parsed.data.ok) expect(parsed.data.secretScope?.status).toBe('ready');
+        }
         expect(protocol.ProtocolDeploymentEnvironmentGetResultV1Schema.safeParse({
             ok: true, environment, targetLinks: [targetLink], unexpected: true,
         }).success).toBe(false);
