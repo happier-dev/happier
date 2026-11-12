@@ -84,6 +84,7 @@ describe('public Domain storage and native custody', () => {
                 machineId: f.machine.id, installationId: f.machine.installationId } } });
             const result = DeploymentDomainMutationResultV1Schema.parse(added.json());
             if (!result.ok || !result.domain.providerPlacement) throw new Error('provider capture missing');
+            expect(result.domain).not.toHaveProperty('routedReplicas');
             const url = `/v1/deployments/environments/${f.environment.id}/domains/${input.domainId}`;
             const headers = { 'x-test-user-id': f.owner.id };
             const settle = (domain: typeof result.domain, state: 'active' | 'removed', tamper = false) => {
@@ -208,13 +209,19 @@ describe('public Domain storage and native custody', () => {
         });
     });
 
-    it.each(['plain', 'e2ee'] as const)('creates and lists a single-Machine local-hostname Domain in %s through the public route, records native facts and tombstones only signed complete removal', async mode => {
+    it.each(['plain', 'e2ee'] as const)('creates and lists a multi-Machine local-hostname Domain in %s through the public route, records native facts and tombstones only signed complete removal', async mode => {
         const f = await fixture(mode);
+        const secondMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: f.key.publicKey } });
+        await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: { machines: { create: {
+            machineId: secondMachine.id, installationId: secondMachine.installationId!, position: 1, state: 'active',
+        } } } });
         const input = { serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
             targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
             actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
             placements: [{ machineId: f.machine.id, installationId: f.machine.installationId!, nativeServer: 'private', listener: 'privateOrigin', dockerEngineId: 'domain-engine' },
-                { machineId: f.machine.id, installationId: f.machine.installationId!, nativeServer: 'public', listener: 'public', dockerEngineId: 'domain-engine' }],
+                { machineId: f.machine.id, installationId: f.machine.installationId!, nativeServer: 'public', listener: 'public', dockerEngineId: 'domain-engine' },
+                { machineId: secondMachine.id, installationId: secondMachine.installationId!, nativeServer: 'private', listener: 'privateOrigin', dockerEngineId: 'second-domain-engine' }],
             ...await f.content('deployment-domain.v1') };
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const request = (user: string, body: Record<string, unknown> = input) => app.inject({ method: 'POST',
@@ -233,6 +240,20 @@ describe('public Domain storage and native custody', () => {
             // The native target is not the operation controller. All retained legs belong to the
             // current admitted root, so project its exact address without disclosing execution custody.
             const captures = DeploymentDomainCapturedPlacementsV1Schema.parse(stored.capturedPlacements);
+            expect(result.domain).not.toHaveProperty('routedReplicas');
+            const emptyTopology = captures.map(capture => ({ ...capture, routedReplicas: [] }));
+            expect(projectDeploymentDomainHeader({ ...stored, capturedPlacements: emptyTopology }))
+                .toMatchObject({ routedReplicas: { source: 'recordedTopology', count: 0, replicas: [] } });
+            expect(projectDeploymentDomainHeader({ ...stored, capturedPlacements: [emptyTopology[0], ...captures.slice(1)] }))
+                .not.toHaveProperty('routedReplicas');
+            expect(projectDeploymentDomainHeader({ ...stored, capturedPlacements: [
+                ...emptyTopology, { ...captures[0]!, desired: false, routedReplicas: [{ containerName: 'retired-web' }] },
+            ] })).toMatchObject({ routedReplicas: { source: 'recordedTopology', count: 0, replicas: [] } });
+            expect(projectDeploymentDomainHeader({ ...stored,
+                capturedPlacements: captures.map(capture => ({ ...capture, desired: false, routedReplicas: [{ containerName: 'retired-web' }] })),
+            })).not.toHaveProperty('routedReplicas');
+            expect(projectDeploymentDomainHeader({ ...stored, deletedAt: new Date(), capturedPlacements: emptyTopology }))
+                .not.toHaveProperty('routedReplicas');
             const executed = captures.map(capture => ({ ...capture, execution: {
                 controller: { machineId: 'controller-machine', installationId: 'controller-installation' },
                 requestEnvelopeDigest: 'admitted-envelope', actionId: 'deployments.domains.add' as const,
@@ -267,10 +288,11 @@ describe('public Domain storage and native custody', () => {
             await db.deploymentDomain.update({ where: { id: input.domainId }, data: { capturedPlacements: unavailableCaptures } });
             const unavailable = DeploymentDomainMutationResultV1Schema.parse((await app.inject({ method: 'GET',
                 url: `${url}?serverId=${serverId}`, headers })).json());
-            expect(unavailable).toMatchObject({ ok: true, domain: { networkExposure: [
-                { observation: { kind: 'unavailable', reason: 'required_fact_unavailable', requiredFact: 'networkExposure', remedy: expect.any(String) } },
-                { observation: unavailableCaptures[1]!.networkExposure },
-            ] } });
+            expect(unavailable).toMatchObject({ ok: true, domain: { networkExposure: unavailableCaptures.map((capture, index) => ({
+                observation: index === 0
+                    ? { kind: 'unavailable', reason: 'required_fact_unavailable', requiredFact: 'networkExposure', remedy: expect.any(String) }
+                    : capture.networkExposure,
+            })) } });
             if (!unavailable.ok) throw new Error(unavailable.error);
             expect((await app.inject({ method: 'GET',
                 url: `/v1/deployments/environments/${f.environment.id}/domains?serverId=${serverId}`, headers })).json())
@@ -282,7 +304,7 @@ describe('public Domain storage and native custody', () => {
             expect(captured).toMatchObject({ dockerEngineId: 'domain-engine',
                 environmentContent: { contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
                 targetLinkContent: { contentArtifactId: f.target.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 } });
-            const signed = (capture: DeploymentDomainPlacementV1, revision: number, state: DeploymentDomainObservationBodyV1['state']) => {
+            const signed = (capture: DeploymentDomainPlacementV1, revision: number, state: DeploymentDomainObservationBodyV1['state'], recordReplicas = false) => {
                 const ids = nativeCaddyDomainRouteIdsV1(input.domainId, capture.listener);
                 const removal = state === 'removed' ? { kind: 'removed' as const, placement: capture.placement, routeIds: ids.removalIds,
                     proof: { version: 1 as const, algorithm: 'ed25519' as const, signature: encodeBase64(nacl.sign.detached(
@@ -291,7 +313,10 @@ describe('public Domain storage and native custody', () => {
                     : { kind: 'ready' as const, listener: capture.listener, listeners: [{ tls: false,
                         automaticHttpsDisabled: true, endpoints: [{ audience: 'privateNetwork' as const, hostPort: 8080,
                             containerPort: 8080, protocol: 'tcp' as const }] }], localOrigin: true, fallback: false };
-                const observation = { capture, state, networkExposure, ...(removal ? { removal } : { dnsHealth: {
+                const observation = { capture, state, networkExposure,
+                    ...(recordReplicas ? { routedReplicas: [{ containerName: 'web-1' },
+                        ...(capture.listener === 'public' ? [{ containerName: 'web-2' }] : [])] } : {}),
+                    ...(removal ? { removal } : { dnsHealth: {
                     status: 'up' as const, evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'dns' },
                         author: { kind: 'process' as const }, text: JSON.stringify({ reason: 'dns_matched' }) }] },
                 } }) };
@@ -301,7 +326,10 @@ describe('public Domain storage and native custody', () => {
             const transition = (revision: number, observations: ReturnType<typeof signed>[]) => app.inject({ method: 'POST',
                 url: `${url}/transitions`, headers, payload: { serverId, environmentId: f.environment.id,
                     domainId: input.domainId, expectedDomainRevision: revision, observations } });
-            const valid = result.domain.placements!.map(capture => signed(capture, 1, 'active'));
+            const valid = result.domain.placements!.map(capture => signed(capture, 1, 'active', true));
+            expect((await transition(1, valid.map(value => ({ ...value,
+                routedReplicas: [{ containerName: 'web-1', hostAddress: '100.98.0.2', networkNames: ['private'] }],
+            })))).statusCode).toBe(400);
             const privateAddressPayload = valid.map(value => ({ ...value, networkExposure: { ...value.networkExposure,
                 listeners: [{ listen: ['[fd00::2]:8080'], tls: false, automaticHttpsDisabled: true,
                     endpoints: [{ audience: 'privateNetwork' as const, hostAddress: '100.98.0.2', hostPort: 8080,
@@ -317,11 +345,21 @@ describe('public Domain storage and native custody', () => {
             expect((await transition(1, valid.map(value => ({ ...value, networkExposure: {
                 ...value.networkExposure, fallback: true,
             } })))).statusCode).toBe(403);
+            expect((await transition(1, valid.map(value => ({ ...value,
+                routedReplicas: [{ containerName: 'unsigned-web' }],
+            })))).statusCode).toBe(403);
             expect((await transition(1, valid.map((value, index) => index ? value : { ...value,
                 proof: { ...value.proof, signature: encodeBase64(nacl.randomBytes(64), 'base64url') } }))).statusCode).toBe(403);
             const active = DeploymentDomainMutationResultV1Schema.parse((await transition(1, valid)).json());
             expect(active).toMatchObject({ ok: true, domain: { state: 'active', revision: 2, observedAtMs: expect.any(Number) } });
             if (!active.ok) throw new Error(active.error);
+            expect(active.domain.routedReplicas).toEqual({ source: 'recordedTopology', count: 3, replicas: [
+                { machineId: f.machine.id, installationId: f.machine.installationId, containerName: 'web-1' },
+                { machineId: f.machine.id, installationId: f.machine.installationId, containerName: 'web-2' },
+                { machineId: secondMachine.id, installationId: secondMachine.installationId, containerName: 'web-1' },
+            ] });
+            expect(active.domain.placements).toEqual(result.domain.placements);
+            expect(JSON.stringify(active.domain.routedReplicas)).not.toMatch(/network|address|endpoint|listen|hostPort|containerPort/i);
             expect(active.domain).toMatchObject({ networkExposure: result.domain.placements!.map(capture => ({
                 machineId: capture.placement.machineId, installationId: capture.placement.installationId,
                 nativeServer: capture.placement.nativeServer, listener: capture.listener,
@@ -344,6 +382,10 @@ describe('public Domain storage and native custody', () => {
                 for (let i = 0; i < 3; i++) expect((await transition(2, result.domain.placements!.map(capture => signed(capture, 2, 'active')))).json()).toEqual(active);
             } finally { stop(); }
             expect(changes).toEqual([]);
+            expect((await db.deploymentDomain.findUniqueOrThrow({ where: { id: input.domainId } })).capturedPlacements)
+                .toEqual(expect.arrayContaining(valid.map(({ capture, routedReplicas }) => expect.objectContaining({
+                    placement: capture.placement, routedReplicas,
+                }))));
             expect((await request(f.owner.id, { ...input, expectedRevision: 2, expectedDomainRevision: 2,
                 requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID() })).json()).toEqual(active);
             const remove = { serverId, environmentId: f.environment.id, domainId: input.domainId, expectedRevision: 2,
@@ -351,6 +393,7 @@ describe('public Domain storage and native custody', () => {
             const removing = DeploymentDomainMutationResultV1Schema.parse((await app.inject({ method: 'POST', url: `${url}/remove`, headers, payload: remove })).json());
             expect(removing).toMatchObject({ ok: true, domain: { state: 'removing', revision: 3 } });
             if (!removing.ok) throw new Error(removing.error);
+            expect(removing.domain).not.toHaveProperty('routedReplicas');
             expect((await db.deploymentDomain.findUniqueOrThrow({ where: { id: input.domainId } })).deletedAt).toBeNull();
             const teardownInput = { serverId, environmentId: f.environment.id, expectedRevision: removing.revision,
                 targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
@@ -363,6 +406,11 @@ describe('public Domain storage and native custody', () => {
             const removed = DeploymentDomainMutationResultV1Schema.parse((await transition(3,
                 removing.domain.placements!.map(capture => signed(capture, 3, 'removed')))).json());
             expect(removed).toMatchObject({ ok: true, domain: { state: 'removing', deletedAtMs: expect.any(Number), revision: 4 } });
+            if (!removed.ok) throw new Error(removed.error);
+            expect(removed.domain).not.toHaveProperty('routedReplicas');
+            expect(DeploymentDomainCapturedPlacementsV1Schema.parse((await db.deploymentDomain.findUniqueOrThrow({
+                where: { id: input.domainId },
+            })).capturedPlacements).every(capture => capture.routedReplicas === undefined)).toBe(true);
             expect(removed).toMatchObject({ ok: true, domain: { networkExposure: removing.domain.placements!.map(capture => ({
                 machineId: capture.placement.machineId, installationId: capture.placement.installationId,
                 nativeServer: capture.placement.nativeServer, listener: capture.listener,

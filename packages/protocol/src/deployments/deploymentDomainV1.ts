@@ -104,10 +104,13 @@ export const DeploymentDomainNetworkExposureV1Schema = lazyZodSchema(() => z.dis
 export type DeploymentDomainNetworkExposureV1 = z.infer<typeof DeploymentDomainNetworkExposureV1Schema>;
 /** Semantic DNS facts only: observation clocks must not turn equal verification into a write. */
 const domainDnsHealth = () => z.pick(HealthCheckResultV1Schema, { status: true, evidence: true });
+/** Replica dial identities recorded by a successful native Domain apply, never a live inventory. */
+const domainRoutedReplicas = lazyZodSchema(() => z.array(z.strictObject({ containerName: id })));
 export const DeploymentDomainCapturedPlacementsV1Schema = lazyZodSchema(() => z.array(z.extend(DeploymentDomainPlacementV1Schema, {
     installationPublicKey: z.string().check(z.minLength(1)),
     networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
     dnsHealth: z.optional(domainDnsHealth()),
+    routedReplicas: z.optional(domainRoutedReplicas),
     execution: z.optional(z.strictObject({ controller: z.strictObject({ machineId: id, installationId: id }),
         requestEnvelopeDigest: z.string().check(z.minLength(1)), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove']),
     })),
@@ -139,6 +142,10 @@ export const DeploymentDomainHeaderV1Schema = lazyZodSchema(() => z.strictObject
     /** Exact admitted controller operation; absent for legacy captures without execution custody. */
     operationAddress: z.optional(ActionOperationAddressV1Schema),
     dnsHealth: z.optional(domainDnsHealth()),
+    routedReplicas: z.optional(z.strictObject({ source: z.literal('recordedTopology'),
+        count: z.number().check(z.int(), z.nonnegative()),
+        replicas: z.array(z.strictObject({ machineId: id, installationId: id, containerName: id })),
+    })),
     networkExposure: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id,
         listener: z.enum(['privateOrigin', 'public']), observation: DeploymentDomainNetworkExposureV1Schema }))),
     createdAtMs: timestamp, updatedAtMs: timestamp, deletedAtMs: z.optional(timestamp),
@@ -187,6 +194,7 @@ export const DeploymentDomainObservationBodyV1Schema = lazyZodSchema(() => z.str
     capture: DeploymentDomainPlacementV1Schema, state: z.enum(['active', 'warning', 'failed', 'removed']),
     networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
     dnsHealth: z.optional(domainDnsHealth()),
+    routedReplicas: z.optional(domainRoutedReplicas),
     removal: z.optional(NativeCaddyRemovalV1Schema),
 }).check(z.refine(value => (value.state === 'removed') === (value.removal !== undefined),
     { message: 'Removed observations require exact native absence.' })));

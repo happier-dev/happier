@@ -51,6 +51,7 @@ export function projectDeploymentDomainMachineReferences(row: Readonly<{ id: str
             domainId: row.id, machineId, installationId: placement.installationId }));
 }
 function publicCapture({ installationPublicKey: _key, execution: _execution, networkExposure: _exposure, dnsHealth: _dns,
+    routedReplicas: _replicas,
     ...capture }: Captures[number]): DeploymentDomainPlacementV1 { return capture; }
 
 const domainContentReferenceFields = ['content', 'environmentContent', 'targetLinkContent'] as const;
@@ -208,6 +209,12 @@ export async function readAcceptedDeploymentDomainSecretDestinationInTx(tx: Tx,
 export function projectDeploymentDomainHeader(row: DeploymentDomainRow) {
     const provider = readProviderCapture(row);
     const captures = readCaptures(row) ?? [];
+    const desired = row.deletedAt ? [] : captures.filter(capture => capture.desired);
+    const replicas = desired.length > 0 && desired.every(capture => capture.routedReplicas !== undefined)
+        ? [...new Map(desired.flatMap(capture => capture.routedReplicas!.map(({ containerName }) => {
+            const replica = { machineId: capture.placement.machineId, installationId: capture.placement.installationId, containerName };
+            return [JSON.stringify([replica.machineId, replica.installationId, containerName]), replica] as const;
+        }))).values()] : undefined;
     const first = captures[0];
     const operationAddress = first?.execution && captures.every(capture =>
         capture.execution?.controller.machineId === first.execution!.controller.machineId
@@ -220,6 +227,7 @@ export function projectDeploymentDomainHeader(row: DeploymentDomainRow) {
         revision: row.revision, state: row.state, ...deploymentContentReference(row),
         createdByAccountId: row.createdByAccountId,
         placements: captures.map(publicCapture),
+        ...(replicas ? { routedReplicas: { source: 'recordedTopology', count: replicas.length, replicas } } : {}),
         ...(provider ? { provider: true, providerPlacement: provider.placement,
             operationAddress: { serverId: provider.placement.serverId, machineId: provider.placement.controller.machineId,
                 operationId: provider.placement.actionOperationId } } : {}),
@@ -661,8 +669,10 @@ export async function transitionDeploymentDomainInTx(tx: Tx, input: DeploymentDo
                 return deploymentFailure('deployment_access_denied');
             }
         } else if (!capture.desired || row.state === 'removing') return deploymentFailure('deployment_conflict');
-        const { networkExposure: _previous, dnsHealth: _previousDns, ...retainedCapture } = capture;
+        const { networkExposure: _previous, dnsHealth: _previousDns, routedReplicas: _previousReplicas, ...retainedCapture } = capture;
+        const routedReplicas = observation.state === 'removed' ? undefined : observation.routedReplicas ?? capture.routedReplicas;
         observedCaptures.push({ ...retainedCapture,
+            ...(routedReplicas ? { routedReplicas } : {}),
             ...(observation.networkExposure ? { networkExposure: observation.networkExposure } : {}),
             ...(observation.dnsHealth ? { dnsHealth: observation.dnsHealth } : {}) });
     }

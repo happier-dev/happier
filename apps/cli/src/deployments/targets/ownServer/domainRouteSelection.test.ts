@@ -560,7 +560,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -577,6 +577,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     const nativeUnknownFailure = MachineElevationFailureV1Schema.parse({ ...nativeCheckFailure, kind: 'native_effect_failed' });
     const environment = createDeploymentEnvironmentDetailV1();
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
+    const recordedReplicaCase = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy redirect';
     const networkConnectFailure = scenario === 'Tunnel running private network failure';
     // File logging is the diagnostic boundary; keep the real controller/native path.
     const nativeWarnings = networkConnectFailure ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
@@ -602,7 +603,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     if (scenario === 'no active Domain members') delete link.activeDeploymentId;
     if (scenario === 'membership join installed') link.members[0]!.state = 'joining';
     const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
-    const installedCaddy = incumbentJoining || scenario === 'direct installed Caddy admin write refused' || scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
+    const installedCaddy = incumbentJoining || scenario === 'direct installed Caddy admin write refused' || recordedReplicaCase || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
     if (installedCaddy) {
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
@@ -664,7 +665,11 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 async inspect() { return { phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:32771' }; },
                 async stop() { return { status: 'stopped' }; },
                 nativeContainers: () => [{ id: 'healthy-web', composeProject: 'deployed', service: 'web', containerName: 'deployed-web-1',
-                    networkNames: ['deployed_default', ...(networkConnectFailure ? ['deployed_extra'] : [])] }],
+                    networkNames: ['deployed_default', ...(networkConnectFailure ? ['deployed_extra'] : [])] },
+                    ...(recordedReplicaCase ? [
+                        { id: 'second-web', composeProject: 'deployed', service: 'web', containerName: 'deployed-web-2', networkNames: ['deployed_default'] },
+                        { id: 'database', composeProject: 'deployed', service: 'db', containerName: 'deployed-db-1', networkNames: ['deployed_default'] },
+                    ] : [])],
                 nativeDocker: async () => occupiedPort ? { engineId: 'engine-a', async run(args) {
                     if (args.includes('--all')) return { exitCode: 0, stdout: '', stderr: '' };
                     if (scenario === 'native Caddy host port occupied') {
@@ -703,7 +708,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         expectedRevision: input.expectedRevision, expectedDomainRevision: 1, requestKey: 'domain-remove',
     }) : input;
     const domainContent = DeploymentDomainContentV1Schema.parse({
-        hostname: 'qa-domain-1101-ingress.localhost', target: { service: 'web', containerPort: 80 },
+        hostname: 'qa-domain-1101-ingress.localhost', target: { service: 'web', containerPort: 80,
+            ...(scenario === 'direct installed Caddy redirect' ? { redirectTo: 'https://destination.example.test' } : {}) },
         healthCheck: { path: '/', expectStatus: 200 },
         // A previously prepared tunnel retains its opaque target grant; this
         // native recovery does not configure the vendor Account again.
@@ -1383,12 +1389,20 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 expect(transitions).toMatchObject(networkConnectFailure ? [] : [{ observations: [{ state: 'active' }] }]);
                 if (!networkConnectFailure) expect(admissions[0]?.placements).toMatchObject([{ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }]);
             }
-        } else if (scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'incumbent receipt joining member') {
+        } else if (recordedReplicaCase || scenario === 'membership join installed' || scenario === 'incumbent receipt joining member') {
             expect(result, `Native public TLS listener/publication required for Domain admission: ${JSON.stringify(result)}`)
                 .toMatchObject({ ok: true, domain: { state: 'active' } });
             expect(admissions).toHaveLength(1);
             expect(children).toHaveLength(2);
             expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: 'active' }] }]);
+            if (recordedReplicaCase) {
+                expect(transitions).toMatchObject([{ observations: [
+                    { routedReplicas: [{ containerName: 'deployed-web-1' }, { containerName: 'deployed-web-2' }] },
+                    { routedReplicas: scenario === 'direct installed Caddy redirect' ? []
+                        : [{ containerName: 'deployed-web-1' }, { containerName: 'deployed-web-2' }] },
+                ] }]);
+                expect(JSON.stringify(transitions)).not.toContain('deployed-db-1');
+            }
             expect(nativeResults).toMatchObject([{ caddy: { status: 'ready' } }, { state: 'active' }, { state: 'active' }]);
             expect(admissions[0]?.placements).toEqual(expect.arrayContaining([
                 expect.objectContaining({ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }),

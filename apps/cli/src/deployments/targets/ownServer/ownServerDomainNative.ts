@@ -460,7 +460,12 @@ export function createOwnServerDomainNative(host: Readonly<{
                 'details' in result ? result.details : undefined, 'failureCause' in result ? result.failureCause : undefined);
             const observation: DeploymentDomainObservationBodyV1 = { capture: job.capture,
                 state: routeState, dnsHealth: await readDnsHealth(),
-                ...(result.networkExposure ? { networkExposure: result.networkExposure } : {}) };
+                ...(result.networkExposure ? { networkExposure: result.networkExposure } : {}),
+                // Materialization owns localOrigin: redirects and edge-to-origin
+                // proxies do not configure local replicas, even if discovered.
+                ...(result.networkExposure?.kind === 'ready' ? { routedReplicas:
+                    result.networkExposure.localOrigin && route.upstreams.kind === 'replicas'
+                        ? route.upstreams.containerNames.map(containerName => ({ containerName })) : [] } : {}) };
             return signObservation(observation);
         } finally { await acquired.release(); }
     }
