@@ -188,6 +188,24 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         release();
     });
 
+    it('keeps showing last-known meters without an error when a background refresh failed', async () => {
+        const snapshot = {
+            v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
+            fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null,
+            meters: [{ meterId: 'five_hour', label: '5-hour', used: 5, limit: 10, unit: 'requests' as const,
+                utilizationPct: 50, resetsAt: null, status: 'ok' as const, details: {} }],
+            evidence: { headers: { 'retry-after': new Date(Date.now() + 60 * 60_000).toISOString() } },
+        };
+        getSnapshotPlain.mockResolvedValue(snapshot);
+        // The daemon's own poll was throttled upstream; no refresh was requested from this client.
+        readMetadata = { fetchedAt: 1, staleAfterMs: snapshot.staleAfterMs, status: 'error', refreshErrorAt: 2 };
+        const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
+        const release = retainQuotaSnapshotPolling(key, ctx);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(getQuotaSnapshotEntry(key)).toMatchObject({ snapshot: { meters: snapshot.meters }, refreshing: false, error: null });
+        release();
+    });
+
     it('keeps a newer snapshot pending while the authoritative refresh marker remains', async () => {
         const snapshot = { v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
             fetchedAt: 1, staleAfterMs: 60_000, planLabel: null, accountLabel: null, meters: [] };

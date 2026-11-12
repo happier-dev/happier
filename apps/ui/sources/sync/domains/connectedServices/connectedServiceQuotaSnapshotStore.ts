@@ -368,7 +368,12 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
                 opened = null;
             }
             entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
-            if (opened && readMetadata?.status === 'error' && readMetadata.refreshRequestedAt === undefined) {
+            // A settled failure answers this client's own refresh request, or explains an empty observation.
+            // A background poll failure keeps last-known meters on screen without an error: the daemon only
+            // re-fetches once a snapshot is past its freshness bound, so staleness (`fetchedAt + staleAfterMs`)
+            // stays the consumer's signal and the next successful read replaces the data.
+            if (opened && readMetadata?.status === 'error' && readMetadata.refreshRequestedAt === undefined
+                && (entry.refreshAccepted || opened.meters.length === 0)) {
                 const retryAfter = opened.evidence?.headers?.['retry-after'];
                 const retryAt = typeof retryAfter === 'string' ? Date.parse(retryAfter) : NaN;
                 entry.error = Number.isFinite(retryAt) && retryAt > Date.now()
