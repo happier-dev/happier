@@ -22,7 +22,7 @@ import {
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
 } from './contributionRegistry';
-import { createConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountAttemptConfigurationStore, createConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import { anthropicConnectedAccountRuntime, ANTHROPIC_API_KEY_INPUT_SCHEMA } from '../../../../../../packages/plugins/claude/src/connectedAccounts/anthropicRuntime';
@@ -472,6 +472,55 @@ describe('addressed manual attempts', () => {
                 status: 'conflict', code: 'connected_account_runtime_generation_changed',
             });
             expect(next.invoke).not.toHaveBeenCalled();
+        } finally { first.owner.dispose(); next.owner.dispose(); }
+    });
+
+    it('carries a replaced manual configuration into a fresh host before submit', async () => {
+        const original = manualMode();
+        const admittedMode = { ...original, descriptor: PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            ...original.descriptor, configuration: accountScopedConfiguration(),
+        }) };
+        const api = createConnectedAccountAttemptTransactionApiBoundary();
+        const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+            credentials: { token: 'account-token', encryption: null },
+            getAccountEncryptionMode: async () => 'plain', getMachineId: () => null, now: () => 1_000, api,
+        });
+        const makeHost = () => {
+            const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'configuration-2', transactions });
+            const configuration = createConnectedAccountConfigurationOwner({
+                read: async target => target.kind === 'attempt' ? store.read(target) : null,
+                replace: async input => {
+                    if (input.target.kind !== 'attempt') throw new Error('Expected attempt');
+                    return store.replace({ ...input, target: input.target });
+                },
+                destroyAttempt: store.destroy,
+                secrets: { admit: async () => {}, has: async () => false, read: async () => null },
+                isRuntimeCurrent: () => true,
+            });
+            return { configuration, ...harness({ admittedMode, attemptAddresses: transactions.address,
+                admitConfiguration: configuration.admit, configurationCurrent: configuration.isCurrent,
+                destroyAttemptConfiguration: configuration.destroyAttempt }) };
+        };
+        const first = makeHost();
+        const next = makeHost();
+        try {
+            expect(await first.owner.beginConnect({ service, modeId: 'manual' })).toMatchObject({ status: 'configurationRequired' });
+            const control = await first.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' });
+            expect(await first.configuration.replaceForControl({ ...control!, expectedRevision: null,
+                values: { tenant: 'fixture' }, secretValues: {} })).toMatchObject({ status: 'committed' });
+            expect(await first.owner.continueConnect({ attemptId: 'attempt-1', expectedConfigurationRevision: 'configuration-2' }))
+                .toMatchObject({ status: 'awaitingManual' });
+            expect(api.records.size).toBe(1);
+            first.owner.dispose();
+            expect(await next.owner.ensureRestored({ attemptId: 'attempt-1' })).toBeNull();
+            expect(api.records.size).toBe(1);
+            expect(await next.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'synthetic-token' } }))
+                .toMatchObject({ status: 'connected' });
+            expect(next.settle).toHaveBeenCalledOnce();
+            expect(next.settle.mock.calls[0]?.[0]).toMatchObject({
+                expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: { values: { tenant: 'fixture' } },
+            });
+            expect(api.records.size).toBe(0);
         } finally { first.owner.dispose(); next.owner.dispose(); }
     });
 

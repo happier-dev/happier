@@ -9,6 +9,7 @@ export const ConnectedAccountManualAttemptBasisSchema = z.strictObject({
     expectedCredentialRevision: z.nullable(z.string()),
     expectedCredentialConfigurationRevision: z.nullable(z.string()),
     expectedConfigurationRevision: z.nullable(z.string()),
+    stagedAccountConfigurationContent: z.optional(z.unknown()),
 });
 
 export const ConnectedAccountManualAttemptDraftSchema = z.strictObject({

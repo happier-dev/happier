@@ -252,7 +252,8 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const first = createHost();
     const manual = { account: null, sourceCustody: managedCustody,
       expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
-      expectedConfigurationRevision: 'configuration-1' };
+      expectedConfigurationRevision: 'configuration-1',
+      stagedAccountConfigurationContent: { values: { tenant: 'fixture' }, secretRefs: {}, secretValues: { clientSecret: 'synthetic-secret' } } };
     const snapshot = { attemptId: 'manual-handoff', kind: 'manual' as const,
       phase: 'awaitingManual' as const, createdAtMs: 5_000,
       intent: 'connect' as const, service, modeId: 'manual', manual };

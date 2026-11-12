@@ -9746,9 +9746,10 @@ Local cancellation is authoritative immediately; the best-effort provider cancel
 callback follows the invocation lifetime without a separate host timeout.
 
 Unsubmitted manual attempts retain their Account, mode, source custody and
-configuration/credential revision basis in the existing Account-mode attempt
-transaction envelope. A fresh CLI, app or approval executor can restore that draft through
-the shared attempt owner; manual input and resolved Saved Secret values are supplied
+configuration/credential revision basis and staged Account configuration in the existing
+Account-mode attempt transaction envelope. The shared configuration store restores
+that staged content at the retained revision when a fresh CLI, app or approval
+executor resumes the draft through the shared attempt owner; manual input and resolved Saved Secret values are supplied
 only by the submitting invocation. Before provider work starts, the owner advances
 the existing address to `starting` and removes its resumable draft. Another host
 then reports an unknown outcome requiring reconnection rather than replaying the

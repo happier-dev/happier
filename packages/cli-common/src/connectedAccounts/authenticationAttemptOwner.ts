@@ -1290,6 +1290,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     expectedCredentialRevision: attempt.expectedCredentialRevision,
                     expectedCredentialConfigurationRevision: attempt.expectedCredentialConfigurationRevision,
                     expectedConfigurationRevision: attempt.configuration?.snapshot.revision ?? null,
+                    ...(attempt.configuration?.stagedAccountConfigurationContent === undefined ? {} : {
+                        stagedAccountConfigurationContent: attempt.configuration.stagedAccountConfigurationContent,
+                    }),
                 } } : {}),
             });
             attempt.addressExpiresAtMs = acknowledgement.expiresAtMs;

@@ -183,6 +183,15 @@ export function createConnectedAccountAttemptConfigurationStore(params: Readonly
             }
             const record = await params.transactions?.address?.read(target.attemptId);
             if (!record) return null;
+            if (record.kind === 'manual') {
+                if (!sameService(record.scope.service, target.service) || record.scope.modeId !== target.modeId) return null;
+                const manual = await params.transactions?.address?.readManualDraft?.(record);
+                return manual?.stagedAccountConfigurationContent === undefined || manual.expectedConfigurationRevision === null
+                    ? null
+                    : parseConnectedAccountConfigurationRecordContent(
+                        manual.stagedAccountConfigurationContent, manual.expectedConfigurationRevision, 'attempt',
+                    );
+            }
             const snapshot = record.kind === 'oauth'
                 ? (await params.transactions?.oauth?.read?.(target.attemptId, record))?.snapshot
                 : record.kind === 'device'
