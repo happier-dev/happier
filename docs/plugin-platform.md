@@ -79,6 +79,13 @@ omitted `required`) still withdraw the declaration. Author validation stays stri
 re-admission of the original manifest restores a reference once its producer is
 available. This decision belongs to Protocol's contribution catalog and load
 admission; runtime and UI consumers use their admitted projection.
+The same upstream loading/admission result projects known excluded sources into
+`TargetedContributionSnapshot.unavailablePlugins` as `{ pluginId, code }` entries.
+The optional list is omitted when empty and is not a complete installation
+inventory. An optional-reference diagnostic carries its known `unavailableSource`
+from that list; an absent referenced plugin without a more specific source failure
+uses `plugin_source_missing`. Registration and consumers carry these facts rather
+than infer exclusions from missing contributions.
 Logs name the blocking plugin ids and codes;
 dependent diagnostics retain those causes. Static declarations remain available
 for diagnosis and repair. Existing predecessor retirement and lease custody still
@@ -3564,7 +3571,7 @@ still requires exactly one explicit Account or native-service selection.
 
 Contribution-family membership and normalization are Protocol-owned. In development source, the CLI's [`projection/families.ts`](../apps/cli/src/plugins/projection/families.ts) asserts its descriptors against that catalog, adds current occurrence facts and validates each projected entry with the existing Protocol schema. The daemon omits an invalid entry and publishes a plugin-attributed diagnostic identifying its family and entry, while retaining healthy entries in the same projection. Agent catalog and UI registries consume that projection; a feature must not scan Actions, invent conventional ids or install a second registry to discover its contributors.
 
-The development-only `machineProvisioners` family declares native launch and resource schemas and same-plugin Account or daemon Action roles through its [Protocol owner](../packages/protocol/src/plugins/contributions/machineProvisioners.ts). Discovery reads descriptors without importing provisioner leaves; selected or retained contribution demand activates only the needed leaf through the existing `activate(api)` Action ABI. Roles receive raw declared launch choices or resource values, and options receive the provider-declared query value. The host retains qualified resource references, controller and occurrence identity, current-row custody and captured credentials separately. Effectful roles require that private admission; ordinary contributed Action calls cannot supply it. Retained reads may use the same row custody, while initial checks and options can pin a private captured-account lease without inventing a managed row. Native enrollment accepts buffered argv/private-stdin execution through the same ordinary enrollment recipe; live output is optional. Buffered pairing uses the existing auth request, controller approval and auth wait producers, not another installer or enrollment authority. Only the selected guest process receives any invocation-private output observer and inherited task budget; captured preflight processes do not.
+The development-only `machineProvisioners` family declares native launch and resource schemas and same-plugin Account or daemon Action roles through its [Protocol owner](../packages/protocol/src/plugins/contributions/machineProvisioners.ts). Discovery reads descriptors without importing provisioner leaves; selected or retained contribution demand activates only the needed leaf through the existing `activate(api)` Action ABI. Roles receive raw declared launch choices or resource values, and options receive the provider-declared query value. The host retains qualified resource references, controller and occurrence identity, current-row custody and captured credentials separately. Effectful roles require that private admission; ordinary contributed Action calls cannot supply it. Retained reads may use the same row custody, while initial checks and options can pin a private captured-account lease without inventing a managed row. Native enrollment accepts buffered argv/private-stdin execution through the same ordinary enrollment recipe; live output is optional. Buffered pairing uses the existing auth request, controller approval and auth wait producers, not another installer or enrollment authority. Only the selected guest process receives any invocation-private output observer and inherited task budget; captured preflight processes do not. A provisioner may also declare the optional `bootstrapTransport.stream` role (input `{resource, argv}`, result `{termination}` only): a long-lived non-PTY duplex byte channel for one guest argv, used to reach the per-Session holder in a guest that runs no Happier daemon. The Action spawns the provider's native carrier with `ExecService.spawn(…, {outputDelivery:'invocation'})`; the host feeds that process's stdin from its private invocation channel and observes its stdout, with no timeout, captured output or new lifetime owner (the channel lives as long as the invocation; destroying it aborts the invocation). The returned termination describes the local carrier only: a channel that ends never proves the guest process exited. Devcontainer (`docker exec --interactive` / `devcontainer exec`), Lima (`limactl shell`) and Coder (`coder ssh`) implement it; omitting it means the provider has no channel.
 
 An explicit managed guest diagnostic read sends `allowWake: false` on the existing
 native exec role. The provisioner must execute only on an already reachable running
@@ -9022,6 +9029,15 @@ field policies and validation issues. Supplier-owned Classic child schemas do
 not require a first-party Classic container or namespace import.
 
 ### Standalone Voice attempt policy (0.3 development)
+
+A disconnect with pending realtime tools ends the attempt with
+`voice_tool_result_delivery_unrecoverable`. The existing Retry action starts a
+new conversation; the host does not replay a retained result into a replacement
+provider response. A failed result submission uses the same recovery. The tool
+barrier retains effect outcomes by actual tool-call ID for one execution per
+call (including ElevenLabs duplicate callbacks), independently of reconnect.
+Current privacy projection still applies before delivery. xAI's saved provider
+conversation ID and Forget operation are separate from pending-tool delivery.
 
 Realtime `provider_error` events keep their closed host category and may carry
 an optional content-free `providerCode` for diagnostics. Provider messages and

@@ -1,8 +1,10 @@
 import fastify from 'fastify';
+import * as undici from 'undici';
 import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, normalizeActionsSettingsV1, QualifiedConnectedAccountCredentialSnapshotV4Schema,
-    QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+    QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountProfileV4Schema,
+    QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
@@ -16,6 +18,9 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-vercel/src/manifest';
+
+// Portable Account HTTP uses the native Undici adapter; feature discovery uses fetch.
+vi.mock('undici', async importOriginal => ({ ...await importOriginal<typeof import('undici')>(), fetch: vi.fn() }));
 
 // Original CLI preparation, portable public author/runtime, credential owner,
 // power engine and report stay real. Only Home/vendor HTTP and temp OS custody vary.
@@ -49,7 +54,7 @@ it.each(['custodian', 'noncustodian'] as const)(
         const seal = (kind: 'credential' | 'configuration', payload: Parameters<typeof sealQualifiedConnectedAccountContentEnvelope>[0]['payload']) => sealQualifiedConnectedAccountContentEnvelope({
             kind, accountMode: 'plain', payload, randomBytes: length => new Uint8Array(length),
         });
-        const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: selected, authenticationModeId: 'token',
+        let credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: selected, authenticationModeId: 'token',
             revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision: 'selected-config',
             content: seal('credential', { v: 1, values: { token: secret } }), metadata: { scopes: [] } });
         const configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ target: { kind: 'account', ref: selected },
@@ -60,7 +65,7 @@ it.each(['custodian', 'noncustodian'] as const)(
         const resource = { name: 'happier-retained', managedId: 'retained', createdAt: 1000, teamId: 'team_one', projectId: 'prj_one' };
         const launch = { provider, schemaVersion: 1, name: 'Retained', choices: { image: 'vercel/sandbox/universal:latest', region: 'iad1',
             vcpus: 2, timeoutMs: 300000, snapshotExpirationMs: 0 }, credentials: [{
-            purpose: { consumer: { pluginId: authored.pluginId, localId: provisioner.actions.power! }, purpose: 'cloud-api' },
+            purpose: { consumer: provider, purpose: 'cloud-api' },
             account: selected,
         }] };
         let machine = ManagedMachineV1Schema.parse({ id: resource.managedId, homeId, custodianAccountId: accountId,
@@ -88,6 +93,15 @@ it.each(['custodian', 'noncustodian'] as const)(
             return credential;
         });
         app.get('/v4/connect/qualified/configuration', async () => configuration);
+        app.patch('/v4/connect/qualified/credential/health', async request => {
+            const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(request.body);
+            expect(patch.ref).toEqual(selected);
+            expect(patch.expectedCredentialRevision).toBe(credential.credentialRevision);
+            expect(patch.expectedConfigurationRevision).toBe(credential.configurationRevision);
+            credential = { ...credential, health: patch.health };
+            return QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse({ success: true,
+                credentialRevision: credential.credentialRevision, configurationRevision: credential.configurationRevision });
+        });
         app.post('/v1/machines/managed/actions/get', async (_request, reply) => {
             machineReads++;
             return actor === 'noncustodian' ? reply.code(403).send({ code: 'permission_denied' }) : machine;
@@ -113,7 +127,7 @@ it.each(['custodian', 'noncustodian'] as const)(
         let resumes = 0;
         const vendorHeaders: string[] = [];
         const session = { id: 'sbx_one', sourceSandboxName: resource.name, projectId: resource.projectId, createdAt: resource.createdAt };
-        vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+        const fixtureFetch = vi.fn<typeof fetch>(async (url, init) => {
             const address = new URL(String(url));
             if (address.origin !== 'https://api.vercel.com') {
                 expect(address.origin).toBe(serverHttpBaseUrl);
@@ -131,7 +145,14 @@ it.each(['custodian', 'noncustodian'] as const)(
             return Response.json({ sandbox: { name: resource.name, createdAt: resource.createdAt,
                 tags: { 'happier-managed-id': machine.id }, persistent: true, status: running ? 'running' : 'stopped',
                 currentSessionId: session.id, ...(!running ? { currentSnapshotId: 'snap_one' } : {}) }, session });
-        }));
+        });
+        vi.stubGlobal('fetch', fixtureFetch);
+        vi.mocked(undici.fetch).mockImplementation(async (url, init) => {
+            const response = await fixtureFetch(String(url), { method: init?.method,
+                headers: [...new undici.Headers(init?.headers)] });
+            return new undici.Response(await response.arrayBuffer(), { status: response.status,
+                headers: [...response.headers] });
+        });
         try {
             const snapshot = getActiveAccountSettingsSnapshot()!;
             const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
@@ -171,7 +192,7 @@ it.each(['custodian', 'noncustodian'] as const)(
             expect(readAccounts.every(account => account === selected.accountId)).toBe(true);
             expect(JSON.stringify(result)).not.toContain(secret);
         } finally {
-            restore(); await app.close(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests();
+            restore(); await app.close(); vi.mocked(undici.fetch).mockReset(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests();
         }
     });
 });

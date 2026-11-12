@@ -3,6 +3,27 @@ import { describe, expect, it, vi } from 'vitest';
 import { createProviderRedactionLease } from './redaction';
 
 describe('provider redaction lease', () => {
+  it('delivers safe bytes immediately while retaining only a possible split secret', () => {
+    const lease = createProviderRedactionLease({ values: ['selected-vercel-token'] });
+    const stream = lease.createStreamingSanitizer();
+    const frame = new TextEncoder().encode('{"message":"ready"}\n');
+
+    expect(stream.pushBytes(frame)).toEqual(frame);
+    expect(lease.isActive()).toBe(true);
+    expect(stream.push('selected-vercel-')).toBe('');
+    expect(stream.push('token\n')).toBe('[REDACTED]\n');
+    expect(stream.flush()).toBe('');
+    lease.close();
+  });
+
+  it('retains an ambiguous shorter secret until a longer overlapping secret is decided', () => {
+    const stream = createProviderRedactionLease({ values: ['sëcret', 'sëcret-value'] }).createStreamingSanitizer();
+
+    expect(stream.push('before sëcret')).toBe('before ');
+    expect(stream.push('-value after')).toBe('[REDACTED] after');
+    expect(stream.flush()).toBe('');
+  });
+
   it('redacts every exact registered value and drops them on idempotent cleanup', () => {
     const onClose = vi.fn();
     const lease = createProviderRedactionLease({

@@ -1,3 +1,4 @@
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
@@ -138,7 +139,9 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
             const opened = await owner.open({
                 subscriptionId,
                 resourceId: reference.localId,
-                deliver: listener,
+                deliver: event => listener(event.kind === 'pages'
+                    ? { ...event, pages: event.pages.map(page => ({ contentType: page.contentType, digest: page.digest,
+                        bytes: decodeBase64(page.bytesBase64, 'base64') })) } : event),
                 ...(signal === undefined ? {} : { signal }),
             });
             if (!opened.ok) {

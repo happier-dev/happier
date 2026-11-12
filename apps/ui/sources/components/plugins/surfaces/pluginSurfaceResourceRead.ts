@@ -191,8 +191,11 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
     pluginId?: string;
     resource: PluginContextualResourceBinding;
     isCurrent?: () => boolean;
-}>): Pick<PluginUiResourceClient, 'readResource'> {
+}>): Pick<PluginUiResourceClient, 'readResource' | 'delivery'> {
+    const runtimePages = 'hostResource' in input.resource && input.resource.hostResource.hostRead === 'deployments.logs'
+        && input.resource.hostResource.input.kind === 'runtime';
     return Object.freeze({
+        ...(runtimePages ? { delivery: 'pages' as const } : {}),
         async readResource(resource, options) {
             if ('hostResource' in input.resource) {
                 const read = input.resource.read ?? machinePluginUiResourceRead;

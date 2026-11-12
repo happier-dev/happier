@@ -194,6 +194,11 @@ function readResourceSubscriptionEvent(value: JsonValue, subscriptionId: string)
     if (!parsed.success || parsed.data.subscriptionId !== subscriptionId) {
         throw new PluginUiHostApiClientError('invalid_payload', 'Host returned an invalid resource subscription event.');
     }
+    if (parsed.data.kind === 'pages') {
+        return { ...parsed.data, pages: parsed.data.pages.map(({ bytesBase64, ...page }) => ({
+            ...page, bytes: decodeBase64(bytesBase64),
+        })) };
+    }
     return parsed.data;
 }
 

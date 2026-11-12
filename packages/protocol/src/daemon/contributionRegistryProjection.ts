@@ -1,8 +1,10 @@
+import { ConnectedAccountActionFormSelectionV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import * as zMini from '../zodRuntimePolicy.js';
 export { buildPluginBrowserProjectionEntryId, normalizePluginBrowserProjection, EMPTY_PLUGIN_BROWSER_PROJECTION,
   type PluginBrowserProjectionEntry, type PluginBrowserTargetProjection, type PluginBrowserActionProjectionEntry,
   type PluginBrowserActionProjection, type PluginBrowserProjectionModel } from './browserProjection.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { PluginUiResourceContentV1Schema } from '../plugins/ui/resourceContent.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { PluginActionFailureResponseV1Schema } from '../plugins/actions/failureResponse.js';
 import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
@@ -718,7 +720,7 @@ export type DaemonPluginActionFormConnectedAccountOptionsResolveRequest = z.infe
 
 /** Native choices carry the exact declared sibling path; no credential material leaves the daemon. */
 export const DaemonPluginActionFormConnectedAccountOptionSchema = lazyZodSchema(() => z.union([z.strictObject({
-  value: QualifiedConnectedAccountRefSchema,
+  value: ConnectedAccountActionFormSelectionV1Schema,
   label: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
 }), z.strictObject({
   value: PluginContributionIdentityV1Schema,
@@ -1007,10 +1009,10 @@ export type DaemonPluginUiArtifactBytesReadResponse = z.infer<
 /**
  * Read one declared plugin resource for a mounted plugin UI surface (§3.6).
  *
- * `readResource` is the single snapshot authority for plugin UI: it returns the
- * admitted generation's verified bytes, and no subscription ever carries a
- * payload. A **packaged** resource is immutable within its generation, so this
- * request has no watch counterpart.
+ * `readResource` returns the admitted generation's verified initial or refreshed
+ * bytes. Non-replayable producers can continue with finite pages on their existing
+ * subscription. A **packaged** resource is immutable within its generation, so
+ * this request has no watch counterpart.
  *
  * The reference is caller-scoped. `callerPluginId` is host-stamped from the
  * mounted surface, never author-supplied, and the daemon binds the resource
@@ -1040,7 +1042,7 @@ export type DaemonPluginUiResourceReadRequest = z.infer<
 export const DaemonPluginUiResourceReadResponseSchema = lazyZodSchema(() => z.union([
   z.strictObject({
     ok: z.literal(true), resource: PluginUiMachineServiceReadReferenceV1Schema,
-    contentType: z.literal('application/json'), digest: PluginUiArtifactDigestV1Schema,
+    ...PluginUiResourceContentV1Schema.shape, contentType: z.literal('application/json'),
     bytesBase64: z.string().check(z.refine(isCanonicalBase64)),
   }),
   z.strictObject({
@@ -1050,8 +1052,8 @@ export const DaemonPluginUiResourceReadResponseSchema = lazyZodSchema(() => z.un
       localId: z.string().check(z.trim(), z.minLength(1)),
     }),
     kind: PluginResourceKindV2Schema,
+    ...PluginUiResourceContentV1Schema.shape,
     contentType: z.string().check(z.trim(), z.minLength(1)),
-    digest: PluginUiArtifactDigestV1Schema,
     bytesBase64: z.string().check(z.refine(isCanonicalBase64)),
   }),
   z.strictObject({
@@ -1065,7 +1067,7 @@ export type DaemonPluginUiResourceReadResponse = z.infer<
 >;
 
 /**
- * Live resource invalidation transport for a mounted plugin UI surface
+ * Live Resource subscription transport for a mounted plugin UI surface
  * (§3.6, EU-4b).
  *
  * The app owns the connection: it opens one subscription, long-polls `next`,
@@ -1074,14 +1076,14 @@ export type DaemonPluginUiResourceReadResponse = z.infer<
  * already uses carries all three calls, exactly as the managed-service endpoint
  * read triple does for its stream.
  *
- * `next` never carries resource bytes. The event is the canonical bounded
- * invalidation signal (`PluginUiResourceSubscriptionEventV1`) and the observer
- * re-reads through `daemon.plugins.ui.resources.read`, which stays the single
- * snapshot authority.
+ * Rereadable Resources emit `invalidated`, then the observer obtains their
+ * current bytes through `daemon.plugins.ui.resources.read`. A non-replayable
+ * producer delivers finite Resource content through the generic `pages` arm
+ * on this same subscription. Its exact subscriber and disposal remain owned
+ * by the existing watch, without a replay registry or history cursor.
  *
- * `open` answers with the digest the daemon currently observes, so a late
- * mount, a reconnect or a replaced daemon-side subscription converges on
- * last-known-good plus one re-read instead of a silent stale view.
+ * An `open` digest lets rereadable Resources converge after reconnect through
+ * their canonical read. Reopened live pages remain an incomplete observation.
  */
 export const DaemonPluginUiDeclaredResourceWatchOpenRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),

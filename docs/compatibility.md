@@ -11007,6 +11007,23 @@ Domain schemas in the affected Protocol and CLI paths.
 
 ## Native Domain Caddy diagnostics (0.3 development source)
 
+The closed V1 native Domain observation and captured-placement JSON accept
+optional `routedReplicas: [{ containerName }]` outside placement identity. The
+existing installation signature binds this last successful Domain-apply snapshot.
+The closed get/list header optionally projects `routedReplicas` with literal
+`source: 'recordedTopology'`, a derived count and closed Machine/installation/
+container identity rows. Verification omission retains recorded topology; absent
+desired snapshots remain unknown and removal clears them. These facts do not
+claim current traffic or health, and start-first switches do not refresh them.
+Matching Protocol, CLI and server readers reload together under the unpublished
+0.3 direct cut: earlier strict development readers reject the new fields.
+Existing stored captures without them remain valid. The V1 wire epoch is
+unchanged, independently of package SemVer, and unknown fields remain rejected.
+No column, migration, compatibility adapter, probe or polling path is added.
+The inspected scoped-clean `../0.2` frontier
+`7b0f74960b1393886b994dbda71dcb3439c1ab57` has neither the Domain Protocol nor
+server Domain service path.
+
 The existing Domain `native_execution` failure details now retain an optional
 closed Caddy diagnostic: a fixed step and Docker phase, numeric command/container
 exit status, classified bind failure and TCP port. Raw command output and Docker

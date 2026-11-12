@@ -5,15 +5,33 @@ import { useMachineServiceResource } from './useMachineServiceResource';
 
 type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'deployments.logs' }>;
 type Page = Extract<ManagedServiceNativeLogResultV1, { kind: 'page' }>;
-type LogsProjection = Readonly<{ result: ManagedServiceNativeLogResultV1; lastGoodPage?: Page }>;
+type LogsProjection = Readonly<{
+    result: ManagedServiceNativeLogResultV1;
+    lastGoodPage?: Page;
+    /** Only this admitted Resource view remembers identities; they assert no provider history. */
+    rowIds?: Set<string>;
+}>;
 const LOG_PROJECTION = Object.freeze({
-    decode(content: Readonly<{ bytes: Uint8Array }>, previous: LogsProjection | undefined): LogsProjection {
+    decode(content: Readonly<{ bytes: Uint8Array }>, previous: LogsProjection | undefined,
+        source: 'read' | 'pages'): LogsProjection {
         const result = ManagedServiceNativeLogResultV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes)));
-        // Source changes stop continuation. Ordinary unavailability retains one
-        // admitted finite page; authority-loss errors are retired by the store.
-        const lastGoodPage = result.kind === 'page' ? result
-            : result.kind === 'source-changed' ? undefined : previous?.lastGoodPage;
-        return { result, ...(lastGoodPage ? { lastGoodPage } : {}) };
+        if (result.kind === 'source-changed') return { result };
+        if (result.kind === 'unavailable') return { ...previous, result };
+        const prior = source === 'pages' ? previous?.lastGoodPage : undefined;
+        if (prior && prior.page.sourceRevision !== result.page.sourceRevision)
+            return { result: { kind: 'source-changed', sourceRevision: result.page.sourceRevision } };
+        const rowIds = prior ? previous?.rowIds ?? new Set<string>() : new Set<string>();
+        const { rowId, ...page } = result.page;
+        if (previous && prior && rowId && rowIds.has(rowId))
+            return previous.result.kind === 'page' ? previous : { ...previous, result: prior };
+        if (rowId) rowIds.add(rowId);
+        const lastGoodPage: Page = { kind: 'page', page: { ...page,
+            text: (prior?.page.text ?? '') + page.text,
+            truncated: page.truncated || prior?.page.truncated === true,
+            ...(page.secretMasking === 'incomplete' || prior?.page.secretMasking === 'incomplete'
+                ? { secretMasking: 'incomplete' as const } : {}),
+        } };
+        return { result: lastGoodPage, lastGoodPage, rowIds };
     },
 });
 

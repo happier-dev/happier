@@ -1,6 +1,7 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
+import { PluginUiResourceContentV1Schema } from './resourceContent.js';
 import { PluginUiArtifactDigestV1Schema } from './artifactIntegrity.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { ActionOperationSnapshotV1Schema } from '../../actions/operations/v1.js';
@@ -97,20 +98,18 @@ export type PluginUiDisposeHostResourceRequestV1 =
   z.infer<typeof PluginUiDisposeHostResourceRequestV1Schema>;
 
 /**
- * The canonical plugin UI subscription event (§3.6).
- *
- * It is a **bounded invalidation signal, not a payload channel**: `readResource`
- * remains the single Resource snapshot authority, so an observer re-reads through it
- * after an `invalidated` event rather than receiving resource bytes here.
- * Authority-only watches carry terminal withdrawal, never a credential digest.
- * The predecessor `snapshot` arm carried a full `PluginUiResourceSnapshotV1` — a
- * second data path bound to the declarative session-resource-target vocabulary —
- * and is retired with its `resourceSnapshots.ts` owner; it had no producer.
- *
- * `complete` and `error` are the acknowledged-async retirement and rejection
- * arms and are unchanged.
+ * Resource watches normally invalidate rereadable content. A producer whose
+ * finite pages cannot be reread delivers those bytes on its existing watch.
+ * Subscription identity and disposal remain with the same watch lifetime.
+ * Authority-only watches carry terminal withdrawal, never credential content.
  */
 export const PluginUiResourceSubscriptionEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+    version: z.literal(1),
+    subscriptionId: z.string().check(z.trim(), z.minLength(1)),
+    kind: z.literal('pages'),
+    pages: z.array(PluginUiResourceContentV1Schema),
+  }),
   z.strictObject({
     version: z.literal(1),
     subscriptionId: z.string().check(z.trim(), z.minLength(1)),

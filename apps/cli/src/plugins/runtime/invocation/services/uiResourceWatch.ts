@@ -6,6 +6,7 @@ import { PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol
 import type { PluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type { PluginUiResourceContentV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
@@ -22,10 +23,10 @@ export const UI_RESOURCE_WATCH_DELIVERY_LIMITS = Object.freeze({
 /**
  * The daemon half of the plugin UI live-resource transport (§3.6, EU-4b).
  *
- * It owns exactly one thing: turning the canonical producer's invalidation —
- * `ResourcesService.watch`, whose per-watcher delivery accounting, coalescing
- * and digest suppression already hold — into a signal one long-polling app
- * surface can take, within this transport's delivery budget.
+ * It forwards canonical Resource invalidations and host-observer finite pages
+ * to the exact long-polling subscriber. `ResourcesService.watch` retains its
+ * existing per-watcher accounting, coalescing and digest suppression; finite
+ * page producers await this watch's existing single pending handoff.
  *
  * **No second broker.** Delivery serialization, the per-subscription queue and
  * byte accounting, the runtime-limit
@@ -37,13 +38,10 @@ export const UI_RESOURCE_WATCH_DELIVERY_LIMITS = Object.freeze({
  * let a plugin's declared event deliver a fabricated invalidation to a
  * `watchResource` observer.
  *
- * **No payload channel.** Resource events carry a digest; admitted Action
- * dependencies carry only the private `readInvalidated` signal. The
- * observer re-reads through `readResource`, which stays the single snapshot
- * authority. That is also why a dropped delivery under backpressure cannot
- * strand an observer: the broker only refuses an emit when that subscription
- * already holds ≥1 undelivered signal, and every delivery is a re-read
- * instruction that returns the CURRENT bytes.
+ * Rereadable Resources use digest invalidations and acquire their current
+ * snapshot through `readResource`. An admitted observer may instead deliver
+ * ordered finite pages to its exact subscriber, awaiting each handoff. Those
+ * pages are live deliveries and provide no retained history or replay.
  */
 
 /**
@@ -60,13 +58,14 @@ export type PluginUiResourceWatchPollResult =
     | Readonly<{ status: 'idle' }>;
 
 export type HostResourceWatchError = Pick<Extract<PluginUiResourceSubscriptionEventV1, { kind: 'error' }>, 'code' | 'diagnostics'>;
+export type HostResourceWatchEmit = (digest: string, pages?: readonly PluginUiResourceContentV1[]) => void | Promise<void>;
 export type PluginUiResourceWatchOwner = Readonly<{
     /** Host Account demand shares this transport owner without a plugin occurrence. */
     openHost(params: Readonly<{
         accountId: string;
         subscriptionId: string;
         resource: PluginUiHostReadReferenceV1;
-        bind(signal: AbortSignal, emit: (digest: string) => void,
+        bind(signal: AbortSignal, emit: HostResourceWatchEmit,
             end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>>;
     }>): Promise<Readonly<{ subscriptionId: string; digest: string }>>;
     /**
@@ -303,7 +302,16 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 waiter: null, lastPolledAtMs: nowMs(), terminal: null, closed: false };
             watches.set(key, watch);
             let observedDigest: string | undefined;
-            const publish = (digest: string) => {
+            const publish: HostResourceWatchEmit = (digest, pages) => {
+                if (pages) {
+                    if (!isWatchCurrent(watch)) return;
+                    // These are ordered finite results of THIS admitted observer.
+                    // Awaiting handOff keeps the existing single pending slot as
+                    // backpressure, including while the observer is attaching.
+                    return handOff(watch, PluginUiResourceSubscriptionEventV1Schema.parse({
+                        version: 1, subscriptionId, kind: 'pages', pages,
+                    }));
+                }
                 if (!isWatchCurrent(watch) || observedDigest === digest) return;
                 observedDigest = digest;
                 // Binding can observe before it returns its admitted baseline.

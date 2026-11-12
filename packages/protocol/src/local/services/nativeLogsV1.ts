@@ -21,6 +21,8 @@ export const MachineServiceLogsReadInputV1Schema = lazyZodSchema(() => z.strictO
 export type MachineServiceLogsReadInputV1 = z.infer<typeof MachineServiceLogsReadInputV1Schema>;
 
 export const ManagedServiceNativeLogPageV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Optional producer identity for this frame; omission or empty identity makes no deduplication claim. */
+  rowId: z.optional(z.string()),
   sourceRevision: z.string().check(z.minLength(1)), text: z.string(),
   nextCursor: z.nullable(ManagedServiceNativeLogCursorV1Schema), truncated: z.boolean(),
   secretMasking: z.optional(z.literal('incomplete')),

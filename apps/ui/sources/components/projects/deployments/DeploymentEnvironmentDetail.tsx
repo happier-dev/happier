@@ -31,6 +31,8 @@ import {
 } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, type DeploymentOnFailureV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { buildSessionListDateGroups, formatDayGroupedAgeShort } from '@/sync/domains/session/listing/sessionListDateGroups';
@@ -94,7 +96,8 @@ import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol
 import { createDeploymentActions } from './deploymentActions';
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
-import { useStoredDefinitionDocument } from './StoredDefinitionEditor';
+import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
+import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredDefinitionEditor';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
@@ -287,6 +290,15 @@ export const DeploymentEnvironmentDetail = React.memo(
         input: { ...reference, kind: 'runtime', serverId: props.serverId } };
     }, [active.snapshot.value, platform?.runtimeLogs, props.serverId]);
     const [selectedMethod, setSourceMethod] = React.useState<Readonly<{ targetLinkId: string; value: DeploymentSourceMethodV1 }> | null>(null);
+    // This choice belongs to the next invocation, never to Environment configuration.
+    const [failurePolicyDraft, setFailurePolicyDraft] = React.useState<Readonly<{
+      serverId: string; accountId: string; environmentId: string; value: DeploymentOnFailureV1;
+    }> | null>(null);
+    const onFailure = runtime?.source.kind === 'host' && runtime.members.length > 1
+      ? failurePolicyDraft?.serverId === props.serverId && failurePolicyDraft.accountId === props.accountId
+        && failurePolicyDraft.environmentId === props.environmentId
+        ? failurePolicyDraft.value : DEFAULT_DEPLOYMENT_ON_FAILURE_V1
+      : undefined;
     const sourceMethod = platform?.sourceMethods.includes('upload')
       ? selectedMethod?.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
         ? selectedMethod.value : platform.sourceMethods[0]
@@ -463,7 +475,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const { deploy, review, environmentId } = props;
     const pressDeploy = async () => {
       if (!deploy || availability.kind !== 'ready') return;
-      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(sourceMethod ? { sourceMethod } : {}) }));
+      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), ...(sourceMethod ? { sourceMethod } : {}) }));
     };
     const liveSha =
       active.snapshot.value?.content.sourceIntent?.kind === 'repository'
@@ -471,7 +483,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         : null;
     const pressRedeploy = async () => {
       if (!deploy || availability.kind !== 'ready' || !liveSha) return;
-      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, sha: liveSha, ...(sourceMethod ? { sourceMethod } : {}) }));
+      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), sha: liveSha, ...(sourceMethod ? { sourceMethod } : {}) }));
     };
     const deployBlocked =
       deploying ||
@@ -607,6 +619,11 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Restore a backup: the pre-migration dump the serving deploy kept, read from the active receipt the page
     // already holds. The restore Action decides admission at each press.
     const servingReceipt = active.snapshot.value;
+    const fleetLink = runtime?.targetKind === 'ownServer' && runtime.source.kind === 'host'
+      ? { ...runtime, source: runtime.source } : null;
+    const openFleet = lifetime && detail.environment.capabilities.manageTargets && fleetLink
+      ? () => showDeploymentFleetSheet({ detail, runtimeLink: fleetLink, receipt: servingReceipt, lifetime }) : null;
+
     const retainedBackup = backupSummary.result.value && servingReceipt
       ? retainedBackupFromSummary(backupSummary.result.value, deploymentSourceLabel(servingReceipt.content)) : null;
     const restoreAction = props.restore ?? null;
@@ -693,7 +710,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         && environment.catalogUpdate.upstream.state !== 'current' || environment.catalogUpdate.error)),
     });
     const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
-      void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, whenBusy: 'supersede', ...(sourceMethod ? { sourceMethod } : {}) }));
+      void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), whenBusy: 'supersede', ...(sourceMethod ? { sourceMethod } : {}) }));
     } : null;
     const attentionNotice = (() => {
       switch (attention?.kind) {
@@ -985,6 +1002,12 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </View>
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
+              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
+                revision={detail.content.definition.contentRevision}
+                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
+                onOpen={() => openTab('settings')}
+                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
+                  ? () => openTab('settings') : null} /> : null}
               {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
                 source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
@@ -995,14 +1018,21 @@ export const DeploymentEnvironmentDetail = React.memo(
                 compose={detail.content.definition.compose} serverId={props.serverId} accountId={props.accountId}
                 disabled={!ready || deployBlocked} onDeploy={async sourceIntent => {
                   if (!deploy || availability.kind !== 'ready') return;
-                  await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, sourceIntent, requestKey: randomUUID() }));
+                  await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), sourceIntent, requestKey: randomUUID() }));
                 }} /> : null}
               {runtime && runtime.members.length > 1 ? (
                 <EnvironmentServersSection
                   members={runtime.members}
+                  memberVersions={detail.memberVersions}
+                  failurePolicy={onFailure ? {
+                    value: onFailure,
+                    disabled: !ready || deploying || reviewPending,
+                    onChange: value => setFailurePolicyDraft({ serverId: props.serverId, accountId: props.accountId,
+                      environmentId: props.environmentId, value }),
+                  } : null}
                   health={detail.healthAggregate ?? null}
                   machineName={machineName}
-                  onManage={() => openTab('settings', 'servers-build')}
+                  onManage={openFleet ?? (() => openTab('settings', 'servers-build'))}
                 />
               ) : null}
               {services.length > 0 ? (
@@ -1195,6 +1225,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               focusSection={settingsSection}
               onUnlink={disposition.canDelete ? openDisposition : null}
               onLink={openLink}
+              onManageServers={openFleet}
               onChangeMachine={runtime?.source.kind === 'host' && runtime.state === 'configured'
                 && !activeId && hasNoDeploymentHistory(runtime.id) ? openLink : null}
               onAddPlatform={openPlatform}
@@ -1876,6 +1907,10 @@ function EnvironmentMenu(
 function EnvironmentServersSection(
   props: Readonly<{
     members: readonly Readonly<{ machineId: string; state: 'joining' | 'active' }>[];
+    memberVersions: import('@happier-dev/deployments').DeploymentEnvironmentReadDetailV1['memberVersions'];
+    failurePolicy: Readonly<{
+      value: DeploymentOnFailureV1; disabled: boolean; onChange: (value: DeploymentOnFailureV1) => void;
+    }> | null;
     health: DeploymentEnvironmentDetailV1['healthAggregate'] | null;
     machineName: (machineId: string) => string;
     onManage: () => void;
@@ -1906,7 +1941,8 @@ function EnvironmentServersSection(
         const sentence = member.state === 'joining'
           ? t('projects.deployments.overviewStatus.joining')
           : status === 'down' ? t('projects.deployments.healthDown')
-            : status === 'degraded' ? t('projects.deployments.healthDegraded') : undefined;
+            : status === 'degraded' ? t('projects.deployments.healthDegraded')
+              : props.memberVersions[member.machineId]?.behind ? t('projects.deployments.overviewStatus.behind') : undefined;
         return (
           <Item
             key={member.machineId}
@@ -1918,6 +1954,19 @@ function EnvironmentServersSection(
           />
         );
       })}
+      {props.failurePolicy ? <SegmentedChoiceItem<DeploymentOnFailureV1>
+        testID="project-deployments.environment.failurePolicy"
+        testIDPrefix="project-deployments.environment.failurePolicy"
+        title={t('projects.deployments.receipt.policy')}
+        subtitle={t('projects.deployments.receipt.policyDescription')}
+        options={[
+          { id: 'rollbackAll', label: t('projects.deployments.receipt.rollbackAll') },
+          { id: 'keepPartial', label: t('projects.deployments.receipt.keepPartial') },
+        ]}
+        value={props.failurePolicy.value}
+        onChange={props.failurePolicy.onChange}
+        disabled={props.failurePolicy.disabled}
+      /> : null}
     </ItemGroup>
   );
 }

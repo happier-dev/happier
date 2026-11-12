@@ -34,6 +34,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
     >;
 }> = canonicalRoleInputs;
 export { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export type { DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentTargetVariablesReadResultV1ProtocolSchema,

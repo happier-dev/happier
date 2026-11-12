@@ -50,6 +50,7 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
     const [follow, setFollow] = React.useState(true);
     const { accountLifetime, reference, sourceKey } = input;
     const firstState = input.first;
+    const resourceFirst = reference?.hostRead === 'deployments.logs' && reference.input.kind === 'runtime';
     // The Resource hook must accept absent admission without creating a store or acquiring transport demand.
     const followed = useMachineServiceLogsResource({ accountLifetime, reference,
         active: input.active && followable, follow: follow && followable });
@@ -68,6 +69,11 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
         }
         const previous = baseline.current?.lifetime === accountLifetime && accountLifetime?.isCurrent()
             && baseline.current.index.sourceKey === sourceKey ? baseline.current : null;
+        if (resourceFirst) {
+            const first = continuation?.kind === 'source-changed' ? continuation
+                : followed?.lastGoodPage ?? continuation;
+            return first ? buildMachineServiceLogIndex({ sourceKey, first, baseline: previous?.index }) : null;
+        }
         if (firstState.kind === 'reading' && previous)
             return { kind: 'index', index: previous.index, truncated: previous.truncated, secretMasking: previous.secretMasking };
         return firstState.kind === 'read' ? buildMachineServiceLogIndex({
@@ -77,12 +83,13 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
             // A follow reference with a cursor continues the first page; a tail reference replaces it.
             continues: reference?.input.cursor !== undefined,
         }) : null;
-    }, [sourceKey, accountLifetime, firstState, followed?.value, followed?.lastGoodPage, authorityWithdrawal, reference]);
+    }, [sourceKey, accountLifetime, firstState, followed?.value, followed?.lastGoodPage, authorityWithdrawal, reference, resourceFirst]);
     const index = projection?.kind === 'index' || projection?.kind === 'sourceChanged' ? projection.index : null;
     const followUnavailable = followed?.value?.kind === 'unavailable' ? followed.value.reason : null;
     const stale = firstState.kind === 'reading' && index !== null || projection?.kind === 'sourceChanged'
         || followUnavailable !== null || followed?.error !== undefined
-        || followed?.freshness === 'stale' || followed?.subscription === 'reconnecting';
+        || followed?.freshness === 'stale' || followed?.subscription === 'reconnecting'
+        || resourceFirst && index !== null && followed?.subscription === 'ended';
     React.useEffect(() => {
         if (authorityWithdrawal || baseline.current?.lifetime !== accountLifetime || !accountLifetime?.isCurrent())
             baseline.current = null;
@@ -114,11 +121,17 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
     }, []);
     const read = input.read;
     React.useEffect(() => {
-        if (input.active && firstState.kind === 'idle') void read();
-    }, [input.active, firstState.kind, read]);
+        if (input.active && !resourceFirst && firstState.kind === 'idle') void read();
+    }, [input.active, firstState.kind, read, resourceFirst]);
+    const refresh = followed?.refresh;
+    const readAgain = React.useCallback(async () => {
+        if (!resourceFirst) return read();
+        setFollow(true);
+        await refresh?.();
+    }, [resourceFirst, read, refresh]);
     const firstRead = authorityWithdrawal && firstState.kind === 'read'
         ? { ...firstState, value: authorityWithdrawal } : firstState;
     const followedRead = authorityWithdrawal && followed ? { ...followed, lastGoodPage: undefined } : followed;
-    return { first: firstRead, readAgain: read, follow, setFollow, followed: followedRead, followUnavailable, stale,
+    return { first: firstRead, readAgain, follow, setFollow, followed: followedRead, followUnavailable, stale,
         projection, index, viewer, copyLoaded, exportLoaded };
 }

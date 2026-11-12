@@ -292,6 +292,10 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                         watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', 'plugin_resource_event_invalid'));
                         return;
                     }
+                    if (event.kind === 'pages') {
+                        watch.deliver(event);
+                        continue;
+                    }
                     if (event.kind === 'invalidated') {
                         if (watch.actionRead) {
                             retire(watch.subscriptionId);

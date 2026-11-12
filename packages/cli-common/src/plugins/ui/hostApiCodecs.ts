@@ -1,4 +1,4 @@
-import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
+import { PluginUiResourceContentV1Schema } from '@happier-dev/protocol/plugins/ui/resourceContent';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginDiagnosticData } from '../errors.js';
 
@@ -24,35 +24,18 @@ export function decodePluginUiResourceContent(
     value: JsonValue | undefined,
     decodeBytes: (bytesBase64: string) => Uint8Array,
 ): PluginUiHostApiDecodeResult<ResourceContent> {
-    if (!isJsonRecord(value)) return { ok: false, diagnostic: 'resource_response_not_object' };
-    const keys = Object.keys(value);
-    if (
-        keys.length !== 3
-        || !keys.includes('contentType')
-        || !keys.includes('digest')
-        || !keys.includes('bytesBase64')
-    ) {
-        return { ok: false, diagnostic: 'resource_response_fields_invalid' };
-    }
-    if (
-        typeof value.contentType !== 'string'
-        || value.contentType.trim() === ''
-        || typeof value.digest !== 'string'
-        || !/^sha256:[a-f0-9]{64}$/u.test(value.digest)
-        || typeof value.bytesBase64 !== 'string'
-    ) {
-        return { ok: false, diagnostic: 'resource_response_invalid' };
-    }
-    if (readPaddedBase64DecodedLength(value.bytesBase64) === null) {
-        return { ok: false, diagnostic: 'resource_bytes_invalid' };
+    const parsed = PluginUiResourceContentV1Schema.safeParse(value);
+    if (!parsed.success) {
+        const invalidBytes = parsed.error.issues.some(issue => issue.path[0] === 'bytesBase64');
+        return { ok: false, diagnostic: invalidBytes ? 'resource_bytes_invalid' : 'resource_response_invalid' };
     }
     try {
         return {
             ok: true,
             value: Object.freeze({
-                contentType: value.contentType,
-                digest: value.digest,
-                bytes: decodeBytes(value.bytesBase64),
+                contentType: parsed.data.contentType,
+                digest: parsed.data.digest,
+                bytes: decodeBytes(parsed.data.bytesBase64),
             }),
         };
     } catch {

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import fastify from 'fastify';
-import { afterEach, expect, it, onTestFailed, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse, FeaturesResponseSchema, QualifiedConnectedAccountRefSchema, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -150,8 +150,6 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
     const directory = await mkdtemp(join(tmpdir(), 'account-vercel-runtime-'));
     // Existing scripted, schema-backed Home fixture over loopback; CLI admission and custody stay real.
     const app = fastify();
-    const homeRequests: string[] = [];
-    app.addHook('onRequest', (request, _reply, done) => { homeRequests.push(`${request.method} ${request.url}`); done(); });
     const accountId = 'requester';
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
     const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'selected-vercel' };
@@ -220,11 +218,6 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
     const watches = createStablePluginUiResourceWatchOwner({ isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null });
     const cancelled: number[] = [];
     let runtimeRequests = 0;
-    let phase = 'setup';
-    let cleanupFrom: string | undefined;
-    let initialEnvelope: unknown;
-    onTestFailed(() => { console.error('Account runtime checkpoint', { phase, cleanupFrom, initialEnvelope, runtimeRequests, cancelled,
-        providerRequests: vendor.request.mock.calls.map(([url]) => url) }); });
     let followController: ReadableStreamDefaultController<Uint8Array> | undefined;
     // Replay the typed derivative of the recorded documentation example; the second frame is a further mutation.
     const frames = [openApiTypedRuntimeLog, { ...openApiTypedRuntimeLog, rowId: 'second-provider-row',
@@ -280,18 +273,8 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
                     installationId: 'installation-a', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
             const input = { serverId: 'home', environmentId: environment.environment.id, deploymentId: receipt.id,
                 targetLinkId: link.targetLink.id, machineId: 'machine-a', installationId: 'installation-a', kind: 'runtime' as const };
-            phase = 'initial Action';
             const initial = await executor.execute('deployments.logs.read', input, context);
-            initialEnvelope = initial;
-            phase = initial.ok ? 'initial result' : 'options diagnostic';
-            const optionsRead = initial.ok ? undefined : await executor.execute('action.invoke', {
-                action: { pluginId: vercelManifest.id, localId: 'target-options-read' },
-                input: { credentialRef: account, credentialPrincipal: preparation.credentialPrincipal, fieldPath: 'providerAccountId' },
-            }, context);
-            expect(initial, JSON.stringify({ initial, optionsRead, homeRequests, credentialHealth: credential.health,
-                credentialPluginDiagnostics: native.pluginDiagnosticsByPluginId[account.service.pluginId],
-                credentialPluginActivation: native.targetActivationFacts.filter(fact => fact.pluginId === account.service.pluginId),
-                providerRequests: vendor.request.mock.calls.map(([url]) => url) })).toMatchObject({ ok: true, result: { ok: true, logs: { kind: 'page',
+            expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, result: { ok: true, logs: { kind: 'page',
                 page: { sourceRevision: 'deployment_selected', rowId: frames[0].rowId, text: expect.any(String), nextCursor: null, truncated: true } } } });
             if (!initial.ok) throw new Error(JSON.stringify(initial));
             const initialResult = DeploymentActionOutputSchemasV1['deployments.logs.read'].parse(initial.result);
@@ -303,7 +286,6 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
             const resource = { hostRead: 'deployments.logs' as const, sourceRevision: 'deployment_selected', input };
             const resourceContext = { signal: context.signal!, localActionContext: context };
             const subscription = { hostAccountId: accountId, subscriptionId: 'real-vercel-follow', resource };
-            phase = 'watch open';
             await watches.openHost({ accountId, subscriptionId: subscription.subscriptionId, resource,
                 bind: (signal, emit, end) => hostRead.observe(resource, 'machine-a', resourceContext, signal, emit, end) });
             for (const [index, frame] of frames.entries()) {
@@ -311,7 +293,6 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
                     if (!followController) throw new Error('Expected demanded provider stream');
                     followController.enqueue(new TextEncoder().encode(`${JSON.stringify(frame)}\n`));
                 }
-                phase = `watch page ${index}`;
                 const next = await watches.next(subscription);
                 expect(next).toMatchObject({ status: 'event', event: { kind: 'pages' } });
                 if (next.status !== 'event' || next.event.kind !== 'pages') throw new Error('Expected finite pushed pages');
@@ -321,13 +302,10 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
                 expect(JSON.parse(page.page.text)).toEqual(frame);
             }
             expect(runtimeRequests).toBe(2); // One finite read and one demand; no per-page rerun/history request.
-            phase = 'watch close';
             expect(await watches.close(subscription)).toBe(true);
             expect(cancelled).toEqual([1, 2]);
         });
     } finally {
-        cleanupFrom = phase;
-        phase = 'cleanup';
         watches.retire();
         await runtime?.registry.dispose();
         await native?.dispose();

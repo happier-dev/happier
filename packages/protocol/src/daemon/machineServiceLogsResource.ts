@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineServiceLogsReadInputV1Schema } from '../local/services/nativeLogsV1.js';
 import { MachineServicesListInputV1Schema } from '../actions/specs/machine/services.js';
 import { RPC_METHODS } from '../rpc/methods.js';
-import { DeploymentHealthCurrentInputV1Schema, DeploymentStageLogsReadInputV1Schema } from '../deployments/deploymentReadsV1.js';
+import { DeploymentHealthCurrentInputV1Schema, DeploymentStageLogsReadInputV1Schema, DeploymentRuntimeLogsReadInputV1Schema } from '../deployments/deploymentReadsV1.js';
 
 /** Native identity only. The original logs Action remains the admission owner. */
 export const PluginUiMachineServiceLogsReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -25,7 +25,9 @@ export const PluginUiDeploymentEdgeHealthReadReferenceV1Schema = lazyZodSchema((
 }));
 /** Same admitted deployment logs Action and native Resource lifetime; no second log endpoint. */
 export const PluginUiDeploymentStageLogsReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
-  hostRead: z.literal('deployments.logs'), input: z.extend(DeploymentStageLogsReadInputV1Schema, { tail: z.literal(true) }),
+  hostRead: z.literal('deployments.logs'), input: z.discriminatedUnion('kind', [
+    z.extend(DeploymentStageLogsReadInputV1Schema, { tail: z.literal(true) }), DeploymentRuntimeLogsReadInputV1Schema,
+  ]),
   sourceRevision: z.string().check(z.trim(), z.minLength(1)),
 }));
 export const PluginUiMachineServiceReadReferenceV1Schema = lazyZodSchema(() => z.union([

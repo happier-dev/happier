@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
+import * as React from 'react';
+import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachineServiceRowV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
-import { renderHook, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import type { ForgeCiLogLineV1 } from '@happier-dev/forge-ci/runtime';
+import { renderHook, renderScreen, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -44,6 +47,136 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await restoreScope(); await homes.reset(); });
 
 describe('native log viewer authority withdrawal', () => {
+    it('renders runtime rows from native pages through the shared viewer and releases hidden demand without a separate Action read', async () => {
+        const reference = { hostRead: 'deployments.logs', input: { serverId, machineId: 'machine',
+            installationId: 'installation', environmentId: 'environment', deploymentId: 'deployment',
+            targetLinkId: 'target', kind: 'runtime' }, sourceRevision: 'deployment' } as const;
+        const actionId = 'deployments.logs.read';
+        const actionPath = `/v1/actions/${actionId}`;
+        const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'account' }), installationId: 'installation' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'runtime-proof', binding: {
+                serverIdentityId: 'srv_log_viewer_current', accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+                actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId: 'machine' },
+                machineId: 'machine', installationId: 'installation', custodianAccountId: 'account', accountEncryptionMode: 'plain',
+                deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, reference.input),
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        let reads = 0;
+        let opens = 0;
+        let closes = 0;
+        let deliver: ((results?: ManagedServiceNativeLogResultV1[]) => void) | undefined;
+        let current: ManagedServiceNativeLogResultV1 = { kind: 'page', page: {
+            sourceRevision: 'deployment', text: '', nextCursor: null, truncated: false,
+        } };
+        const content = (result: unknown) => {
+            const bytes = Buffer.from(JSON.stringify(result));
+            return { contentType: 'application/json', bytesBase64: bytes.toString('base64'),
+                digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
+        };
+        homes.answer(serverId, actionPath, { select: (body, request) => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
+            const continuation = envelope.resourceContinuation;
+            if (!continuation) throw new Error('Runtime view must acquire demand through Resource');
+            const reply = (result: unknown): HomeDomainAnswer => ({ body: {
+                v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result },
+            } });
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                reads++;
+                return reply({ ok: true, resource: reference, ...content(current) });
+            }
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
+                opens++;
+                return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content(current).digest });
+            }
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) {
+                closes++;
+                return reply({ ok: true, closed: true });
+            }
+            return new Promise<HomeDomainAnswer>(resolve => {
+                deliver = results => {
+                    deliver = undefined;
+                    resolve(reply({ ok: true, status: 'event', event: results ? { version: 1, kind: 'pages',
+                        subscriptionId: continuation.params.subscriptionId, pages: results.map(content) }
+                        : { version: 1, kind: 'complete', subscriptionId: continuation.params.subscriptionId, diagnostics: [] } }));
+                };
+                const abort = () => { deliver = undefined; resolve(reply({ ok: true, status: 'idle' })); };
+                request.signal?.addEventListener('abort', abort, { once: true });
+                if (request.signal?.aborted) abort();
+            });
+        } });
+        const { DeploymentRuntimeLogs } = await import('@/components/projects/deployments/DeploymentRuntimeLogs');
+        const { NativeLogLines } = await import('./MachineServiceLogs');
+        const screen = await renderScreen(React.createElement(DeploymentRuntimeLogs, { serverId, reference, active: false }));
+        const loadedLines = (): ReadonlyArray<ForgeCiLogLineV1> => screen.findByType(NativeLogLines).props.lines;
+        expect([reads, opens]).toEqual([0, 0]);
+        await screen.update(React.createElement(DeploymentRuntimeLogs, { serverId, reference, active: true }));
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        const initialReads = reads;
+        const frame = (rowId: string, message: string): ManagedServiceNativeLogResultV1 => ({ kind: 'page', page: {
+            sourceRevision: 'deployment', rowId, text: `${JSON.stringify({ rowId, timestampInMs: 1000, level: 'info', message,
+                messageTruncated: false, source: 'function', domain: 'example.test', requestMethod: 'GET',
+                requestPath: '/health', responseStatusCode: 200 })}\n`, nextCursor: null, truncated: true,
+        } });
+        deliver!([frame('row-1', 'first')]);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('first'));
+        const admittedFirst = loadedLines()[0];
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        deliver!([frame('row-2', 'second'), frame('row-1', 'first')]);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('second'));
+        expect(screen.getTextContent().match(/first/g)).toHaveLength(1);
+        expect(loadedLines()[0]).toBe(admittedFirst);
+        const admittedLines = loadedLines();
+        expect(screen.getTextContent()).toContain('/health');
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        deliver!([frame('row-1', 'first')]);
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        expect(loadedLines()).toBe(admittedLines);
+        deliver!([frame('row-3', 'first')]);
+        await vi.waitFor(() => expect(screen.getTextContent().match(/first/g)).toHaveLength(2));
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        deliver!([frame('', 'unidentified'), frame('', 'unidentified')]);
+        await vi.waitFor(() => expect(screen.getTextContent().match(/unidentified/g)).toHaveLength(2));
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        expect(reads).toBe(initialReads);
+        deliver!();
+        await vi.waitFor(() => expect(screen.findHostByTestId('deployment-runtime-logs-stale')).not.toBeNull());
+        expect(loadedLines()[0]).toBe(admittedFirst);
+        await screen.pressByTestIdAsync('deployment-runtime-logs-stale-action');
+        await vi.waitFor(() => expect(opens).toBe(2));
+        await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        expect(reads).toBe(initialReads);
+        deliver!([{ kind: 'unavailable', reason: 'unavailable' }]);
+        await vi.waitFor(() => expect(screen.findHostByTestId('deployment-runtime-logs-stale')).not.toBeNull());
+        await screen.pressByTestIdAsync('deployment-runtime-logs-follow');
+        await vi.waitFor(() => expect(closes).toBe(1));
+        await flushHookEffects();
+        expect(reads).toBe(initialReads);
+        const pausedCounts = [reads, opens];
+        await flushHookEffects();
+        expect([reads, opens]).toEqual(pausedCounts);
+        current = { kind: 'page', page: { sourceRevision: 'deployment', text: 'first\nsecond', nextCursor: null, truncated: false } };
+        await screen.pressByTestIdAsync('deployment-runtime-logs-stale-action');
+        await vi.waitFor(() => expect(opens).toBe(3));
+        expect(reads).toBe(initialReads);
+        expect(screen.getTextContent()).toContain('first');
+        expect(screen.getTextContent()).toContain('second');
+        await screen.update(React.createElement(DeploymentRuntimeLogs, { serverId, reference, active: false }));
+        await vi.waitFor(() => expect(closes).toBe(2));
+        const hiddenCounts = [reads, opens];
+        await flushHookEffects();
+        expect([reads, opens]).toEqual(hiddenCounts);
+        expect(screen.getTextContent()).toContain('first');
+        expect(screen.getTextContent()).toContain('second');
+        await screen.unmount();
+    });
+
     it.each(['expired_resource', 'action_forbidden', 'action_home_signed_out'] as const)(
         'preserves bounded logs through unavailable and hidden demand, then retires and readmits on %s', async reason => {
             const actionId = 'machines.services.logs.read';

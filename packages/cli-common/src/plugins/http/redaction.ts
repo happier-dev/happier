@@ -67,11 +67,13 @@ function buildProviderStreamingSanitizer(
 
   const emitSafePrefix = (): string => {
     const ordered = readOrderedValues();
-    const maxValueLength = Math.max(1, ...ordered.map((value) => value.length));
-    const boundary = Math.max(0, pending.length - (maxValueLength - 1));
     let cursor = 0;
     let output = '';
-    while (cursor < boundary) {
+    while (cursor < pending.length) {
+      // Only a suffix that could still become a registered value needs more
+      // bytes. Safe bytes must not wait for another chunk or EOF.
+      if (ordered.some(value => value.length > pending.length - cursor
+        && value.startsWith(pending.slice(cursor)))) break;
       const match = ordered.find((value) => pending.startsWith(value, cursor));
       if (match) {
         output += '[REDACTED]';

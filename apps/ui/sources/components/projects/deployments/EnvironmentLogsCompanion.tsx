@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
+import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { DetailCompanionPane } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { MachineServiceLogs } from '@/components/machines/services/MachineServiceLogs';
@@ -12,6 +13,7 @@ import { SegmentedTabBar, SegmentedValueSelect } from '@/components/ui/navigatio
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
+import { DeploymentRuntimeLogs } from './DeploymentRuntimeLogs';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { useDeploymentReceipt } from './useDeploymentReads';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
@@ -38,9 +40,10 @@ export function EnvironmentLogsCompanion(
     deploymentId: string | null;
     demand: DeploymentReadDemandV1;
     readLogs: DeploymentReadLogs | null;
+    platformRuntime?: Extract<PluginUiHostReadReferenceV1, { hostRead: 'deployments.logs' }>;
   }>,
 ) {
-  const runtimeAvailable = props.machineId !== null && props.services.length > 0;
+  const runtimeAvailable = props.platformRuntime !== undefined || props.machineId !== null && props.services.length > 0;
   const [view, setView] = React.useState<EnvironmentLogsView>(runtimeAvailable ? 'runtime' : 'build');
   const [chosen, setChosen] = React.useState<string | null>(null);
   // A row's Logs names its service; until the person picks another, the companion follows that row.
@@ -59,7 +62,7 @@ export function EnvironmentLogsCompanion(
     [props.services]);
   const actions = (
     <View style={styles.logsActions}>
-      {shown === 'runtime' && serviceName && serviceTabs.length > 1 ? (
+      {shown === 'runtime' && !props.platformRuntime && serviceName && serviceTabs.length > 1 ? (
         <SegmentedValueSelect
           tabs={serviceTabs}
           activeTabId={serviceName}
@@ -85,12 +88,17 @@ export function EnvironmentLogsCompanion(
     <DetailCompanionPane
       open={props.open}
       title={t('projects.deployments.overviewStatus.logsTitle')}
-      {...(shown === 'runtime' && serviceName ? { subtitle: serviceName } : {})}
+      {...(shown === 'runtime' && !props.platformRuntime && serviceName ? { subtitle: serviceName } : {})}
       actions={actions}
       onClose={props.onClose}
       testID="environment-logs"
     >
-      {!props.open ? null : shown === 'runtime' && props.machineId && serviceName ? (
+      {!props.open ? null : shown === 'runtime' && props.platformRuntime ? (
+        <ItemList testID="environment-logs.runtime">
+          <DeploymentRuntimeLogs serverId={props.serverId} reference={props.platformRuntime}
+            active={props.demand.mounted && props.demand.visible && props.demand.focused} />
+        </ItemList>
+      ) : shown === 'runtime' && props.machineId && serviceName ? (
         <EnvironmentRuntimeLogs
           serverId={props.serverId}
           machineId={props.machineId}

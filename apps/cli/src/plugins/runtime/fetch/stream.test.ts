@@ -44,10 +44,14 @@ describe('HTTP body lifetime with retained redaction custody', () => {
             onDispose: lease.close,
         });
         const iterator = response.chunks[Symbol.asyncIterator]();
-        if (end === 'end') expect(new TextDecoder().decode((await iterator.next()).value)).toBe('tail');
+        if (end === 'end') {
+            let received = '';
+            for await (const chunk of response.chunks) received += new TextDecoder().decode(chunk);
+            expect(received).toBe('tail');
+        }
         else await response.dispose();
-        expect(lease.isActive()).toBe(false);
         expect(await iterator.next()).toEqual({ done: true, value: undefined });
+        expect(lease.isActive()).toBe(false);
         await response.dispose();
     });
 

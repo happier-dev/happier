@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
 import { DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema } from '../../daemon/contributionRegistryProjection.js';
 
 import {
@@ -96,9 +97,8 @@ describe('plugin UI resource subscriptions', () => {
     }).success).toBe(false);
   });
 
-  it('is a bounded invalidation signal, never a payload channel', () => {
-    // §3.6: `readResource` stays the single snapshot authority, so the event
-    // carries no resource payload and no second data path exists. The retired
+  it('keeps invalidations payload-free and rejects the retired declarative snapshot vocabulary', () => {
+    // Rereadable Resources still invalidate without carrying content. The retired
     // `snapshot` arm carried a full `PluginUiResourceSnapshotV1` payload bound
     // to the declarative session-resource-target vocabulary.
     expect(PluginUiResourceSubscriptionEventV1Schema.safeParse({
@@ -126,6 +126,27 @@ describe('plugin UI resource subscriptions', () => {
       kind: 'invalidated',
       digest: 'not-a-digest',
     }).success).toBe(false);
+  });
+
+  it('admits a normalized identified native frame inside a finite Resource page without erasing its identity or metadata', () => {
+    const row = { rowId: 'vendor-row', timestampInMs: 1000, level: 'info', message: 'accepted',
+      messageTruncated: false, source: 'function', domain: 'example.test', requestMethod: 'GET',
+      requestPath: '/health', responseStatusCode: 200 };
+    const result = { kind: 'page', page: { rowId: row.rowId, sourceRevision: 'deployment',
+      text: `${JSON.stringify(row)}\n`, nextCursor: null, truncated: true } };
+    const admitted = ManagedServiceNativeLogResultV1Schema.parse(result);
+    expect(admitted).toEqual(result);
+  });
+
+  it('carries finite Resource pages in order on the admitted subscription and rejects malformed content', () => {
+    const content = { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' };
+    const event = { version: 1, subscriptionId: 'pages', kind: 'pages', pages: [content, { ...content, bytesBase64: 'W10=' }] };
+    expect(PluginUiResourceSubscriptionEventV1Schema.parse(event)).toEqual(event);
+    for (const page of [{ ...content, credential: 'private' }, { ...content, bytesBase64: '***' },
+      { ...content, digest: 'invalid' }, { ...content, contentType: '' }]) {
+      expect(PluginUiResourceSubscriptionEventV1Schema.safeParse({ ...event, pages: [page] }).success).toBe(false);
+    }
+    expect(PluginUiResourceSubscriptionEventV1Schema.safeParse({ ...event, resource: 'another-slot' }).success).toBe(false);
   });
 
   it('keeps acknowledged-async retirement and rejection on the same event union', () => {

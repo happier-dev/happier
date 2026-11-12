@@ -42,6 +42,7 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
             if (input.serverId !== host.serverId || input.machineId !== host.machineId
                 || installation?.installationId !== input.installationId) return failure('target_mismatch');
             if (actionId === 'deployments.logs.read' && isRuntimeLogsInput(input)) {
+                if (!input.service) return failure('invalid_parameters');
                 // Log access needs the receipt's public placement, not its private
                 // content or a new secret acquisition from Home.
                 const headers = await host.readRetentionHeaders({ environmentId: input.environmentId,

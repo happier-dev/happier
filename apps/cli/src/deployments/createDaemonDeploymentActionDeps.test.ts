@@ -47,6 +47,7 @@ import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testki
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
+import { createDaemonHostResourceRead } from '@/rpc/handlers/daemonHostResourceRead';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -1268,10 +1269,11 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider Domain add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider Domain add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const variableScenario = scenario.startsWith('variable ');
+        const runtimeLogs = scenario === 'runtime logs';
         const domainScenario = scenario.startsWith('provider Domain');
         const domainTeardown = scenario === 'provider Domain retained native teardown';
         const domainRemove = scenario === 'provider Domain remove';
@@ -1311,7 +1313,7 @@ describe('installed deployment storage and target composition', () => {
             repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/project' } };
         // Retained older links/receipts did not carry a native preparation.
         const capturedPreparation = scenario === 'retained receipt observe' ? {} : { preparedNative, repositoryAccess };
-        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : [])] as const;
+        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : [])] as const;
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner', ...(sdkBackgroundObservation ? {
             tokenEpoch: 1, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.s`, encryption: null };
         let sdkHomeUrl = 'https://platform.test';
@@ -1362,7 +1364,7 @@ describe('installed deployment storage and target composition', () => {
             // SCM materialization consumes the real daemon-applied registry owner.
             ...(scenario === 'upload source' ? { controller: pluginReloadController } : {}),
             runtimeOptions: { resolveCurrentMachineId: () => 'machine-a', connectedAccounts,
-                ...(scenario === 'build logs' || variableScenario || domainScenario ? { deploymentAccountExecution: { credentials, serverUrl: sdkHomeUrl,
+                ...(scenario === 'build logs' || runtimeLogs || variableScenario || domainScenario ? { deploymentAccountExecution: { credentials, serverUrl: sdkHomeUrl,
                     serverId: 'home', serverIdentityId: 'home', machineId: 'machine-a', isCurrent: async () => true } } : {}),
                 ...(rootApproval ? { readDaemonRequesterWorkAttribution: () => projectDaemonRequesterWorkAttribution({
                     serverId: 'profile-home', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a' }, rootApprovalHomeUnavailable ? null : 'home') } : {}),
@@ -1379,16 +1381,17 @@ describe('installed deployment storage and target composition', () => {
                     connectedAccountDescriptors: [{ id: 'service', title: 'Platform account', authentication: {
                     defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
                         fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] } }],
-                    actions: [...roles.map(id => ({ id: id === 'uploadDeploy' ? 'upload-deploy' : id === 'logs.build' ? 'build-logs-read' : id === 'variables.read' ? 'variables-read' : id === 'variables.sync' ? 'variables-sync' : id === 'domains.verify' ? 'domains-verify' : id === 'domains.remove' ? 'domains-remove' : id === 'domains.add' ? 'domains-add' : id, title: id, scopes: ['global'], surfaces: ['plugin'],
+                    actions: [...roles.map(id => ({ id: id === 'uploadDeploy' ? 'upload-deploy' : id === 'logs.build' ? 'build-logs-read' : id === 'logs.runtime' ? 'runtime-logs-read' : id === 'variables.read' ? 'variables-read' : id === 'variables.sync' ? 'variables-sync' : id === 'domains.verify' ? 'domains-verify' : id === 'domains.remove' ? 'domains-remove' : id === 'domains.add' ? 'domains-add' : id, title: id, scopes: ['global'], surfaces: ['plugin'],
                     placementBindings: [],
                     execution: { target: 'daemon' },
                     hostAccess: ['manage'],
                     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
-                    dangerLevel: id === 'inspect' || id === 'observe' || id === 'logs.build' || id === 'variables.read' || id === 'domains.verify' ? 'safe' : 'writesLocal',
+                    dangerLevel: id === 'inspect' || id === 'observe' || id === 'logs.build' || id === 'logs.runtime' || id === 'variables.read' || id === 'domains.verify' ? 'safe' : 'writesLocal',
+                    ...(id === 'logs.runtime' ? { readOnly: true } : {}),
                     inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
                     resultSchema: id === 'domains.verify' || id === 'domains.remove' || id === 'domains.add' ? DeploymentTargetDomainResultV1ProtocolSchema.jsonSchema : id === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
                         : id === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema.jsonSchema
-                        : id === 'logs.build' ? DeploymentTargetLogsResultV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+                        : id === 'logs.build' || id === 'logs.runtime' ? DeploymentTargetLogsResultV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 })), ...(scenario === 'upload source' ? [{ id: 'source-check', title: 'Check retired source', scopes: ['global'],
                     surfaces: ['cli'], placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe',
                     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1397,7 +1400,7 @@ describe('installed deployment storage and target composition', () => {
                     linkSchema: { type: 'object', properties: {}, additionalProperties: false },
                     ...(scenario === 'teardown with data target' ? { role: 'data' } : { role: 'runtime',
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
-                            ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}),
+                            ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : runtimeLogs ? { logs: { runtime: 'runtime-logs-read' } } : {}),
                             ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
                             ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : domainRole === 'domains.add' ? { add: 'domains-add' } : { verify: 'domains-verify' } } : {}),
                             ...(domainTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
@@ -1406,12 +1409,15 @@ describe('installed deployment storage and target composition', () => {
                 import { join } from 'node:path';
                 let retainedSource;
                 let observationCount = 0;
+                let runtimeWatchCount = 0;
+                let runtimeWatchDisposals = 0;
                 let backgroundProbe;
                 let finishBackground;
                 const backgroundCompletion = new Promise(resolve => { finishBackground = resolve; });
                 export function readBackgroundProbe() { return backgroundProbe; }
                 export function waitForBackgroundCompletion() { return backgroundCompletion; }
                 export function readObservationCount() { return observationCount; }
+                export function readRuntimeWatchCounts() { return { opened: runtimeWatchCount, disposed: runtimeWatchDisposals }; }
                 export function activate(api) {
                 ${sdkBackgroundObservation ? `api.backgroundServices.register('observer', async context => {
                     try {
@@ -1423,7 +1429,7 @@ describe('installed deployment storage and target composition', () => {
                     catch (error) { backgroundProbe = { errorCode: error.code, error: error.message }; }
                     finally { finishBackground(); }
                 });` : ''}
-                ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
+                ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'logs.runtime' ? 'runtime-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
                     ${role === 'domains.verify' || role === 'domains.add' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
                     ${role === 'variables.read' ? `observationCount++; return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
@@ -1432,6 +1438,10 @@ describe('installed deployment storage and target composition', () => {
                         variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }], failures: [] };` : ''}
                     ${role === 'logs.build' ? `if (input.providerDeploymentId !== 'existing-provider-deployment') throw new Error('Wrong retained deployment');
                     return { kind: 'page', page: { sourceRevision: input.providerDeploymentId, text: 'Build complete\\n', nextCursor: null, truncated: false } };` : ''}
+                    ${role === 'logs.runtime' ? `if (input.providerDeploymentId !== 'existing-provider-deployment' || input.service) throw new Error('Wrong retained platform receipt');
+                    observationCount++;
+                    return { kind: 'page', page: { sourceRevision: input.providerDeploymentId,
+                        text: 'Runtime ready\\n', truncated: true, nextCursor: null } };` : ''}
                     ${backgroundObservation && role === 'observe' ? `if (++observationCount === 1) return {
                         v: 1, state: 'queued', providerDeploymentId: 'existing-provider-deployment', observedAtMs: 2 };` : ''}
                     ${rootApproval && role === 'uploadDeploy' ? `
@@ -1452,7 +1462,18 @@ describe('installed deployment storage and target composition', () => {
                     await retainedSource.commit();
                     ` : ''}
                     ${roleFails ? `throw new PluginError({ code: '${roleErrorCode}', details: ${JSON.stringify(sourceAdmissionFailure ? sourceAdmission : { phase: 'send' })} });` : `return {v:1,state:'succeeded',providerDeploymentId:'${role === 'observe' ? 'existing-provider-deployment' : 'provider-deployment'}',observedAtMs:1,steps:[{id:'build',label:'Provider build',state:'succeeded',streamRef:'masked-provider-stream'}],urls:['https://app.example.test']};`}
-                });`).join(' ')}
+                }${role === 'logs.runtime' ? `, { observeRead(input, observation, context) {
+                    runtimeWatchCount++;
+                    let stopped = false;
+                    const delivery = Promise.resolve().then(async () => {
+                        for (const text of ['Follow first\\n', 'Follow second\\n']) {
+                            if (stopped || context.signal.aborted) return;
+                            await observation.emit({ kind: 'page', page: { sourceRevision: input.providerDeploymentId,
+                                text, nextCursor: null, truncated: true } });
+                        }
+                    }).catch(error => { if (!stopped) observation.retire(error); });
+                    return { async dispose() { if (stopped) return; stopped = true; runtimeWatchDisposals++; await delivery; } };
+                } }` : ''});`).join(' ')}
                 ${scenario === 'upload source' ? `api.actions.register('source-check', async (_input, context) => {
                     let refused = false;
                     try { await context.services.deploymentSource.materialize({ environmentId: retainedSource.environmentId,
@@ -1924,7 +1945,7 @@ describe('installed deployment storage and target composition', () => {
                 acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
             const receiptContent = scenario === 'receipt source differs'
                 ? { ...candidate.content, sourceIntent: { ...sourceIntent, contentRevision: sourceIntent.contentRevision + 1 } }
-                : scenario === 'build logs' || scenario === 'retained receipt observe' || backgroundObservation ? { ...platformCandidate,
+                : scenario === 'build logs' || runtimeLogs || scenario === 'retained receipt observe' || backgroundObservation ? { ...platformCandidate,
                     platform: { ...platformCandidate.platform, observation: { v: 1, state: backgroundObservation ? 'queued' : 'running',
                         providerDeploymentId: 'existing-provider-deployment', observedAtMs: 1,
                         ...(scenario === 'retained receipt observe' ? { uploadProvenance: { sourceManifestFingerprint: 'approved-manifest',
@@ -2035,6 +2056,44 @@ describe('installed deployment storage and target composition', () => {
                         [scenario === 'qualified child policy requires approval'
                             ? formatQualifiedPluginActionId({ pluginId, localId: 'upload-deploy' }) : 'action.invoke']:
                             { approvalRequiredSurfaces: ['api'] } } } : {}) }) };
+            if (runtimeLogs) {
+                const result = await executor.execute('deployments.logs.read', { serverId: 'home', environmentId: receipt.environmentId,
+                    deploymentId: receipt.id, targetLinkId: receipt.targetLinkId, machineId: 'machine-a', installationId: 'installation-a', kind: 'runtime' },
+                context);
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, kind: 'runtime', logs: {
+                    kind: 'page', page: { sourceRevision: 'existing-provider-deployment', text: 'Runtime ready\n', truncated: true } } } });
+                const hostRead = createDaemonHostResourceRead({ readAccountId: () => 'owner', resolveActionExecutor: async () => executor });
+                const reference = { hostRead: 'deployments.logs' as const, sourceRevision: 'existing-provider-deployment', input: {
+                    serverId: 'home', environmentId: receipt.environmentId, deploymentId: receipt.id, targetLinkId: receipt.targetLinkId,
+                    machineId: 'machine-a', installationId: 'installation-a', kind: 'runtime' as const } };
+                const resourceContext = { signal: new AbortController().signal, localActionContext: context };
+                await expect(hostRead.read(reference, 'machine-a', resourceContext)).resolves.toMatchObject({ value: {
+                    kind: 'page', page: { sourceRevision: 'existing-provider-deployment', text: 'Runtime ready\n', truncated: true } } });
+                const { createStablePluginUiResourceWatchOwner } = await import('@/plugins/runtime/invocation/services/uiResourceWatch');
+                const watches = createStablePluginUiResourceWatchOwner({ isPluginConsumerCurrent: () => false,
+                    readPluginOccurrenceId: () => null });
+                const subscription = { hostAccountId: 'owner', subscriptionId: 'runtime-follow', resource: reference };
+                try {
+                    await watches.openHost({ accountId: 'owner', subscriptionId: subscription.subscriptionId, resource: reference,
+                        bind: (signal, emit, end) => hostRead.observe(reference, 'machine-a', resourceContext, signal, emit, end) });
+                    for (const text of ['Follow first\n', 'Follow second\n']) {
+                        const next = await watches.next(subscription);
+                        expect(next).toMatchObject({ status: 'event', event: { kind: 'pages', pages: [expect.objectContaining({ contentType: 'application/json' })] } });
+                        if (next.status !== 'event' || next.event.kind !== 'pages') throw new Error('Expected finite watch pages');
+                        expect(JSON.parse(Buffer.from(next.event.pages[0]!.bytesBase64, 'base64').toString('utf8')))
+                            .toEqual({ kind: 'page', page: { sourceRevision: 'existing-provider-deployment', text, nextCursor: null, truncated: true } });
+                    }
+                    expect(await watches.close(subscription)).toBe(true);
+                    const module = runtime.modulesByPluginId.get(pluginId);
+                    if (typeof module?.readObservationCount !== 'function' || typeof module?.readRuntimeWatchCounts !== 'function')
+                        throw new Error('Expected authored runtime counters');
+                    expect(module.readObservationCount()).toBe(2); // Direct Action + finite Resource read, none per followed page.
+                    expect(module.readRuntimeWatchCounts()).toEqual({ opened: 1, disposed: 1 });
+                } finally { watches.retire(); }
+                expect(nativeReads).toBe(0);
+                expect(transitionWrites).toBe(0);
+                return;
+            }
             if (scenario === 'build logs') {
                 // QA #82: receipt revision1 remains readable after the same Link advances to2.
                 row.targetLink.revision = 2;
@@ -4091,7 +4150,7 @@ describe('installed deployment storage and target composition', () => {
                         const prepared = await executor.prepare('deployments.templates.instantiate', requested, { ...context,
                             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'srv_preparation_home',
                             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
-                        expect(prepared.kind).toBe('ready');
+                        expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
                         if (prepared.kind !== 'ready') throw new Error('Expected one reviewed template invocation');
                         failTemplateArtifact = selection === 'template install artifact failure';
                         const outcome = await prepared.invocation.run();

@@ -1,3 +1,5 @@
+import type { PluginUiResourceSubscriptionEventV1 as ProtocolPluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type { ResourceContent } from '@happier-dev/cli-common/plugins/ui';
 import type { InboxItemAttentionTypeV1 as DtoInboxItemAttentionTypeV1, PluginUiToneV1 as DtoPluginUiToneV1, PluginUiAttachmentToneV1 as DtoPluginUiAttachmentToneV1, PluginUiIconTokenV1 as DtoPluginUiIconTokenV1 } from '../actions/dtos/actionDeclarativeNodeDto.generated.js';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -371,25 +373,10 @@ export type PluginUiHostApiSurfaceContextV1 = {
 };
 
 export type PluginUiResourceSubscriptionEventV1 =
-    | {
-        version: 1;
-        subscriptionId: string;
-        kind: 'invalidated';
-        digest: string;
-    }
-    | {
-        version: 1;
-        subscriptionId: string;
-        kind: 'complete';
-        diagnostics: string[];
-    }
-    | {
-        version: 1;
-        subscriptionId: string;
-        kind: 'error';
-        code: 'unavailable' | 'denied' | 'stale_surface' | 'expired_resource';
-        diagnostics: string[];
-    };
+    | Exclude<ProtocolPluginUiResourceSubscriptionEventV1, { kind: 'pages' }>
+    | (Omit<Extract<ProtocolPluginUiResourceSubscriptionEventV1, { kind: 'pages' }>, 'pages'> & {
+        pages: ResourceContent[];
+    });
 
 export type OpenableContentRefV1 = {
     kind: 'workspaceFile';

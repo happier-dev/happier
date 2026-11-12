@@ -33,6 +33,43 @@ const GENERATION = 'registry:eu4b';
 const roots: string[] = [];
 
 describe('native host Resource binding', () => {
+    it('delivers every finite page to its exact watch with acknowledgement backpressure', async () => {
+        const owner = createStablePluginUiResourceWatchOwner({
+            isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,
+        });
+        const resource = { hostRead: 'machines.services.logs' as const,
+            input: { serverId: 'home', machineId: 'machine', serviceId: 'service' },
+            expectedGeneration: 'generation', sourceRevision: 'source' };
+        const page = (text: string) => {
+            const bytes = Buffer.from(JSON.stringify({ kind: 'page', page: {
+                sourceRevision: 'source', text, nextCursor: null, truncated: true } }));
+            return { contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest: digest(bytes) };
+        };
+        const pages = [page('first\n'), page('second\n')];
+        let emit!: (digest: string, pages?: typeof pages) => void | Promise<void>;
+        let disposed = 0;
+        await owner.openHost({ accountId: 'account', subscriptionId: 'pages', resource,
+            async bind(_signal, publish) { emit = publish; return { digest: digest(Buffer.from('initial')),
+                dispose() { disposed++; } }; } });
+        const demand = { hostAccountId: 'account', subscriptionId: 'pages', resource };
+        let acknowledged = false;
+        const delivered = Promise.resolve(emit(pages[1]!.digest, pages)).then(() => { acknowledged = true; });
+        try {
+            await Promise.resolve();
+            expect(acknowledged).toBe(false);
+            expect(await owner.next(demand)).toEqual({ status: 'event', event: {
+                version: 1, subscriptionId: 'pages', kind: 'pages', pages } });
+            await delivered;
+            // Equal text/digest can be a second real log line, unlike an equal invalidation.
+            const repeated = Promise.resolve(emit(pages[1]!.digest, [pages[1]!]));
+            expect(await owner.next(demand)).toMatchObject({ status: 'event', event: { kind: 'pages', pages: [pages[1]!] } });
+            await repeated;
+            const pending = Promise.resolve(emit(pages[0]!.digest, [pages[0]!]));
+            expect(await owner.close(demand)).toBe(true);
+            await pending;
+            expect(disposed).toBe(1);
+        } finally { owner.retire(); }
+    });
     it('releases only the withdrawn requester host watches and retains their terminal signal', async () => {
         const owner = createStablePluginUiResourceWatchOwner({
             isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,

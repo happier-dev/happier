@@ -118,6 +118,8 @@ export interface TargetedContributionSnapshot<TContribution> {
     readonly occurrenceId: string;
     readonly sourceCustody: PluginTargetedContributionSourceCustodyV1;
     readonly contributions: readonly TContribution[];
+    /** Known upstream exclusions; absence is not a complete installed-plugin inventory. */
+    readonly unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
 }
 
 /** A reserve-before-read observation of one target point's current admitted view. */
@@ -137,7 +139,11 @@ export interface TargetedContributionsService {
 }
 
 
-export type PluginActionReadInvalidation = (() => void) & Readonly<{ retire(): void }>;
+export type PluginActionReadInvalidation = (() => void) & Readonly<{
+  retire(error?: import('@happier-dev/protocol/plugins/errors').PluginErrorContract): void;
+  /** Finite results from this exact observer; acknowledgement backpressures its producer. */
+  emit?(result: JsonValue): Promise<void>;
+}>;
 export type PluginActionReadObserver<I extends JsonValue = JsonValue, TContext = unknown> = (
   input: I, invalidate: PluginActionReadInvalidation, context: TContext,
 ) => Disposable | Promise<Disposable>;

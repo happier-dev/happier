@@ -17,6 +17,81 @@ function createProjection() {
 }
 
 describe('shared typed Resource projections', () => {
+  it.each(['refresh', 'resume'] as const)('retains delivered pages when %s cannot reopen the watch', async recovery => {
+    let push: Parameters<NonNullable<PluginUiResourceClient['watchResource']>>[1] | undefined;
+    let reads = 0;
+    let offline = false;
+    const store = createPluginUiResourceStore({ client: {
+      delivery: 'pages',
+      readResource: async () => { reads++; return content('initial', 0); },
+      watchResource: async (_reference, listener) => {
+        if (offline) throw Object.assign(new Error('Offline'), { code: 'unavailable' });
+        push = listener;
+        return { dispose() {} };
+      },
+    } });
+    const entry = store.getEntry('live-output');
+    const selected = entry.select({ decode: (value, previous: string | undefined, source) =>
+      (source === 'pages' ? previous ?? '' : '') + new TextDecoder().decode(value.bytes) }, snapshot => snapshot);
+    let release = selected.subscribe(() => {}, true);
+    try {
+      await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+      const page = { contentType: 'text/plain', digest: 'page', bytes: new TextEncoder().encode('delivered\n') };
+      push!({ version: 1, subscriptionId: 'output', kind: 'pages', pages: [page] });
+      const admitted = selected.getSnapshot().value;
+      offline = true;
+      let refreshed: ReturnType<typeof entry.refresh> | undefined;
+      if (recovery === 'refresh') refreshed = entry.refresh();
+      else { release(); release = selected.subscribe(() => {}, true); }
+      await vi.waitFor(() => expect(entry.getSnapshot().error?.code).toBe('unavailable'));
+      expect(reads).toBe(1);
+      expect(selected.getSnapshot()).toMatchObject({ value: admitted, pending: 'idle', freshness: 'stale',
+        error: { code: 'unavailable' } });
+      await refreshed;
+    } finally { release(); store.dispose(); }
+  });
+
+  it('projects every finite watch page in order without rereads, retaining identical pages and partial content through retirement', async () => {
+    let push: Parameters<NonNullable<PluginUiResourceClient['watchResource']>>[1] | undefined;
+    let reads = 0;
+    let closes = 0;
+    let opens = 0;
+    let finishInitial: ((value: ResourceContent) => void) | undefined;
+    const store = createPluginUiResourceStore({ client: {
+      delivery: 'pages',
+      readResource: () => { reads++; return new Promise<ResourceContent>(resolve => { finishInitial = resolve; }); },
+      watchResource: async (_reference, listener) => { opens++; push = listener; return { dispose() { closes++; } }; },
+    } });
+    const entry = store.getEntry('live-output');
+    const selected = entry.select({ decode: (value, previous: string | undefined) =>
+      (previous ?? '') + new TextDecoder().decode(value.bytes) }, snapshot => snapshot);
+    let release = selected.subscribe(() => {}, true);
+    try {
+      await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+      const page = { contentType: 'text/plain', digest: 'same-page', bytes: new TextEncoder().encode('line\n') };
+      push!({ version: 1, subscriptionId: 'output', kind: 'pages', pages: [page, { ...page }] });
+      push!({ version: 1, subscriptionId: 'output', kind: 'pages', pages: [{ ...page }] });
+      expect(selected.getSnapshot().value).toBe('line\nline\nline\n');
+      expect(reads).toBe(1);
+      finishInitial!(content('late-initial', 0));
+      await Promise.resolve();
+      expect(selected.getSnapshot().value).toBe('line\nline\nline\n');
+      push!({ version: 1, subscriptionId: 'output', kind: 'error', code: 'unavailable', diagnostics: [] });
+      expect(selected.getSnapshot()).toMatchObject({ value: 'line\nline\nline\n', freshness: 'stale' });
+      await vi.waitFor(() => expect(closes).toBe(1));
+      await entry.refresh();
+      expect(opens).toBe(2);
+      expect(reads).toBe(1);
+      expect(selected.getSnapshot().value).toBe('line\nline\nline\n');
+      push!({ version: 1, subscriptionId: 'output-retry', kind: 'complete', diagnostics: [] });
+      expect(selected.getSnapshot().value).toBe('line\nline\nline\n');
+      await vi.waitFor(() => expect(closes).toBe(2));
+      release();
+      release = selected.subscribe(() => {}, false);
+      expect(reads).toBe(1);
+    } finally { release(); store.dispose(); }
+  });
+
   it('marks unhinted typed invalidations stale and retains fresh presentation only for the admitted identity', async () => {
     const identity = {};
     const value: ResourceContent = { contentType: 'application/json',
@@ -136,7 +211,7 @@ describe('shared typed Resource projections', () => {
       // Even without a read during denial, a replacement cannot inherit the
       // typed baseline from the withdrawn authority.
       expect(first.getSnapshot()?.checkedAt).toBe(3);
-      expect(decode).toHaveBeenLastCalledWith(current, undefined);
+      expect(decode).toHaveBeenLastCalledWith(current, undefined, 'read');
     } finally { store.dispose(); }
   });
 
@@ -249,7 +324,7 @@ describe('shared typed Resource projections', () => {
       expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(false);
       reads[3]!.resolve(content('running', 2));
       await refresh;
-      expect(decode).toHaveBeenLastCalledWith(expect.anything(), undefined);
+      expect(decode).toHaveBeenLastCalledWith(expect.anything(), undefined, 'read');
       expect(selected.getSnapshot()).not.toBe(oldValue);
       const replacement = selected.getSnapshot();
       const replacementContent = entry.getSnapshot().value;

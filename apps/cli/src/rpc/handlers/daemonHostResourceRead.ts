@@ -8,7 +8,7 @@ import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/
 import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import type { HostResourceWatchError } from '@/plugins/runtime/invocation/services/uiResourceWatch';
+import type { HostResourceWatchError, HostResourceWatchEmit } from '@/plugins/runtime/invocation/services/uiResourceWatch';
 import type { RegisterActionSpecRpcHandlersParams } from './registerActionSpecRpcHandlers';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -130,7 +130,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
         current,
         read,
         async observe(reference: LogsReference, machineId: string, context: RpcHandlerContext | undefined,
-            signal: AbortSignal, emit: (digest: string) => void, end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>> {
+            signal: AbortSignal, emit: HostResourceWatchEmit, end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>> {
             if (reference.hostRead === 'deployments.health.edge') {
                 const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
                 const projection = lease?.registry.currentDomainEdgeObservation;
@@ -153,11 +153,11 @@ export function createDaemonHostResourceRead(input: Readonly<{
                     return { digest: initial.digest, async dispose() { onChange.dispose(); await lease.release(); } };
                 } catch (error) { onChange.dispose(); await lease.release(); throw error; }
             }
-            const retire = () => end();
             const unavailable = (error: unknown) => {
                 if (!signal.aborted) end({ code: 'unavailable',
                     diagnostics: [isPluginError(error) ? error.code : 'plugin_resource_unavailable'] });
             };
+            const retire = (error?: import('@happier-dev/protocol/plugins/errors').PluginErrorContract) => error ? unavailable(error) : end();
             let subscription: Disposable | undefined;
             const release = readRequesterAccountActionContext(context?.callerInputAuthorization)?.retain();
             const cancelled = () => retire();
@@ -170,15 +170,21 @@ export function createDaemonHostResourceRead(input: Readonly<{
                         // consumer re-enters the same admitted list Action once.
                         emit(digest);
                     },
-                    emit(value) {
+                    async emit(value, delivery) {
                         if (signal.aborted) return;
                         // The retained admission remains local; pushed Machine
                         // access loss closes this watch through its owner.
-                        void accountId(context, reference, retire).then(() => {
+                        try {
+                            await accountId(context, reference, retire);
                             if (signal.aborted) return;
                             const bytes = Buffer.from(JSON.stringify(value), 'utf8');
-                            emit(`sha256:${createHash('sha256').update(bytes).digest('hex')}`);
-                        }).catch(unavailable);
+                            const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+                            await emit(digest, delivery === 'pages'
+                                ? [{ contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest }] : undefined);
+                        } catch (error) {
+                            if (delivery === 'pages') throw error;
+                            unavailable(error);
+                        }
                     }, accept(value) { subscription = value; } });
                 if (!subscription || signal.aborted) throw new PluginError({ code: 'service_unavailable' });
                 const held = subscription;

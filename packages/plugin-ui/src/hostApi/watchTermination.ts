@@ -4,7 +4,7 @@ import type { PluginUiResourceError, PluginUiResourceSnapshot } from './resource
 
 /** Withdraw terminal authority; a recoverable replacement owns read settlement. */
 export function settleResourceWatchTermination(input: Readonly<{
-  event: Exclude<ResourceSubscriptionEvent, { kind: 'invalidated' }>;
+  event: Exclude<ResourceSubscriptionEvent, { kind: 'invalidated' | 'pages' }>;
   snapshot: PluginUiResourceSnapshot;
   established: boolean;
   demanded: boolean;

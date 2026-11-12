@@ -54,6 +54,25 @@ describe('Host API negotiation admission', () => {
 });
 
 describe('host Action refusal evidence', () => {
+    it('restores the authored cause beside details and remediation from a host refusal', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const failure = { name: 'PluginError' as const, code: 'credential_scope_denied',
+            details: { requestId: 'authored-request', itemId: 'review-7' },
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
+            remediation: { kind: 'openSettings', path: '/settings/accounts' } } as const;
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['executeAction'] });
+                if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'error', identity,
+                    requestId: message.requestId, method: message.method, error: failure });
+            },
+        } });
+        await expect(api.executeAction('discussion.read', { discussionId: 'discussion-1', throughSeq: 0 }))
+            .rejects.toMatchObject({ code: failure.code, data: failure });
+    });
+
     it.each([true, false])('preserves canonical pre-dispatch evidence without inferring from code (marked=%s)', async marked => {
         let receive: ((message: unknown) => void) | undefined;
         const failure = marked
@@ -3305,5 +3324,47 @@ describe('plugin UI domain client transport adapter', () => {
         void api.watchContext(() => undefined).catch(() => undefined);
         await expect(api.watchContext(() => undefined)).rejects.toMatchObject({ code: 'duplicate_subscription_id' });
         expect(sent.filter((message) => message.kind === 'subscribe')).toHaveLength(1);
+    });
+});
+
+describe('finite Resource pages delivery', () => {
+    it('decodes ordered watch pages without rereading and keeps the subscription alive until disposal', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity,
+            createRequestId: () => `pages-request-${sent.length}`,
+            createSubscriptionId: () => 'pages-subscription',
+            transport: {
+                subscribe(listener) { receive = listener; return { dispose() {} }; },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                        apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['watchResource'] });
+                    if (message.kind === 'subscribe') receive?.({ wireVersion: 1, kind: 'result', identity,
+                        requestId: message.requestId, method: message.method, result: { subscriptionId: message.subscriptionId } });
+                },
+            },
+        });
+        const events: unknown[] = [];
+        const watch = await api.watchResource('runtime-output', event => events.push(event));
+        const content = (bytesBase64: string, digit: string) => ({ contentType: 'text/plain', bytesBase64,
+            digest: `sha256:${digit.repeat(64)}` });
+        const deliver = (event: unknown) => receive?.({ wireVersion: 1, identity, kind: 'subscription',
+            subscriptionId: 'pages-subscription', event });
+        deliver({ version: 1, subscriptionId: 'pages-subscription', kind: 'pages',
+            pages: [content('Zmlyc3Q=', 'a'), content('c2Vjb25k', 'b')] });
+        deliver({ version: 1, subscriptionId: 'pages-subscription', kind: 'pages', pages: [content('dGhpcmQ=', 'c')] });
+        expect(events).toEqual([
+            { version: 1, subscriptionId: 'pages-subscription', kind: 'pages', pages: [
+                { contentType: 'text/plain', digest: `sha256:${'a'.repeat(64)}`, bytes: new TextEncoder().encode('first') },
+                { contentType: 'text/plain', digest: `sha256:${'b'.repeat(64)}`, bytes: new TextEncoder().encode('second') },
+            ] },
+            { version: 1, subscriptionId: 'pages-subscription', kind: 'pages', pages: [
+                { contentType: 'text/plain', digest: `sha256:${'c'.repeat(64)}`, bytes: new TextEncoder().encode('third') },
+            ] },
+        ]);
+        expect(sent.filter(message => message.kind === 'request')).toEqual([]);
+        await watch.dispose();
+        expect(sent.at(-1)).toMatchObject({ kind: 'disposeHostResource', subscriptionId: 'pages-subscription' });
     });
 });

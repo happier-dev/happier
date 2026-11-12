@@ -577,6 +577,7 @@ export interface PluginManifest {
       | 'openableContentViewers'
       | 'accountCollections'
       | 'webhooks'
+      | 'machineRoles'
       | 'captureSources'
       | 'pluginContributionPoints'
       | 'targetedPluginContributions']?: readonly Readonly<{
@@ -796,6 +797,7 @@ export type PluginContributes = Readonly<{
   voiceModelPacks: NonNullable<NonNullable<PluginManifest['contributes']>['voiceModelPacks']>;
   voiceProviders: NonNullable<NonNullable<PluginManifest['contributes']>['voiceProviders']>;
   backgroundServices: NonNullable<NonNullable<PluginManifest['contributes']>['backgroundServices']>;
+  machineRoles: NonNullable<NonNullable<PluginManifest['contributes']>['machineRoles']>;
   daemonDatabases: NonNullable<NonNullable<PluginManifest['contributes']>['daemonDatabases']>;
   composerReferences: NonNullable<NonNullable<PluginManifest['contributes']>['composerReferences']>;
   searchProviders: NonNullable<NonNullable<PluginManifest['contributes']>['searchProviders']>;

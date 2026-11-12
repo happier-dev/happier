@@ -24,6 +24,7 @@ export type {
     DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1,
 } from './deploymentTargets.js';
 export { DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,
+    DeploymentTargetLinkProviderContentV1ProtocolSchema,
     DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
     hasDeploymentTargetPreparationCoordinatesV1 } from './deploymentTargets.js';

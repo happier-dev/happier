@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { HostingProviderRuntimeServices } from './hostingProvider.js';

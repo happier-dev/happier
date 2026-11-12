@@ -46,6 +46,7 @@ export type { DeploymentTargetDomainResultV1 } from './deploymentTargets.js';
 export { DeploymentTargetDomainResultV1ProtocolSchema } from './deploymentTargets.js';
 export type { DeploymentTargetInspectInputV1 } from './deploymentTargets.js';
 export type { DeploymentTargetLifecycleInputV1 } from './deploymentTargets.js';
+export { DeploymentTargetLinkProviderContentV1ProtocolSchema } from './deploymentTargets.js';
 export type { DeploymentTargetLinkRoleInputV1 } from './deploymentTargets.js';
 export { DeploymentTargetLogsResultV1ProtocolSchema } from './deploymentTargets.js';
 export type { DeploymentTargetObserveInputV1 } from './deploymentTargets.js';

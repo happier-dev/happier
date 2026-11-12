@@ -72,6 +72,7 @@
 | `.` | `DeploymentTargetDomainResultV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetInspectInputV1` | type | any |
 | `.` | `DeploymentTargetLifecycleInputV1` | type | any |
+| `.` | `DeploymentTargetLinkProviderContentV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetLinkRoleInputV1` | type | any |
 | `.` | `DeploymentTargetLogsResultV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetObserveInputV1` | type | any |
@@ -588,6 +589,8 @@
 | `./actions` | `MachineRebootActionResultById` | type | any |
 | `./actions` | `MachineResourcesActionInputById` | type | any |
 | `./actions` | `MachineResourcesActionResultById` | type | any |
+| `./actions` | `MachineRolesActionInputById` | type | any |
+| `./actions` | `MachineRolesActionResultById` | type | any |
 | `./actions` | `MachineSetupSourceEntryV1` | type | any |
 | `./actions` | `MachineSetupSourceV1` | type | any |
 | `./actions` | `MachineStorageActionInputById` | type | any |
@@ -1453,6 +1456,7 @@
 | `./connected-accounts` | `AuthPkceChallenge` | type | any |
 | `./connected-accounts` | `AuthPromptTextInput` | type | any |
 | `./connected-accounts` | `AuthPromptTextResult` | type | any |
+| `./connected-accounts` | `CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1` | value | any |
 | `./connected-accounts` | `CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1` | value | any |
 | `./connected-accounts` | `CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV` | value | any |
 | `./connected-accounts` | `ConnectedAccountAccessTokenFingerprint` | type | any |
@@ -1518,6 +1522,7 @@
 | `./connected-accounts` | `OauthCredentialRecord` | type | any |
 | `./connected-accounts` | `OauthCredentialRecordWithExpiry` | type | any |
 | `./connected-accounts` | `PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1` | value | any |
+| `./connected-accounts` | `PluginConnectedAccountAccessOnlyExportV1` | type | any |
 | `./connected-accounts` | `PluginConnectedAccountAuthenticationModeV2` | type | any |
 | `./connected-accounts` | `PluginConnectedAccountAuthenticationV2` | type | any |
 | `./connected-accounts` | `PluginConnectedAccountConfigurationFieldV2` | type | any |
@@ -1563,6 +1568,7 @@
 | `./connected-accounts` | `parseProviderResetAt` | value | any |
 | `./connected-accounts` | `parseProviderTimestampMs` | value | any |
 | `./connected-accounts` | `parseRetryAfterHeader` | value | any |
+| `./connected-accounts` | `parseRetryAfterValue` | value | any |
 | `./connected-accounts` | `requestDeviceGrantStep` | value | any |
 | `./connected-accounts` | `requireOauthCredentialRecordWithExpiry` | value | daemon |
 | `./connected-accounts` | `requireTokenCredentialRecord` | value | daemon |
@@ -2753,10 +2759,13 @@
 | `./scm/hosting` | `ScmHostingProviderKind` | type | daemon |
 | `./scm/hosting` | `ScmHostingProviderKindSchema` | value | any |
 | `./scm/hosting` | `ScmHostingProviderRef` | type | daemon |
-| `./scm/hosting` | `readCurrentHostingProviderRuntimeServices` | value | daemon |
-| `./scm/hosting` | `requestForgeJson` | value | daemon |
+| `./scm/hosting` | `createHostingProviderOperationActions` | value | any |
+| `./scm/hosting` | `readScmHostingBasicCredentials` | value | any |
+| `./scm/hosting` | `readScmHostingBearerToken` | value | any |
+| `./scm/hosting` | `requestForgeJson` | value | any |
 | `./scm/hosting` | `resolveScmHostingProviderFollowupAllowedBaseUrl` | value | any |
-| `./scm/hosting` | `runWithHostingProviderRuntimeServices` | value | daemon |
+| `./scm/hosting/runtime` | `readCurrentHostingProviderRuntimeServices` | value | daemon |
+| `./scm/hosting/runtime` | `runWithHostingProviderRuntimeServices` | value | daemon |
 | `./secrets` | `MachineConnectorSecretsService` | type | cli |
 | `./secrets` | `SecretMutationResult` | type | daemon |
 | `./secrets` | `SecretStatus` | type | daemon |
@@ -3288,6 +3297,7 @@
 | `./testing` | `createPluginClientTestkit` | value | daemon |
 | `./testing` | `createPluginHttpFixture` | value | daemon |
 | `./testing` | `createPluginTestkit` | value | daemon |
+| `./testing` | `createPluginUiActionControlTestHost` | value | any |
 | `./testing` | `createPluginUiTestkit` | value | daemon |
 | `./testing` | `createSurfaceContextFixture` | value | any |
 | `./testing` | `createTestResourceInvocationContext` | value | any |
@@ -3403,6 +3413,7 @@
 | `./ui` | `PluginRightSidebarCountV1Schema` | value | any |
 | `./ui` | `PluginRightSidebarDefaultPlacement` | type | any |
 | `./ui` | `PluginSurfaceTarget` | type | any |
+| `./ui` | `PluginUiActionBinding` | type | any |
 | `./ui` | `PluginUiActionControl` | type | any |
 | `./ui` | `PluginUiActionControlController` | type | any |
 | `./ui` | `PluginUiActionControlEventV1` | type | any |
@@ -3644,8 +3655,6 @@
 | `./voice/client` | `VoiceConnectionMediaHost` | type | client |
 | `./voice/client` | `VoiceConversationCapabilities` | type | client |
 | `./voice/client` | `VoiceConversationProviderRole` | type | client |
-| `./voice/client` | `VoiceConversationToolCapabilities` | type | client |
-| `./voice/client` | `VoiceConversationToolEffectCalls` | type | client |
 | `./voice/client` | `VoiceGuidanceAvailability` | type | client |
 | `./voice/client` | `VoiceHostTextPlayback` | type | client |
 | `./voice/client` | `VoiceHostedConversationService` | type | client |
@@ -3688,6 +3697,7 @@
 | `./voice/client` | `isVoiceSdkSafeActionSpec` | value | client |
 | `./voice/client` | `listVoiceSdkSafeToolActionSpecs` | value | client |
 | `./voice/client` | `normalizeVoiceFailureCode` | value | client |
+| `./voice/client` | `projectVoiceRealtimeToolResultOutput` | value | client |
 | `./voice/speech` | `SpeechProviderRuntime` | type | daemon |
 | `./voice/speech` | `VoiceProviderCatalogItem` | type | daemon |
 | `./voice/speech` | `VoiceSpeechCatalogDeclaration` | type | daemon |

@@ -3267,6 +3267,18 @@ admitted Docker endpoint. The caller applies the setup/firewall plans once throu
 the existing interpreter before consuming that result. Route observation and
 removal do not start or recreate the shared container.
 
+Current 0.3 development Domain get/list headers optionally expose
+`routedReplicas: { source: 'recordedTopology', count, replicas }`. Each replica
+contains only its Machine, installation and container dial identity. The native
+installation signs this snapshot from the successful Domain apply; the server
+retains it in the existing captured-placement JSON and deduplicates identities
+across desired public/private listeners. Verification retains the snapshot.
+Start-first route switches do not update it, so it describes the last recorded
+Domain apply rather than live membership, traffic or health. Missing snapshots
+remain unknown; known empty snapshots yield zero. Provider Domains, removed
+placements and tombstoned Domains expose no replica snapshot. Private addresses,
+networks, ports and route material remain outside this projection.
+
 These are development producers, not a complete installed Domain flow: the
 authored Caddy setup/profile/private-binding caller is still missing. Tunnel
 private-origin activation is not proof of public Cloudflare routing; consumed

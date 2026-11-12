@@ -26,6 +26,8 @@ type PluginUiResourceClientEvent = ResourceSubscriptionEvent | Readonly<{
  * contract directly without manufacturing a Surface identity.
  */
 export type PluginUiResourceClient = Readonly<{
+  /** Finite continuation pages arrive on the demanded watch; reads supply only the initial window. */
+  delivery?: 'pages';
   readResource: (resource: PluginUiResourceReference,
     options?: Parameters<PluginUiHostApi['readResource']>[1] & Readonly<{
       /** Host-private progress is admitted by this read's existing entry and lifetime. */
@@ -112,7 +114,7 @@ export type PluginUiResourceSnapshot = Readonly<{
 
 /** Keep one descriptor identity for consumers sharing the same admitted model. */
 export type PluginUiResourceProjection<T> = Readonly<{
-  decode(content: ResourceContent, previous: T | undefined): T;
+  decode(content: ResourceContent, previous: T | undefined, source: 'read' | 'pages'): T;
 }>;
 
 export type PluginUiResourceProjectionSnapshot<T> = Readonly<Omit<PluginUiResourceSnapshot, 'value'> & {
@@ -156,6 +158,7 @@ type MutableEntry = {
   readonly listeners: Set<() => void>;
   readonly projections: Map<object, Readonly<{ update(snapshot: PluginUiResourceSnapshot): void; getSnapshot(): unknown }>>;
   snapshot: PluginUiResourceSnapshot;
+  contentSource: 'read' | 'pages';
   subscriberCount: number;
   liveSubscriberCount: number;
   disposed: boolean;
@@ -428,7 +431,7 @@ export function createPluginUiResourceStore(input: Readonly<{
         } else if (next.value !== attemptedContent) {
           attemptedContent = next.value;
           try {
-            value = projection.decode(next.value, value);
+            value = projection.decode(next.value, value, entry.contentSource);
             decodeError = undefined;
           } catch (error) {
             decodeError = readError(error);
@@ -585,6 +588,42 @@ export function createPluginUiResourceStore(input: Readonly<{
     replace?.();
   }
 
+  function admitContent(entry: MutableEntry, value: ResourceContent, pending: PluginUiResourceSnapshot['pending'],
+    source: 'read' | 'pages'): void {
+    const previous = entry.snapshot;
+    // Reuse the producer's reconciled identity or the wire byte digest.
+    // An unchanged Resource keeps its reference and avoids a rerender.
+    const unchanged = source === 'read' && sameContent(previous.value, value);
+    entry.contentSource = source;
+    // Admission, not render, is where a renderable image becomes a platform
+    // source. Encoding is linear in the byte length and the Resource
+    // ceiling is 16 MiB, so a render that derived it would block the UI for
+    // seconds. This resolution is already off the render path, and the
+    // image owner alone decides the renderable type and the product size
+    // and decode ceilings.
+    if (!unchanged && value.contentType === HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE) {
+      const admission = materializeHappierRenderableImage(value.bytes);
+      if (!admission.admitted) {
+        // A refused image is indistinguishable from an absent one on every
+        // user-facing surface, so the only place an author can learn about
+        // it is their own diagnostic channel. The owner decided the code,
+        // severity and numbers; this adds the Resource identity, which is
+        // the one fact only this entry knows.
+        reportDiagnostic({
+        ...admission.refusal,
+        details: { ...admission.refusal.details, resource: pluginUiResourceReferenceLabel(entry.resource) },
+        });
+      }
+    }
+    publish(entry, {
+      value: unchanged ? previous.value : value,
+      ...(contentIdentity(value) === undefined ? { digest: value.digest } : {}),
+      freshness: 'fresh',
+      pending,
+      subscription: previous.subscription,
+    });
+  }
+
   function requestRead(
     entry: MutableEntry,
     requestedPending: 'initial' | 'refresh',
@@ -631,37 +670,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     entry.readController = controller;
     const admitValue = (value: ResourceContent, pending: PluginUiResourceSnapshot['pending']): void => {
       if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
-      const previous = entry.snapshot;
-      // Reuse the producer's reconciled identity or the wire byte digest.
-      // An unchanged Resource keeps its reference and avoids a rerender.
-      const unchanged = sameContent(previous.value, value);
-      // Admission, not render, is where a renderable image becomes a platform
-      // source. Encoding is linear in the byte length and the Resource
-      // ceiling is 16 MiB, so a render that derived it would block the UI for
-      // seconds. This resolution is already off the render path, and the
-      // image owner alone decides the renderable type and the product size
-      // and decode ceilings.
-      if (!unchanged && value.contentType === HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE) {
-        const admission = materializeHappierRenderableImage(value.bytes);
-        if (!admission.admitted) {
-          // A refused image is indistinguishable from an absent one on every
-          // user-facing surface, so the only place an author can learn about
-          // it is their own diagnostic channel. The owner decided the code,
-          // severity and numbers; this adds the Resource identity, which is
-          // the one fact only this entry knows.
-          reportDiagnostic({
-            ...admission.refusal,
-            details: { ...admission.refusal.details, resource: pluginUiResourceReferenceLabel(entry.resource) },
-          });
-        }
-      }
-      publish(entry, {
-        value: unchanged ? previous.value : value,
-        ...(contentIdentity(value) === undefined ? { digest: value.digest } : {}),
-        freshness: 'fresh',
-        pending,
-        subscription: previous.subscription,
-      });
+      admitContent(entry, value, pending, 'read');
     };
     void input.client.readResource(entry.resource, { signal: controller.signal,
       onProgress: value => admitValue(value, requestedPending),
@@ -758,6 +767,22 @@ export function createPluginUiResourceStore(input: Readonly<{
 
   function receiveWatchEvent(entry: MutableEntry, event: PluginUiResourceClientEvent): void {
     if (!isEntryCurrent(entry)) return;
+    if (event.kind === 'pages') {
+      if (event.pages.length === 0) return;
+      // Once the watch delivers admitted continuation bytes, its independent
+      // initial read cannot replace them with a later-settling snapshot.
+      entry.readController?.abort();
+      entry.readController = null;
+      entry.reading = false;
+      entry.readQueued = false;
+      entry.readQueuedRetryOnFailure = false;
+      entry.readQueuedExpectedDigest = null;
+      clearRereadRetry(entry);
+      for (const page of event.pages) admitContent(entry, page, 'idle', 'pages');
+      settleRefreshWaiters(entry);
+      settleRefreshWaiters(entry, true);
+      return;
+    }
     if (event.kind === 'invalidated') {
       const retainsFreshSnapshot = (
         (event.digest !== undefined ? entry.snapshot.digest === event.digest
@@ -869,7 +894,10 @@ export function createPluginUiResourceStore(input: Readonly<{
           && (watch.admittedIdentity !== undefined
             ? contentIdentity(entry.snapshot.value) === watch.admittedIdentity
             : watch.admittedDigest !== undefined && entry.snapshot.digest === watch.admittedDigest);
-        if (!snapshotAlreadyMatchesAdmission && entry.snapshot.error?.retryable !== false) {
+        if (input.client.delivery === 'pages') {
+          if (entry.snapshot.pending === 'refresh') publish(entry, { ...entry.snapshot, pending: 'idle' });
+          settleRefreshWaiters(entry);
+        } else if (!snapshotAlreadyMatchesAdmission && entry.snapshot.error?.retryable !== false) {
           requestRead(
             entry,
             entry.snapshot.value === undefined ? 'initial' : 'refresh',
@@ -887,13 +915,14 @@ export function createPluginUiResourceStore(input: Readonly<{
         entry.watchFailureTerminal = !failure.unsupported && !failure.retryable;
         const previous = entry.snapshot;
         const hasValue = previous.value !== undefined;
+        const pending = input.client.delivery === 'pages' && !entry.reading ? 'idle' : previous.pending;
         if (!failure.unsupported) {
-          publishResourceFailure(entry, resourceError, failure.retryable ? 'reconnecting' : 'ended', previous.pending);
+          publishResourceFailure(entry, resourceError, failure.retryable ? 'reconnecting' : 'ended', pending);
         } else {
           publish(entry, {
             ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
             freshness: hasValue ? 'stale' : 'unknown',
-            pending: previous.pending,
+            pending,
             subscription: 'unsupported',
           });
         }
@@ -901,10 +930,11 @@ export function createPluginUiResourceStore(input: Readonly<{
         // admission. Do not queue a second read merely because opening the
         // invalidation channel failed: if that baseline is still pending it
         // remains current, and if it has settled it is already authoritative.
-        if (retainedBaseline && !entry.reading && (failure.unsupported || failure.retryable)
+        if (input.client.delivery !== 'pages' && retainedBaseline && !entry.reading && (failure.unsupported || failure.retryable)
           && !hasLostResourceReadAuthority(resourceError)) {
           requestRead(entry, entry.snapshot.value === undefined ? 'initial' : 'refresh');
         }
+        if (input.client.delivery === 'pages' && !entry.reading) settleRefreshWaiters(entry);
         if (failure.unsupported || !failure.retryable || hasLostResourceReadAuthority(resourceError)) return;
         // A transient live transport failure never makes Resource bytes
         // unavailable. Keep one LKG owner and wait for the host's existing
@@ -922,6 +952,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       listeners: new Set(),
       projections: new Map(),
       snapshot: initialSnapshot(),
+      contentSource: 'read',
       subscriberCount: 0,
       liveSubscriberCount: 0,
       disposed: false,
@@ -974,11 +1005,12 @@ export function createPluginUiResourceStore(input: Readonly<{
               // Matching admission reuses its bytes; changed or generic watch
               // admission refreshes through startWatch's canonical read path.
               // Cold reads and unavailable watches still start independently.
-              if (entry!.snapshot.value === undefined || entry!.snapshot.freshness !== 'fresh'
-                || !entry!.watchEstablishing) {
+              if ((input.client.delivery !== 'pages' || entry!.snapshot.value === undefined)
+                && (entry!.snapshot.value === undefined || entry!.snapshot.freshness !== 'fresh'
+                  || !entry!.watchEstablishing)) {
                 requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
               }
-            } else if (!entry!.reading) {
+            } else if (!entry!.reading && (input.client.delivery !== 'pages' || entry!.snapshot.value === undefined)) {
               // A static subscriber may retain a read already requested by an
               // Action. That current read supplies its baseline; joining it
               // must not queue a second read or shorten the Action's lifetime.
@@ -989,7 +1021,8 @@ export function createPluginUiResourceStore(input: Readonly<{
             // A static subscriber can keep the entry alive indefinitely. Its
             // old snapshot is not a live-admission baseline, so promote the
             // first live subscriber through the same canonical read path.
-            requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
+            if (input.client.delivery !== 'pages' || entry!.snapshot.value === undefined)
+              requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
           }
           let unsubscribed = false;
           return () => {
@@ -1015,6 +1048,14 @@ export function createPluginUiResourceStore(input: Readonly<{
             if (!isEntryCurrent(entry!)) {
               resolve(Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended',
                 error: Object.freeze({ code: 'plugin_surface_retired', message: 'Resource surface is retired.' }) }));
+              return;
+            }
+            if (input.client.delivery === 'pages') {
+              entry!.refreshWaiters.add(resolve);
+              stopWatch(entry!, true);
+              publish(entry!, snapshotForPending(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh'));
+              startWatch(entry!);
+              if (entry!.snapshot.value === undefined && !entry!.reading) requestRead(entry!, 'initial');
               return;
             }
             if (options?.supersede && entry!.reading) {

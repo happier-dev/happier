@@ -4,6 +4,9 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import { isObject } from '../connectedAccounts/probe.js';
 import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
+import { workersCommon, workersIo } from './workersActions.js';
+import { isUploadedWorkerReference } from './workers.js';
+import { isUploadedPreviewReference } from './previewDeploy.js';
 
 /** Finite provider snapshot, with no invented history cursor or polling.
  * https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/subresources/history/subresources/logs/methods/get/
@@ -34,5 +37,42 @@ export const pagesLogsActions = {
       // and expose its incompleteness through the existing native log result.
       return { kind: 'page', page: { sourceRevision, text: lines.join(''), nextCursor: null,
         truncated: value.total > value.data.length } };
+    } },
+} as const;
+
+/** Workers Builds' documented cursor is opaque and belongs to one retained build UUID.
+ * https://developers.cloudflare.com/api/resources/workers_builds/subresources/builds/subresources/logs/methods/get/
+ * Schema observed 2026-11-12: result {cursor?,lines?:Array<Array<number|string>>,truncated?}.
+ */
+export const workersLogsActions = {
+  'workers-build-logs-read': { ...workersCommon, title: 'Read the selected Cloudflare Worker build logs', dangerLevel: 'safe', readOnly: true,
+    inputSchema: inputs['logs.build'].jsonSchema, resultSchema: output.jsonSchema,
+    async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
+      const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;
+      const fail = (code: string): never => { throw new PluginError({ code, retryable: false, details: { phase: 'build' } }); };
+      if (!input.providerDeploymentId) return fail('deployment_content_unavailable');
+      const sourceRevision = input.providerDeploymentId;
+      // Upload receipts name versions or Preview deployments, never a Workers Builds UUID.
+      if (isUploadedWorkerReference(sourceRevision) || isUploadedPreviewReference(sourceRevision))
+        return { kind: 'unavailable', reason: 'unsupported' };
+      if (input.cursor && input.cursor.sourceRevision !== sourceRevision) return { kind: 'source-changed', sourceRevision };
+      const query = input.cursor ? `?${new URLSearchParams({ cursor: input.cursor.token })}` : '';
+      const reply = await request(workersIo(context), input.providerIdentity.providerAccountId,
+        `/builds/builds/${encodeURIComponent(sourceRevision)}/logs${query}`, 'build');
+      if ('code' in reply) return fail(reply.code);
+      const value = reply.value;
+      if (!isObject(value) || value.lines !== undefined && !Array.isArray(value.lines)
+        || value.cursor !== undefined && typeof value.cursor !== 'string'
+        || value.truncated !== undefined && typeof value.truncated !== 'boolean') return fail('provider_response_invalid');
+      const lines: string[] = [];
+      for (const row of value.lines ?? []) {
+        if (!Array.isArray(row) || row.some(cell => typeof cell !== 'string'
+          && (typeof cell !== 'number' || !Number.isFinite(cell)))) return fail('provider_response_invalid');
+        // Preserve every documented cell, including the numeric-only official example.
+        const line = row.join(' ');
+        lines.push(line.endsWith('\n') ? line : `${line}\n`);
+      }
+      return { kind: 'page', page: { sourceRevision, text: lines.join(''), truncated: value.truncated ?? false,
+        nextCursor: value.cursor ? { sourceRevision, token: value.cursor } : null } };
     } },
 } as const;
