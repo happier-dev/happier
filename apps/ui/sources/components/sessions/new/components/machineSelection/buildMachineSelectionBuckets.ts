@@ -62,7 +62,8 @@ export function buildMachineSelectionBuckets<TMachine extends MachineDisplayRend
     const isVisible = (machine: TMachine) => isMachineVisibleForLaunchSelection(machine)
         || machine.id === params.includeSelectedUnavailableMachineId;
     const visibleMachines = params.machines.filter(isVisible);
-    const visibleRecentMachines = (params.recentMachines ?? []).filter(isVisible);
+    const currentMachineIds = new Set(visibleMachines.map(machine => machine.id));
+    const visibleRecentMachines = (params.recentMachines ?? []).filter(machine => isVisible(machine) && currentMachineIds.has(machine.id));
     const visibleFavoriteMachines = (params.favoriteMachines ?? []).filter(isVisible);
 
     const launchPinnedRecentMachines = disableOfflineMachines

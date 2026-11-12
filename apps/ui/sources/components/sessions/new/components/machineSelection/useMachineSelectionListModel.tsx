@@ -63,6 +63,7 @@ import {
     temporaryComputerTargetOptionKey,
 } from './temporaryComputerTargetIdentity';
 import { showTemporaryComputerExpiryModal } from './TemporaryComputerExpiryModal';
+import { foldOfflineWorkers, useOfflineWorkerSectionState } from './foldOfflineWorkers';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -1264,5 +1265,22 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     // Request reachability changes presence without any Machine row change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [params.groups, purpose, resolveMachinePlacementFacts, presenceKey, scopeForServer]);
-    return { ...model, managedWakeByServerId, offlineOnlyMachineIdsByServerId };
+    const offlineStateForSection = useOfflineWorkerSectionState();
+    const rootStep = React.useMemo(() => {
+        const offlineIds = new Set(Object.entries(offlineOnlyMachineIdsByServerId).flatMap(([serverId, ids]) =>
+            ids.flatMap(id => [id, `${serverId}::${id}`])));
+        return { ...model.rootStep, sections: foldOfflineWorkers(model.rootStep.sections,
+            option => offlineIds.has(option.id), sectionId => {
+                const state = offlineStateForSection(sectionId);
+                return {
+                    ...state,
+                    label: count => t(purpose === 'finite' || purpose === 'service-start'
+                        ? 'projectWorkers.offlineWorkers' : 'projectWorkers.offlineMachines', { count }),
+                    detail: t('projectWorkers.offlineWorkersDetail'),
+                    icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
+                    accessory: <Icon name={state.open ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+                };
+            }) };
+    }, [model.rootStep, offlineOnlyMachineIdsByServerId, offlineStateForSection, purpose, theme, language]);
+    return { ...model, rootStep, managedWakeByServerId, offlineOnlyMachineIdsByServerId };
 }

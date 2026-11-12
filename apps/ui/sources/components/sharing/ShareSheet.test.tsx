@@ -44,6 +44,15 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>, inp
 }
 
 describe('ShareSheet full presentation', () => {
+    it('keeps browse entries above asynchronous suggestions', () => {
+        const step = buildShareSheetSelectionStep({ model: { ...model, directory: { query: '', sections: [{
+            kind: 'account', title: 'People', status: 'idle', candidates: [], cursor: null, hasMore: false,
+            loadingMore: false, resolveCandidates: async () => [],
+        }] } }, actions, adapter, presentation: 'full', idPrefix: '', onExpand: noop });
+        expect(step.sections.findIndex(section => section.id.startsWith('directory-controls')))
+            .toBeLessThan(step.sections.findIndex(section => section.id === 'directory:account'));
+    });
+
     it.each(['team', 'group'] as const)('keeps lazy %s browsing reachable until an empty directory resolves', async (kind) => {
         vi.useFakeTimers();
         let reads = 0;

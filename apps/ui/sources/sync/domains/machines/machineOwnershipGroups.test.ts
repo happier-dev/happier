@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeMachineSharedOwnership } from './machineOwnershipGroups';
+import { createMachineFixture } from '@/dev/testkit';
+import { buildMachineOwnershipGroups, describeMachineSharedOwnership } from './machineOwnershipGroups';
 
 const shared = (displayName: string | null) =>
   ({
@@ -26,4 +27,9 @@ describe('describeMachineSharedOwnership', () => {
       expect(describeMachineSharedOwnership(shared(name))).toBe('Linux');
     }
   });
+});
+
+it('merges unresolved custodians into one shared group', () => {
+  const machines = ['a', 'b'].map(accountId => createMachineFixture({ id: accountId, isShared: true, access: { custodian: { accountId, displayName: null }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }));
+  expect(buildMachineOwnershipGroups(machines).map(group => group.machines.length)).toEqual([2]);
 });

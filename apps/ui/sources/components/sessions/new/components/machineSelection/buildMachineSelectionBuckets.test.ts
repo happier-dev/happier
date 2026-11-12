@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import {
   clearMachineRequestReachabilityForTest,
   recordMachineRequestFailed,
@@ -12,6 +13,13 @@ import { buildMachineSelectionBuckets } from './buildMachineSelectionBuckets';
 afterEach(() => clearMachineRequestReachabilityForTest());
 
 describe('buildMachineSelectionBuckets', () => {
+  it('omits deleted machines from pinned recent rows', () => {
+    const current = createMachineFixture({ id: 'current' });
+    const deleted = createMachineFixture({ id: 'deleted' });
+    expect(buildMachineSelectionBuckets({ machines: [current], recentMachines: [deleted], disableOfflineMachines: false })
+      .buckets.flatMap(bucket => bucket.machines).map(machine => machine.id)).toEqual(['current']);
+  });
+
   it('sorts a machine this Home cannot reach after reachable ones, by the same fact its row label reads (DRA D14)', () => {
     const scope = { serverId: 'home', accountId: 'account-a' };
     const now = Date.now();
@@ -26,6 +34,7 @@ describe('buildMachineSelectionBuckets', () => {
       active: true,
       activeAt: now - 1_000,
     });
+    publishMachineActivityForTest([unreachable, reachable]);
     recordMachineRequestFailed({
       ...scope,
       machineId: 'unreachable',

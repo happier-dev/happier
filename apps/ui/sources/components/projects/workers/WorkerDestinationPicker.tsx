@@ -8,7 +8,6 @@ import type {
 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 import { useMachineSelectionListModel, type ServerScopedMachinePoolSelection } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
-import { foldOfflineWorkers, useOfflineWorkerSectionState } from '@/components/sessions/new/components/machineSelection/foldOfflineWorkers';
 import { useMachinePoolGroups } from '@/components/sessions/new/hooks/machines/useMachinePoolGroups';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
@@ -115,7 +114,6 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     [props.sourceMachineId, scopedGroups],
   );
   const poolGroups = useMachinePoolGroups(groups);
-  const offlineStateForSection = useOfflineWorkerSectionState();
   const onChooseRef = React.useRef(props.onChoose);
   onChooseRef.current = props.onChoose;
   const poolSelection = props.poolSelection;
@@ -284,20 +282,6 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
               : props.servicePresentation ? undefined : t('projectWorkers.workersSection'),
           }) as SelectionListSectionDescriptor,
       );
-    // The list's own classification (offline and nothing else): a Machine refused for another reason keeps its named row.
-    const offlineOnlyOptionIds = new Set((list.offlineOnlyMachineIdsByServerId[serverId] ?? []).flatMap((id) => [id, `${serverId}::${id}`]));
-    const foldedMachineSections = props.servicePresentation
-      ? machineSections
-      : foldOfflineWorkers(machineSections, (option) => offlineOnlyOptionIds.has(option.id), (sectionId) => {
-          const state = offlineStateForSection(sectionId);
-          return {
-            ...state,
-            label: (count) => t('projectWorkers.offlineWorkers', { count }),
-            detail: t('projectWorkers.offlineWorkersDetail'),
-            icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
-            accessory: <Icon name={state.open ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
-          };
-        });
     const ordered: SelectionListSectionDescriptor[] = [
       ...(leading.length > 0
         ? [
@@ -310,7 +294,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
             } as const,
           ]
         : []),
-      ...foldedMachineSections,
+      ...machineSections,
       ...poolSections,
       ...(props.trailingSections ?? []),
     ];
@@ -321,8 +305,6 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     };
   }, [
     list.rootStep,
-    list.offlineOnlyMachineIdsByServerId,
-    offlineStateForSection,
     props.presentPoolAsAutomatic,
     props.exactTargetOnly,
     props.servicePresentation,

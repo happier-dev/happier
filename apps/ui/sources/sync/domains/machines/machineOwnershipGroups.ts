@@ -32,7 +32,7 @@ export function buildMachineOwnershipGroups<T extends MachineDisplayRenderable>(
     for (const machine of machines) {
         if (!machine.isShared) { owned.push(machine); continue; }
         const custodian = machine.access?.custodian ?? null;
-        const key = custodian?.accountId ?? '';
+        const key = custodian?.displayName?.trim() ? custodian.accountId : '';
         let group = shared.get(key);
         if (!group) { group = { custodian, machines: [] }; shared.set(key, group); }
         group.machines.push(machine);

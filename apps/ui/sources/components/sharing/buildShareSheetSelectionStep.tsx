@@ -228,6 +228,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     }
     if (!searching) sections.push(...roster);
     const collapsedControls: SelectionListOption[] = [];
+    const suggestionSections: SelectionListSectionDescriptor[] = [];
     if (model.editable) for (const kind of SHARE_DIRECTORY_KINDS) {
         if (input.directoryKind && input.directoryKind !== kind) continue;
         const source = model.directory.sections.find((section) => section.kind === kind);
@@ -236,7 +237,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         // reachable until the owner resolves it; a resolver alone does not prove an empty directory.
         if (!input.directoryKind && kind !== 'account' && (source.resolved ?? !source.resolveCandidates)
             && source.status === 'idle' && source.candidates.length === 0 && !source.hasMore) continue;
-        if (suggestionsShown) sections.push(sourceSection(source));
+        if (suggestionsShown) suggestionSections.push(sourceSection(source));
         const controls: SelectionListOption[] = [];
         if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,
             rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction label={t('common.retry')}
@@ -255,6 +256,8 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         else if (controls.length) sections.push({ kind: 'static', id: `directory-controls:${kind}`, options: controls });
     }
     if (collapsedControls.length) sections.push({ kind: 'static', id: 'directory-controls', options: collapsedControls });
+    // Browse stays above results that arrive asynchronously, so its rows never move on arrival.
+    sections.push(...suggestionSections);
     if (input.directoryKind) {
         // A settled people directory with no one to add says who appears there and where to connect with someone.
         const directory = model.directory.sections.find(section => section.kind === input.directoryKind);

@@ -18,8 +18,16 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         ScrollView: React.forwardRef((props: Record<string, unknown> & { children?: React.ReactNode }, ref) => {
-            React.useImperativeHandle(ref, () => ({ scrollTo: scrollToSpy }));
-            return React.createElement('ScrollView', { ...props, ref }, props.children);
+            const [offset, setOffset] = React.useState(0);
+            React.useImperativeHandle(ref, () => ({ scrollTo: (args: { y: number; animated?: boolean }) => {
+                setOffset(args.y); scrollToSpy(args);
+            } }));
+            return React.createElement('ScrollView', { ...props, ref, testScrollOffset: offset,
+                onScroll: (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+                    setOffset(event.nativeEvent.contentOffset.y);
+                    (props.onScroll as ((event: unknown) => void) | undefined)?.(event);
+                },
+            }, props.children);
         }),
     });
 });
@@ -60,6 +68,8 @@ function defaultProps(rootStep: SelectionListStep, overrides: Partial<SelectionL
  * (`sl:bodyScroll`) so other tests + the popover surface contract can rely on
  * the ownership boundary.
  */
+const { SelectionList } = await import('../SelectionList');
+
 describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () => {
     beforeEach(() => {
         scrollToSpy.mockClear();
@@ -72,6 +82,19 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
     afterEach(() => {
         standardCleanup();
         vi.unstubAllGlobals();
+    });
+
+    it('opens a new step at the top after scrolling its parent', async () => {
+        const root: SelectionListStep = { id: 'root', sections: [{ kind: 'static', id: 'entries', options: [{
+            id: 'teams', label: 'Teams', openStep: { id: 'teams', sections: [{ kind: 'static', id: 'teams', options: makeOptions(5) }] },
+        }] }] };
+        const screen = await renderScreen(<SelectionList {...defaultProps(root)} />);
+        await act(async () => screen.find(node => node.type === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.onScroll({ nativeEvent: {
+            contentOffset: { x: 0, y: 600 }, layoutMeasurement: { width: 300, height: 200 }, contentSize: { width: 300, height: 900 },
+        } }));
+        expect(screen.find(node => node.type === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.testScrollOffset).toBe(600);
+        await act(async () => screen.findByTestId('sl:root:option:teams').props.onPress());
+        expect(screen.find(node => node.type === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.testScrollOffset).toBe(0);
     });
 
     it('wraps non-virtualized rows in a ScrollView so all rows remain reachable', async () => {
@@ -87,7 +110,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 200 })} />,
         );
@@ -131,7 +153,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 { id: 'tab', label: 'Tab', description: 'autocomplete' },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 300, keyboardHintsEnabled: true })} />,
         );
@@ -170,7 +191,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 { id: 'enter', label: '↵', description: 'commit' },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 300, keyboardHintsEnabled: true })} />,
         );
@@ -211,7 +231,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 300 })} />,
         );
@@ -245,7 +264,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, {
                 maxHeight: 200,
@@ -282,7 +300,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
             inputPlaceholder: 'Search',
             sections: [{ kind: 'static', id: 'shorty', title: 'SHORTY', options }],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 200, selectedOptionId: 'short-5' })} />,
         );
@@ -323,7 +340,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, {
                 maxHeight: 200,
@@ -360,7 +376,6 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
                 { kind: 'static', id: 'existing-worktrees', title: 'EXISTING', options: makeOptions(20, 'worktree') },
             ],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 200, selectedOptionId: 'worktree-12' })} />,
         );

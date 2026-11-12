@@ -1,8 +1,9 @@
-import type * as React from 'react';
+import * as React from 'react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -48,11 +49,15 @@ function buildMachineDestinationModel(input: Parameters<typeof buildScopedMachin
     return buildScopedMachineDestinationModel({ ...input, scopesByServerId: fixtureScopes });
 }
 let useMachineSelectionListModel: typeof UseMachineSelectionListModel;
+let NewSessionMachineSelectionContent: typeof import('../NewSessionMachineSelectionContent').NewSessionMachineSelectionContent;
+let SelectionList: typeof import('@/components/ui/selectionList').SelectionList;
 afterEach(() => { clearMachineRequestReachabilityForTest(); network.resetRequests(); });
 afterAll(() => network.dispose());
 
 beforeAll(async () => {
     ({ useMachineSelectionListModel } = await import('./useMachineSelectionListModel'));
+    ({ NewSessionMachineSelectionContent } = await import('../NewSessionMachineSelectionContent'));
+    ({ SelectionList } = await import('@/components/ui/selectionList'));
 }, 240_000);
 
 // The package harness clears device storage before every test, including credentials and Homes.
@@ -194,6 +199,59 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it('folds a large New Session offline roster once per section and expands only that section in place', async () => {
+        const machines = Array.from({ length: 220 }, (_, i) => ({ ...createMachine(`offline-${i}`), active: false, activeAt: 0 }));
+        const shared = machines.slice(0, 3).map(machine => ({ ...machine, id: `shared-${machine.id}`, isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const,
+        } }));
+        const fixture = createFixture([...machines, ...shared]);
+        publishMachineActivityForTest(fixture.machines);
+        const rendered = await renderScreen(<NewSessionMachineSelectionContent {...buildParams(fixture, makeHandlers())}
+            recentMachines={[]} favoriteMachines={[]} showCliGlyphs={false} />);
+        try {
+            const options = () => (rendered.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>)
+                .rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+            expect(options().map(option => option.id)).toEqual(['offline:all', 'offline:shared:alice']);
+            await act(async () => rendered.findByTestId('new-session-machine-list:machine-root:option:offline:shared:alice').props.onPress());
+            expect(options().map(option => option.id)).toEqual(['offline:all', 'offline:shared:alice', ...shared.map(machine => machine.id)]);
+        } finally { await rendered.unmount(); }
+    });
+
+    it.each([
+        { entry: 'MachineSelector dropdown / New Session picker', purpose: 'session', showCliGlyphs: false },
+        { entry: 'MachineSelector list', purpose: 'session', showCliGlyphs: true },
+        { entry: 'WorkerDestinationPicker finite', purpose: 'finite', showCliGlyphs: false },
+        { entry: 'WorkerDestinationPicker service', purpose: 'service-start', showCliGlyphs: false },
+    ] as const)('keeps section folds, custodian names and availability together for $entry', async ({ purpose, showCliGlyphs }) => {
+        const own = ['own-a', 'own-b'].map(id => ({ ...createMachine(id), active: false, activeAt: 0 }));
+        const shared = ['alice-a', 'alice-b'].map(id => ({ ...createMachine(id), active: false, activeAt: 0, isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,
+            resourceMode: 'plain' as const, accessState: 'ready' as const,
+        } }));
+        const online = createMachine('online');
+        const fixture = createFixture([...own, ...shared, online]);
+        publishMachineActivityForTest(fixture.machines);
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, makeHandlers()), selectedMachine: null,
+            recentMachines: [], favoriteMachines: [], purpose, showCliGlyphs,
+            // Worker callers supply their workspace. No worker answer is fabricated here:
+            // a reachable machine without a settled placement remains unavailable.
+            ...(purpose === 'session' ? {} : { workerPlacement: { workspace: { serverId: 'server-a', refId: 'checkout' } } }),
+        }));
+        try {
+            const sections = () => rendered.getCurrent().rootStep.sections.filter(section => section.kind === 'static');
+            const options = () => sections().flatMap(section => section.options);
+            expect(sections().find(section => section.id === 'shared:alice')?.title).toBe('machines.destinations.shared:Alice');
+            expect(options().filter(option => option.id.startsWith('offline:')).map(option => option.id))
+                .toEqual(['offline:all', 'offline:shared:alice']);
+            expect(options().find(option => option.id === online.id)?.disabled).toBe(purpose !== 'session');
+            await act(async () => options().find(option => option.id === 'offline:shared:alice')!.onSelect?.());
+            expect(options().map(option => option.id)).toContain('alice-a');
+            expect(options().map(option => option.id)).not.toContain('own-a');
+            expect(options().find(option => option.id === 'alice-a')?.disabled).toBe(true);
+        } finally { await rendered.unmount(); }
+    });
+
     it('keeps a New Session roster row online across elapsed time and disables it on pushed activity withdrawal', async () => {
         const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
         vi.useFakeTimers({ toFake: ['Date'] });

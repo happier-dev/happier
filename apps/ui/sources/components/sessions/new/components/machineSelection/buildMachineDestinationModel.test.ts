@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { ProjectWorkerStatusResultV1Schema, type ProjectWorkerStatusResultV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { type MachinePoolViewV1} from '@happier-dev/protocol/machines/pools/v1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -25,7 +26,7 @@ function buildMachineDestinationModel(input: Parameters<typeof buildScopedMachin
 }
 
 function machine(id: string, overrides: Partial<Machine> = {}): Machine & { serverId: string; serverName: string } {
-    return {
+    const result = {
         ...createMachineFixture({ id }),
         active: true,
         activeAt: Date.now(),
@@ -33,6 +34,8 @@ function machine(id: string, overrides: Partial<Machine> = {}): Machine & { serv
         serverId: 'server-a',
         serverName: 'Server A',
     } as Machine & { serverId: string; serverName: string };
+    publishMachineActivityForTest([result]);
+    return result;
 }
 
 function group(overrides: Partial<Parameters<typeof buildMachineDestinationModel>[0]['groups'][number]> = {}) {

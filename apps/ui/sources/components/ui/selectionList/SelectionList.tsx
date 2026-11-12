@@ -1441,6 +1441,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
 
     const listBody = (
         <SelectionListBody
+            key={currentStep.id}
             surface={surface}
             step={currentStep}
             emptyQuery={filterQuery}
