@@ -20,6 +20,7 @@ const boundary = vi.hoisted(() => ({
   alert: vi.fn<(title: string, message?: string) => void>(),
   nativeAlert: vi.fn<(title: string, message?: string, buttons?: AlertButton[]) => void>(),
   confirmDecisions: [] as boolean[],
+  actionReview: vi.fn<(actionId: string) => Promise<boolean>>(async () => true),
 }));
 const nativeAlertObservers = new Set<() => void>();
 installDisconnectedServerSocketBoundary();
@@ -160,6 +161,7 @@ let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undef
 let selectedSecretRef: string | undefined;
 let credentialChanged = createDeferred<void>();
 let alertPresented = createDeferred<void>();
+let restoreReviewPresentation: (() => void) | undefined;
 
 function register(declaration: typeof credentialSourceDeclaration | null = credentialSourceDeclaration, contract?: typeof recipientContract) {
   removeExternalVoiceProviderRegistration(token);
@@ -354,6 +356,22 @@ describe('VoiceCredentialItem', () => {
     credentialChanged = createDeferred<void>();
     alertPresented = createDeferred<void>();
     boundary.confirmDecisions = [];
+    boundary.actionReview.mockReset().mockResolvedValue(true);
+    // eb1a5146c42 presents carried facts in a card; answer that presentation
+    // boundary while keeping native recipient dialogs and all Action logic real.
+    const present = Modal.show.bind(Modal);
+    const reviewPresentation = vi.spyOn(Modal, 'show').mockImplementation(config => {
+      const id = present(config);
+      const props = config.props;
+      if (config.chrome?.testID === 'actions.confirmation-review.modal' && props
+        && typeof props === 'object' && 'onAnswer' in props && typeof props.onAnswer === 'function') {
+        const answer = props.onAnswer;
+        const actionId = 'actionId' in props && typeof props.actionId === 'string' ? props.actionId : '';
+        void boundary.actionReview(actionId).then(confirmed => { answer(confirmed); Modal.hide(id); });
+      }
+      return id;
+    });
+    restoreReviewPresentation = () => reviewPresentation.mockRestore();
     // Native Alert is the OS presentation boundary. Press its real supplied
     // button callbacks; ModalManager still owns the confirmation promise.
     boundary.nativeAlert.mockImplementation((title, message, buttons) => {
@@ -374,6 +392,7 @@ describe('VoiceCredentialItem', () => {
     await account?.dispose();
     account = undefined;
     webLocks.restore();
+    restoreReviewPresentation?.(); restoreReviewPresentation = undefined;
   });
 
   it('mounts raw review only for the selected current source, realm and phase', async () => {
