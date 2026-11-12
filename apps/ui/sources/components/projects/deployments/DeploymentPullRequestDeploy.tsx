@@ -10,6 +10,7 @@ import { GitPullRequestProviderMark } from '@/components/sessions/panes/git/pull
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { useOpenResource } from '@/utils/url/openResource';
+import { DeploymentSourceCheckoutRow, useOwnSourceCheckout } from './DeploymentSourceCheckoutRow';
 import { deploymentRevisionLabel } from './deploymentPresentation';
 import { machineScmPullRequestGet } from '@/sync/ops/scm/machineScm';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -27,8 +28,11 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
   serverId: string;
   accountId: string;
   disabled: boolean;
+  /** The page's Version section already leads to a checkout (a serving repository version), so this one doesn't. */
+  checkoutLedByVersion: boolean;
   onDeploy(source: RepositorySource): Promise<void>;
 }>) {
+  const ownCheckout = useOwnSourceCheckout(props.projectSourceId, props.serverId);
   const { openResource } = useOpenResource({ serverId: props.serverId });
   const [reference, setReference] = React.useState('');
   const [candidate, setCandidate] = React.useState<Readonly<{ pullRequest: ScmPullRequestSummary; source: RepositorySource | null }> | null>(null);
@@ -78,9 +82,12 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
     }
     finally { if (!abort.signal.aborted) setPending(false); }
   };
-  // A pull request head is read from a checkout. Without one here, Version already says where it is and leads there,
-  // so this section doesn't repeat that row (VISUAL-136 D9).
-  if (!workspace) return null;
+  // A pull request head is read from a checkout. Without one here, Version says where it is and leads there when it
+  // shows; otherwise this section is the one place that does (VISUAL-136 D9: never the same row twice).
+  if (!workspace) return props.checkoutLedByVersion ? null : <ItemGroup testID="project-deployments.pr" title={t('projects.deployments.editors.pullRequest')}>
+    <DeploymentSourceCheckoutRow testID="project-deployments.pr.checkout" projectSourceId={props.projectSourceId} serverId={props.serverId}
+      checkout={ownCheckout} purpose={ownCheckout ? t('projects.deployments.editors.compareInCheckout') : t('projects.deployments.editors.comparisonNeedsCheckout')} />
+  </ItemGroup>;
   // Reading the head is an operation beside its field; the pull request it finds is a row of this sheet, not a card in it.
   return <ItemGroup testID="project-deployments.pr" title={t('projects.deployments.editors.pullRequest')}>
     {workspace ? <>

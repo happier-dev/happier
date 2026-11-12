@@ -1050,6 +1050,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               {detail.content.definition.kind === 'repository' ? <DeploymentPullRequestDeploy
                 key={`${props.serverId}:${props.accountId}:${detail.environment.projectSourceId}:${projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision}:${props.workspaceRef?.id}`}
                 workspaceRef={props.workspaceRef} projectSourceId={detail.environment.projectSourceId}
+                checkoutLedByVersion={active.snapshot.value?.content.sourceIntent?.kind === 'repository'}
                 sourceRevision={projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision ?? null}
                 compose={detail.content.definition.compose} serverId={props.serverId} accountId={props.accountId}
                 disabled={!ready || deployBlocked} onDeploy={async sourceIntent => {
