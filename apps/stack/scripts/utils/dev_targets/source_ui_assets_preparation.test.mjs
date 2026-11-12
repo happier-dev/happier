@@ -1,8 +1,9 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
@@ -26,6 +27,10 @@ test('UI suite preparation publishes usable source assets on cold, warm and miss
   write(join(ui, 'scripts/prepareSourceUiAssets.mjs'),
     `export * from ${JSON.stringify(new URL('../../../../ui/scripts/prepareSourceUiAssets.mjs', import.meta.url).href)};`);
   symlinkSync(fileURLToPath(new URL('../../../../../node_modules', import.meta.url)), join(ui, 'node_modules'), 'dir');
+  // Classification reads the selected config's real source-resolver declaration.
+  for (const config of ['vitest.config.ts', 'vitest.gesture-web.config.ts']) {
+    cpSync(fileURLToPath(new URL(`../../../../ui/${config}`, import.meta.url)), join(ui, config));
+  }
   const policy = resolveRemoteCommandPolicy(['pnpm', 'exec', 'vitest', 'run',
     '--config', 'vitest.gesture-web.config.ts', 'sources/components/sessions/shell/SessionListRow.gestureWeb.real.integration.test.tsx'],
     { cwd: ui, repoRoot: fixture.root });
@@ -53,10 +58,57 @@ test('UI suite preparation publishes usable source assets on cold, warm and miss
   assert.match(readFileSync(updatedBundle, 'utf8'), /salut/);
 });
 
-test('UI source asset references stay with their worker-local bundles across source sync', () => {
-  for (const path of Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS)) {
-    assert.ok(DEV_TARGET_MUTAGEN_IGNORE_PATHS.includes(`apps/ui/${path}`));
-    assert.ok(!DEV_TARGET_MUTAGEN_IGNORE_PATHS.includes(`apps/ui/${path.replace(/\.js$/u, '.d.ts')}`),
-      'authored declarations continue to synchronize');
+test('source sync preserves usable worker-local UI assets while updating their authored inputs', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-ui-asset-sync-' });
+  const source = fixture.path('source');
+  const mirror = fixture.path('mirror');
+  const write = (path, contents) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+  };
+  mkdirSync(source, { recursive: true });
+  execFileSync('git', ['init', '--quiet', source]);
+  write(join(source, '.gitignore'), `${DEV_TARGET_MUTAGEN_IGNORE_PATHS.join('\n')}\n`);
+  write(fixture.path('empty-excludes'), '');
+  const sourceFiles = [];
+  const outputs = [];
+  for (const [kind, output] of Object.entries(SOURCE_UI_ASSET_OUTPUT_PATHS)) {
+    const outputPath = `apps/ui/${output}`;
+    const assetPath = host => `apps/ui/.expo/hstack/${kind}/${host}.bundle`;
+    for (const [root, host] of [[source, 'controller'], [mirror, 'worker']]) {
+      const specifier = relative(dirname(outputPath), assetPath(host)).replaceAll('\\', '/');
+      write(join(root, outputPath), `export const asset = require(${JSON.stringify(specifier)});\n`);
+      write(join(root, assetPath(host)), `${kind} ${host} bundle`);
+    }
+    sourceFiles.push(outputPath, assetPath('controller'));
+    outputs.push(outputPath);
+    const declaration = outputPath.replace(/\.js$/u, '.d.ts');
+    write(join(source, declaration), 'export declare const asset: number;\n');
+    sourceFiles.push(declaration);
   }
+  const translation = 'apps/ui/sources/text/translations/fr.ts';
+  write(join(source, translation), "export const fr = { greeting: 'salut' };\n");
+  sourceFiles.push(translation);
+  // Mutagen uses Git-style ignores; let Git select the actual copy set, as in
+  // mutagen_project.test.mjs, rather than duplicating its matcher in this test.
+  const ignored = new Set(execFileSync('git', ['-C', source, '-c', `core.excludesFile=${fixture.path('empty-excludes')}`,
+    'check-ignore', '--no-index', '--stdin', '-z'], {
+    input: `${sourceFiles.join('\0')}\0`, encoding: 'utf8',
+  }).split('\0').filter(Boolean));
+  const copied = sourceFiles.filter(path => !ignored.has(path));
+  for (const path of copied) {
+    mkdirSync(dirname(join(mirror, path)), { recursive: true });
+    cpSync(join(source, path), join(mirror, path));
+  }
+  for (const output of outputs) {
+    const reference = /require\("([^"\n]+)"\)/u.exec(readFileSync(join(mirror, output), 'utf8'))[1];
+    const bundle = join(dirname(join(mirror, output)), reference);
+    assert.ok(existsSync(bundle), 'source sync must not replace worker references with absent controller bundles');
+    assert.match(readFileSync(bundle, 'utf8'), /worker bundle/);
+  }
+  assert.equal(copied.length, outputs.length + 1, 'only authored declarations and the changed translation synchronize');
+  assert.match(readFileSync(join(mirror, translation), 'utf8'), /salut/);
+  for (const output of outputs) assert.ok(existsSync(join(mirror, output.replace(/\.js$/u, '.d.ts'))));
+  assert.equal(existsSync(join(mirror, 'apps/ui/.expo/hstack/locales/controller.bundle')), false,
+    'controller Expo output remains excluded');
 });
