@@ -245,6 +245,36 @@ async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, total
   return { root, broker, sampleResources };
 }
 
+test('status exposes symbolic reservation head and exact queue floor buckets', linux, async t => {
+  let reads = 0;
+  const { root, broker } = await fixture(t, { readMemory: () => {
+    reads += 1;
+    return { availableMemoryKiB: 100, totalMemoryKiB: 100 };
+  } });
+  const holder = await acquire(root, 40, t, { arrivedAt: Date.now() - 10000 });
+  const held = await holder.admit();
+  const arrivedAt = Date.now() - 5000;
+  await acquire(root, 90, t, { className: 'compilation', arrivedAt,
+    floorOptions: [{ floorKiB: 90, workers: 2 }, { floorKiB: 80, workers: 1 }] });
+  for (let index = 0; index < 3; index += 1) await acquire(root, 30, t);
+  const barrier = await request(root, { kind: 'sample' });
+  const snapshot = await barrier.next(); barrier.socket.destroy();
+  assert.equal(snapshot.head.className, 'compilation');
+  assert.equal(snapshot.head.minimumFloorKiB, 80);
+  assert.ok(snapshot.head.ageMs >= 5000);
+  assert.equal(snapshot.head.reservationKiB, 40);
+  assert.equal(snapshot.waitingByClassAndFloor.reduce((n, bucket) => n + bucket.count, 0), 4);
+  assert.deepEqual(snapshot.waitingByClassAndFloor.find(bucket => bucket.className === 'compilation'), {
+    className: 'compilation', floorKiB: 90, minimumFloorKiB: 80,
+    floorOptions: [{ floorKiB: 90, workers: 2 }, { floorKiB: 80, workers: 1 }], count: 1,
+  });
+  assert.equal(broker.status().waitingByClassAndFloor.find(bucket => bucket.className === 'validation').count, 3);
+  const before = reads;
+  broker.status(); broker.status();
+  assert.equal(reads, before, 'diagnostic projection never samples processes or memory');
+  await held.release();
+});
+
 test('completed slots retain sampled RSS peaks by class without extra process walks or status disclosure', linux, async t => {
   let rssKiB = 17;
   let reads = 0;
@@ -1120,8 +1150,12 @@ for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adapti
   assert.equal(spare.achievableMemoryKiB, 60);
   assert.equal(spare.unreservedMemoryKiB, 40, 'non-admitted pressure cannot be drained by holding the head reservation');
   assert.equal(spare.kind, 'admitted', 'read-only checks expose the same spare memory as drain');
-  const follower = await acquire(root, 10, t);
-  const backfill = await follower.admit();
+  const backfills = [];
+  for (let index = 0; index < 4; index += 1) {
+    const follower = await acquire(root, 10, t);
+    backfills.push(await follower.admit());
+  }
+  assert.equal(broker.status().activeCount, 5, 'all four small waiters backfill the unachievable head');
   assert.equal(broker.status().waitingCount, 1, 'the unachievable head stays queued with its original arrival');
 
   // Recovery to the minimum floor restores the head reservation even while
@@ -1137,7 +1171,7 @@ for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adapti
   barrier.socket.destroy();
   assert.equal(broker.status().waitingCount, 2, 'younger arrivals cannot displace the recovered head');
   await held.release();
-  await backfill.release();
+  for (const backfill of backfills) await backfill.release();
   const resumed = await head.admit();
   assert.equal(resumed.admitted.floorKiB, 80);
   assert.equal(broker.status().waitingCount, 1);

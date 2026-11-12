@@ -188,9 +188,27 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   function status() {
     const budget = slotResourceBudget();
     const head = waiting.find(canReserveHead);
+    // Only catalog symbols and numeric resource facts leave this private queue.
+    // Never expose request env, paths, PIDs or an arbitrary caller label.
+    const symbolicClass = item => Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, item.className) ? item.className : 'unknown';
+    const minimumFloor = item => item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
+    const buckets = new Map();
+    for (const item of waiting) {
+      if (item.slot) continue;
+      const bucket = { className: symbolicClass(item), floorKiB: item.floorKiB,
+        minimumFloorKiB: minimumFloor(item),
+        ...(item.floorOptions ? { floorOptions: item.floorOptions.map(({ floorKiB, workers }) => ({ floorKiB, workers })) } : {}) };
+      const key = JSON.stringify(bucket);
+      const existing = buckets.get(key);
+      if (existing) existing.count += 1;
+      else buckets.set(key, { ...bucket, count: 1 });
+    }
     // Publish the same head reservation used by drain and read-only checks.
     // Publication-blocked demand has no memory reservation.
     return { ...sample, ...budget,
+      head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
+        ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: headReservationKiB(head) } : null,
+      waitingByClassAndFloor: [...buckets.values()],
       unreservedCpuCores: Math.max(0, budget.unreservedCpuCores - headReservationCpuCores(head)),
       queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : accountedCpuCores(item, item.floorOptions?.[0]?.workers)), 0),
       unreservedMemoryKiB: Math.max(0, budget.unreservedMemoryKiB - headReservationKiB(head)),
