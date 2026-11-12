@@ -7,9 +7,8 @@ export type AccountPluginWriterClaim = Readonly<{
     occurrenceId: string | undefined;
     accountLifetimeToken: number;
     availabilityChangeKey: string;
-    preparesCollections: boolean;
     diagnosticClaimAttemptId?: string;
-    result: Promise<PluginError | null>;
+    result: Promise<PluginError | null> | PluginError;
 }>;
 
 export type AccountPluginWriterClaims = Map<string, AccountPluginWriterClaim>;

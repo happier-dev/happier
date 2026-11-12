@@ -1427,13 +1427,14 @@ describe('Account plugin Data storage host', () => {
             contracts?: readonly NormalizedPluginAccountCollectionContractV1[];
             resolveReleaseLessDeclaration?: (pluginId: string) => ParsedPluginManifestV2 | null;
             resolveReleaseLessCollectionMigrations?: () => Promise<import('@happier-dev/plugin-sdk').PluginAccountCollectionMigrationRuntimeProjection>;
+            readCredentials?: AccountPluginDataStorageHostDependencies['readCredentials'];
             scopeKey: () => string;
             post: AccountPluginDataHttpClient['post'];
         }>) {
             const host = createAccountPluginDataStorageHost({
                 ...(params.writerClaims ? { writerClaims: params.writerClaims } : {}),
                 contracts: params.contracts ?? [admitted],
-                readCredentials: async () => plainCredentials,
+                readCredentials: params.readCredentials ?? (async () => plainCredentials),
                 isCurrentAccount: () => true,
                 resolveAccountScopeKey: params.scopeKey,
                 resolveBaseUrl: () => 'https://data.example.test',
@@ -1449,7 +1450,7 @@ describe('Account plugin Data storage host', () => {
                     post: params.post,
                 },
             });
-            return (occurrenceId = '1') => {
+            return Object.assign((occurrenceId = '1') => {
                 const account = host.bind({
                     pluginId: PLUGIN_ID,
                     occurrenceId,
@@ -1458,7 +1459,10 @@ describe('Account plugin Data storage host', () => {
                 });
                 if (!account) throw new Error('Expected Account Data host binding');
                 return account;
-            };
+            }, { publish: (occurrenceId = '1') => host.claimReleaseLessDeclaration({
+                pluginId: PLUGIN_ID, occurrenceId, signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+            }) });
         }
 
         function recordingPost(
@@ -1497,12 +1501,14 @@ describe('Account plugin Data storage host', () => {
             });
             try {
                 const collection = bind().collection(collectionDefinition);
+                const publication = bind.publish();
                 await claimStarted;
                 const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
                 const pending = runTracedExternalActionStage('action.invoke', `rpc_${requestId}`, 'contributed.target_invoke', () =>
                     collection.get('private-row-marker'));
                 release();
                 await expect(pending).resolves.toBeNull();
+                await publication;
                 await collection.query({ index: 'by-status', order: 'asc' });
                 const records = sink.mock.calls.filter(([message]) => message === '[external-action-stage]');
                 const claimHttp = records.find(([, record]) => record && typeof record === 'object'
@@ -1522,7 +1528,7 @@ describe('Account plugin Data storage host', () => {
                     stage: 'collection.writer_claim.start', claimAttemptId: claimId, claimAbsent: true,
                     pluginId: PLUGIN_ID, claimOccurrenceId: '1', claimProducerPid: process.pid,
                     claimProducerKind: 'cli',
-                    collectionPreparationTriggerKind: 'collection-operation',
+                    collectionPreparationTriggerKind: 'declaration-publication',
                 })]);
                 expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
                     rootRequestId: requestId, stage: 'collection.http.get.end', httpStatus: 200,
@@ -1558,7 +1564,7 @@ describe('Account plugin Data storage host', () => {
             expect(calls.filter((url) => url === CLAIM_URL)).toHaveLength(2);
         });
 
-        it('claims at activation for a plugin whose only Account declarations are webhooks or Events', async () => {
+        it('publishes event-only declarations explicitly without claiming on an unused storage binding', async () => {
             const eventOnlyManifest = PluginManifestV2Schema.parse({
                 ...declaredManifest,
                 contributes: {
@@ -1571,15 +1577,59 @@ describe('Account plugin Data storage host', () => {
                 },
             });
             const calls: string[] = [];
+            const readCredentials = vi.fn(async () => plainCredentials);
             const bind = claimingHost({
                 contracts: [],
+                readCredentials,
                 resolveReleaseLessDeclaration: () => eventOnlyManifest,
                 scopeKey: () => 'account-a',
                 post: recordingPost(calls, { status: 200, data: {} }, eventOnlyManifest),
             });
 
             bind();
-            await vi.waitFor(() => expect(calls).toEqual([CLAIM_URL]));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(readCredentials).not.toHaveBeenCalled();
+            expect(calls).toEqual([]);
+            await bind.publish();
+            expect(calls).toEqual([CLAIM_URL]);
+        });
+
+        it('does not repeat a failed declaration batch on unchanged background publication ticks', async () => {
+            const writerClaims: NonNullable<AccountPluginDataStorageHostDependencies['writerClaims']> = new Map();
+            let claims = 0;
+            let available = false;
+            const tick = async (occurrenceId: string, manifest = declaredManifest) => {
+                const bind = claimingHost({ writerClaims,
+                    resolveReleaseLessDeclaration: () => manifest,
+                    scopeKey: () => 'failed-publication-account',
+                    post: async url => {
+                        if (url === CLAIM_URL) {
+                            claims += 1;
+                            return available ? { status: 200, data: {} }
+                                : { status: 503, data: { error: 'database_transaction_timeout' } };
+                        }
+                        return { status: 200, data: { row: null, absenceEpoch: 0 } };
+                    },
+                });
+                bind(occurrenceId);
+                await bind.publish(occurrenceId);
+                return bind;
+            };
+            await tick('first');
+            expect(claims).toBe(1);
+            let latest = await tick('reload-1', PluginManifestV2Schema.parse(declaredManifest));
+            for (let index = 2; index <= 8; index += 1) {
+                latest = await tick(`reload-${index}`, PluginManifestV2Schema.parse(declaredManifest));
+            }
+            expect(claims).toBe(1);
+            // A real operation is the recovery boundary, even with unchanged inputs.
+            available = true;
+            await expect(latest('reload-8').collection(collectionDefinition).get('task-1')).resolves.toBeNull();
+            expect(claims).toBe(2);
+            await tick('recovered');
+            expect(claims).toBe(2);
+            await tick('changed', PluginManifestV2Schema.parse({ ...declaredManifest, version: '1.5.0' }));
+            expect(claims).toBe(3);
         });
 
         it.each(['network', '503', '503-with-conflict-body'] as const)('retries a transient %s claim failure on the next operation', async (failure) => {
@@ -1601,7 +1651,9 @@ describe('Account plugin Data storage host', () => {
             });
 
             const collection = bind().collection(collectionDefinition);
-            await expect(collection.get('task-1')).resolves.toBeNull();
+            await Promise.all(Array.from({ length: 8 }, (_, index) =>
+                expect(collection.get(`concurrent-${index}`)).resolves.toBeNull()));
+            expect(calls.filter((url) => url === CLAIM_URL)).toHaveLength(1);
             await collection.get('task-2');
             await collection.get('task-3');
             expect(calls.filter((url) => url === CLAIM_URL)).toHaveLength(2);

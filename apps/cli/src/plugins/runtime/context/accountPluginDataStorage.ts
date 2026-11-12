@@ -868,14 +868,14 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
          * The release-less Availability claim for a daemon-selected plugin,
          * carrying its admitted manifest. It is best effort: the server's
          * Collection, webhook, and Event admission stay the only authorities,
-         * so transient failures remain retryable by the next operation. A
+         * so transient failures remain retryable by the next real operation,
+         * without replaying a failed batch on background publication. A
          * contract conflict is retained for the exact declaration and live
          * Account/occurrence inputs, and stays visibly unavailable.
          */
         const ensureWriterClaim = async (
             credentials: StoredCredentials,
             operationSignal?: AbortSignal,
-            prepareCollections = true,
             triggerKind: CandidatePreparationTriggerKind = 'collection-operation',
         ): Promise<void> => {
             const manifest = resolveReleaseLessDeclaration(lifecycle.pluginId);
@@ -883,6 +883,10 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             if (!manifest || scopeKey === null) return;
             const key = `${scopeKey}\u0000${lifecycle.pluginId}`;
             const availabilityChangeKey = readPluginAccountAvailabilityChangeKey(scopeKey, lifecycle.pluginId);
+            const realDemand = triggerKind === 'collection-operation';
+            const isTransientRefusal = (refusal: PluginError | null): boolean => refusal !== null
+                && refusal.code !== 'plugin_collection_contract_conflict'
+                && refusal.code !== COLLECTION_WRITERS_CLAIM_SETTLED_REFUSAL;
             let claim = writerClaimsByScope.get(key);
             // Reload replaces storage hosts and may reparse an unchanged manifest.
             // Successful admission belongs to the declaration and live Account,
@@ -896,18 +900,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 await assertBoundCurrent(lifecycle, operationSignal);
                 claim = writerClaimsByScope.get(key);
                 if (claim !== retained) continue;
-                if (refusal === null) {
+                if (refusal === null || (!realDemand && isTransientRefusal(refusal))) {
                     claim = { ...retained, manifest, occurrenceId: lifecycle.occurrenceId };
                     writerClaimsByScope.set(key, claim);
                 }
                 break;
             }
-            // A provisional binding must not join an operation's retained-row migration.
-            // The existing claim already owns this declaration's publication.
-            if (!prepareCollections && claim?.manifest === manifest
-                && claim.occurrenceId === lifecycle.occurrenceId
-                && claim.accountLifetimeToken === lifecycle.accountLifetimeToken
-                && (claim.preparesCollections || claim.availabilityChangeKey === availabilityChangeKey)) return;
             let availabilityRefused = false;
             while (claim && claim.manifest === manifest
                 && claim.occurrenceId === lifecycle.occurrenceId
@@ -922,6 +920,15 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 }
                 availabilityRefused = refusal !== null;
                 break;
+            }
+            // Only a new real Collection demand retries a settled transient
+            // failure. Callers joining an in-flight batch do not replay its failure.
+            if (realDemand && claim?.manifest === manifest
+                && claim.occurrenceId === lifecycle.occurrenceId
+                && claim.accountLifetimeToken === lifecycle.accountLifetimeToken
+                && isPluginError(claim.result) && isTransientRefusal(claim.result)) {
+                writerClaimsByScope.delete(key);
+                claim = undefined;
             }
             if (!claim || claim.manifest !== manifest
                 || claim.occurrenceId !== lifecycle.occurrenceId
@@ -979,7 +986,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         await claimOnce();
                         return;
                     } catch (error) {
-                        if (!prepareCollections || !isPluginError(error)
+                        if (!isPluginError(error)
                             || error.code !== 'plugin_intent_writable_collections_not_ready') throw error;
                     }
                     const preparation = PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(await claimOnce(true));
@@ -1017,36 +1024,24 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         throw error;
                     }
                 })().then(() => null, (error: unknown) => {
-                    // Keep declaration-only "needs migration" distinct from
-                    // success. A real Collection demand promotes this same
-                    // claim owner; publication never loads migration modules.
-                    if (!prepareCollections && isPluginError(error)
-                        && error.code === 'plugin_intent_writable_collections_not_ready') return error;
-                    if (isPluginError(error) && error.code === 'plugin_collection_contract_conflict') return error;
-                    if (isPluginError(error) && error.code === COLLECTION_WRITERS_CLAIM_SETTLED_REFUSAL) return error;
-                    // An obsolete request must not evict a newer input's claim.
-                    if (writerClaimsByScope.get(key)?.result === result) writerClaimsByScope.delete(key);
-                    return null;
+                    // Keep the failed attempt at its declaration owner. A bind or
+                    // registry publication is not a recovery action.
+                    const refusal = isPluginError(error) ? error
+                        : dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Account Collection writer claim failed', true);
+                    const current = writerClaimsByScope.get(key);
+                    if (current?.result === result) writerClaimsByScope.set(key, { ...current, result: refusal });
+                    return refusal;
                 });
-                claim = { manifest, occurrenceId: lifecycle.occurrenceId, preparesCollections: prepareCollections,
+                claim = { manifest, occurrenceId: lifecycle.occurrenceId,
                     accountLifetimeToken: lifecycle.accountLifetimeToken, availabilityChangeKey, result,
                     ...(diagnosticClaimAttemptId ? { diagnosticClaimAttemptId } : {}) };
                 writerClaimsByScope.set(key, claim);
             }
             const retainedClaim = claim;
-            const refusal = await runTracedExternalActionInnerStage('collection.writer_claim.wait', () => retainedClaim.result,
+            const refusal = await runTracedExternalActionInnerStage('collection.writer_claim.wait', async () => retainedClaim.result,
                 retainedClaim.diagnosticClaimAttemptId ? { claimAttemptId: retainedClaim.diagnosticClaimAttemptId } : {});
             await assertBoundCurrent(lifecycle, operationSignal);
-            if (refusal?.code === 'plugin_intent_writable_collections_not_ready') {
-                if (prepareCollections) {
-                    // Concurrent demands reuse whichever caller promoted the
-                    // declaration claim first. No polling or retry timer.
-                    if (writerClaimsByScope.get(key) === retainedClaim) writerClaimsByScope.delete(key);
-                    await ensureWriterClaim(credentials, operationSignal, true, triggerKind);
-                }
-                return;
-            }
-            if (refusal && refusal.code !== COLLECTION_WRITERS_CLAIM_SETTLED_REFUSAL) throw refusal;
+            if (refusal?.code === 'plugin_collection_contract_conflict') throw refusal;
         };
         const request = async (input: Readonly<{
             path: string;
@@ -1124,7 +1119,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
             };
             const context = createBoundRequestContext(lifecycle);
-            await context.ensureWriterClaim(await context.currentCredentials(), undefined, true, 'declaration-publication');
+            await context.ensureWriterClaim(await context.currentCredentials(), undefined, 'declaration-publication');
         },
         async retireCollectionMigrationCandidate(input): Promise<void> {
             let binding: PluginCollectionCandidatePreparationBindingV1;
@@ -1621,15 +1616,8 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 post,
                 request,
             } = createBoundRequestContext(lifecycle);
-            // Binding publishes declarations, without starting retained-row
-            // migrations for undemanded plugins. The readiness owner's later
-            // publication and real Collection operations retain preparation
-            // through this same claim owner, including direct UI recovery.
-            if (resolveReleaseLessDeclaration(binding.pluginId) !== null) {
-                void currentCredentials()
-                    .then((credentials) => ensureWriterClaim(credentials, undefined, false))
-                    .catch(() => undefined);
-            }
+            // Binding a service performs no publication. The daemon publishes
+            // declarations explicitly; real Collection demand claims here.
 
             type AccountKvSnapshot = Readonly<{
                 row: PluginAccountStorageRowV1;

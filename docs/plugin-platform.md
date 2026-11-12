@@ -2782,8 +2782,12 @@ Account across a daemon's registry replacements and plugin re-activations. Equal
 rebuilt manifests reuse that admission; a changed declaration or independent host
 claims anew. An unrelated change-stream reset is not a new writer declaration.
 Refusals retain their occurrence/Account recovery inputs and can retry on
-availability hints; transient failures remain retryable. Every read/write still
-passes server authorization. This is unreleased 0.3 development behavior.
+availability hints. Transient failures are retained across unchanged background
+publication and retry on real Collection demand or changed recovery inputs.
+Binding an Account storage service does not publish declarations: the daemon's
+publication lifecycle and real Collection demand use the same claim owner.
+Every read/write still passes server authorization. This is unreleased 0.3
+development behavior.
 
 `definePlugin(...).activateAccount` exports the same `activate(api)` ABI, limited
 to the declared Account Action ids for that artifact/export. Its context exposes
@@ -5756,9 +5760,9 @@ direction to the SDK query, resets the cursor when the field or direction
 changes, and appends later pages with the returned cursor. The table remains a
 consumer of this one query owner; it does not sort a loaded page locally.
 
-Constructing a dormant Account storage binding does not prepare retained rows.
-A real Collection operation promotes its provisional declaration refusal through
-the same Account Data claim owner; concurrent operations share its preparation.
+Constructing a dormant Account storage binding performs no claim or preparation.
+A real Collection operation admits its declaration through the Account Data
+claim owner; concurrent operations share its preparation.
 The daemon's background declaration publication retains upgrade recovery for
 direct Account UI readers that never issue a daemon Collection operation. The
 daemon readiness owner keeps that preparation outside its readiness dependency.
