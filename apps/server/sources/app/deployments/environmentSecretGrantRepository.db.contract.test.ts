@@ -378,8 +378,12 @@ describe('Environment installation grants and complete resource captures', () =>
                 expect(await snapshot(), 'capture refusal must not partially commit grants, Environment CAS or publications').toEqual(before);
             };
             if (variant === 'operational') {
+                // The bindings writer authors backup credential and self-hosted service role references itself
+                // (6086f127920; backupBeforePlacement covers the former). A repository definition's services are
+                // not known to the server. Domain credentials and managed data roles still need their owner.
                 const ordinaryBindings = content.bindings.filter(row => row.purpose === 'variable' || row.purpose === 'registry');
-                for (const binding of content.bindings.filter(row => row.purpose !== 'variable' && row.purpose !== 'registry')) {
+                for (const binding of content.bindings.filter(row => row.purpose !== 'variable' && row.purpose !== 'registry'
+                    && row.purpose !== 'backupDestination' && !(row.purpose === 'dataRole' && 'service' in row))) {
                     await refuse({ ...input, ...await artifact('deployment-environment.v1', {
                         ...content, bindings: [...ordinaryBindings, binding],
                     }) });

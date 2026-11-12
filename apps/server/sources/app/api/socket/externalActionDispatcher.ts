@@ -197,6 +197,8 @@ interface DispatchPhaseFailure {
     readonly credentialScopeDenied: boolean;
     readonly grantReason: ApiTokenGrantDenialReasonV1 | null;
     readonly databaseErrorCode: ReturnType<typeof readDatabaseErrorCode>;
+    /** The mint's own typed refusal that its placement target is gone (retryable), kept over the generic code. */
+    readonly targetUnavailable: boolean;
     readonly failureCause?: ActionFailureCauseV1;
 }
 
@@ -239,6 +241,7 @@ function recordDispatchPhaseFailure(
     let credentialScopeDenied = false;
     let grantReason: ApiTokenGrantDenialReasonV1 | null = null;
     let databaseErrorCode: DispatchPhaseFailure['databaseErrorCode'] = null;
+    let targetUnavailable = false;
     try {
         errorClass = error instanceof TypeError ? 'TypeError'
             : error instanceof RangeError ? 'RangeError'
@@ -248,6 +251,7 @@ function recordDispatchPhaseFailure(
             credentialScopeDenied = true;
             grantReason = error.grantReason ?? null;
         }
+        targetUnavailable = error instanceof ApiTokenOperationError && error.code === 'target_unavailable';
         databaseErrorCode = readDatabaseErrorCode(error);
     } catch {
         // A thrown Proxy or accessor is untrusted too; retain only the phase.
@@ -258,6 +262,7 @@ function recordDispatchPhaseFailure(
         credentialScopeDenied,
         grantReason,
         databaseErrorCode,
+        targetUnavailable,
         ...(phase === 'execution_authorization' ? { failureCause: projectActionFailureCauseV1(error, phase) } : {}),
     };
     return failure;
@@ -277,7 +282,8 @@ async function runDispatchPhase<T>(
 }
 
 function projectDispatchPhaseFailureCode(failure: DispatchPhaseFailure): ExternalActionPlacementErrorCode {
-    return failure.databaseErrorCode ?? (failure.phase === 'execution_authorization' ? 'action_not_admitted' : 'target_unavailable');
+    return failure.databaseErrorCode ?? (failure.phase === 'execution_authorization' && !failure.targetUnavailable
+        ? 'action_not_admitted' : 'target_unavailable');
 }
 
 function createPlacementError(input: Readonly<{

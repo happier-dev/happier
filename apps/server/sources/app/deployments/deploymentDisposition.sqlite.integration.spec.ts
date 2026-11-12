@@ -365,12 +365,13 @@ it('preserves a pending Action and requires its canonical cancellation before di
         requestKey: crypto.randomUUID(), targetLinkId: f.link.id,
         actionOperationId: crypto.randomUUID(),
     } });
-    await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { pendingDeployContent: pending } });
+    // Stored pending intent is the retained `{ pendingDeploy }` record (9871b103b09), not the bare envelope.
+    await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { pendingDeployContent: { pendingDeploy: pending } } });
     expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, { ...f.input, detachKeepRunning: true })))
         .toMatchObject({ error: 'deployment_conflict' });
     expect(await inTx(tx => deleteDeploymentEnvironmentInTx(tx, f.owner.id, { ...f.base, detachKeepRunning: true })))
         .toMatchObject({ error: 'deployment_conflict' });
-    expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).pendingDeployContent).toEqual(pending);
+    expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).pendingDeployContent).toEqual({ pendingDeploy: pending });
 });
 
 it('retires Automation and exact grant authority only when its surviving runtime is removed', async () => {

@@ -127,7 +127,8 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     if (selectedPreparation?.operation === 'setup' && readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) {
         const environmentId = operands && typeof operands === 'object' && 'environmentId' in operands ? operands.environmentId : undefined;
         const selected = selectedPreparation.deployments.find(selected => selected.environment.id === environmentId);
-        if (!selected || !await readAdmittedSetupDeploymentEnvironmentInTx(tx, binding, selected)) seeds.environment.clear();
+        // Mint admitted this signed selection; its later reads are steps of that work, not new admissions.
+        if (!selected) seeds.environment.clear();
     }
     const native = binding.deploymentNativeAdmission;
     const backup = native && 'kind' in native && (native.kind === 'backup' || native.kind === 'restore') ? native : undefined;
@@ -1275,17 +1276,6 @@ async function readSetupDeploymentEnvironment(tx: Tx, binding: ExternalActionExe
         member.machineId, 'target', member.installationId) ? loaded.row : null;
 }
 
-/** Later reads consume the signed selection and private Account custody, without replaying permissions. */
-async function readAdmittedSetupDeploymentEnvironmentInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
-    selected: SetupDeployment) {
-    const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
-        selected.environment.id, {}, { environmentId: selected.environment.id });
-    if (!loaded.ok || loaded.admission.owner.kind === 'account' && loaded.admission.owner.accountId !== binding.accountId) return null;
-    const member = await readSetupDeploymentTargetInTx(tx, loaded.row, selected);
-    return member && await tx.machine.findFirst({ where: { id: member.machineId, installationId: member.installationId,
-        revokedAt: null, replacedByMachineId: null }, select: { id: true } }) ? loaded.row : null;
-}
-
 async function readSetupDeploymentTargetInTx(tx: Tx, environment: DeploymentEnvironmentRow, selected: SetupDeployment) {
     if (environment.deletedAt || environment.revision !== selected.environment.revision
         || environment.runtimeTargetLinkId !== selected.target.id) return null;
@@ -1546,7 +1536,9 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             selected = deployments.find(selected => owners.some(owner => owner.id === selected.environment.id));
         }
         if (!selected) return false;
-        const environment = await readAdmittedSetupDeploymentEnvironmentInTx(tx, binding, selected);
+        // Mint admitted this signed selection; a step reads its current content without re-admitting it.
+        const environment = await tx.deploymentEnvironment.findFirst({ where: { id: selected.environment.id, deletedAt: null },
+            select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } });
         if (!environment) return false;
         const expected = selected.candidate.contentArtifactId === artifactId ? selected.candidate : environment;
         if (expected.contentArtifactId !== artifactId) return false;

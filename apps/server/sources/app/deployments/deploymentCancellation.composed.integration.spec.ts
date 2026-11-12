@@ -51,7 +51,6 @@ describe('storage-only cancellation through the sole receipt transition route', 
             if (!created.ok) throw new Error(created.error);
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
-        // Retained builder configuration is not native authority for a plugin link.
         const staleBuilder = target === 'platform-retained-builder' ? await db.machine.create({ data: {
             id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(), revokedAt: new Date(),
             metadata: encodePlainMachineStoredContent({ host: 'fixture', platform: 'linux', happyCliVersion: 'test',
@@ -69,6 +68,14 @@ describe('storage-only cancellation through the sole receipt transition route', 
             ...(native ? { targetId: target } : { targetId: 'platform-test', source: { kind: 'plugin' as const,
                 contribution: { pluginId: 'deployment-platform-test', localId: 'runtime' } }, targetKind: 'platform' }),
             machines: native ? [{ machineId, installationId }] : [], ...linkContent }));
+        if (staleBuilder) {
+            // A revoked retained builder is current placement: linking is new work, so it is
+            // refused at this boundary with a typed, recoverable choice (O-DEPLOY 2026-11-12).
+            expect(linked).toMatchObject({ ok: false, error: 'machine_unavailable', role: 'build', machineIds: [staleBuilder.id],
+                nextActions: expect.arrayContaining(['chooseAnother']), diagnostic: { reason: 'machine_revoked' } });
+            expect(await db.deploymentTargetLink.count({ where: { environmentId: environment.id } })).toBe(0);
+            return;
+        }
         if (!linked.ok) throw new Error(linked.error);
         const input = { serverId, environmentId: environment.id, expectedRevision: linked.revision,
             targetLinkId: linked.targetLinkId, expectedTargetLinkRevision: linked.targetLinkRevision,

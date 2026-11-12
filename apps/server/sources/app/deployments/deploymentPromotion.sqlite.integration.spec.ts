@@ -153,8 +153,9 @@ describe('stored promotion storage composition', () => {
                 expect(result).toMatchObject({ ok: true, state: 'queued' });
                 if (!result.ok || !('deploymentId' in result)) throw new Error('Expected admitted promotion');
                 expect.soft(queries.filter(query => query === 'ProjectSource.findUnique'), 'source and destination each admit Source access once').toHaveLength(2);
-                // Each Machine admission needs one permission query and one installation query.
-                expect.soft(queries.filter(query => query === 'Machine.findMany'), 'one admission for the controller/builder/member set').toHaveLength(2);
+                // Two decisions, each one set read plus one permission read: the receipt's Source-custody admission,
+                // and the definition write's admission of the person's own Machine authority (717576ac290).
+                expect.soft(queries.filter(query => query === 'Machine.findMany'), 'receipt and definition admissions each read the set once').toHaveLength(4);
                 const receipt = await db.deployment.findUniqueOrThrow({ where: { id: result.deploymentId } });
                 const transition = async (contentUpdate?: DeploymentTransitionInputV1['contentUpdate']) => {
                     const body: Omit<DeploymentTransitionInputV1, 'proof'> = { serverId, environmentId: to.environmentId,

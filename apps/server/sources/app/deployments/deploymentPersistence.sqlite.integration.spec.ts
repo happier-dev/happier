@@ -1554,11 +1554,11 @@ describe('deployment storage real SQLite boundary', () => {
             expect(admitted.statusCode, admitted.body).toBe(200);
             const retained = await db.artifact.findUniqueOrThrow({ where: { id: snapshot.contentArtifactId } });
             const current = () => db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } });
-            const write = async (content: typeof initial) => {
+            const write = async (content: typeof initial, patch?: Readonly<{ ownServer: Readonly<Record<string, unknown>> }>) => {
                 const row = await current();
                 const reference = await artifact('deployment-environment.v1', content);
                 return app.inject({ method: 'PATCH', url: base, headers,
-                    payload: { serverId, environmentId, expectedRevision: row.revision, ...reference } });
+                    payload: { serverId, environmentId, expectedRevision: row.revision, ...reference, ...(patch ? { patch } : {}) } });
             };
             const rejectWithoutMutation = async (content: typeof initial) => {
                 const before = await current();
@@ -1569,9 +1569,12 @@ describe('deployment storage real SQLite boundary', () => {
             };
             await rejectWithoutMutation({ ...initial, definition: { ...definitionA, contentRevision: 2 } });
             await rejectWithoutMutation({ ...initial, definition: { ...definitionA, composeDigest: `sha256:${'b'.repeat(64)}` } });
-            const renamed = { ...initial, name: 'Renamed', retainPreviousDeployments: 3,
-                ownServer: { rollout: 'startFirst' as const, autoRestorePreviousRelease: false } };
-            expect((await write(renamed)).statusCode).toBe(200);
+            const ownServerPatch = { rollout: 'startFirst' as const, autoRestorePreviousRelease: false };
+            // Content carries the applied configuration, including the owner's defaults.
+            const renamed = { ...initial, name: 'Renamed', retainPreviousDeployments: 3, ownServer: { ...ownServerPatch,
+                backupBeforeMigration: true, migrationFailurePolicy: 'ask' as const, serviceExports: [] } };
+            // Own-server configuration is written through its patch, not opaque content (0118106b8f8).
+            expect((await write(renamed, { ownServer: ownServerPatch })).statusCode).toBe(200);
             const definitionB = { ...definitionA, document: documentB, composeDigest: digest(documentB), contentRevision: 2 };
             await rejectWithoutMutation({ ...renamed, definition: { ...definitionB, contentRevision: 1 } });
             expect((await write({ ...renamed, definition: definitionB })).statusCode).toBe(200);
