@@ -1828,14 +1828,27 @@ Environment too, and replay does not create a second link. The separate link
 Action remains available for changes to an existing Environment.
 
 Settings and Move use the same Link Action to replace the selected own-server
-runtime. Replacement retains the predecessor link, its ordered Machines and its
-serving receipt; it neither stops the old workload nor proves it drained. Failed
-attempts retain their native custody too. The existing teardown and unlink owners
-require cleanup proof or explicit detach before releasing that predecessor,
-excluding common Machines that transferred to the selected link. The optional `drainedDeploymentId` input
-remains accepted for current development callers but does not decide replacement
-permission. Older development servers can refuse this preparation with
-`deployment_conflict`; there is no alternate Move or cleanup path.
+runtime. A Move to disjoint Machines retains the predecessor link, its ordered
+Machines and its serving receipt; selection neither stops the old workload nor
+proves it drained. Failed attempts retain their native custody too. The existing
+teardown and unlink owners require cleanup proof or explicit detach before
+releasing that predecessor, excluding common Machines transferred to the selected
+link.
+
+In current development, a selective reduction that keeps common installations
+requires `drainedDeploymentId` before dropping the removed members. It must name
+the latest receipt for the exact Environment and predecessor link: a settled,
+successful teardown whose signed proof names exactly the removed Machine and
+installation pairs. A later deployment attempt, including a failed attempt that
+leaves the serving pointer unchanged, invalidates the older drain proof. Partial
+teardown preserves the serving pointer and link revision, so its proof revision
+must equal the current predecessor revision. Whole-target teardown instead clears
+the pointer and advances the link revision once; its disposition owner consumes
+that advanced revision before unlink or delete. A configured link with no prior
+receipt and no serving pointer can still be edited without inventing a drain
+receipt. An explicitly supplied `drainedDeploymentId` is always validated.
+Older development servers can refuse this preparation with `deployment_conflict`;
+there is no alternate Move or cleanup path.
 
 Changing the selected runtime does not copy deployed application data. Move's
 Workflow composes the existing deployment Actions for the supported source shape;
