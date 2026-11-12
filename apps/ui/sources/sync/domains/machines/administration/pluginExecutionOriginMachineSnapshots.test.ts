@@ -1,9 +1,14 @@
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
+import { setImmediate } from 'node:timers/promises';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import * as inventory from '@/sync/domains/machines/machineInventorySnapshots';
+import { publishMachineActivities } from '@/sync/domains/machines/machineActivity';
 import * as origins from './pluginExecutionOrigin';
 import * as fleet from './fleetUnion';
 import * as originIdentity from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -721,11 +726,12 @@ describe('execution-origin Machine publication', () => {
         const classify = () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } });
         // Every plugin holds an installation on every Machine and declares one
         // contribution to the next plugin: the busy Account's real shape.
-        function account(pluginCount: number, machineCount: number) {
+        function account(pluginCount: number, machineCount: number, includeSources = false) {
             const ctx = fixture();
             const machines = [ctx.machine, ...Array.from({ length: machineCount - 1 }, (_, index) =>
                 createMachineFixture({ id: `origin-work-${index}`, activeAt: ctx.now }))];
             storage.setState({ machineListByServerId: { [ctx.home.id]: machines } });
+            if (includeSources) publishMachineActivities(machines.map(machine => ({ machine, activity: machine, projections: [] })));
             const pluginIds = Array.from({ length: pluginCount }, (_, index) => `acme.work-${index}`);
             const counts = { declarationReads: 0, rowPluginIdReads: 0 };
             const manifests = pluginIds.map((id, index) => {
@@ -761,8 +767,12 @@ describe('execution-origin Machine publication', () => {
                 return counted;
             });
             const installedPlugins = publish(1, rows);
+            const sourcesByPlugin = new Map(pluginIds.map(pluginId => [pluginId, includeSources ? machines.map(host => ({
+                ...ctx.source, source: { ...ctx.source.source, origin: { ...ctx.source.source.origin,
+                    sourceRef: { ...ctx.source.source.origin.sourceRef, pluginId, machineId: host.id } } },
+            })) : []]));
             const inputsFor = (pluginId: string, selection: Partial<NonNullable<ExecutionOriginMachineSnapshotInputs['selection']>> = {}): ExecutionOriginMachineSnapshotInputs => ({
-                ...ctx.inputs, pluginId, sources: [], materializations,
+                ...ctx.inputs, pluginId, sources: sourcesByPlugin.get(pluginId)!, materializations,
                 selection: { availabilityRevision: null, classifyRelease: classify, storedOrigin: null,
                     homeServerIdentityId: ctx.home.serverIdentityId, installedPlugins, ...selection } });
             const connections = pluginIds.map(pluginId => ctx.connect(inputsFor(pluginId)));
@@ -781,6 +791,56 @@ describe('execution-origin Machine publication', () => {
         }
         const revokeMachine = ({ home, machines }: ReturnType<typeof account>, machineId: string) =>
             storage.setState({ machineListByServerId: { [home.id]: machines.map(row => row.id === machineId ? { ...row, revokedAt: Date.now() } : row) } });
+
+        it('bounds candidate allocation and releases superseded publications at 30 plugins × 20 Machines', async () => {
+            // Observe allocations without retaining the objects in spy call history.
+            const allocated: WeakRef<object>[] = [];
+            const originalSet = Map.prototype.set;
+            const observe = vi.spyOn(Map.prototype, 'set').mockImplementation(function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+                if (value && typeof value === 'object' && 'target' in value && 'rejection' in value
+                    && 'materializations' in value && 'sources' in value) allocated.push(new WeakRef(value));
+                return originalSet.call(this, key, value);
+            });
+            const work = account(30, 20, true);
+            expect(work.connections.every(connection => work.machines.every(machine => connection.getSnapshot().readMachineFact({
+                serverIdentityId: work.home.serverIdentityId, machineId: machine.id,
+            }).eligible))).toBe(true);
+            expect(allocated).toHaveLength(600);
+            expect(work.connections.reduce((sum, connection) => sum + connection.getSnapshot().selection!.candidates.length, 0)).toBe(1200);
+            // One contextual consumer per supplying Machine, alongside AppShell's Auto consumer.
+            const contextual = work.pluginIds.flatMap(pluginId => work.machines.map(machine => {
+                const inputs = work.inputsFor(pluginId, { contextualTarget: {
+                    serverIdentityId: work.home.serverIdentityId, machineId: machine.id,
+                } });
+                return { connection: work.connect(inputs), inputs };
+            }));
+            expect(allocated).toHaveLength(600);
+            observe.mockClear();
+            const original = work.connections.map(connection => connection.getSnapshot().selection!.candidates);
+            work.connections.forEach((connection, index) => connection.updateInputs(work.inputsFor(work.pluginIds[index]!)));
+            expect(allocated).toHaveLength(600);
+            work.connections.forEach((connection, index) => expect(connection.getSnapshot().selection!.candidates).toBe(original[index]));
+            revokeMachine(work, work.machines[1]!.id);
+            expect(allocated).toHaveLength(600);
+            const afterRevoke = work.connections.map(connection => connection.getSnapshot().selection!.candidates);
+            expect(afterRevoke.flatMap((rows, plugin) => rows.filter((row, index) => row !== original[plugin]![index]))).toHaveLength(60);
+            // A genuinely new availability basis supersedes all candidate publications.
+            const availabilityRevision = {};
+            work.connections.forEach((connection, index) => connection.updateInputs(work.inputsFor(work.pluginIds[index]!, { availabilityRevision })));
+            contextual.forEach(({ connection, inputs }) => connection.updateInputs({ ...inputs,
+                selection: { ...inputs.selection!, availabilityRevision } }));
+            expect(allocated).toHaveLength(1200);
+            observe.mockRestore();
+            // GC is an actual runtime boundary. End the WeakRef keep-alive job first.
+            setFlagsFromString('--expose-gc');
+            const collect: () => void = runInNewContext('gc');
+            setFlagsFromString('--no-expose-gc');
+            await setImmediate();
+            collect();
+            expect(allocated.slice(0, 600).filter(ref => ref.deref())).toHaveLength(0);
+            expect(allocated.slice(600).filter(ref => ref.deref())).toHaveLength(600);
+            work.connections.forEach(connection => connection.dispose());
+        });
 
         it('derives per-installation facts once, not per demand, when one Machine flips', () => {
             const work = account(12, 6);
