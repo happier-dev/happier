@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, FreestyleLaunchSchema, FreestyleOperationSchema, FreestyleResourceSchema, ROLE_SCHEMAS, reference, type FreestyleLaunch, type FreestyleOperation, type FreestyleResource } from './schemas.js';
 
 // Freestyle public v5 REST, OpenAPI 3.1.0 / info 0.1.0, observed 2026-11-01.
@@ -55,7 +55,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       const value = await http(FREESTYLE_API + '/vms?limit=0');
       const valid = isFreestyleVmList(value);
       return valid ? { available: true } : { available: false, code: 'provider_unavailable' };
-    } catch (error) { return { available: false, code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
   async function acquire(input: FreestyleLaunch, managedId: string): Promise<Acquisition> {
     const launch = FreestyleLaunchSchema.parse(input);
@@ -76,7 +76,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     try {
       const native = identity(await http(path(operation.name)), operation);
       return { kind: 'bound', resource: reference(resource(native, operation.managedId)) };
-    } catch { return pending(operation); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: FreestyleResource): Promise<MachineProvisionerObservationV1> {
     const value = FreestyleResourceSchema.parse(input);
@@ -91,10 +91,10 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
           ? [{ kind: 'stopped-storage', rule: { kind: 'after-stop', afterMs: native.autoDeleteSeconds * 1000 }, consequence: 'disk-deleted' }] : [],
         ...(expiry !== undefined && expiry >= 0 ? { nativeExpiry: expiry } : {}) };
 
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404
         ? { kind: 'absent' } : { kind: 'unknown', reason: code(error) });
-    }
+    }); }
   }
   async function execute(value: FreestyleResource, argv: readonly string[], inputBase64 = '', timeoutMs?: number | null) {
     // Native output is UTF-8 text; a private shell envelope preserves bytes, channels and status.

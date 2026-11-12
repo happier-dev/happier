@@ -1,6 +1,6 @@
 import * as z from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1, MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   dropletAcquireInputSchema, dropletPowerIntentSchema, dropletResourceSchema,
   nativeDropletSchema, nativeActionSchema, nativeSizeSchema, nativeRegionSchema, nativeImageSchema,
@@ -67,7 +67,10 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
       if (reply.status === 204 || reply.status === 404) return { kind: 'response', status: reply.status, body: null };
       try { return { kind: 'response', status: reply.status, body: await reply.json() as unknown }; }
       catch { return { kind: 'unavailable', reason: 'invalid-response', status: reply.status }; }
-    } catch { return { kind: 'unavailable', reason: 'transport' }; }
+    } catch (error) {
+      const transportFailure = (): HttpResult => ({ kind: 'unavailable', reason: 'transport' });
+      return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+    }
   }
   async function collection<T>(path: string, key: string, schema: z.ZodMiniType<T>): Promise<{ kind: 'available'; values: T[] } | Unavailable> {
     const values: T[] = [];

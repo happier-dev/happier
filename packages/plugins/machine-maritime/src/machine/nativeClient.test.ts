@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { createMaritimeNativeClient } from './nativeClient.js';
@@ -53,10 +54,17 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
 }
 
 describe('Maritime managed-machine REST leaf', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createMaritimeNativeClient(request, new AbortController().signal);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it('recognizes the account limits response before reporting provider access', async () => {
     let limits: unknown = {};
     const client = createMaritimeNativeClient(async () => Response.json(limits), new AbortController().signal, 1000);
-    expect(await client.check()).toMatchObject({ available: false });
+    await expect(client.check()).rejects.toMatchObject({ code: 'maritime_invalid_response' });
     limits = { plan: 'growth', machines: 0, awakeMachines: 0 };
     expect(await client.check()).toMatchObject({ available: true });
   });

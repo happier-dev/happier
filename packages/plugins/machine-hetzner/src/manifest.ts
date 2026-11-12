@@ -2,7 +2,7 @@ import { definePlugin, PluginError, type PluginInvocationContext } from '@happie
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
+import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerSnapshotResultV1Schema,
   MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerCloudHostKeyV1,
@@ -114,18 +114,18 @@ export const PLUGIN = definePlugin({
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
           if (result.kind === 'rejected') return result;
           return pending(correlation, result.nativeCause);
-        } catch (error) { return pending(correlation, error instanceof HetznerNativeError ? error.nativeCause : undefined); }
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(correlation, error instanceof HetznerNativeError ? error.nativeCause : undefined)); }
       },
     },
     check: { ...defaults, title: 'Check Hetzner API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch (error) { return { ...machineCheckPresentation({ available: false, code: 'provider_unavailable' }), ...failureCause(error) }; } },
+      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ ...machineCheckPresentation({ available: false, code: 'provider_unavailable' }), ...failureCause(error) })); } },
     },
     options: { ...defaults, title: 'Discover Hetzner options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
       async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
         try { return projectHetznerOptions(await (await runtime(context)).options()); }
-        catch (error) { return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable', ...failureCause(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable', ...failureCause(error) })); }
       },
     },
     acquire: { ...defaults, title: 'Acquire Hetzner resource', dangerLevel: 'destructive',
@@ -170,9 +170,9 @@ export const PLUGIN = definePlugin({
       async run(input, context) { try { const result = await (await runtime(context)).inspect(input.resource);
         return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: result.kind,
           ...(result.kind === 'present' ? { power: result.power === 'transitioning' ? 'unknown' as const : result.power, storage: 'retained' as const, billing } : {}) });
-        } catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown',
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown',
           reason: error instanceof HetznerNativeError && error.code === 'native_cleanup_unconfirmed'
-            ? 'native_cleanup_incomplete' : 'provider_unavailable', ...failureCause(error) }); } },
+            ? 'native_cleanup_incomplete' : 'provider_unavailable', ...failureCause(error) })); } },
     },
     power: { ...defaults, title: 'Change Hetzner power', dangerLevel: 'destructive',
       confirmation: { title: 'Change this Hetzner Server’s power?', body: 'This starts or stops the exact managed resource. Powered-off Servers remain billable.' },

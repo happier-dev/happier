@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import { createVercelNativeClient } from './nativeClient.js';
 import { MachineProvisionerPowerResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -33,6 +34,13 @@ const materializeHeaders = async ({ bindingKey }: { bindingKey: string }) => ({ 
   headers: { authorization: 'Bearer private-upstream-' + bindingKey, host: 'wrong-host.invalid' } });
 
 describe('Vercel native credential replacement', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createVercelNativeClient(scope, request);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it.each([401, 403])('keeps the resource HTTP %s cause before credential policy writes', async status => {
     const { client, calls } = fixture(() => json({ private: 'vendor body' }, status));
     expect(await client.applyNativeCredentials(credentialInput(), materializeHeaders)).toEqual({

@@ -78,7 +78,10 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       response = await request(url, { method, redirect: 'error', signal,
         headers: { 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    } catch (error) { return { kind: effect ? 'unknown' : 'unavailable', code: errorCode(error) }; }
+    } catch (error) {
+      const transportFailure = (): Http => ({ kind: effect ? 'unknown' : 'unavailable', code: errorCode(error) });
+      return effect ? transportFailure() : projectMachineProvisionerActionFailure(error, transportFailure);
+    }
     if (!response.ok) {
       // The observed status class is a native fact. Vendor bodies/codes are not
       // admitted diagnostic content, and are never copied into public results.

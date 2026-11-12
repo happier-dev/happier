@@ -1,3 +1,4 @@
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isLumeMacos, readLumeCapacity } from './capacity.js';
@@ -82,13 +83,16 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
       }
       return response;
     } catch (error) {
-      // Vendor diagnostics and thrown transport errors may contain private material.
-      const cause = error instanceof Error && error.cause ? error.cause : error;
-      const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
-      const notSent = code === 'ECONNREFUSED' || code === 'ENETUNREACH' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND';
-      return { kind: 'unknown', reason: 'transport',
-        ...(notSent ? { delivery: 'not-sent' as const } : {}),
-        ...(route === 'run' ? { nativeCause: { localCause: 'native_route_unavailable' as const } } : {}) };
+      const transportFailure = (): LumeNativeUnknown => {
+          // Vendor diagnostics and thrown transport errors may contain private material.
+          const cause = error instanceof Error && error.cause ? error.cause : error;
+          const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
+          const notSent = code === 'ECONNREFUSED' || code === 'ENETUNREACH' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND';
+          return { kind: 'unknown', reason: 'transport',
+            ...(notSent ? { delivery: 'not-sent' as const } : {}),
+            ...(route === 'run' ? { nativeCause: { localCause: 'native_route_unavailable' as const } } : {}) };
+        };
+      return (init.method ?? 'GET') === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
     }
   }
 
@@ -196,7 +200,7 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
           }
         }
         return { kind: 'catalog', references: [...references] };
-      } catch { return { kind: 'unknown', reason: 'response' }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', reason: 'response' })); }
     },
     async imageDiskBytes(reference: string, signal?: AbortSignal): Promise<Readonly<{ kind: 'image'; diskBytes: number }> | LumeNativeUnknown> {
       const match = /^ghcr\.io\/(trycua\/(?:macos|macos-tahoe-cua))(?::([A-Za-z0-9_][A-Za-z0-9_.-]*)|@(sha256:[a-f0-9]{64}))$/u.exec(reference);

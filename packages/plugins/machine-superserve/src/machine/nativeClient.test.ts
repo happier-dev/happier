@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,6 +56,13 @@ function vendor(options: { readAccessToken?: boolean } = {}) {
 }
 const launch = { template: 'superserve/base' };
 describe('Superserve thin HTTP qualification', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createSuperserveNativeClient(request, new AbortController().signal);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it.each([true, false])('reads an active diagnostic guest without activating it (read token: %s)', async readAccessToken => {
     const v = vendor({ readAccessToken });
     try {

@@ -1,3 +1,4 @@
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { FLY_DEFAULT_IMAGE, FLY_ROLE_SCHEMAS, FlyAcquireOperationV1Schema, FlyAcquireRequestSchema, FlyExecRequestSchema, FlyExecResponseSchema, FlyGuestBootSchema, FlyLaunchV1Schema, FlyMachineSchema, FlyProcessConfigurationSchema, FlyPutFileOptionsSchema, FlyResourceV1Schema, FlyVolumeSchema, type FlyAcquireOperationV1, type FlyAcquireRequest, type FlyExecRequest, type FlyGuestBoot, type FlyLaunchV1, type FlyPutFileRequest, type FlyResourceV1 } from './schemas.js';
@@ -82,7 +83,10 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
         headers: { Authorization: formatFlyAuthorization(token), 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-    } catch { return { kind: method === 'GET' ? 'unavailable' : 'unknown', reason: 'transport' }; }
+    } catch (error) {
+      const transportFailure = (): HttpResult => { return { kind: method === 'GET' ? 'unavailable' : 'unknown', reason: 'transport' }; };
+      return method === 'GET' || url === FLY_GRAPHQL_API ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+    }
     if (response.status === 404 && method === 'GET') return { kind: 'absent' };
     // Reflected native bodies may contain credentials or private input. They
     // never enter public errors, diagnostics or recovery state.

@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, DaytonaLaunchSchema, DaytonaOperationSchema, DaytonaResourceSchema, ROLE_SCHEMAS, reference, type DaytonaLaunch, type DaytonaOperation, type DaytonaResource } from './schemas.js';
 
 // Daytona v0.226 stable docs, OpenAPI 1.0 / Toolbox v0.0.0-dev, checked 2026-11-01.
@@ -54,7 +54,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
       const permissions = key !== null && typeof key === 'object' && 'permissions' in key ? key.permissions : undefined;
       const valid = Array.isArray(permissions) && ['write:sandboxes', 'delete:sandboxes'].every(permission => permissions.includes(permission));
       return valid ? { available: true } : { available: false, code: 'credential_unavailable' };
-    } catch (error) { return { available: false, code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
   async function acquire(input: DaytonaLaunch, managedId: string): Promise<Acquisition> {
     const launch = DaytonaLaunchSchema.parse(input);
@@ -75,7 +75,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
     try {
       const native = identity(await http(path(operation.name)), operation);
       return { kind: 'bound', resource: reference(resource(native, operation.managedId)) };
-    } catch { return pending(operation); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: DaytonaResource): Promise<MachineProvisionerObservationV1> {
     const value = DaytonaResourceSchema.parse(input);
@@ -87,10 +87,10 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
         : native.state === 'stopped' || native.state === 'archived' ? 'stopped' : native.state === 'paused' ? 'suspended' : 'unknown',
         storage: ['started', 'stopped', 'archived', 'paused'].includes(native.state) ? 'retained' : 'unknown', billing: BILLING,
         ...(expiry !== undefined && Number.isFinite(expiry) && expiry >= 0 ? { nativeExpiry: expiry } : {}) };
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404
         ? { kind: 'absent' } : { kind: 'unknown', reason: code(error) });
-    }
+    }); }
   }
   async function execute(value: DaytonaResource, argv: readonly string[], inputBase64 = '', timeoutMs?: number | null) {
     // Toolbox merges stdout/stderr. A private shell envelope preserves bytes, channels and status.

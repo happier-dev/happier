@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import { readFileSync, statSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,6 +11,13 @@ async function bound(client: ReturnType<typeof createRailwayNativeClient>) {
   return acquired.resource.value;
 }
 describe('Railway documented network contracts', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createRailwayNativeClient(request, new AbortController().signal);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it('enrolls the paid native identity through the portable guest carrier', async () => {
     const v = railwayVendor();
     try { const client = createRailwayNativeClient(v.request); const resource = await bound(client);

@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -47,6 +48,13 @@ function vendor() {
 }
 const launch = { snapshotId: 'freestyle/ubuntu' };
 describe('Freestyle HTTP leaf qualification', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createFreestyleNativeClient(request, new AbortController().signal);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it.each(['start', 'resume'])('confirms native %s without relying on guest execution', async intent => {
     const v = vendor();
     try {

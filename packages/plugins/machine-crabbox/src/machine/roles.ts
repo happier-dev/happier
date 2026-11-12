@@ -3,7 +3,7 @@ import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { machineCheckPresentation, machinePresentationLabel } from '../ui/translations.js';
 import { prepareCrabboxConnection } from './connection.js';
 import { crabboxLeaseId, createCrabboxProvider, CrabboxDependencyUnavailable } from './provider.js';
-import { observeMachineProvisionerNativeRead, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID } from './constants.js';
 import { CrabboxOptionsInputV1Schema, CrabboxResourceV1Schema, resolveCrabboxLaunchQueryCandidate } from './schemas.js';
@@ -41,7 +41,7 @@ export async function reconcileCrabbox<TContext extends CoordinatorContext>(
     resource = recovered.data;
   }
   try { return await (await providerFor(resource, context)).reconcile(resource); }
-  catch { return { kind: 'pending' as const, nativeOperationRef: { contributionRef: reference, schemaVersion: 1, value: resource } }; }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'pending' as const, nativeOperationRef: { contributionRef: reference, schemaVersion: 1, value: resource } })); }
 }
 
 export async function acquireCrabbox<TContext extends CoordinatorContext>(input: RoleInput<'acquireInput'>, context: TContext,
@@ -63,7 +63,7 @@ export async function inspectCrabbox<TContext extends CoordinatorContext>(input:
   if (!input.resource.nativeInstanceId) return observeMachineProvisionerNativeRead(context.invokedAtMs,
     { kind: 'unknown', reason: 'crabbox_connection_custody_unavailable' });
   try { return await (await providerFor(input.resource, context)).inspect(input.resource); }
-  catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: providerFailureCode(error, input.resource) }); }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: providerFailureCode(error, input.resource) })); }
 }
 
 export async function destroyCrabbox<TContext extends CoordinatorContext>(
@@ -80,7 +80,7 @@ export async function inspectedCrabboxProvider(context: CoordinatorContext, refe
 
 export async function checkCrabboxCoordinator(context: CoordinatorContext) {
   try { await inspectedCrabboxProvider(context); return machineCheckPresentation({ available: true }); }
-  catch { return machineCheckPresentation({ available: false, code: 'credential_unavailable' }); }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: 'credential_unavailable' })); }
 }
 
 /** Only a selected direct route demands its native host adapter. Coordinator
@@ -101,8 +101,10 @@ export async function crabboxOptions(input: ProtocolSchemaOutput<typeof CrabboxO
       available = true;
     }
   } catch (error) {
-    if (launch.transport === 'direct' && !(error instanceof CrabboxDependencyUnavailable)) throw error;
-    // Preserve the reviewed launch while exposing the selected route's refusal.
+    projectMachineProvisionerActionFailure(error, () => {
+      if (launch.transport === 'direct' && !(error instanceof CrabboxDependencyUnavailable)) throw error;
+      // Preserve the reviewed launch while exposing the selected route's refusal.
+    });
   }
   return { dimensions, base: { launch,
     guestPlatform: launch.target === 'macos' ? 'darwin' as const : 'linux' as const,

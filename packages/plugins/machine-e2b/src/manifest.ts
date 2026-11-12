@@ -2,7 +2,7 @@ import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import {
+import { projectMachineProvisionerActionFailure,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
@@ -57,7 +57,7 @@ export const PLUGIN = definePlugin({
   actions: {
     check: { ...defaults, title: 'Check E2B access', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { try { return await runtime(context).check(); }
-        catch (error) { return { available: false, code: errorCode(error), status: 'E2B unavailable' }; } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: errorCode(error), status: 'E2B unavailable' })); } } },
     options: { ...defaults, title: 'E2B sandbox options', dangerLevel: 'safe', inputSchema: E2bOptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
         { path: 'templateId', title: 'Template ID or alias', widget: 'text', required: true, defaultValue: 'base' },
@@ -83,7 +83,7 @@ export const PLUGIN = definePlugin({
       async run(input, context) { return runtime(context).bootstrap(input.resource); } },
     inspect: { ...defaults, title: 'Inspect E2B sandbox', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) { try { return await runtime(context).inspect(input.resource); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) })); } } },
     power: { ...defaults, title: 'Pause or resume E2B sandbox', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) { try { return await runtime(context).power(input.resource, input.intent); }
         catch (error) { return { kind: 'unknown', code: errorCode(error) }; } } },

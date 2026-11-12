@@ -1,5 +1,5 @@
 import * as mini from 'zod/mini';
-import { buildMachineProvisionerCloudInit, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerCloudInit, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { HetznerAcquireV1Schema, HetznerCorrelationSchema, HetznerDeleteOperationV1Schema, HetznerNativeError, HetznerPowerIntentSchema, HetznerResourceV1Schema, parseHetznerValue } from './schemas.js';
 import type { HetznerResourceV1 } from './schemas.js';
@@ -81,7 +81,10 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
         headers: { Authorization: `Bearer ${options.token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-    } catch { throw new HetznerNativeError('native_transport_unavailable'); }
+    } catch (error) {
+      const transportFailure = (): never => { throw new HetznerNativeError('native_transport_unavailable'); };
+      return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+    }
     if (!response.ok) {
       // REST v1 Errors (https://docs.hetzner.cloud/reference/cloud), fetched
       // 2026-10-26: expose only closed codes and submitted field names. Messages
@@ -242,8 +245,8 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
         }
         if (exact.size !== 1) return { kind: 'unknown', code: exact.size ? 'native_identity_ambiguous' : 'native_identity_not_found', correlation };
         return bind([...exact.values()][0], { volumeIds: [], primaryIpIds: [] });
-      } catch (error) { return { kind: 'unknown', code: codeOf(error), correlation,
-        ...(error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: codeOf(error), correlation,
+        ...(error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) })); }
     },
     async power(rawResource: unknown, rawIntent: unknown) {
       const resource = parseHetznerValue(HetznerResourceV1Schema, rawResource);

@@ -1,5 +1,5 @@
 import { encodeBase64, decodeBase64, defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, UpstashBoxLaunchSchema, UpstashBoxOperationSchema, UpstashBoxResourceSchema, ROLE_SCHEMAS, reference, type UpstashBoxLaunch, type UpstashBoxOperation, type UpstashBoxResource } from './schemas.js';
 
 // Public REST v2; official @upstash/box 0.7.10 at 170dd8b98821, checked 2026-11-01.
@@ -46,7 +46,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     try {
       const result = await http(UPSTASH_BOX_API + '?label=happier-access-check');
       return Array.isArray(result) ? { available: true } : { available: false, code: 'upstash_box_invalid_response' };
-    } catch (error) { return { available: false, code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
   async function acquire(input: UpstashBoxLaunch, managedId: string): Promise<Acquisition> {
     const launch = UpstashBoxLaunchSchema.parse(input);
@@ -67,7 +67,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     try {
       const native = identity(await http(path(operation.name)), operation);
       return { kind: 'bound', resource: reference(resource(native, operation.managedId)) };
-    } catch { return pending(operation); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: UpstashBoxResource): Promise<MachineProvisionerObservationV1> {
     const value = UpstashBoxResourceSchema.parse(input);
@@ -77,10 +77,10 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
       return { observedAt, availability: 'present', power: native.status === 'idle' || native.status === 'running' ? 'running'
         : native.status === 'paused' ? 'stopped' : 'unknown',
         storage: ['idle', 'running', 'paused'].includes(native.status) ? 'retained' : 'unknown', billing: BILLING };
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404
         ? { kind: 'absent' } : { kind: 'unknown', reason: code(error) });
-    }
+    }); }
   }
   async function execute(value: UpstashBoxResource, argv: readonly string[], inputBase64 = '') {
     // The native exec DTO is text. Encode inside the guest to preserve arbitrary bytes and separate channels.

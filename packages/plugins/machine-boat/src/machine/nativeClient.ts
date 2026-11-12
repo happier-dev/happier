@@ -1,3 +1,4 @@
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as mini from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
@@ -86,8 +87,11 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
     let response: Response;
     try {
       response = await transport(`${API_ORIGIN}${path}`, { ...init, redirect: 'error', signal: options.signal });
-    } catch {
-      throw new BoatNativeError('native_transport_unavailable');
+    } catch (error) {
+      const transportFailure = (): never => {
+          throw new BoatNativeError('native_transport_unavailable');
+        };
+      return (init.method ?? 'GET') === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
     }
     // The response class is observed at the HTTP boundary. Vendor bodies and
     // messages are never diagnostic carriers, including undecodable refusals.

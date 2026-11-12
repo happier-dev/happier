@@ -1,3 +1,4 @@
+import { PluginError } from '../errors.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { HttpRequest } from '../http.js';
 import { createMachineProvisionerFetch, createMachineProvisionerMaterializedFetch } from './http.js';
@@ -12,6 +13,20 @@ function boundary() {
 }
 
 describe('machine provisioner host HTTP bridge', () => {
+  it('preserves typed pre-effect and read failures while keeping mutation transport uncertain', async () => {
+    const b = boundary();
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed' });
+    const materialize = vi.fn(async () => { throw refusal; });
+    const request = createMachineProvisionerMaterializedFetch({ ...b.context, services: { ...b.context.services, connectedAccounts: { materialize } } }, {
+      purpose: 'cloud-api', origin, headerName: 'authorization', methods: ['GET', 'POST'], isGuestUrl: () => true,
+    });
+    await expect(request(origin)).rejects.toBe(refusal);
+    expect(b.request).not.toHaveBeenCalled();
+    b.request.mockRejectedValueOnce(refusal);
+    await expect(request('https://guest.example.test')).rejects.toBe(refusal);
+    b.request.mockRejectedValueOnce(new PluginError({ code: 'plugin_fetch_redirect_limit_exceeded' }));
+    await expect(request('https://guest.example.test', { method: 'POST' })).rejects.toMatchObject({ code: 'provider_unavailable' });
+  });
   it('preserves Request bytes and binds the purpose without forwarding the native client sentinel', async () => {
     const b = boundary();
     const request = createMachineProvisionerFetch(b.context, { purpose: 'cloud-api', origins: [origin], headerName: 'authorization' });

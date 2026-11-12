@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
+import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
   type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING_BY_KIND, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type MaritimeLaunch, type MaritimeResource, type MaritimeOperation } from './schemas.js';
 
@@ -81,7 +81,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     try {
       const entries = await matches(operation);
       return entries.length === 1 ? acquired(entries[0], operation) : unknown(operation);
-    } catch { signal.throwIfAborted(); return unknown(operation); }
+    } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => unknown(operation)); }
   }
   async function read(resource: MaritimeResource) {
     const response = await http(pathOf(resource));
@@ -96,7 +96,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
       const billing = BILLING_BY_KIND[resource.kind];
       return native ? { observedAt, availability: 'present', power: nativePower(native.status), storage: 'retained', billing }
         : { observedAt, availability: 'absent', storage: 'lost', billing };
-    } catch (error) { signal.throwIfAborted(); return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) }); }
+    } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
   }
   async function power(resource: MaritimeResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     const box = resource.kind === 'agent-box';
@@ -205,7 +205,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         const value = await json(await http('/api/v1/account/limits'));
         if (!isMaritimeAccountLimits(value)) throw invalid();
         return { available: true };
-      } catch (error) { signal.throwIfAborted(); return { available: false, code: safeCode(error), status: 'Maritime unavailable' }; }
+      } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: safeCode(error), status: 'Maritime unavailable' })); }
     },
     async acquire(launch: MaritimeLaunch, managedId: string): Promise<Acquisition> {
       const operation: MaritimeOperation = { kind: 'acquire', managedId, launch };

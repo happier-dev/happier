@@ -3,7 +3,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { decodeBase64, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerBootstrapCarrierV1, MachineProvisionerDestroyResultV1, MachineProvisionerObservationV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CrabboxCoordinatorClient, CrabboxNativeError } from './nativeClient.js';
 import type { CrabboxHttp } from './nativeClient.js';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema } from './schemas.js';
@@ -52,9 +52,9 @@ export function createCrabboxProvider(options: Readonly<{
           return { kind: 'bound', resource: { contributionRef, schemaVersion: 1, value: observed.resource } };
         }
         return { ...pending(), ...(observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) };
-      } catch (error) {
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
         return crabboxErrorCode(error) === 'native_identity_mismatch' ? { kind: 'rejected', code: 'resource_mismatch' } : pending(error);
-      }
+      }); }
     },
     async acquire(input: Readonly<{ launch: CrabboxLaunchV1; managedId?: string; bootstrapPublicKey?: string }>): Promise<MachineProvisionerAcquireResultV1<CrabboxResourceV1, CrabboxResourceV1>> {
       const parsed = CrabboxLaunchV1Schema.safeParse(input.launch);
@@ -105,8 +105,8 @@ export function createCrabboxProvider(options: Readonly<{
           ...(observed.cleanup === 'pending' ? { reason: 'native_cleanup_incomplete' } : {}),
           ...(observed.expiresAt === undefined ? {} : { nativeExpiry: observed.expiresAt }),
           ...(observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) });
-      } catch (error) { return observeMachineProvisionerNativeRead(options.observedAt, { kind: 'unknown', reason: crabboxErrorCode(error),
-        ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) }); }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(options.observedAt, { kind: 'unknown', reason: crabboxErrorCode(error),
+        ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) })); }
     },
     async destroy(resource: CrabboxResourceV1): Promise<MachineProvisionerDestroyResultV1<CrabboxResourceV1>> {
       try {

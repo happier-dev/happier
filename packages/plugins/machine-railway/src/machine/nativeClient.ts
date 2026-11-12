@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOperationSchema, RailwayResourceSchema, ROLE_SCHEMAS, reference, type RailwayLaunch, type RailwayOperation, type RailwayResource } from './schemas.js';
 import { readRailwayFile, writeRailwayFile } from './files.js';
 
@@ -43,7 +43,10 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       if ('errors' in body && (!Array.isArray(body.errors) || body.errors.length > 0)) throw new NativeError('railway_graphql_unavailable');
       if (!('data' in body) || !body.data || typeof body.data !== 'object' || Array.isArray(body.data)) throw new NativeError('railway_invalid_response');
       return body.data as Record<string, unknown>;
-    } catch (error) { throw error instanceof NativeError ? error : new NativeError(code(error)); }
+    } catch (error) {
+      const transportFailure = (): never => { throw error instanceof NativeError ? error : new NativeError(code(error)); };
+      return query.startsWith('query') ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+    }
   }
   function identity(input: unknown, expected: { environmentId: string; sandboxId?: string }): Native {
     const decoded = nativeSchema.safeParse(input);
@@ -67,7 +70,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       const data = await graphql('query{me{id}}', {});
       const user = defineProtocolObject({ id: text }, open).safeParse(data.me);
       return user.success ? { available: true } : { available: false, code: 'credential_unavailable' };
-    } catch (error) { return { available: false, code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
   async function acquire(input: RailwayLaunch, managedId: string): Promise<Acquisition> {
     const launch = RailwayLaunchSchema.safeParse(input);
@@ -90,7 +93,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
     try {
       const native = await read({ environmentId: operation.environmentId, sandboxId: operation.sandboxId });
       return native ? acquired(native, operation.managedId) : { kind: 'rejected', code: 'managed_not_found' };
-    } catch { return unknown(operation.sandboxId); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation.sandboxId)); }
   }
   async function inspect(input: RailwayResource): Promise<MachineProvisionerObservationV1> {
     const resource = RailwayResourceSchema.parse(input);
@@ -99,7 +102,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       if (native === null || native.status === 'DESTROYED') return observeMachineProvisionerNativeRead(observedAt, { kind: 'absent' });
       return { observedAt, availability: 'present', power: native.status === 'RUNNING' ? 'running' : 'unknown',
         storage: native.status === 'RUNNING' && native.idleTimeoutMinutes === 0 ? 'retained' : 'unknown', billing: BILLING };
-    } catch (error) { return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: code(error) }); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: code(error) })); }
   }
   function timeoutSeconds(timeoutMs?: number | null) {
     // HTTPS exec is documented as default 120 s / maximum 600 s. Use its full native

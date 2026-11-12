@@ -1,4 +1,5 @@
 /** @moduleRealm any */
+import { projectMachineProvisionerActionFailure } from './actionFailure.js';
 import type { PluginAccountActionContext } from '../actions/index.js';
 import type { HttpMethod, HttpRequest, HttpService } from '../http.js';
 
@@ -99,18 +100,19 @@ export function createMachineProvisionerMaterializedFetch(context: Materializati
     let admittedAuthorization: string;
     try {
       admittedAuthorization = url.origin === options.origin ? await (authorization ??= acquireAuthorization()) : '';
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
-      throw failure('credential_unavailable');
+      return projectMachineProvisionerActionFailure(error, () => { throw failure('credential_unavailable'); });
     }
     signal.throwIfAborted();
     const headers = new Headers(request.headers);
     headers.delete(options.headerName);
     if (url.origin === options.origin) headers.set(options.headerName, admittedAuthorization);
     try { return await send(context, request, headers, signal); }
-    catch {
+    catch (error) {
       signal.throwIfAborted();
-      throw failure('provider_unavailable');
+      const transportFailure = (): never => { throw failure('provider_unavailable'); };
+      return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
     }
   };
 }

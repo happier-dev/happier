@@ -1,3 +1,4 @@
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { z } from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
@@ -159,7 +160,10 @@ export class CrabboxCoordinatorClient {
                     ...(method === 'PUT' ? { Prefer: 'respond-async' } : {}) },
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             });
-        } catch { return undefined; }
+        } catch (error) {
+          const transportFailure = (): CoordinatorLease | undefined => { return undefined; };
+          return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+        }
         if (!response.ok) {
             if (method === 'PUT' && response.status === 409) {
                 const rejection = z.object({ error: z.string() }).safeParse(await response.json().catch(() => undefined));

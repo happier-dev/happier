@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -47,6 +48,13 @@ async function activated(response: unknown, status = 200, replyForUrl?: (url: st
   return { handlers, context, requests };
 }
 describe('public digitalocean machine provisioner', () => {
+  it('preserves a typed HTTP refusal through activated options', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const runtime = await activated(undefined, 200, () => { throw refusal; });
+    await expect(runtime.handlers.get('options')!({}, runtime.context)).rejects.toBe(refusal);
+    expect(runtime.requests.map(request => request.method)).toEqual(['GET']);
+  });
   it.each(['completed', 'errored', 'unavailable', 'ambiguous'] as const)('settles one exact native snapshot Action with truthful coverage after %s', async outcome => {
     let submitted = false;
     let observations = 0;

@@ -56,7 +56,7 @@ export async function request(context: Context, path: string, method: HttpMethod
   } catch (error) {
     const code = isPluginError(error) ? error.code : undefined;
     if (readOnlyRequest) return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable'));
-    if (code && beforeRequestRefusals.has(code)) return projectMachineProvisionerActionFailure(error, () => failure(code));
+    if (code && beforeRequestRefusals.has(code)) throw error;
     throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}) });
   }
   if (context.signal.aborted) return failure(readOnlyRequest ? 'operation_cancelled' : 'outcome_unknown');

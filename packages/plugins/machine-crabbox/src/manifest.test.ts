@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { CRABBOX_PLUGIN, CRABBOX_ROLE_SCHEMAS } from './manifest.js';
@@ -45,6 +46,24 @@ async function coordinatorRoles(putResponse?: { status: number; body: unknown })
 }
 
 describe('Crabbox lazy family authoring', () => {
+  it.each(['inspect', 'reconcile', 'check', 'options'] as const)('preserves a typed refusal through the activated %s read role', async role => {
+    const runtime = await coordinatorRoles();
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      managedServices: { dependencies: { status: async (id: string) => ({ state: 'missing', id, supported: true }) } },
+      http: { ...runtime.context.services.http, request: async () => { throw refusal; } },
+      connectedAccounts: { ...runtime.context.services.connectedAccounts,
+        ...(role === 'check' || role === 'options' ? { materialize: async () => { throw refusal; } } : {}),
+      },
+    } };
+    const resource = { backendId: 'aws', namespace: 'test-org', transport: 'coordinator',
+      leaseId: runtime.leaseId, nativeInstanceId: 'i-exact' };
+    const input = role === 'reconcile' ? { nativeOperation: resource } : role === 'inspect' ? { resource }
+      : role === 'options' ? { backendId: 'aws', namespace: 'test-org', transport: 'coordinator', nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', target: 'linux', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } : {};
+    await expect(runtime.handlers.get(role)!(input, context)).rejects.toBe(refusal);
+  });
+
   it('activates the declared Account coordinator roles while retaining the native route', async () => {
     const actions = CRABBOX_PLUGIN.manifest.contributes.actions ?? [];
     const provisioners = CRABBOX_PLUGIN.manifest.contributes.machineProvisioners ?? [];

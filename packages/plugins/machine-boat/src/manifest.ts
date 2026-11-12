@@ -4,7 +4,7 @@ import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import {
+import { projectMachineProvisionerActionFailure,
   defineMachineProvisionerReconciliationSchemas,
   defineMachineProvisionerSchemas,
   computeSshHostKeyFingerprint,
@@ -174,23 +174,23 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
           const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
           if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: operation.idempotencyKey, reason: result.code }, ...cause };
           return { kind: 'rejected' as const, code: result.code === 'native_idempotency_mismatch' ? 'request_conflict' as const : 'provider_unavailable' as const, ...cause };
-        } catch (error) {
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
           if (error instanceof BoatNativeError && boatSetupMessage(error.code)) return { kind: 'unknown' as const,
             recovery: { reference: operation.idempotencyKey, reason: error.code }, ...failureCause(error) };
           return pending(operation, failureCause(error).nativeCause);
-        }
+        }); }
       },
     },
     check: { ...defaults, title: 'Check Boat API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return boatCheckPresentation(await runtime(context).check()); }
-        catch (error) {
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => {
           const code = error instanceof BoatNativeError ? error.code : 'provider_unavailable';
           const message = boatSetupMessage(code);
           return { ...boatCheckPresentation({ available: false, code,
             ...(message ? { status: { key: `machineBoat.errors.${code}`, fallback: message } } : {}) }), ...failureCause(error) };
-        }
+        }); }
       },
     },
     options: { ...defaults, title: 'Discover Boat sandbox options', dangerLevel: 'safe',
@@ -265,8 +265,8 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
             ...('reason' in result ? { reason: result.reason } : {}),
             storage: result.storage, ...(result.nativeExpiry === undefined ? {} : { nativeExpiry: result.nativeExpiry }),
             deletionNotices: result.deletionNotices, billing });
-        } catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown',
-          reason: error instanceof BoatNativeError && boatSetupMessage(error.code) ? error.code : 'provider_unavailable', ...failureCause(error) }); }
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown',
+          reason: error instanceof BoatNativeError && boatSetupMessage(error.code) ? error.code : 'provider_unavailable', ...failureCause(error) })); }
       },
     },
     renew: { ...defaults, title: 'Renew Boat sandbox lifetime', dangerLevel: 'destructive',

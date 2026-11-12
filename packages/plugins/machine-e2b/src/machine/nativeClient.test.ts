@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import { createE2bNativeClient } from './nativeClient.js';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
@@ -36,6 +37,13 @@ function vendor(options: { failCreate?: boolean; duplicate?: boolean; processByt
 }
 
 describe('E2B native REST leaf', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createE2bNativeClient(request, new AbortController().signal);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it('reports an unavailable Check as a typed contract result', async () => {
     const client = createE2bNativeClient(async () => { throw new TypeError('offline'); }, new AbortController().signal, 1000);
     expect(await client.check()).toMatchObject({ available: false, code: 'provider_unavailable' });

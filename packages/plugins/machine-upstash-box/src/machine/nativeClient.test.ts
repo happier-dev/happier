@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createUpstashBoxNativeClient } from './nativeClient.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -35,6 +36,13 @@ function vendor() {
   return { home, calls, request, dto, loseCreate() { lost = true; }, deferDelete() { deleting = true; }, deleted() { present = false; }, fail() { unavailable = true; }, cleanup() { rmSync(home, { recursive: true, force: true }); } };
 }
 describe('Upstash Box HTTP qualification', () => {
+  it('preserves a typed HTTP refusal during a native read', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    const client = createUpstashBoxNativeClient(request, new AbortController().signal);
+    await expect(client.check()).rejects.toBe(refusal);
+  });
   it('enrolls the retained box through the shared portable native guest carrier', async () => {
     const v = vendor();
     try { expect(await createUpstashBoxNativeClient(v.request).bootstrap(resource)).toMatchObject({ kind: 'native', guestHome: { homeDir: v.home, daemonStartup: 'native-process' } }); }

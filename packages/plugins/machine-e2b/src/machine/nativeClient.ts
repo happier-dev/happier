@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type E2bLaunch, type E2bResource, type E2bOperation } from './schemas.js';
 import { executeEnvd, type EnvdSession } from './envd.js';
 
@@ -87,7 +87,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       } while (next);
       if (matches.size !== 1) return unknown(operation);
       return { kind: 'bound', resource: reference({ sandboxId: [...matches][0]!, managedId: operation.managedId, timeoutSeconds: operation.launch.timeoutSeconds }) };
-    } catch { return unknown(operation); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation)); }
   }
   async function inspect(resource: E2bResource): Promise<MachineProvisionerObservationV1> {
     try {
@@ -95,7 +95,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       return native ? { observedAt, availability: 'present', power: native.state === 'paused' ? 'suspended' : 'running',
         storage: 'retained', billing: BILLING, nativeExpiry: Date.parse(native.endAt) }
         : { observedAt, availability: 'absent', storage: 'lost', billing: BILLING };
-    } catch (error) { return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) }); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const session = await guest(input.resource);
@@ -156,7 +156,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
         const value = await json(await http('/v2/sandboxes'));
         if (!Array.isArray(value)) throw invalid();
         return { available: true };
-      } catch (error) { signal.throwIfAborted(); return { available: false, code: safeCode(error), status: 'E2B unavailable' }; }
+      } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: safeCode(error), status: 'E2B unavailable' })); }
     },
     async acquire(launch: E2bLaunch, managedId: string): Promise<Acquisition> {
       // Vendor Idempotency-Key: lowercase letters/digits/hyphens, 1–255.

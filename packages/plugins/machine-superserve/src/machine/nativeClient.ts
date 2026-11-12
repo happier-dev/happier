@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolUnion, defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { API_ORIGIN, GUEST_ORIGIN } from '../account.js';
 import { BILLING, CONTRIBUTION, SuperserveLaunchSchema, SuperserveOperationSchema, SuperserveResourceSchema, ROLE_SCHEMAS, reference, type SuperserveLaunch, type SuperserveOperation, type SuperserveResource } from './schemas.js';
 
@@ -38,7 +38,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
   const path = (id: string) => API_ORIGIN + '/sandboxes/' + encodeURIComponent(id);
   async function check(): Promise<MachineProvisionerCheckResultV1> {
     try { if (!Array.isArray((await http(API_ORIGIN + '/sandboxes')).value)) throw new NativeError('superserve_invalid_response'); return { available: true }; }
-    catch (error) { return { available: false, code: code(error) }; }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
   async function acquire(input: SuperserveLaunch, managedId: string): Promise<Acquisition> {
     const launch = SuperserveLaunchSchema.parse(input), operation = { kind: 'acquire', name: 'happier-' + managedId, managedId } as const;
@@ -59,7 +59,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       if (!Array.isArray(response) || response.length !== 1) return pending(operation);
       const native = identity(response[0], operation);
       return { kind: 'bound', resource: reference({ sandboxId: native.id, name: native.name, managedId: operation.managedId }) };
-    } catch { return pending(operation); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: SuperserveResource): Promise<MachineProvisionerObservationV1> {
     const resource = SuperserveResourceSchema.parse(input);
@@ -73,7 +73,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
         ...(nativeExpiry !== undefined && native.auto_delete_seconds !== undefined && native.auto_delete_seconds > 0 ? {
           deletionNotices: [{ kind: 'stopped-storage' as const, at: nativeExpiry, rule: { kind: 'after-stop' as const, afterMs: native.auto_delete_seconds * 1000 }, consequence: 'disk-deleted' as const }],
         } : {}) };
-    } catch (error) { return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404 ? { kind: 'absent' } : { kind: 'unknown', reason: code(error) }); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404 ? { kind: 'absent' } : { kind: 'unknown', reason: code(error) })); }
   }
   async function guest(resource: SuperserveResource, allowWake?: false) {
     const native = identity((await (allowWake === false ? http(path(resource.sandboxId))
