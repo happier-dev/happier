@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createServer } from 'node:http';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture } from '../../testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture, rustToolchainFakeBins } from '../../testkit/core/native_admission_fixture.mjs';
 import { requestAdmissionSample } from '../proc/admission_client.mjs';
 
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
@@ -1248,7 +1248,9 @@ test('verified plugin Vitest configs skip publication while dist configs retain 
   await writeFile(artifact, renderNativeCommandPolicy());
   const { prepareRemoteValidationWorkspace } = await import('./remote_validation_preparation.mjs');
   const requests = [
-    ['onepassword', []],
+    ['elevenlabs', ['--config', 'vitest.config.ts']],
+    ['xai', ['--config', 'vitest.config.ts']],
+    ['openai', ['--config', 'vitest.config.ts']],
     ['codex', []],
     ['codex', ['--config', 'vitest.mcpApproval.config.ts']],
     ['codex', ['--config=./vitest.mcpToolPolicy.config.ts']],
@@ -1275,6 +1277,15 @@ test('verified plugin Vitest configs skip publication while dist configs retain 
       assert.equal(native.status, 0, native.stderr);
       assert.equal(native.stdout, 'source-test,');
     });
+  }
+  // OnePassword still has a partial hand-written resolver and needs emitted preparation.
+  const partialResolverArgs = ['pnpm', '--dir', 'packages/plugins/onepassword', 'exec', 'vitest', 'run'];
+  assert.equal(resolveRemoteCommandPolicy(partialResolverArgs, { cwd: root }).kind, 'runtime');
+  if (process.platform !== 'win32') {
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
+      'policy', artifact, root, ...partialResolverArgs], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'runtime');
   }
   const cwd = fixture.path('packages/plugins/codex');
   await mkdir(cwd, { recursive: true });
@@ -1380,6 +1391,7 @@ test('compiler-consuming suites reserve their nested compiler envelope in both d
   for (const [component, config] of [
     ['.', 'vitest.config.ts'],
     ['packages/plugins/claude', 'vitest.config.ts'],
+    ['packages/triage-protocol', 'vitest.source.config.ts'],
     ['apps/ui', 'vitest.legend-native.config.ts'],
     ['packages/plugin-ui', 'vitest.config.ts'],
   ]) {
@@ -2992,6 +3004,7 @@ printf 'prepared-native' > "$output"
 ` });
     writeFakeBin({ root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "33554432 33554432\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
     writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+    for (const [name, content] of Object.entries(rustToolchainFakeBins())) writeFakeBin({ root, name, content });
     const bin = join(root, 'bin');
     const environment = {
       HOME: root, PATH: `${bin}:${process.env.PATH}`, CI: '', HAPPIER_DEV_TARGET_EXECUTION: '1',

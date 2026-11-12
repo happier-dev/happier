@@ -44,7 +44,29 @@ import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(tracePath)}, JSON.stringify(import.meta.url) + '\\n');
 register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hook)}`)}, import.meta.url);
 `);
+  // The selected checkout owns the Rust pin, toolchain owner and holder builder the CLI native
+  // preparation uses for its Session holder.
+  await mkdir(join(repoDir, 'packages/iroh-native/scripts'), { recursive: true });
+  for (const path of ['packages/iroh-native/rust-toolchain.toml', 'packages/iroh-native/scripts/ensure-rust-toolchain.mjs',
+    'packages/iroh-native/scripts/build-node-addon.mjs']) {
+    await writeFile(join(repoDir, path), await readFile(join(sourceRoot, path)));
+  }
   return { setupTarget, runtimeTarget, tracePath };
+}
+
+/** Cargo and rustup are OS boundaries: a ready pinned toolchain whose build emits the holder executable. */
+export function rustToolchainFakeBins() {
+  return {
+    rustup: '#!/bin/sh\nexit 0\n',
+    cargo: `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --target ]; then shift; target=$1; fi
+  shift
+done
+mkdir -p "$CARGO_TARGET_DIR/$target/release"
+printf 'compiled session holder' > "$CARGO_TARGET_DIR/$target/release/happier-session-holder"
+`,
+  };
 }
 
 /** A simulated physical worker cannot inherit the runner's custody or CPU budget.
