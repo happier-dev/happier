@@ -772,8 +772,8 @@ export function createTriageEntrySessionStartController(
                         { signal: selectionLifetime.signal, sessionAddress: session },
                     ));
                     if (!retired.current) setPhase(Object.freeze({ kind: 'handoffSettled', result }));
-                } catch {
-                    if (!retired.current) setPhase(unavailable(submitted ? 'handoffOutcomeUnknown' : 'dispatch'));
+                } catch (error) {
+                    if (!retired.current) setPhase(unavailable(submitted ? 'handoffOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
                 } finally {
                     inFlight.current = false;
                     notify();

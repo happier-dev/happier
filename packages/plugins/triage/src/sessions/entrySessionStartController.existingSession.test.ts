@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
@@ -16,7 +17,7 @@ import { createTriageEntrySessionStartController, type TriageEntrySessionStartRe
     type TriageStartHostV1 } from './entrySessionStartController.js';
 import { describeTriageEntrySessionPhaseV1 } from '../ui/header/sessionStartOutcome.js';
 
-function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncertainOnce = false) {
+function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncertainOnce = false, dispatchFailure?: PluginError) {
     const entryRef = testkitEntryRef({ kindId: 'issue' });
     const request: TriageEntrySessionStartRequestV1 = {
         action: { actionId: 'ask', label: 'Ask', enabled: true, appliesTo: ['issue'], profileId: null,
@@ -52,6 +53,7 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
         executeAction: async (id: unknown, input: JsonValue, options?: unknown): Promise<unknown> => {
             const localId = testkitTriageActionId(id);
             if (localId === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
+                if (dispatchFailure) throw dispatchFailure;
                 const operand = TriageRunConfiguredActionInputV1Schema.parse(input);
                 operands.push(operand);
                 const sessionChoice = operand.handoff.sessionChoice;
@@ -87,6 +89,15 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
 }
 
 describe('entry existing Session handoff', () => {
+    it('retains the dispatch refusal and request identity for the existing failure presenter', async () => {
+        const f = fixture('send', false, false, new PluginError({ code: 'target_unavailable',
+            diagnostics: [{ code: 'daemon_forward_not_ok' }], details: { requestId: 'send-request' } }));
+        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-a', sessionId: 'same-session' });
+        expect(f.controller.getSnapshot().phase).toMatchObject({ kind: 'unavailable',
+            failure: { codes: ['target_unavailable', 'daemon_forward_not_ok'], requestId: 'send-request' } });
+        expect(f.sends).toEqual([]);
+    });
+
     it('keeps equal Session ids on two Homes distinct and returns native receipts', async () => {
         const f = fixture();
         for (const serverId of ['home-a', 'home-b']) {
