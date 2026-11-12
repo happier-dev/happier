@@ -24,6 +24,7 @@ import {
 } from '../../../../../../packages/plugin-ui/src/surfaceFixture.testSupport';
 
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -471,3 +472,168 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         expect(document.querySelector('[data-testid="dropdown-option-inspect"]')).not.toBeNull();
     });
 });
+
+
+describe('inline Action binding person commits', () => {
+    it.each(['icon', 'form', 'menu', 'property', 'toggle', 'relation', 'tone', 'relation-remove'] as const)('executes the host-created %s control once, never on prop changes', async kind => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+        const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
+        const { IconButton, Form, PropertyList, Toggle, RelationList } = await import('@happier-dev/plugin-ui/components');
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction: async () => {
+            effects++; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
+        } }));
+        const lifetime = new AbortController();
+        const controls = createPluginSurfaceActionControls({ pluginId: 'acme.test', surfaceId: 'inline-test',
+            hostAction: { execute: executor.execute, context: { runtimeAccountId: 'account-a' } },
+            signal: lifetime.signal, isCurrent: () => true, captureCurrentBinding: () => () => true });
+        const context = createSurfaceContext();
+        const hostApi = createHostApiStub(context);
+        const host = createPluginUiPrivatePresentationHost(undefined, { actionControls: controls });
+        const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+            executable: 'act', argv: [], cwd: '/work' };
+        let prepared = 0;
+        const committed: unknown[] = [];
+        const executions: unknown[] = [];
+        const binding = { action: 'projects.compute.exec' as const,
+            prepare(value: unknown) { prepared++; committed.push(value); return { input }; },
+            onSettled(execution: unknown) { executions.push(execution); return execution; } };
+        const previousRect = HTMLElement.prototype.getBoundingClientRect;
+        HTMLElement.prototype.getBoundingClientRect = () => rect(100, 100, 180, 40);
+        const container = document.createElement('div'); document.body.append(container);
+        const root = createRoot(container);
+        const render = (value: string) => <PluginUiProvider hostApi={hostApi} context={context}>
+            <PluginUiPresentationHostProviderInternal host={host}>
+                {kind === 'icon' ? <IconButton accessibilityLabel="Complete task" icon={null} testID="inline-icon" action={binding} />
+                : kind === 'form' ? <Form hints={{ fields: [{ path: 'title', title: 'Title', widget: 'text' }], submitLabel: 'Create task' }}
+                    value={{ title: value }} onChange={() => {}} action={binding} testID="inline-form" />
+                : kind === 'toggle' ? <Toggle label="Workflow active" value={value === 'in_progress'} action={binding} testID="inline-toggle" />
+                : kind === 'relation-remove' ? <RelationList entries={[{ id: 'done', title: 'Fix totals', removeAction: binding }]} testID="inline-relation" />
+                : kind === 'relation' ? <RelationList entries={[]} add={{ label: 'Add a blocker', choices: [{ id: 'done', label: 'Done' }], action: binding }} testID="inline-relation" />
+                : kind === 'tone' ? <PropertyList testID="inline-tone" items={[{ id: 'labels', label: 'Labels', value: 'Bug', editor: {
+                    kind: 'list', value: ['Bug'], onCommit: () => undefined, tones: { valueOf: () => null,
+                        choices: [{ id: 'done', label: 'Done', tone: 'danger' }], action: binding } } }]} />
+                : kind === 'menu' ? <Menu trigger="Status" triggerAccessibilityLabel="Status" open onOpenChange={() => {}}
+                    items={[{ id: 'done', label: 'Done', action: binding }]} onSelect={() => {}} testID="inline-menu" />
+                : <PropertyList testID="inline-property" items={[{ id: 'status', label: 'Status', value,
+                    editor: { kind: 'choice', value, choices: [{ id: 'open', label: 'Open' }, { id: 'in_progress', label: 'In progress' }, { id: 'done', label: 'Done' }], action: binding } }]} />}
+            </PluginUiPresentationHostProviderInternal>
+        </PluginUiProvider>;
+        try {
+            await act(async () => { root.render(render('open')); });
+            await act(async () => { root.render(render('in_progress')); });
+            expect({ effects, prepared }).toEqual({ effects: 0, prepared: 0 });
+            const click = async (read: () => HTMLElement | undefined | null) => {
+                const target = read(); expect(target).toBeTruthy();
+                await act(async () => { dispatchPointerPress(target!); await waitForPopoverCommit(); });
+            };
+            if (kind === 'icon') await click(() => container.querySelector('[data-testid="inline-icon"]'));
+            else if (kind === 'form') await click(() => Array.from(container.querySelectorAll<HTMLElement>('[role="button"],button'))
+                .find(button => button.textContent === 'Create task'));
+            else if (kind === 'relation-remove') await click(() => container.querySelector('[data-testid="inline-relation.done.remove"]'));
+            else if (kind === 'toggle') await click(() => container.querySelector('[role="switch"]'));
+            else {
+                if (kind === 'relation') await click(() => container.querySelector('[data-testid="inline-relation.add"]'));
+                if (kind === 'tone') {
+                    await click(() => container.querySelector('[data-testid="inline-tone.labels.value"]'));
+                    await click(() => document.querySelector('[aria-label="Colour of Bug, No colour"]'));
+                }
+                if (kind === 'property') await click(() => container.querySelector('[data-testid="inline-property.status.value"]'));
+                await vi.waitFor(() => expect(document.querySelector('[data-testid="dropdown-option-done"]')).not.toBeNull());
+                await click(() => document.querySelector('[data-testid="dropdown-option-done"]'));
+            }
+            expect({ effects, prepared }).toEqual({ effects: 1, prepared: 1 });
+            expect(executions).toMatchObject([{ ok: true }]);
+            expect(committed).toEqual([kind === 'icon' ? undefined : kind === 'form' ? { title: 'in_progress' }
+                : kind === 'toggle' ? false : kind === 'tone' ? { name: 'Bug', colorToken: 'done' } : 'done']);
+        } finally { await act(async () => { root.unmount(); }); controls.dispose(); lifetime.abort(); container.remove(); HTMLElement.prototype.getBoundingClientRect = previousRect; }
+    });
+});
+
+it('keeps inline binding unavailable without a mounted host Action owner', async () => {
+    const { IconButton, Form, PropertyList } = await import('@happier-dev/plugin-ui/components');
+    const context = createSurfaceContext();
+    let preparations = 0;
+    const binding = { action: 'projects.compute.exec' as const, prepare(_value: unknown) { preparations++; return null; }, onSettled() {} };
+    const container = document.createElement('div'); document.body.append(container); const root = createRoot(container);
+    try {
+        await act(async () => root.render(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+            <IconButton accessibilityLabel="Complete" testID="unsupported-icon" icon={null} action={binding} />
+            <Form hints={{ fields: [], submitLabel: 'Create' }} value={{}} onChange={() => {}} action={binding} />
+            <PropertyList items={[{ id: 'status', label: 'Status', value: 'Open', editor: {
+                kind: 'choice', value: 'open', choices: [{ id: 'open', label: 'Open' }], action: binding } }]} />
+        </PluginUiProvider>));
+        expect(container.querySelector('[data-testid="unsupported-icon"]')?.getAttribute('aria-disabled')).toBe('true');
+        expect(container.textContent).toContain('Inline actions are unavailable');
+        expect(preparations).toBe(0);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+});
+
+
+it.each(['icon-unmount', 'menu-unmount', 'menu-close'] as const)(
+    'settles async inline preparation against the author control lifetime: %s', async kind => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+        const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
+        const { IconButton } = await import('@happier-dev/plugin-ui/components');
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction: async () => {
+            effects++; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
+        } }));
+        const lifetime = new AbortController();
+        const controls = createPluginSurfaceActionControls({ pluginId: 'acme.test', surfaceId: 'inline-cancellation',
+            hostAction: { execute: executor.execute, context: { runtimeAccountId: 'account-a' } },
+            signal: lifetime.signal, isCurrent: () => true, captureCurrentBinding: () => () => true });
+        const context = createSurfaceContext();
+        const hostApi = createHostApiStub(context);
+        const host = createPluginUiPrivatePresentationHost(undefined, { actionControls: controls });
+        const ready = createDeferred<void>();
+        let preparationSignal: AbortSignal | undefined;
+        const executions: unknown[] = [];
+        const binding = { action: 'projects.compute.exec' as const,
+            async prepare(_value: unknown, options?: Readonly<{ signal?: AbortSignal }>) {
+                preparationSignal = options?.signal;
+                await ready.promise;
+                return { input: { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+                    executable: 'act', argv: [], cwd: '/work' } };
+            },
+            onSettled(execution: unknown) { executions.push(execution); return execution; } };
+        function AuthorControl() {
+            const [open, setOpen] = React.useState(true);
+            return kind === 'icon-unmount'
+                ? <IconButton accessibilityLabel="Complete task" icon={null} testID="async-inline-icon" action={binding} />
+                : <Menu trigger="Status" triggerAccessibilityLabel="Status" open={open} onOpenChange={setOpen}
+                    items={[{ id: 'done', label: 'Done', action: binding }]} onSelect={() => {}} testID="async-inline-menu" />;
+        }
+        const previousRect = HTMLElement.prototype.getBoundingClientRect;
+        HTMLElement.prototype.getBoundingClientRect = () => rect(100, 100, 180, 40);
+        const container = document.createElement('div'); document.body.append(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => { root.render(<PluginUiProvider hostApi={hostApi} context={context}>
+                <PluginUiPresentationHostProviderInternal host={host}><AuthorControl /></PluginUiPresentationHostProviderInternal>
+            </PluginUiProvider>); });
+            const selector = kind === 'icon-unmount' ? '[data-testid="async-inline-icon"]' : '[data-testid="dropdown-option-done"]';
+            await vi.waitFor(() => expect(document.querySelector(selector)).not.toBeNull());
+            await act(async () => { dispatchPointerPress(document.querySelector<HTMLElement>(selector)!); await waitForPopoverCommit(); });
+            expect(preparationSignal).toBeDefined();
+            expect(preparationSignal?.aborted).toBe(false);
+            expect(effects).toBe(0);
+            if (kind === 'menu-close') {
+                expect(container.querySelector('[data-testid="async-inline-menu"]')?.getAttribute('aria-expanded')).toBe('false');
+                expect(document.querySelector('[data-testid="dropdown-option-done"]')).toBeNull();
+            } else {
+                await act(async () => { root.render(null); });
+                expect(preparationSignal?.aborted).toBe(true);
+            }
+            await act(async () => { ready.resolve(undefined); await ready.promise; });
+            await vi.waitFor(() => expect(executions).toHaveLength(1));
+            expect(effects).toBe(kind === 'menu-close' ? 1 : 0);
+            expect(executions[0]).toMatchObject({ ok: kind === 'menu-close' });
+        } finally {
+            await act(async () => { root.unmount(); lifetime.abort(); controls.dispose(); ready.resolve(undefined); await ready.promise; });
+            container.remove(); HTMLElement.prototype.getBoundingClientRect = previousRect;
+        }
+    },
+);

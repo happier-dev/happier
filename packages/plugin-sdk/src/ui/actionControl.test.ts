@@ -3,11 +3,13 @@ import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/
 import type { PluginUiHostApiWireEnvelopeV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { PLUGIN_UI_HOST_METHODS_V1, PluginUiActionControlEventV1Schema, PluginUiActionControlRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { createPluginUiHostApiClientFromTransport } from './clientTransport.js';
+import { PluginError } from '../errors.js';
 
 const identity = { instanceId: 'control-mount', mountNonce: 'control-nonce' } as const;
 
-async function fixture(supported = true) {
+async function fixture(supported = true, holdPrepared = false) {
     let receive: ((message: unknown) => void) | undefined;
+    let preparedRequest: Extract<PluginUiHostApiWireEnvelopeV1, { kind: 'request' }> | undefined;
     const sent: PluginUiHostApiWireEnvelopeV1[] = [];
     const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
         subscribe(listener) { receive = listener; return { dispose() {} }; },
@@ -15,6 +17,9 @@ async function fixture(supported = true) {
             sent.push(message);
             if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
                 apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: supported ? PLUGIN_UI_HOST_METHODS_V1 : ['context'] });
+            if (holdPrepared && message.kind === 'request' && message.method === 'actionControl'
+                && message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload)
+                && message.payload.kind === 'prepared') { preparedRequest = message; return; }
             if (message.kind === 'subscribe' || message.kind === 'request') receive?.({ wireVersion: 1,
                 kind: 'result', identity, requestId: message.requestId, method: message.method, result: null });
         },
@@ -24,7 +29,15 @@ async function fixture(supported = true) {
         if (!subscription || subscription.kind !== 'subscribe') throw new Error('No control subscription');
         receive?.({ wireVersion: 1, kind: 'subscription', identity, subscriptionId: subscription.subscriptionId, event: value });
     };
-    return { api, sent, event };
+    return { api, sent, event, settlePrepared(execution: unknown) {
+        if (!preparedRequest) throw new Error('No admitted preparation');
+        receive?.({ wireVersion: 1, kind: 'result', identity, requestId: preparedRequest.requestId,
+            method: preparedRequest.method, result: execution });
+    }, refusePrepared() {
+        if (!preparedRequest) throw new Error('No admitted preparation');
+        receive?.({ wireVersion: 1, kind: 'error', identity, requestId: preparedRequest.requestId,
+            method: preparedRequest.method, error: new PluginError({ code: 'unavailable', message: 'unavailable', retryable: false }).data });
+    } };
 }
 
 describe('mounted host Action control', () => {
@@ -47,21 +60,100 @@ describe('mounted host Action control', () => {
         await control.dispose();
     });
 
-    it('aborts retired preparation and never submits its late input', async () => {
+    it.each(['dispose', 'withdrawal', 'stop'] as const)('aborts %s preparation and never submits its late input', async (retirement) => {
         const { api, sent, event } = await fixture();
+        const cancellation = new AbortController();
         let finish: ((value: { input: string }) => void) | undefined;
         let signal: AbortSignal | undefined;
         const prepare = vi.fn((options: { signal: AbortSignal }) => {
             signal = options.signal;
             return new Promise<{ input: string }>(resolve => { finish = resolve; });
         });
-        const control = await api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled() {} });
+        const control = await api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled() {} }, {
+            ...(retirement === 'stop' ? { signal: cancellation.signal } : {}),
+            ...(retirement === 'withdrawal' ? { withdrawalSignal: cancellation.signal } : {}),
+        });
         event({ kind: 'prepare', requestId: 'gesture-retired' });
-        await control.dispose();
+        if (retirement === 'dispose') await control.dispose();
+        else cancellation.abort();
         expect(signal?.aborted).toBe(true);
         finish?.({ input: 'late' });
         await Promise.resolve();
         expect(sent.filter(message => message.kind === 'request' && message.method === 'actionControl')).toEqual([]);
+        await control.dispose();
+    });
+
+    it('withdraws the control while delivering its admitted execution to the original controller exactly once', async () => {
+        const { api, sent, event, settlePrepared } = await fixture(true, true);
+        const prepare = vi.fn(() => ({ input: { saved: true } }));
+        const onSettled = vi.fn();
+        const withdrawal = new AbortController();
+        const control = await api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Save' } },
+            { prepare, onSettled }, { withdrawalSignal: withdrawal.signal });
+        event({ kind: 'prepare', requestId: 'gesture-save' });
+        await vi.waitFor(() => expect(sent).toContainEqual(expect.objectContaining({ kind: 'request',
+            payload: expect.objectContaining({ kind: 'prepared', requestId: 'gesture-save' }) })));
+        withdrawal.abort();
+        expect(sent.filter(message => message.kind === 'disposeHostResource')).toHaveLength(1);
+        await expect(control.update({ title: 'Withdrawn' })).rejects.toMatchObject({ code: 'aborted' });
+        event({ kind: 'prepare', requestId: 'gesture-after-withdrawal' });
+        expect(prepare).toHaveBeenCalledTimes(1);
+        const execution = { ok: true, result: { saved: true } };
+        settlePrepared(execution);
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution));
+        event({ kind: 'settled', requestId: 'gesture-save', execution });
+        settlePrepared(execution);
+        expect(onSettled).toHaveBeenCalledTimes(1);
+        await control.dispose();
+    });
+
+    it('forwards author Stop to the admitted request and settles its cancellation once', async () => {
+        const { api, sent, event, settlePrepared } = await fixture(true, true);
+        const onSettled = vi.fn();
+        const stop = new AbortController();
+        const control = await api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Save' } },
+            { prepare: () => ({ input: {} }), onSettled }, { signal: stop.signal });
+        event({ kind: 'prepare', requestId: 'gesture-save' });
+        await vi.waitFor(() => expect(sent).toContainEqual(expect.objectContaining({ kind: 'request',
+            payload: expect.objectContaining({ kind: 'prepared' }) })));
+        stop.abort();
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
+        expect(onSettled.mock.calls[0]?.[0]).toMatchObject({ ok: false, errorCode: 'aborted' });
+        expect(sent.filter(message => message.kind === 'cancel')).toHaveLength(1);
+        settlePrepared({ ok: false, errorCode: 'aborted', error: 'aborted' });
+        await Promise.resolve();
+        expect(onSettled).toHaveBeenCalledOnce();
+        await control.dispose();
+    });
+
+    it('preserves an ordinary unavailable refusal when the person has not stopped the execution', async () => {
+        const { api, sent, event, refusePrepared } = await fixture(true, true);
+        const onSettled = vi.fn();
+        const stop = new AbortController();
+        const control = await api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Save' } },
+            { prepare: () => ({ input: {} }), onSettled }, { signal: stop.signal });
+        event({ kind: 'prepare', requestId: 'gesture-unavailable' });
+        await vi.waitFor(() => expect(sent).toContainEqual(expect.objectContaining({ kind: 'request',
+            payload: expect.objectContaining({ kind: 'prepared' }) })));
+        refusePrepared();
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith({ ok: false, errorCode: 'unavailable', error: 'unavailable' }));
+        await control.dispose();
+    });
+
+    it('settles once when the subscription and admitted request both return the execution', async () => {
+        const { api, sent, event, settlePrepared } = await fixture(true, true);
+        const onSettled = vi.fn();
+        const control = await api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Save' } },
+            { prepare: () => ({ input: {} }), onSettled });
+        event({ kind: 'prepare', requestId: 'gesture-save' });
+        await vi.waitFor(() => expect(sent).toContainEqual(expect.objectContaining({ kind: 'request',
+            payload: expect.objectContaining({ kind: 'prepared' }) })));
+        const execution = { ok: true, result: { saved: true } };
+        event({ kind: 'settled', requestId: 'gesture-save', execution });
+        settlePrepared(execution);
+        await Promise.resolve();
+        expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution);
+        await control.dispose();
     });
 
     it('cancels thrown preparation and reports it to the original controller', async () => {

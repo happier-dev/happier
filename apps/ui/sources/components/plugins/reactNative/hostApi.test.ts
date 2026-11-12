@@ -6,6 +6,8 @@ import {
     PluginUiArtifactDigestV1Schema,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_METHODS_V1,
+    PluginUiActionControlRequestV1Schema,
+    type PluginUiActionControlEventV1,
     type ComposerContentHandleV1,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiJsonValueV1,
@@ -1081,6 +1083,38 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             installedMethods: host.installedMethods,
         });
     }
+
+    it('settles a stopped admitted Action control once without waiting for its late executor response', async () => {
+        const stop = new AbortController();
+        const settled = vi.fn();
+        let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
+        let finish: ((value: PluginUiJsonValueV1) => void) | undefined;
+        let executionSignal: AbortSignal | undefined;
+        const adapter = createAdapterOverHost({ actionControl: async (request, options) => {
+            const payload = PluginUiActionControlRequestV1Schema.parse(request.payload);
+            if (payload.kind === 'bind') {
+                publish = options?.actionControlSubscription?.publish;
+                options?.actionControlSubscription?.retain(() => {});
+                return null;
+            }
+            if (payload.kind === 'update') return null;
+            executionSignal = options?.signal;
+            return await new Promise<PluginUiJsonValueV1>(resolve => { finish = resolve; });
+        } });
+        try {
+            const control = await adapter.api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } },
+                { prepare: () => ({ input: {} }), onSettled: settled }, { signal: stop.signal });
+            publish?.({ kind: 'prepare', requestId: 'physical-run' });
+            await vi.waitFor(() => expect(executionSignal).toBeDefined());
+            stop.abort();
+            expect(executionSignal?.aborted).toBe(true);
+            await vi.waitFor(() => expect(settled).toHaveBeenCalledExactlyOnceWith({ ok: false, errorCode: 'aborted', error: 'aborted' }));
+            finish?.({ ok: true, result: { operationId: 'late' } });
+            await Promise.resolve();
+            expect(settled).toHaveBeenCalledTimes(1);
+            await control.dispose();
+        } finally { finish?.(null); adapter.dispose(); }
+    });
 
     it('forwards every public cancellation signal through the mounted Host API request seam', async () => {
         const controller = new AbortController();

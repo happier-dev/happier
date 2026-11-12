@@ -79,7 +79,7 @@ type _CollectionHeaderRenderReceivesItsSlots = Assert<IsEqual<
   CollectionHeaderSlots
 >>;
 type _CollectionHeaderSlotsAreCurated = Assert<IsEqual<keyof CollectionHeaderSlots, 'title' | 'search' | 'selection' | 'pageActions'>>;
-type _CollectionSortKeysAreCurated = Assert<IsEqual<keyof CollectionSort, 'key' | 'direction' | 'orders' | 'onChange'>>;
+type _CollectionSortKeysAreCurated = Assert<IsEqual<keyof CollectionSort, 'key' | 'direction' | 'orders' | 'orderColumns' | 'onChange'>>;
 type _CollectionNamedOrdersStayPortable = Assert<IsEqual<CollectionSort['orders'], readonly Readonly<{ key: string; label: string }>[] | undefined>>;
 type _CollectionVirtualizerIsPublic = Assert<IsEqual<CollectionProps<unknown>['virtualizer'], CollectionVirtualizer | undefined>>;
 type _VirtualizedListConsumesSameAdapter = Assert<IsEqual<Extract<ListProps<unknown>, { items: readonly unknown[] }>['virtualizer'], CollectionVirtualizer | undefined>>;

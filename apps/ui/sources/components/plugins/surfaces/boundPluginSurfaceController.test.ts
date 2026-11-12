@@ -391,6 +391,157 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             expect(controller.actionControls!.getSnapshot()).toMatchObject([{ id: 'run', busy: false }]);
         } finally { controller.dispose(); await pending; }
     });
+    it.each([false, true])('awaits one inline preparation and respects cancellation before admission (%s)', async cancelled => {
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction: async () => {
+            effects++; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
+        } }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+            executable: 'act', argv: [], cwd: '/work' };
+        let prepare!: (value: { input: typeof input }) => void;
+        const preparation = new Promise<{ input: typeof input }>(resolve => { prepare = resolve; });
+        const settled: unknown[] = [];
+        const pending = controller.actionControls!.commit({ action: 'projects.compute.exec', prepare: () => preparation,
+            onSettled: execution => { settled.push(execution); return execution.ok; } }, 'done');
+        try {
+            await Promise.resolve();
+            expect(effects).toBe(0);
+            if (cancelled) controller.dispose();
+            prepare({ input });
+            expect(await pending).toBe(!cancelled);
+            expect(effects).toBe(cancelled ? 0 : 1);
+            expect(settled).toHaveLength(1);
+        } finally { controller.dispose(); }
+    });
+    it.each(['stop', 'withdraw'] as const)('cancels inline async preparation on %s without admitting an effect', async mode => {
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ invokeContributedAction: async () => {
+            effects++; return { ok: true, result: null };
+        } }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const stop = new AbortController(); const withdrawal = new AbortController();
+        let finish!: (value: { input: {} }) => void;
+        const held = new Promise<{ input: {} }>(resolve => { finish = resolve; });
+        let preparationSignal: AbortSignal | undefined;
+        const settled: unknown[] = [];
+        const pending = controller.actionControls!.commit({ action: { pluginId: FACTS.pluginId, localId: 'labels.setColor' },
+            signal: stop.signal, prepare: (_value, options) => { preparationSignal = options?.signal; return held; },
+            onSettled: execution => { settled.push(execution); return execution.ok; },
+        }, 'done', { signal: withdrawal.signal });
+        try {
+            expect(preparationSignal).toBeInstanceOf(AbortSignal);
+            (mode === 'stop' ? stop : withdrawal).abort();
+            expect(preparationSignal?.aborted).toBe(true);
+            finish({ input: {} });
+            expect(await pending).toBe(false);
+            expect(effects).toBe(0);
+            expect(settled).toEqual([expect.objectContaining({ ok: false, errorCode: 'aborted' })]);
+        } finally { finish({ input: {} }); await pending; controller.dispose(); }
+    });
+    it('lets Stop cancel an admitted inline Action while withdrawal only retires preparation', async () => {
+        const stop = new AbortController(); const withdrawal = new AbortController();
+        let executionSignal: AbortSignal | undefined; let finish!: () => void;
+        const held = new Promise<void>(resolve => { finish = resolve; });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ invokeContributedAction: async ({ context }) => {
+            executionSignal = context.signal; await held;
+            return { ok: true, result: null };
+        } }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const settled: unknown[] = [];
+        const pending = controller.actionControls!.commit({ action: { pluginId: FACTS.pluginId, localId: 'labels/set-color' },
+            signal: stop.signal, prepare: () => ({ input: {} }), onSettled: execution => { settled.push(execution); return execution.ok; },
+        }, 'done', { signal: withdrawal.signal });
+        try {
+            await vi.waitFor(() => { expect(settled).toEqual([]); expect(executionSignal).toBeDefined(); });
+            withdrawal.abort(); expect(executionSignal?.aborted).toBe(false);
+            stop.abort(); expect(executionSignal?.aborted).toBe(true);
+            finish(); await pending; expect(settled).toHaveLength(1);
+        } finally { finish(); await pending; controller.dispose(); }
+    });
+    it.each([false, true])('returns an admitted control settlement after withdrawal without retaining press authority (Stop=%s)', async stopped => {
+        let effects = 0;
+        let finish!: () => void;
+        let actionSignal: AbortSignal | undefined;
+        const stop = new AbortController();
+        const held = new Promise<void>(resolve => { finish = resolve; });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction: async ({ context }) => {
+            effects++; actionSignal = context.signal;
+            await held;
+            return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
+        } }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+            executable: 'act', argv: [], cwd: '/work' };
+        let withdraw!: () => void;
+        let response: Promise<unknown> | undefined;
+        try {
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'save',
+                action: 'projects.compute.exec', presentation: { title: 'Save' } }), { actionControlSubscription: {
+                retain: release => { withdraw = release; }, publish: event => {
+                    if (event.kind === 'prepare') response = Promise.resolve(controller.hostApi.handleRequest(request('actionControl', {
+                        kind: 'prepared', subscriptionId: 'save', requestId: event.requestId, preparation: { input },
+                    }), { signal: stop.signal }));
+                },
+            } });
+            const pressed = controller.actionControls!.press('save');
+            await vi.waitFor(() => expect(effects).toBe(1));
+            withdraw();
+            expect(controller.actionControls!.getSnapshot()).toEqual([]);
+            await controller.actionControls!.press('save');
+            expect(effects).toBe(1);
+            expect(actionSignal?.aborted).toBe(false);
+            if (stopped) { stop.abort(); expect(actionSignal?.aborted).toBe(true); }
+            finish();
+            await pressed;
+            expect(await response).toMatchObject({ ok: true });
+        } finally { finish(); controller.dispose(); }
+    });
+    it.each(['set', 'clear', 'undeclared', 'toString'] as const)('selects only declared Action keys (%s)', async key => {
+        const invoked: string[] = [];
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ invokeContributedAction: async ({ action }) => {
+            invoked.push(action.localId); return { ok: true, result: null };
+        } }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const settled: unknown[] = [];
+        try {
+            const result = await controller.actionControls!.commit({ actions: {
+                set: { pluginId: FACTS.pluginId, localId: 'labels/set-color' },
+                clear: { pluginId: FACTS.pluginId, localId: 'labels/clear-color' },
+            }, prepare: () => ({ action: key, input: {} }), onSettled: execution => {
+                settled.push(execution); return execution.ok;
+            } }, key);
+            if (key === 'set' || key === 'clear') expect(settled).toEqual([{ ok: true, result: null }]);
+            expect(result).toBe(key === 'set' || key === 'clear');
+            expect(invoked).toEqual(key === 'set' ? ['labels/set-color'] : key === 'clear' ? ['labels/clear-color'] : []);
+            expect(settled).toHaveLength(1);
+            if (key === 'undeclared' || key === 'toString') expect(settled[0]).toMatchObject({ ok: false, errorCode: 'invalid_action' });
+        } finally { controller.dispose(); }
+    });
+    it('commits an inline host binding through person admission while raw execution stays automation', async () => {
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectAction: async () => { effects++; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed-setup' }; },
+        }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+            executable: 'act', argv: [], cwd: '/work' };
+        let prepared = 0;
+        let settled: unknown;
+        const binding = { action: 'projects.compute.exec' as const,
+            prepare(value: string) { prepared++; expect(value).toBe('done'); return { input }; },
+            onSettled(execution: unknown) { settled = execution; return execution; } };
+        try {
+            expect(effects).toBe(0);
+            await controller.actionControls!.commit(binding, 'done');
+            expect(prepared).toBe(1);
+            expect(effects).toBe(1);
+            expect(settled).toMatchObject({ ok: true });
+            const raw = request('executeAction', { action: binding.action, input });
+            await settlePluginSurfaceHostApiRequest(raw, () => controller.hostApi.handleRequest(raw));
+            expect(effects).toBe(1);
+        } finally { controller.dispose(); }
+    });
     it('prepares one person invocation from a mounted host control while raw requests retain approval', async () => {
         let launches = 0;
         const setupHold = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed-setup' } as const;

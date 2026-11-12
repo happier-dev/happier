@@ -2,6 +2,7 @@ import { act, useState } from 'react';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { ActionInputHints } from '@happier-dev/plugin-sdk/actions';
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 
 import { HAPPIER_FIELD_BOX_METRICS } from '../presentation/form/FieldBox.js';
 import { HAPPIER_SMALL_BUTTON_HEIGHT } from '../presentation/interaction/buttonChrome.js';
@@ -464,6 +465,47 @@ describe('canonical Action Form presentation', () => {
       expect(mount.container.ownerDocument.getElementById(descriptionId!)?.textContent).not.toBe('');
     }
     mount.unmount();
+  });
+
+  it('keeps an Action-bound Toggle unavailable without a physical-control host', async () => {
+    const prepare = vi.fn(() => null);
+    const onSettled = vi.fn();
+    const binding: PluginUiActionBinding<boolean> = {
+      action: 'acme.sync.set-enabled',
+      accessibilityLabel: 'Change sync availability',
+      prepare,
+      onSettled,
+    };
+    const context = createSurfaceContext();
+    const hostApi = createHostApiStub(context);
+    const renderToggle = (value: boolean) => (
+      <PluginUiProvider hostApi={hostApi} context={context}>
+        <Form.Toggle label="Enable sync" value={value} action={binding} />
+      </PluginUiProvider>
+    );
+    const mount = mountThroughReactNativeWeb(renderToggle(false));
+    try {
+      const toggle = () => mount.container.querySelector<HTMLElement>('[role="switch"]')!;
+      expect(toggle().getAttribute('aria-disabled')).toBe('true');
+      expect(toggle().getAttribute('aria-label')).toBe('Change sync availability');
+      expect(toggle().getAttribute('aria-checked')).toBe('false');
+      await mount.render(renderToggle(true));
+      expect(toggle().getAttribute('aria-checked')).toBe('true');
+      await act(async () => { toggle().click(); });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(onSettled).not.toHaveBeenCalled();
+    } finally { mount.unmount(); }
+  });
+
+  it('names a Toggle independently of its field label', () => {
+    const mount = mountForm(
+      <Form.Toggle label="Enable sync" accessibilityLabel="Change sync availability"
+        value={false} onChange={() => undefined} />,
+    );
+    try {
+      expect(mount.container.querySelector('[role="switch"]')?.getAttribute('aria-label'))
+        .toBe('Change sync availability');
+    } finally { mount.unmount(); }
   });
 
   it('draws visible focus chrome around a Toggle', async () => {

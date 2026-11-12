@@ -461,9 +461,166 @@ operation status; pending acceptance is not completion. Do not automatically
 repeat a write when its acceptance is unknown. Replacing the controller does
 not transfer settlement from the controller that prepared the invocation.
 
+For inline commits in matching unpublished 0.3 development SDK and host source,
+declare a `PluginUiActionBinding<Value>`. The host submits the Action when the
+person commits in the control. The binding prepares input and consumes the
+original settlement; neither callback receives an executor.
+
+```tsx
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
+
+const statusAction = {
+  action: { pluginId, localId: transitionActionId },
+  prepare(status, { signal }) {
+    if (status === null) return null;
+    return writeState.prepare(buildTransitionInput(status), { signal });
+  },
+  onSettled(execution) {
+    return writeState.settle(execution);
+  },
+} satisfies PluginUiActionBinding<string | null>;
+
+<Menu
+  trigger="Status"
+  triggerAccessibilityLabel="Status"
+  open={open}
+  onOpenChange={setOpen}
+  onSelect={() => {}}
+  items={[{ id: 'done', label: 'Done', action: statusAction }]}
+/>
+<PropertyList items={[{
+  id: 'status', label: 'Status', value: statusLabel,
+  editor: { kind: 'choice', value: status, choices, action: statusAction },
+}]} />
+```
+
+Here `writeState` and `buildTransitionInput` stand for your existing write-state
+and input adapters, not SDK functions. Split any existing execute-and-settle
+function: `prepare(value, { signal })` validates, begins the existing busy state and returns
+`{ input }` or `null` to cancel, either synchronously or through a Promise. Required
+`onSettled(execution)` receives the untouched host envelope; preserve your
+pending approval, uncertain write, created-record and created-Session handling.
+It may return a boolean (`false` retains the draft), or your existing envelope or
+domain settlement for PropertyList's refusal or uncertain notice. Keep the draft
+and never replay a write with an unknown result. The host waits for preparation
+using the captured gesture and cancels before dispatch when its mount or binding
+retires. Unmounting Action.Control after execution admission still delivers
+settlement to the original preparing controller exactly once; do not reopen a
+cancelled draft in settlement.
+Use the host preparation signal to cancel async preparation when the control
+retires. A binding's optional `signal` is for the person's explicit Stop; the host
+forwards it to the Action's existing cancellation path. Control withdrawal alone
+does not cancel admitted work.
+
+For a control that selects between Actions, declare an `actions` map instead of
+`action`. Preparation returns the declared key together with its input. The same
+contract works on every bound component; a name-tone editor can select its set
+or clear Action from the committed `colorToken`:
+
+```tsx
+const labelColorAction = {
+  actions: {
+    set: { pluginId, localId: setColorActionId },
+    clear: { pluginId, localId: clearColorActionId },
+  },
+  async prepare(value, { signal }) {
+    const prepared = await writeState.prepare(buildColorInput(value), { signal });
+    if (prepared === null) return null;
+    return {
+      action: value.colorToken === null ? 'clear' : 'set',
+      input: prepared.input,
+    };
+  },
+  onSettled(execution) {
+    return writeState.settle(execution);
+  },
+} satisfies PluginUiActionBinding<
+  { name: string; colorToken: string | null },
+  'set' | 'clear'
+>;
+```
+
+Assign this binding to `PropertyNameTones.action`. Here `buildColorInput` is your
+input adapter. The `action` and `actions` forms are mutually exclusive. The host
+checks that the selected key belongs to your declared map; an invalid selection
+settles as `invalid_action` without executing an Action.
+
+Menu item, PropertyList editor and name-tone, RelationList add, IconButton, Form
+submit and Toggle bindings use this same mechanism. Their prepared values are,
+respectively, the selected id, typed property value, `{ name, colorToken }`,
+selected relation id, `undefined`, normalized form fields and boolean.
+`RelationListEntry.removeAction` also accepts a string binding: it receives the
+entry's `id` on the removal press, instead of a local `onRemove` callback. A binding
+may supply an `accessibilityLabel`. Choices, tones and relations commit on
+selection without another Save; typed properties keep their existing Save.
+Changing props or typing into a draft does not execute the Action. Use
+Action.Control for a button-shaped Action; its optional `accessibilityLabel`
+can differ from its visible `title`.
+
+Inline bindings require the native or same-realm React Native Web host.
+Hosted HTML and unsupported hosts keep these commits unavailable. Action.Control
+can still register a host-slot button outside the iframe when that interaction
+fits. A raw executeAction call never supplies a fallback for person authority.
+
+An RNW author fixture has two parts. `Action.Control` renders `null` in the
+author tree, so render its observable host slots beside your author component
+inside a test-only `defineUiSurface` wrapper:
+
+```tsx
+import { useSyncExternalStore } from 'react';
+import { Button } from '@happier-dev/plugin-ui';
+import { createPluginUiActionControlTestHost } from '@happier-dev/plugin-sdk/testing';
+
+const submitted: unknown[] = [];
+const actionHost = createPluginUiActionControlTestHost(async request => {
+  submitted.push(request);
+  return { ok: true, result: null };
+});
+
+function HostActionSlots() {
+  const slots = useSyncExternalStore(
+    actionHost.subscribe, actionHost.getSnapshot, actionHost.getSnapshot,
+  );
+  return <>{slots.map(({ id, presentation }) => <Button
+    key={id}
+    title={presentation.title}
+    accessibilityLabel={presentation.accessibilityLabel ?? presentation.title}
+    disabled={presentation.disabled}
+    onPress={() => { void actionHost.pressById(id); }}
+  />)}</>;
+}
+```
+
+Pass `actionHost.handler` as the `actionControl` handler of your existing
+`createPluginUiTestkit` fixture. Its immutable snapshots change when slots or
+their presentation change; ids keep presses distinct when titles repeat.
+
+For inline bound controls, give that same host to the public semantic adapter:
+
+```tsx
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+
+const adapter = createPluginUiRnwSemanticSurfaceAdapter({
+  overlays: true,
+  actionBindings: actionHost,
+});
+```
+
+Pass `adapter` to `createPluginUiTestkit`, then physically press the rendered
+control through `fixture.press`. The host's `commit` shares the binding lifecycle
+used by the app; without `actionBindings`, bound controls stay disabled. Check
+the original settlement, submitted action and input, and that prop-only updates
+submit nothing. The configured test executor supplies test decisions; this
+fixture does not establish runtime person authority. Calling preparation,
+settlement or raw executeAction directly skips the interaction being tested.
+
 For non-React surfaces, `hostApi.actionControl({ action, presentation },
 controller, { signal })` provides the same binding. Its handle has `update`
-and `dispose`; dispose it on cleanup. Unsupported hosts show the component's
+and `dispose`; dispose it on cleanup. Here `signal` is explicit Stop. Use
+`withdrawalSignal` for control retirement without cancelling admitted work.
+Explicit Stop settles once with the typed `aborted` result; it does not promise
+a later successful execution response. The mounted surface's lifetime still
+owns cancellation. Unsupported hosts show the component's
 `fallback` and may be reported through `onUnavailable`.
 
 Only the host's physical gesture supplies person authority. `Action.Execute`,
