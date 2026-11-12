@@ -25,7 +25,7 @@ function unwrapContextUpdateEnvelope(text: string): string {
   const prefix = 'Context updates since your last voice turn:';
   if (!text.startsWith(prefix)) return text;
   const marker = '\n\nUser said:\n';
-  const markerIndex = text.indexOf(marker);
+  const markerIndex = text.lastIndexOf(marker);
   if (markerIndex < 0) return text;
   return text.slice(markerIndex + marker.length);
 }
