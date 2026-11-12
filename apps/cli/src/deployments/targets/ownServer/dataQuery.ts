@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
 import type { DeploymentDataQueryInputV1, DeploymentDataQuerySuccessV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
@@ -28,33 +29,7 @@ const mysqlText = (value: string) => `CONVERT(X'${Buffer.from(value, 'utf8').toS
  * admitted dedicated-login credential and never obtain administrator access. */
 export function ownServerReadOnlyRoleGuardSql(engine: 'postgresql' | 'mysql',
     options: Readonly<{ mysqlGrantee?: string; database?: string }> = {}): string {
-    if (engine === 'postgresql') return `DO $happier_guard$
-BEGIN
-  IF current_setting('server_version_num')::int < 140000
-     OR current_user <> 'happier_ro'
-     OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user
-       AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls OR NOT rolcanlogin))
-     OR NOT pg_has_role(current_user, 'pg_read_all_data', 'USAGE')
-     OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member = current_user::regrole AND admin_option)
-     OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname NOT IN (current_user, 'pg_read_all_data')
-       AND pg_has_role(current_user, oid, 'MEMBER'))
-     OR has_database_privilege(current_user, current_database(), 'CREATE')
-     OR EXISTS (SELECT 1 FROM pg_namespace WHERE has_schema_privilege(current_user, oid, 'CREATE'))
-     OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast'
-       AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-       AND (has_table_privilege(current_user, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-         OR has_any_column_privilege(current_user, c.oid, 'INSERT,UPDATE,REFERENCES')))
-     OR EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'S'
-       AND has_sequence_privilege(current_user, oid, 'USAGE,UPDATE'))
-     OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-       AND has_function_privilege(current_user, p.oid, 'EXECUTE'))
-  THEN
-    RAISE EXCEPTION 'happier_read_role_unavailable' USING ERRCODE = '42501';
-  END IF;
-END
-$happier_guard$;`;
+    if (engine === 'postgresql') return postgresqlReadOnlyRoleGuardSql;
     const grantee = mysqlText(options.mysqlGrantee ?? "'happier_ro'@'127.0.0.1'");
     const database = options.database ? mysqlText(options.database) : 'DATABASE()';
     const roles = "NOT EXISTS (SELECT 1 FROM mysql.role_edges WHERE TO_USER = 'happier_ro' AND TO_HOST = '127.0.0.1')\n"
@@ -130,6 +105,7 @@ function psqlInputScanner(mode: 'query' | 'dump') {
     const flushWord = () => { if (word) { token(word); word = ''; } };
     return {
         write(chunk: string, final = false) {
+            if (chunk.includes('\0')) refuse('unsupported_action', 'psql_binary_input');
             pending += chunk;
             let index = 0;
             const advance = (count = 1) => {

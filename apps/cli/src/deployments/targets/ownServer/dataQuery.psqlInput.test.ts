@@ -12,6 +12,13 @@ async function* bytes(sql: string) {
 }
 
 describe('canonical psql input admission', () => {
+    it('refuses a binary database upload before treating it as SQL text', async () => {
+        const binary = 'SQLite format 3\0\0\0\0\0';
+        expect(() => query.admitPsqlInput(binary, 'query')).toThrow(expect.objectContaining({ code: 'unsupported_action' }));
+        expect(() => query.admitPsqlInput(binary, 'dump')).toThrow(expect.objectContaining({ code: 'unsupported_action' }));
+        await expect(query.admitPsqlInput(bytes(binary), 'dump')).rejects.toMatchObject({ code: 'unsupported_action' });
+    });
+
     it('admits SQL statement dumps while preserving query single-result admission', async () => {
         const sql = `CREATE TABLE example(value text);\nINSERT INTO example VALUES ('é;\\! inert');\n`
             + `DO $body$ BEGIN RAISE NOTICE '\\! inert'; END $body$;\n`;
