@@ -25,9 +25,9 @@ describe('agent install failure presentation', () => {
             expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(code)).body).toBe(body);
         }
         expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'in_use', stepId: 'cli', message: null }))
-            .toMatchObject({ body: 'agentInstallJob.inUseBody', recovery: { kind: 'retry' } });
+            .toMatchObject({ body: 'agentInstallJob.inUseBody machineAgents.failedKept', recovery: { kind: 'retry' } });
         expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'not_managed', stepId: 'cli', message: null }))
-            .toMatchObject({ body: 'agentInstallJob.notManagedBody', recovery: { kind: 'chooseAgent' } });
+            .toMatchObject({ body: 'agentInstallJob.notManagedBody machineAgents.failedKept', recovery: { kind: 'chooseAgent' } });
     });
 
     it('shows the typed refusal code when no specific recovery presentation exists', () => {
@@ -38,7 +38,7 @@ describe('agent install failure presentation', () => {
 
     it('explains an extraction size refusal without exposing raw paths', () => {
         expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'archive_expanded_byte_limit', stepId: 'cli', message: 'Extraction failed in C:\\private\\install.log.' })).toMatchObject({
-            body: 'agentInstallJob.archiveExpandedByteLimitBody',
+            body: 'agentInstallJob.archiveExpandedByteLimitBody machineAgents.failedKept',
         });
     });
 
@@ -69,7 +69,7 @@ describe('agent install failure presentation', () => {
     it('keeps raw vendor diagnostics out of primary copy and offers only an available recovery', () => {
         const failure = { kind: 'failed', code: 'update_not_available', stepId: 'cli', message: 'raw vendor output', guideUrl: 'https://example.com/install' } as const;
         expect(presentAgentInstallJobFailure(failure)).toMatchObject({
-            body: 'agentInstallJob.updateBody', recovery: { kind: 'guide', guideUrl: failure.guideUrl },
+            body: 'agentInstallJob.updateBody machineAgents.failedKept', recovery: { kind: 'guide', guideUrl: failure.guideUrl },
         });
         expect(presentAgentInstallJobFailure({ ...failure, guideUrl: undefined }).recovery.kind).toBe('chooseAgent');
     });
@@ -85,7 +85,7 @@ describe('agent install failure presentation', () => {
             code: 'rate_limited', title: 'agentInstallJob.rateLimited',
             recovery: { kind: 'retry', label: 'agentInstallJob.retry' },
         });
-        expect(presented.body).toBe(`agentInstallJob.rateLimitedBody(time=${formatResetAtTime(Date.parse(resetIso))})`);
+        expect(presented.body).toBe(`agentInstallJob.rateLimitedBody(time=${formatResetAtTime(Date.parse(resetIso))}) machineAgents.failedKept`);
         expect(presented.body).not.toContain(resetIso);
     });
 
@@ -94,6 +94,6 @@ describe('agent install failure presentation', () => {
             kind: 'failed', code: 'rate_limited', stepId: 'download',
             message: 'GitHub\'s API rate limit has been reached. Wait for GitHub to reset it, then try again.',
         });
-        expect(presented).toMatchObject({ title: 'agentInstallJob.rateLimited', body: 'agentInstallJob.rateLimitedBodyNoTime' });
+        expect(presented).toMatchObject({ title: 'agentInstallJob.rateLimited', body: 'agentInstallJob.rateLimitedBodyNoTime machineAgents.failedKept' });
     });
 });

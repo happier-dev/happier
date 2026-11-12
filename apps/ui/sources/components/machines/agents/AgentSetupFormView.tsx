@@ -244,7 +244,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     <AttentionBanner
                         testID={`${testID}.failure`}
                         title={failure?.title ?? t('machineAgents.unknown')}
-                        description={[failure?.body, t('machineAgents.failedKept')].filter(Boolean).join(' ')}
+                        description={failure?.body}
                         action={failure?.recovery.kind === 'guide' && guideUrl
                             ? { label: failure.recovery.label, onPress: () => handlers.onOpenGuide(guideUrl), testID: `${testID}.failure.guide` }
                             : failure?.recovery.kind === 'chooseAgent'

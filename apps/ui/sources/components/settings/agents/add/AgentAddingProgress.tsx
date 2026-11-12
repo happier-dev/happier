@@ -7,7 +7,7 @@ import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import type { MachineAgentJob } from '@/agents/machineAgents/machineAgentTypes';
 import { useAgentInstallJob } from '@/agents/machineAgents/installJobs/useAgentInstallJob';
 import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
-import { presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
+import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -50,7 +50,7 @@ export function presentAgentInstallProgress(
   if (job?.outcome?.kind === 'failed') {
     return job.outcome.code === 'cancelled'
       ? { phase: 'cancelled' }
-      : { phase: 'failed', message: job.outcome.message };
+      : { phase: 'failed', message: presentAgentInstallJobFailure(job.outcome).body };
   }
   if (job?.readFailure) return { phase: 'failed', message: presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(job.readFailure)).body };
   if (!job) {

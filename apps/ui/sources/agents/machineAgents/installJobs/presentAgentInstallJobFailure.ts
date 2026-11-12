@@ -18,6 +18,15 @@ export function presentAgentInstallJobRpcFailure(error: unknown): Readonly<{ cod
     if (code === 'member_install_unavailable') {
         return { code, title: t('agentInstallJob.jobUnavailable'), body: t('errors.agentIsolationMemberSetupAskManager') };
     }
+    if (code === 'in_use') {
+        return { code, title: t('agentInstallJob.inUse'), body: t('agentInstallJob.inUseBody') };
+    }
+    if (code === 'not_managed') {
+        return { code, title: t('agentInstallJob.manualInstall'), body: t('agentInstallJob.notManagedBody') };
+    }
+    if (code === 'definition_version_changed') {
+        return { code, title: t('agentInstallJob.jobUnavailable'), body: t('agentInstallJob.definitionChangedBody') };
+    }
     const body = t('agentInstallJob.jobMissingBody');
     return { code, title: t('agentInstallJob.jobUnavailable'), body: error instanceof AgentInstallJobRpcError ? `${body} (${code})` : body };
 }
@@ -50,6 +59,8 @@ export function presentAgentInstallJobFailure(
 ): AgentInstallJobFailurePresentation {
     const copy = (() => {
         switch (failure.code) {
+            case 'in_use': return { title: t('agentInstallJob.inUse'), body: t('agentInstallJob.inUseBody'), kind: 'retry' } as const;
+            case 'not_managed': return { title: t('agentInstallJob.manualInstall'), body: t('agentInstallJob.notManagedBody'), kind: 'guide' } as const;
             case 'consent_required': return { title: t('agentInstallJob.consentRequired'), body: t('agentInstallJob.consentBody'), kind: 'retry' } as const;
             case 'unsupported_platform': return { title: t('agentInstallJob.unsupportedPlatform'), body: t('agentInstallJob.unsupportedBody'), kind: 'chooseAgent' } as const;
             case 'install_not_available': return { title: t('agentInstallJob.manualInstall'), body: t('agentInstallJob.manualBody'), kind: 'guide' } as const;
@@ -66,5 +77,5 @@ export function presentAgentInstallJobFailure(
     const kind = copy.kind === 'guide' && !failure.guideUrl ? 'chooseAgent' : copy.kind;
     const label = kind === 'guide' ? t('agentInstallJob.openGuide')
         : kind === 'chooseAgent' ? t('agentInstallJob.chooseAgent') : t('agentInstallJob.retry');
-    return { code: failure.code, title: copy.title, body: copy.body, recovery: { kind, label, ...(kind === 'guide' ? { guideUrl: failure.guideUrl } : {}) } };
+    return { code: failure.code, title: copy.title, body: `${copy.body} ${t('machineAgents.failedKept')}`, recovery: { kind, label, ...(kind === 'guide' ? { guideUrl: failure.guideUrl } : {}) } };
 }
