@@ -10,6 +10,14 @@ This page describes the platform's owners and its admission vocabulary. The publ
 contract lives in [api.md](api.md#external-action-api-developer-preview-source-contract); the CLI
 host is in [cli-architecture.md](cli-architecture.md#action-derived-command-arguments).
 
+In unreleased 0.3, a server-to-daemon transport refusal retains its closed RPC
+code and validated `failureCause` through the existing Action failure projection.
+The request envelope supplies the correlation ID. Plain requests return the
+Action failure; protected requests return the non-content HTTP refusal. RPC
+prose and encrypted result content never enter that projection. Untyped forwards
+retain `target_unavailable`; a lost acknowledgement retains its existing unknown
+outcome. The dispatcher does not retry a refusal.
+
 In unreleased 0.3 source, the plugin dispatcher owns finite-operation admission.
 Before admission, the requesting view's abort signal cancels the request. After
 admission, that signal releases the view's subscriber while the existing finite

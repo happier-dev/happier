@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Action daemon transport refusals (unreleased 0.3)
+
+The closed Action HTTP error vocabulary consumes the existing RPC failure-code
+schema; target-unavailable HTTP failures also retain optional, validated
+`failureCause`. Plain Action failures use their existing code/cause shape.
+Matching protocol, Home and client readers load together under the unpublished
+0.3 direct cut; older strict development readers reject the newly recognized
+transport codes. No admission rule, persisted format or retry policy changes.
+The inspected `../0.2` frontier at `57cd3db058af7767335d6d5a4ed44904460c50bb`
+has no `packages/protocol/src/actions/externalActionHttpError.ts` or scoped
+working changes for that path. No predecessor adapter is added.
+
 ## Connected Account connection tests (unreleased 0.3)
 
 The Connected Account runtime adds optional `testConnection`; its shared Action
@@ -8039,6 +8051,19 @@ has no tracked source-declaration protocol at this path and no scoped working
 changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Connected Account modes add optional `accessOnlyExport`, a closed
+declaration of access-token, expiry and public-metadata credential keys. The
+existing closed `directExportContract` persistence/mutation field accepts its
+new access-only contract literal alongside the unchanged manual contract. Both
+are authority-bearing; unknown contracts and unknown declaration fields reject.
+Omission retains the existing manual behavior. Matching Protocol, SDK, server,
+CLI host and declaring plugins reload together; earlier strict development
+readers reject the new declaration/contract. Per the approved direct development
+cut, this adds no wire epoch, capability bit or migration. Existing Accounts
+need reconnect to record the new contract. The inspected `../0.2` frontier
+`57cd3db058af7767335d6d5a4ed44904460c50bb` has neither affected Connected Account
+schema path and no scoped working changes; no predecessor adapter is added.
 
 Unreleased 0.3 Connected Account purpose declarations add optional
 `managedProviderEndpoint`, a closed pair of exact Provider contribution identity

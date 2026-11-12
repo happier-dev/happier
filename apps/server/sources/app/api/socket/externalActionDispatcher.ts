@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ClientActionRpcFailureCodeV1Schema, ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc/errors';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
@@ -73,6 +73,7 @@ export { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 };
  * requested relay.
  */
 export type ExternalActionPlacementErrorCode =
+    | ReturnType<typeof ClientActionRpcFailureCodeV1Schema.parse>
     | "credential_scope_denied"
     | "target_required"
     | "target_not_local"
@@ -296,6 +297,7 @@ function createPlacementError(input: Readonly<{
     machineId?: string;
     availability?: MachineResolution;
     phaseFailure?: DispatchPhaseFailure;
+    failureCause?: ActionFailureCauseV1;
     refusalCode?: ManagedMachineError['code'] | ApiTokenOperationError['code'];
     managedAdmission?: Readonly<{ managedId: string }>;
     credentialScopeDiagnostic?: ExternalActionCredentialScopeDiagnosticV1;
@@ -314,7 +316,8 @@ function createPlacementError(input: Readonly<{
     return {
         kind: 'placement_error',
         code: input.code,
-        ...(input.phaseFailure?.failureCause === undefined ? {} : { failureCause: input.phaseFailure.failureCause }),
+        ...((input.phaseFailure?.failureCause ?? input.failureCause) === undefined ? {}
+            : { failureCause: input.phaseFailure?.failureCause ?? input.failureCause }),
         ...(input.managedAdmission === undefined ? {} : { managedAdmission: input.managedAdmission }),
         ...(input.credentialScopeDiagnostic === undefined ? {} : {
             credentialScopeDiagnostic: input.credentialScopeDiagnostic,
@@ -1123,15 +1126,22 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         }
         if (forwarded.kind === 'failed' || !forwarded.value.ok) {
             const guardFailure = exactDaemonTarget.readPhaseFailure();
+            // Read only plaintext transport diagnostics, never an encrypted Action result or RPC prose.
+            const refusal = forwarded.kind === 'ready' && !guardFailure && 'errorCode' in forwarded.value
+                ? ClientActionRpcFailureCodeV1Schema.safeParse(forwarded.value.errorCode) : null;
+            const cause = forwarded.kind === 'ready' && !guardFailure && 'failureCause' in forwarded.value
+                ? ActionFailureCauseV1Schema.safeParse(forwarded.value.failureCause) : null;
             return submittedUnknown
                 ? { kind: "submitted_unknown", cause: { reason: 'daemon_acknowledgement_lost' } }
                 : createPlacementError({
                     code: forwarded.kind === 'failed' ? projectDispatchPhaseFailureCode(forwarded)
-                        : guardFailure ? projectDispatchPhaseFailureCode(guardFailure) : 'target_unavailable',
+                        : guardFailure ? projectDispatchPhaseFailureCode(guardFailure)
+                            : refusal?.success ? refusal.data : 'target_unavailable',
                     refusalBranch: forwarded.kind === 'failed' || guardFailure ? 'phase_exception'
                         : options.signal?.aborted ? 'aborted' : 'daemon_forward_not_ok',
                     requestId: request.envelope.requestId, machineId,
-                    ...(forwarded.kind === 'ready' && !guardFailure
+                    ...(cause?.success ? { failureCause: cause.data } : {}),
+                    ...(forwarded.kind === 'ready' && !guardFailure && !refusal?.success
                         ? { machineAvailabilityDiagnostic: exactDaemonTarget.readMachineAvailabilityDiagnostic() } : {}),
                     ...(forwarded.kind === 'failed'
                         ? { phaseFailure: forwarded }

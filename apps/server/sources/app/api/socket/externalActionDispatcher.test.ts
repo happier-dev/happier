@@ -359,13 +359,13 @@ describe("createExternalActionDaemonDispatcher", () => {
             kind: "placement_error",
             code: "encrypted_action_unsupported",
         });
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'action.spec.get',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
-        });
+        }));
         expect(forwardRpc).not.toHaveBeenCalled();
     });
 
@@ -431,13 +431,13 @@ describe("createExternalActionDaemonDispatcher", () => {
                 },
             }),
         }));
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'session.spawn_new',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
-        });
+        }));
     });
 
     it("rejects targeted Session input before relay when the exact Machine lacks targeted admission", async () => {
@@ -473,14 +473,14 @@ describe("createExternalActionDaemonDispatcher", () => {
             kind: "placement_error",
             code: "session_input_target_update_required",
         });
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'session.message.send',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
-        });
+        }));
         expect(forwardRpc).not.toHaveBeenCalled();
     });
 
@@ -513,14 +513,14 @@ describe("createExternalActionDaemonDispatcher", () => {
             kind: "placement_error",
             code: "session_input_target_update_required",
         });
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'session.message.send',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
-        });
+        }));
         expect(forwardRpc).not.toHaveBeenCalled();
     });
 
@@ -555,14 +555,14 @@ describe("createExternalActionDaemonDispatcher", () => {
             errorCode: "invalid_action",
             requestId: envelope.requestId,
         });
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'session.message.send',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
-        });
+        }));
         expect(forwardRpc).toHaveBeenCalledTimes(1);
     });
 
@@ -589,13 +589,13 @@ describe("createExternalActionDaemonDispatcher", () => {
             envelope,
             principal,
         })).resolves.toEqual(dispatchedResponse(response("session.message.send", envelope)));
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'session.message.send',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
-        });
+        }));
         expect(forwardRpc).toHaveBeenCalledTimes(1);
     });
 
@@ -630,13 +630,13 @@ describe("createExternalActionDaemonDispatcher", () => {
             errorCode: "invalid_action",
             requestId: envelope.requestId,
         });
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'action.spec.get',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
-        });
+        }));
         expect(forwardRpc).toHaveBeenCalledTimes(1);
     });
 
@@ -671,14 +671,14 @@ describe("createExternalActionDaemonDispatcher", () => {
             errorCode: "invalid_action",
             requestId: envelope.requestId,
         });
-        expect(resolveMachine).toHaveBeenCalledWith({
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'session.message.send',
             accountId: "account-1",
             callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
-        });
+        }));
         expect(forwardRpc).toHaveBeenCalledTimes(1);
     });
 

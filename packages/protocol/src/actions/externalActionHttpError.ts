@@ -3,7 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrant.js';
-import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, UNEXPECTED_ACTION_FAILURE_CODES_V1, type ActionExecuteFailure, type ActionFailureCauseV1 } from './actionExecutionResult.js';
+import { ClientActionRpcFailureCodeV1Schema, ActionExecuteFailureSchema, ActionFailureCauseV1Schema, UNEXPECTED_ACTION_FAILURE_CODES_V1, type ActionExecuteFailure, type ActionFailureCauseV1 } from './actionExecutionResult.js';
 import { EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 } from './externalActionLimits.js';
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
 import { MachineAvailabilityDiagnosticV1Schema, type MachineAvailabilityDiagnosticV1 } from '../machines/machineAccessV1.js';
@@ -48,6 +48,7 @@ const EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES = [
  */
 export const ExternalActionHttpErrorCodeSchema = lazyZodSchema(() => z.enum([
   ...ExternalActionHttpErrorCodeV1Schema.options,
+  ...ClientActionRpcFailureCodeV1Schema.options,
   ...EXTERNAL_ACTION_HTTP_PLACEMENT_ERROR_CODES,
   ...EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES,
 ]));
@@ -96,6 +97,7 @@ const ExternalActionTargetUnavailableHttpErrorSchema = lazyZodSchema(() => z.str
   requestId: z.optional(ExternalActionRequestIdV1Schema),
   managedAdmission: z.optional(ExternalActionManagedAdmissionReceiptV1Schema),
   diagnostic: z.optional(MachineAvailabilityDiagnosticV1Schema),
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
 }));
 
 export { ExternalActionAuthorizationRefusalPhaseSchema, type ExternalActionAuthorizationRefusalPhase } from './externalActionAuthorizationRefusalPhase.js';
@@ -232,6 +234,7 @@ export function projectExternalActionHttpError(
     error: 'invalid_request', code, ...(requestId === undefined ? {} : { requestId }),
     ...(managedAdmission === undefined ? {} : { managedAdmission }),
     ...(machineAvailabilityDiagnostic === undefined ? {} : { diagnostic: machineAvailabilityDiagnostic }),
+    ...(failureCause === undefined ? {} : { failureCause }),
   }) };
   if (phase !== undefined) return { statusCode: 409, payload: ExternalActionTargetRefusalHttpErrorSchema.parse({
     error: 'invalid_request', code, ...(requestId === undefined ? {} : { requestId }), phase,
