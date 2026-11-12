@@ -4,7 +4,7 @@ import { act } from 'react';
 import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
@@ -32,6 +32,7 @@ import { createTriageEphemeralSharedScopeFixture } from '../../../../triage/src/
 
 const FIXTURE = createTriageSourceV1Fixture();
 const mounted: PluginUiTestkit[] = [];
+type MountedFixture = PluginUiTestkit & { controls: ReturnType<typeof createPluginUiActionControlTestHost> };
 
 /** The parent page supplies its public refresh generation; the source has no second refresh control. */
 function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -47,7 +48,10 @@ async function mountDetail(
   results: Readonly<Record<string, JsonValue>> = {},
   /** A scripted answer per invocation, for cases whose contract is a sequence of reads. */
   scripted?: (localId: string, signal: AbortSignal) => JsonValue | undefined | Promise<JsonValue>,
-): Promise<PluginUiTestkit> {
+): Promise<MountedFixture> {
+  const controls = createPluginUiActionControlTestHost(async () => {
+    throw new Error('The tablist fixture does not perform writes.');
+  });
   const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -59,6 +63,7 @@ async function mountDetail(
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
       handlers: {
+        actionControl: controls.handler,
         executeAction: async ({ action, input, signal }) => {
           const localId = typeof action === 'string' ? action : action.localId;
           if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
@@ -71,7 +76,7 @@ async function mountDetail(
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
 afterEach(async () => {
@@ -129,7 +134,7 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     expect(text.indexOf('Anouk')).toBeGreaterThanOrEqual(0);
     expect(text.indexOf('Anouk')).toBeLessThan(text.lastIndexOf('Ship it after the fix'));
     // The remark keeps its resolution controls inside the stream.
-    await expect(detail.getByRole('button', { name: 'Resolve comment 7' })).resolves.toBeDefined();
+    expect(detail.controls.presentation('Resolve').disabled).not.toBe(true);
     await expect(detail.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
     await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
   });

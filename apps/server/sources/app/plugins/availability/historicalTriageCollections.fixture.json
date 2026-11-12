@@ -1,0 +1,827 @@
+[
+  {
+    "id": "source-instances",
+    "identityFields": [
+      "instanceTag"
+    ],
+    "indexes": [
+      {
+        "fields": [
+          {
+            "direction": "asc",
+            "field": "lifecycle"
+          },
+          {
+            "direction": "asc",
+            "field": "configuredAtMs"
+          }
+        ],
+        "id": "by-lifecycle"
+      }
+    ],
+    "migrationArtifact": {
+      "artifactId": "triage-collection-migrations",
+      "exportName": "collectionMigrations"
+    },
+    "migrations": [
+      {
+        "fromSchemaVersion": 1,
+        "id": "source-instances-v1-to-v2",
+        "toSchemaVersion": 2
+      }
+    ],
+    "readableSchemaVersions": [
+      1,
+      2
+    ],
+    "relations": [],
+    "rowIdField": "instanceTag",
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "configured": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "binding": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "service": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    },
+                    "source": {
+                      "const": "native"
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "source",
+                    "service"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "configuration": {
+              "additionalProperties": false,
+              "properties": {
+                "token": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 1024
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "token"
+              ],
+              "type": "object"
+            },
+            "instance": {
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                },
+                "sourceInstanceId": {
+                  "maxLength": 36,
+                  "minLength": 36,
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "sourceInstanceId"
+              ],
+              "type": "object"
+            },
+            "localInstanceKey": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "locator": {
+              "additionalProperties": false,
+              "properties": {
+                "displayLabel": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                },
+                "displayPath": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                },
+                "v": {
+                  "const": 1
+                },
+                "webUrl": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 384
+                }
+              },
+              "required": [
+                "v",
+                "displayLabel"
+              ],
+              "type": "object"
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "instance",
+            "localInstanceKey",
+            "configuration",
+            "binding"
+          ],
+          "type": "object"
+        },
+        "configuredAtMs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instanceTag": {
+          "maxLength": 43,
+          "minLength": 43,
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "lifecycle": {
+          "enum": [
+            "1-active",
+            "2-retired"
+          ],
+          "type": "string"
+        },
+        "retiredReason": {
+          "enum": [
+            "userRemoved",
+            "reconfigured"
+          ],
+          "type": "string"
+        },
+        "sourceQualifiedId": {
+          "maxLength": 513,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "instanceTag",
+        "sourceQualifiedId",
+        "lifecycle",
+        "configuredAtMs",
+        "configured"
+      ],
+      "type": "object"
+    },
+    "schemaVersion": 2,
+    "serverReadable": [
+      "sourceQualifiedId",
+      "lifecycle",
+      "configuredAtMs"
+    ],
+    "uiQueries": []
+  },
+  {
+    "id": "session-links",
+    "identityFields": [
+      "linkTag",
+      "entryTag"
+    ],
+    "indexes": [
+      {
+        "fields": [
+          {
+            "direction": "asc",
+            "field": "entryTag"
+          }
+        ],
+        "id": "by-entry"
+      },
+      {
+        "fields": [
+          {
+            "direction": "asc",
+            "field": "sessionId"
+          }
+        ],
+        "id": "by-session"
+      }
+    ],
+    "migrationArtifact": {
+      "artifactId": "triage-collection-migrations",
+      "exportName": "collectionMigrations"
+    },
+    "migrations": [
+      {
+        "fromSchemaVersion": 1,
+        "id": "session-links-v1-to-v2",
+        "toSchemaVersion": 2
+      }
+    ],
+    "readableSchemaVersions": [
+      1,
+      2
+    ],
+    "relations": [
+      {
+        "field": "sessionId",
+        "hostKind": "session",
+        "id": "session",
+        "kind": "host"
+      }
+    ],
+    "rowIdField": "linkTag",
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "displayPathAtLink": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "entryRef": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "collisionScope": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 192
+            },
+            "entryId": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "kindId": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "source": {
+              "additionalProperties": false,
+              "properties": {
+                "localId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                  "type": "string"
+                },
+                "pluginId": {
+                  "maxLength": 256,
+                  "minLength": 3,
+                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pluginId",
+                "localId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "source",
+            "kindId",
+            "collisionScope",
+            "entryId"
+          ],
+          "type": "object"
+        },
+        "entryTag": {
+          "maxLength": 43,
+          "minLength": 43,
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "identityEntryRef": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "collisionScope": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 192
+            },
+            "entryId": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "kindId": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "source": {
+              "additionalProperties": false,
+              "properties": {
+                "localId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                  "type": "string"
+                },
+                "pluginId": {
+                  "maxLength": 256,
+                  "minLength": 3,
+                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pluginId",
+                "localId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "source",
+            "kindId",
+            "collisionScope",
+            "entryId"
+          ],
+          "type": "object"
+        },
+        "linkTag": {
+          "maxLength": 43,
+          "minLength": 43,
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "linkedAtMs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessionId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "linkTag",
+        "entryTag",
+        "sessionId",
+        "linkedAtMs",
+        "entryRef",
+        "identityEntryRef",
+        "displayPathAtLink"
+      ],
+      "type": "object"
+    },
+    "schemaVersion": 2,
+    "serverReadable": [
+      "entryTag",
+      "sessionId",
+      "linkedAtMs"
+    ],
+    "uiQueries": [
+      {
+        "id": "linked-for-session",
+        "indexId": "by-session",
+        "order": "asc",
+        "pageSize": 50,
+        "parameters": {
+          "sessionId": {
+            "kind": "string",
+            "maxUtf8Bytes": 128
+          }
+        },
+        "prefix": [
+          {
+            "kind": "parameter",
+            "parameterId": "sessionId"
+          }
+        ],
+        "projectedFields": [
+          "linkedAtMs"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "user-marks",
+    "identityFields": [
+      "markTag"
+    ],
+    "indexes": [
+      {
+        "fields": [
+          {
+            "direction": "asc",
+            "field": "pinned"
+          },
+          {
+            "direction": "desc",
+            "field": "markedAtMs"
+          }
+        ],
+        "id": "by-pinned"
+      }
+    ],
+    "migrationArtifact": {
+      "artifactId": "triage-collection-migrations",
+      "exportName": "collectionMigrations"
+    },
+    "migrations": [
+      {
+        "fromSchemaVersion": 1,
+        "id": "user-marks-v1-to-v2",
+        "toSchemaVersion": 2
+      }
+    ],
+    "readableSchemaVersions": [
+      1,
+      2
+    ],
+    "relations": [],
+    "rowIdField": "markTag",
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "displayAtMark": {
+          "additionalProperties": false,
+          "properties": {
+            "scopeLabel": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "scopeLabel"
+          ],
+          "type": "object"
+        },
+        "entryRef": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "collisionScope": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 192
+            },
+            "entryId": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "kindId": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            },
+            "source": {
+              "additionalProperties": false,
+              "properties": {
+                "localId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                  "type": "string"
+                },
+                "pluginId": {
+                  "maxLength": 256,
+                  "minLength": 3,
+                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pluginId",
+                "localId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "source",
+            "kindId",
+            "collisionScope",
+            "entryId"
+          ],
+          "type": "object"
+        },
+        "fixPullRequests": {
+          "additionalProperties": false,
+          "properties": {
+            "dismissed": {
+              "items": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "additionalProperties": false,
+                "properties": {
+                  "collisionScope": {
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                    "type": "string",
+                    "x-happier-max-utf8-bytes": 192
+                  },
+                  "entryId": {
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string",
+                    "x-happier-max-utf8-bytes": 128
+                  },
+                  "kindId": {
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string",
+                    "x-happier-max-utf8-bytes": 128
+                  },
+                  "source": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "localId": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                        "type": "string"
+                      },
+                      "pluginId": {
+                        "maxLength": 256,
+                        "minLength": 3,
+                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "pluginId",
+                      "localId"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "source",
+                  "kindId",
+                  "collisionScope",
+                  "entryId"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "linked": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "displayAtLink": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "scopeLabel": {
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "title": {
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "scopeLabel"
+                    ],
+                    "type": "object"
+                  },
+                  "entryRef": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "additionalProperties": false,
+                    "properties": {
+                      "collisionScope": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 192
+                      },
+                      "entryId": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "kindId": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "source": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "localId": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "maxLength": 256,
+                            "minLength": 3,
+                            "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "pluginId",
+                          "localId"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "kindId",
+                      "collisionScope",
+                      "entryId"
+                    ],
+                    "type": "object"
+                  },
+                  "linkedAtMs": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "entryRef",
+                  "displayAtLink",
+                  "linkedAtMs"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "linked",
+            "dismissed"
+          ],
+          "type": "object"
+        },
+        "markTag": {
+          "maxLength": 43,
+          "minLength": 43,
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "markedAtMs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "markTag",
+        "pinned",
+        "markedAtMs",
+        "entryRef",
+        "displayAtMark"
+      ],
+      "type": "object"
+    },
+    "schemaVersion": 2,
+    "serverReadable": [
+      "pinned",
+      "markedAtMs"
+    ],
+    "uiQueries": []
+  }
+]

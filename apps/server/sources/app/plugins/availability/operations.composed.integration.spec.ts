@@ -6,6 +6,7 @@ import { createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginI
 import { projectPluginAccountCollectionDeclaration } from "@happier-dev/plugin-sdk/collections";
 import { CORPUS_ACCOUNT_COLLECTIONS } from "../../../../../../packages/plugins/triage/src/corpus/collections/definitions.js";
 import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
+import historicalTriageCollections from "./historicalTriageCollections.fixture.json";
 import { createReleaseLessDeclarationV1, readStoredPluginManifestV2 } from "./currentDeclaration";
 
 import {
@@ -1927,30 +1928,13 @@ describe("plugin Availability operations", () => {
             const pluginId = "happier.triage";
             const current = CORPUS_ACCOUNT_COLLECTIONS.map(definition =>
                 PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(definition.id, definition)));
-            // PP's retained declaration differs only at the embedded service
-            // schema. Rebuild that projection from the real schema owners and
-            // pin its observed digest, rather than copying a Collection fixture.
-            const retainOldService = (value: unknown, path = ""): unknown => {
-                if (path === "properties.configured.properties.binding.anyOf.0.properties.account.properties.service") {
-                    if (value !== null && typeof value === "object" && "anyOf" in value && Array.isArray(value.anyOf)) {
-                        return value.anyOf[0];
-                    }
-                    throw new Error("Expected the canonical Connected Account service union");
-                }
-                const childPath = (key: string) => path ? `${path}.${key}` : key;
-                if (Array.isArray(value)) return value.map((child, index) => retainOldService(child, childPath(String(index))));
-                if (value !== null && typeof value === "object") {
-                    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, retainOldService(child, childPath(key))]));
-                }
-                return value;
-            };
-            const incumbent = current.map(collection => collection.id === "source-instances"
-                ? PluginAccountCollectionContributionV1Schema.parse({
-                    ...collection, schemaVersion: 2, readableSchemaVersions: [1, 2],
-                    migrations: collection.migrations?.filter(migration => migration.toSchemaVersion <= 2),
-                    schema: retainOldService(collection.schema),
-                })
-                : collection);
+            // Development regression vector from ea442f386c5dd3168c955c24c13113a49ff90d02:
+            // packages/plugins/triage/.happier-plugin/plugin.json contributes.accountCollections.
+            // These exact v2 declarations match the original golden reconstruction;
+            // later schema widenings must not rewrite the incumbent under its pinned digests.
+            // This fixture establishes no released-version support obligation.
+            const incumbent = historicalTriageCollections.map(collection =>
+                PluginAccountCollectionContributionV1Schema.parse(collection));
             const contracts = normalizePluginAccountCollectionContractsV1({ pluginId, contributions: incumbent });
             expect(Object.fromEntries(contracts.map(contract => [contract.collectionId, contract.contractDigest]))).toEqual({
                 "source-instances": "fnxQ5XZRR8KaIcNU0L-qljTn1OP9KGakoTJhglng13Q",
@@ -1984,7 +1968,7 @@ describe("plugin Availability operations", () => {
                 expect(published.statusCode, published.body).toBe(200);
                 const parsed = PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(published.json());
                 expect(parsed.intent?.writableCollections.map(ref => [ref.collectionId, ref.schemaVersion])).toEqual([
-                    ["session-links", 2], ["source-instances", 3], ["user-marks", 2],
+                    ["session-links", 2], ["source-instances", 4], ["user-marks", 2],
                 ]);
                 const repeated = await claim(current);
                 expect(repeated.statusCode, repeated.body).toBe(200);
