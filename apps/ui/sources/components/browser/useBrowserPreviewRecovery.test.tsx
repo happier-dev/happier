@@ -6,7 +6,12 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
-import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -25,13 +30,23 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 });
 
 const homes = createHomeGovernanceHarness();
+// Substitute Metro's module loader; Action admission and preview transport stay real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
+vi.mock('socket.io-client', async importOriginal =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
 const previewBoundaries = new Map<string, Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>>();
 
 async function addBrowserHome(serverUrl: string) {
-  const serverIdentityId = `browser-shell:${new URL(serverUrl).hostname}`;
+  const serverIdentityId = `srv_${new URL(serverUrl).hostname}`;
   const boundary = await createExternalActionAccountHttpBoundary({
     serverUrl, serverIdentityId, accountId: 'viewer-account', machineId: 'machine_1',
-    actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0, requesterInvocation: 'none',
+    actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0, requesterInvocation: 'credentials',
     execute: input => testState.previewOpen(input),
     failure: result => {
       const parsed = ActionExecuteFailureSchema.safeParse(result);
@@ -43,16 +58,13 @@ async function addBrowserHome(serverUrl: string) {
     name: 'Browser Home', serverUrl, serverIdentityId, accountId: 'viewer-account', currentAccount: true,
     credentials: { token: testState.previewToken },
   });
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(id), accountId: 'viewer-account' };
+  storage.setState({ profileScope: scope, settingsScope: scope });
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
   return { id };
 }
 
 afterEach(async () => { await homes.reset(); });
-
-vi.mock('@/sync/domains/state/storage', async () => {
-  const { createStorageModuleStub } =
-    await import('@/dev/testkit/mocks/storage');
-  return createStorageModuleStub({});
-});
 
 vi.mock('@expo/vector-icons', async () =>
   (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
@@ -220,8 +232,6 @@ describe('useBrowserPreviewRecovery', () => {
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const home = await addBrowserHome('https://start-preview-recovery.example.test');
     const base = await createShellState();
-    const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
-    const accountScope = await activateStorageAccountScope({ serverId: home.id, accountId: 'viewer-account' });
     const declaration = { workspaceRefId: 'ws_1', selection: { kind: 'manifest', name: 'web' } } as const;
     const stopped = LocalServiceLaunchTargetV1Schema.parse({
       id: 'project-service:web', source: 'managed_service', machineId: 'machine_1', title: 'Lumen web',
@@ -242,7 +252,8 @@ describe('useBrowserPreviewRecovery', () => {
       v: 1, machineId: 'machine_1', generatedAt: 2_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [],
     } } satisfies DaemonLocalServicePreviewOpenOrCreateResponseV1;
     testState.previewOpen.mockResolvedValue(outcome === 'registration-refused'
-      ? { error: 'local_service_preview_lifecycle_refused:service_not_listening' }
+      ? ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'local_services_preview_refused:service_not_listening',
+          error: 'local_services_preview_refused:service_not_listening' })
       : registration);
     // The canonical UI Action reaches the Machine preview transport. Keep admission,
     // the Service-target lowering and returned registration parsing real beneath it.
@@ -303,6 +314,6 @@ describe('useBrowserPreviewRecovery', () => {
       await hook.rerender({ ...input, localServiceTargets: [{ ...running }] });
       expect(testState.previewOpen).toHaveBeenCalledTimes(1);
       expect(start).toHaveBeenCalledTimes(1);
-    } finally { await hook.unmount(); accountScope.dispose(); }
+    } finally { await hook.unmount(); }
   });
 });

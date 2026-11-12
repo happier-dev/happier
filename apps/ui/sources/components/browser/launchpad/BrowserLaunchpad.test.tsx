@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import type { BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
 import type { DaemonLocalServicePreviewOpenOrCreateResponseV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets/suggestions';
@@ -12,8 +12,14 @@ import {
     resolveBrowserViewTargetOpen,
 } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
-import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { BrowserLaunchpad, type BrowserLaunchpadOpenTargetOptions } from './BrowserLaunchpad';
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
@@ -21,18 +27,36 @@ import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/lau
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 
 const machineRpcMock = vi.hoisted(() => vi.fn());
+// Substitute Metro's module loader; Action admission and preview transport stay real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpcMock }));
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-// The launchpad renders inside `ConstrainedScreenContent`, which resolves the user's content-width
-// preference from the settings store. The canonical testkit stub is the boundary owner — without it
-// the store initialisation never settles and every case times out, which is the same trap
-// `BrowserDiagnosticsDrawer.test.tsx` documents for `SegmentedTabBar`.
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
+const homes = createHomeGovernanceHarness();
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
+let serverId: string;
+const previewReceiver = vi.fn<(input: unknown) => DaemonLocalServicePreviewOpenOrCreateResponseV1>();
+beforeEach(async () => {
+    await homes.reset();
+    serverId = await homes.addHome({ name: 'Launchpad Home', serverUrl: 'https://launchpad.example.test',
+        serverIdentityId: 'srv_launchpad_home', accountId: 'launchpad_account', currentAccount: true });
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'launchpad_account' };
+    storage.setState({ profileScope: scope, settingsScope: scope });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    machineRpcMock.mockReset();
+    previewReceiver.mockReset().mockReturnValue(previewRegistrationResponse());
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine_1',
+        actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0, requesterInvocation: 'credentials', execute: previewReceiver });
 });
+afterEach(async () => { await homes.reset(); });
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -249,7 +273,7 @@ describe('BrowserLaunchpad', () => {
      */
     it('opens a running service from the Services row in one tap', async () => {
         const response = previewRegistrationResponse();
-        machineRpcMock.mockResolvedValueOnce(response);
+        previewReceiver.mockReturnValue(response);
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
 
         const screen = await renderScreen(
@@ -264,35 +288,27 @@ describe('BrowserLaunchpad', () => {
 
         await screen.pressByTestIdAsync('browser-launchpad-service:preview:preview_vite-open');
 
-        expect(onOpenTarget).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(onOpenTarget).toHaveBeenCalledTimes(1));
         expect(onOpenTarget.mock.calls[0]?.[0]).toEqual(localPreviewTarget);
         expect(onOpenTarget.mock.calls[0]?.[1]).toMatchObject({ currentUrl: response.preview.accessUrl });
     });
 
     it('renews a private-preview admission when opening a recent target', async () => {
-        const home = await createPlainArtifactHomeFixture('https://browser-launchpad-home.test', {
-            serverFeatures: createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } }),
-            handleRequest: async path => path === '/v2/account/settings'
-                ? Response.json({ version: 1, content: { t: 'plain', v: {} } }) : null,
-        });
-        try {
-            machineRpcMock.mockClear();
+        {
             const response = previewRegistrationResponse('https://preview-vite.preview.test/?previewToken=renewed');
-            machineRpcMock.mockResolvedValueOnce(response);
+            previewReceiver.mockReturnValue(response);
             const onOpenTarget = vi.fn();
             const screen = await renderScreen(
                 <BrowserLaunchpad platform="web" rows={[{
                     id: 'recent:preview_vite', section: 'recent', sourceKind: 'recent', title: 'Vite app',
                     detail: 'localServicePreview', target: localPreviewTarget, disabledReason: null,
                     currentUrl: 'https://preview-vite.preview.test/?previewToken=expired', currentUrlExpiresAt: 61_000, lastSeenAt: 1_000,
-                }]} refreshStatus="idle" onOpenTarget={onOpenTarget} localServicePreviewServerId={home.home.id} />,
+                }]} refreshStatus="idle" onOpenTarget={onOpenTarget} localServicePreviewServerId={serverId} />,
             );
             await screen.pressByTestIdAsync('browser-launchpad-card:recent:preview_vite');
-            expect(machineRpcMock).toHaveBeenCalledWith(expect.objectContaining({
-                serverId: home.home.id, payload: { machineId: 'machine_1', sessionId: 'session_1', launchTargetId: 'preview_vite' },
-            }));
-            expect(onOpenTarget).toHaveBeenCalledWith(localPreviewTarget, { platform: 'web', currentUrl: response.preview.accessUrl });
-        } finally { await home.dispose(); }
+            expect(previewReceiver).toHaveBeenCalledWith({ machineId: 'machine_1', sessionId: 'session_1', launchTargetId: 'preview_vite' }, expect.anything());
+            await vi.waitFor(() => expect(onOpenTarget).toHaveBeenCalledWith(localPreviewTarget, { platform: 'web', currentUrl: response.preview.accessUrl }));
+        }
     });
 
     it('disables target rows when the platform adapter is unavailable', async () => {
@@ -657,13 +673,14 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('opens a running row through the canonical opener, creating BOTH a details tab AND a live content record', async () => {
-        machineRpcMock.mockResolvedValueOnce(previewRegistrationResponse());
+        previewReceiver.mockReturnValue(previewRegistrationResponse());
 
         const openedTabs: DetailsTab[] = [];
         // Wire the launcher through the REAL FP-BRW-OPEN-TARGET-1 opener. The launcher only calls
         // props.onOpenTarget; the opener is the single owner of tab + content-record creation. No
         // open/dispatch path is re-implemented in the test — the opener does the work.
         const { open: onOpenTarget, dispose } = createBrowserWorkspaceOpeningFixture({
+            accountLifetime: captureActiveServerAccountScopeLifetime() ?? undefined,
             scope: 'sessionDetails',
             platform: 'android',
             openDetailsTab: (tab) => {
@@ -682,6 +699,7 @@ describe('BrowserLaunchpad', () => {
         );
 
         await screen.pressByTestIdAsync('browser-launchpad-service:preview:preview_vite-open');
+        await vi.waitFor(() => expect(openedTabs).toHaveLength(1));
         dispose();
 
         // (i) a canonical browser-view details-workspace tab for the target…

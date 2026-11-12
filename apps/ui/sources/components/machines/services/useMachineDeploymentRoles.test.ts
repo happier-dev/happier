@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -24,7 +24,8 @@ it('preserves partial header availability and Retry through the real Environment
     const missing = createDeploymentEnvironmentHeaderV1({ id: 'missing-header', serverId: 'srv_service_headers',
         contentArtifactId: 'missing-environment-artifact' });
     await account.createArtifactDocument({ artifactId: readable.contentArtifactId,
-        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Production' }, body: '{}' });
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Production' },
+        body: JSON.stringify(createDeploymentEnvironmentDetailV1({ environment: readable }).content) });
     let response: HomeDomainAnswer = { body: { ok: true, items: [readable, missing], nextCursor: null } };
     homes.answer(serverId, '/v1/deployments/environments', { select: (_body, request) => {
         expect(new URL(request.url).searchParams.getAll('environmentIds')).toEqual([missing.id, readable.id]);

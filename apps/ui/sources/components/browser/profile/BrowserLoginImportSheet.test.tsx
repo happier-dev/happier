@@ -63,15 +63,12 @@ const machine = vi.hoisted(() => ({
 }));
 vi.mock(
   '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')
-    >()),
-    machineRpcWithServerScope: async (call: MachineCall) => {
+  async () => (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(
+    async (call: MachineCall) => {
       machine.calls.push(call);
       return machine.answer(call);
     },
-  }),
+  ),
 );
 
 const home = createHomeGovernanceHarness();
@@ -118,6 +115,12 @@ async function mountSheet(options: Readonly<{
   const { resolveServerProfileScopeIdForIdentifier } =
     await import('@/sync/domains/server/serverProfiles');
   const scopedServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+  const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+  const scope = { serverId: scopedServerId, accountId: 'owner' };
+  storage.setState({ profileScope: scope, settingsScope: scope });
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
   if (options.machines)
     await publishMachineInventoryForTest(
       { serverId: scopedServerId, accountId: 'owner' },
