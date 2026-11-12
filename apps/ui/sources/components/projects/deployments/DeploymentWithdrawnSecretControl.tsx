@@ -42,7 +42,7 @@ function ServiceControl(props: Readonly<{ serverId: string; machineId: string; s
     const id = `project-deployments.environment.secret-control.${props.machineId}.${props.service.serviceId}`;
     return <>
         <Item testID={id} title={props.service.name} subtitle={t(`machineServices.state.${props.service.state}`)}
-            showChevron={false} rightElement={operation ? <RoundButton size="small" display="secondary"
+            showChevron={false} rightElementOutsidePressable rightElement={operation ? <RoundButton size="small" display="secondary"
                 testID={`${id}.${operation}`} title={t(`machineServices.control.${operation}`)} accessibilityLabel={t(`machineServices.control.${operation}`)}
                 disabled={control.pending !== null} loading={control.pending === operation}
                 onPress={() => control.run(operation)} /> : undefined} />

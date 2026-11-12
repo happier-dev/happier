@@ -25,6 +25,7 @@ import { measureMountedCollections } from '@/dev/testkit/render/renderInCollecti
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { t } from '@/text';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { TriageReadSessionHandoffChoicesInputV1Schema, TriageSessionHandoffChoicesV1Schema } from '@happier-dev/triage-protocol/v1';
@@ -561,10 +562,6 @@ describe('MachineServicesTab rendered production wiring', () => {
         const row = service('Web');
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const unwatches: unknown[] = [];
-        answerAction('machines.services.unwatch', envelope => {
-            unwatches.push(envelope.input);
-            return { kind: 'applied', revision: 'revision-b' };
-        });
         machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
             if (method === RPC_METHODS.MACHINES_SERVICE_UNWATCH) {
                 unwatches.push(payload);
@@ -577,7 +574,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await screen.pressByTestIdAsync('machine-service-more');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-unwatch')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-unwatch');
-        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId, machineId,
+        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId: resolveServerProfileScopeIdForIdentifier(serverId), machineId,
             watchId: row.watchId, expectedRevision: row.watchRevision }]));
     });
 
@@ -710,8 +707,8 @@ describe('MachineServicesTab rendered production wiring', () => {
             adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'postgresql.service',
         }, native: { phase: 'running', readiness: 'ready', displayName: 'PostgreSQL service' } });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
-        answerAction('machines.services.detail', () => ({ kind: 'service', service: row,
-            accounting: { kind: 'sample', samples: [{ nativeResourceId: 'postgresql.service', cpuPercent: 3, memoryBytes: 64 * 1024 * 1024 }] } }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row,
+            accounting: { kind: 'sample', samples: [{ nativeResourceId: 'postgresql.service', cpuPercent: 3, memoryBytes: 64 * 1024 * 1024 }] } });
         answerResource(ManagedServiceNativeLogResultV1Schema.parse({ kind: 'page', page: {
             sourceRevision: 'native-source', text: 'database ready [REDACTED]\n', nextCursor: null, truncated: false,
         } }), 'machines.services.logs.read');
@@ -1003,13 +1000,16 @@ describe('MachineServicesTab rendered production wiring', () => {
         const candidate = (name: string, unit: string) => ({ candidateId: `candidate-${name}`, revision: `revision-${name}`, name,
             adapter, nativeResourceId: unit, observation: { phase: 'running', readiness: 'not_reported', endpoint: null } });
         const watches: unknown[] = [];
-        answerAction('machines.services.discovery', () => ({ kind: 'snapshot', failures: [],
-            candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('postgres', 'postgresql.service')] }));
-        answerAction('machines.services.watch', envelope => {
-            watches.push(envelope.input);
-            return { kind: 'applied', revision: 'next' };
+        machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY) return { kind: 'snapshot', failures: [],
+                candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('postgres', 'postgresql.service')] };
+            if (method === RPC_METHODS.MACHINES_SERVICE_WATCH) {
+                watches.push(payload);
+                return { kind: 'applied', revision: 'next' };
+            }
+            throw new Error(`unexpected_rpc:${method}`);
         });
-        const discoveryReads = () => homes.requests.filter(request => request.path === '/v1/actions/machines.services.discovery');
+        const discoveryReads = () => machineTransport.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY);
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.findHostByTestId(initiallyEmpty ? 'machine-services-empty' : 'machine-service-postgres')).not.toBeNull());
         // Nothing is discovered until the person asks.
@@ -1117,7 +1117,10 @@ describe('MachineServicesTab rendered production wiring', () => {
         const row = service('Web', { state: 'healthy' });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const reads: Array<(value: unknown) => void> = [];
-        answerAction('machines.services.detail', () => new Promise(resolve => { reads.push(resolve); }));
+        machineTransport.rpc.mockImplementation(({ method }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return new Promise(resolve => { reads.push(resolve); });
+            throw new Error(`unexpected_rpc:${method}`);
+        });
         const sample = (cpuPercent: number, memoryMb: number) => ({ kind: 'service', service: row, accounting: { kind: 'sample', samples: [
             { nativeResourceId: 'shop-web-1', cpuPercent, memoryBytes: memoryMb * 1024 * 1024,
                 networkReceivedBytes: 2 * 1024 * 1024, networkSentBytes: 0, restartCount: 3 },
@@ -1183,7 +1186,7 @@ it('withdrawn secret notice stops the admitted generation and offers Start only 
     await vi.dynamicImportSettled();
     await screen.pressByTestIdAsync(id + '.stop');
     await vi.dynamicImportSettled();
-    await vi.waitFor(() => expect({ operations, outcome: screen.findByTestId(id + '.outcome') ? textOf(screen.findByTestId(id + '.outcome')!) : null }).toMatchObject({ operations: [expect.anything()], outcome: null }));
+    await vi.waitFor(() => expect({ operations, pending: screen.findHostByTestId(id + '.stop')?.props.accessibilityState, requests: homes.requests.map(request => request.path), outcome: screen.findByTestId(id + '.outcome') ? textOf(screen.findByTestId(id + '.outcome')!) : null }).toMatchObject({ operations: [expect.anything()], outcome: null }));
     expect(operations[0]).toMatchObject({ serverId, machineId, serviceId: row.serviceId,
         expectedGeneration: row.generation, operation: 'stop' });
     expect(screen.findHostByTestId(id + '.start')).toBeNull();
@@ -1193,8 +1196,10 @@ it('withdrawn secret notice stops the admitted generation and offers Start only 
     await act(async () => { firstControl.resolve({ ok: false, errorCode: 'service_operation_unavailable',
         error: 'Native control is unavailable' }); });
     await vi.waitFor(() => expect(screen.findHostByTestId(id + '.outcome')).not.toBeNull());
-    expect(screen.getTextContent()).toContain('service_operation_unavailable');
-    expect(screen.getTextContent()).toContain(t('machineServices.control.unavailableRemedy'));
+    expect(textOf(screen.findHostByTestId(id + '.outcome')!)).toContain(t('machineServices.control.unavailableRemedy'));
+    await screen.pressByTestIdAsync(id + '.outcome-details-toggle');
+    expect(textOf(screen.findHostByTestId(id + '.outcome')!)).toContain('service_operation_unavailable');
+    expect(screen.findHostByTestId(id + '.start')).toBeNull();
     await screen.pressByTestIdAsync(id + '.stop');
     await vi.waitFor(() => expect(operations).toHaveLength(2));
     await resource.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [{ ...row, state: 'stopped' }] }));
