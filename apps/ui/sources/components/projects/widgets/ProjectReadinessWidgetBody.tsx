@@ -7,6 +7,9 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { HappierCountedDisclosure } from '@happier-dev/plugin-ui/presentation';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { Item } from '@/components/ui/lists/Item';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -61,7 +64,8 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
     {collection.snapshot.status === 'unavailable' || collection.snapshot.value?.coverage === 'partial'
       ? <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.partial')}
           diagnosticCode={collection.snapshot.failure?.code} /> : null}
-    {!selected ? <SurfaceStateCard size="line"
+    {/* An unread list already says so above; it is never also "no Environments". */}
+    {!selected && collection.snapshot.status === 'unavailable' && !items.length ? null : !selected ? <SurfaceStateCard size="line"
       kind={collection.snapshot.status === 'idle' || collection.snapshot.status === 'loading' ? 'loading' : 'empty'}
       title={collection.snapshot.status === 'idle' || collection.snapshot.status === 'loading' ? t('projects.readiness.loading')
         : items.length ? t('projects.readiness.choose') : t('projects.readiness.empty')} />
@@ -70,9 +74,9 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
         {readiness.failureCode ? <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.failed')}
           diagnosticCode={readiness.failureCode} /> : null}
         {!readiness.result && readiness.pending ? <SurfaceStateCard kind="loading" size="line" title={t('projects.readiness.loading')} /> : null}
-        {readiness.result?.facts.map(fact => <ReadinessFact key={`${fact.kind}:${fact.environmentId ?? ''}`}
-          fact={fact} serverId={environment!.serverId} projectId={projectId} environmentId={environment!.id}
-          machineId={environment!.controllerMachineId!} lifetime={lifetime} testID={`${props.testID}.${fact.kind}`} />)}
+        {readiness.result ? <ReadinessFacts key={environment!.id} facts={readiness.result.facts}
+          serverId={environment!.serverId} projectId={projectId} environmentId={environment!.id}
+          machineId={environment!.controllerMachineId!} lifetime={lifetime} testID={props.testID} /> : null}
       </>}
     {collection.hasPreviousPage || collection.hasNextPage ? <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
       <SectionActionButton title={t('common.previous')} icon="arrow-left" disabled={!collection.hasPreviousPage}
@@ -81,6 +85,22 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
         onPress={() => { void collection.nextPage(); }} />
     </View> : null}
   </View>;
+}
+
+/** Ready details borrow the shared disclosure; only owner-reported gaps stay open. */
+function ReadinessFacts(props: Omit<React.ComponentProps<typeof ReadinessFact>, 'fact'> & Readonly<{ facts: readonly ProjectReadinessFactV1[] }>) {
+  const ready = props.facts.filter(fact => fact.status === 'ready');
+  const renderFact = (fact: ProjectReadinessFactV1) => <ReadinessFact {...props} key={`${fact.kind}:${fact.environmentId ?? ''}`}
+    fact={fact} testID={`${props.testID}.${fact.kind}`} />;
+  return <>
+    {props.facts.filter(fact => fact.status !== 'ready').map(renderFact)}
+    {ready.length ? <HappierCountedDisclosure testID={`${props.testID}.ready`}
+      title={t('projects.readiness.ready')} count={ready.length}
+      subtitle={ready.map(fact => t(`projects.readiness.${fact.kind}`)).join(', ')}
+      Disclosure={ExpandableItem} renderHeader={state => <Item {...state.headerProps} testID={state.testID}
+        title={state.title} subtitle={state.subtitle} detail={state.detail} />}
+    >{ready.map(renderFact)}</HappierCountedDisclosure> : null}
+  </>;
 }
 
 function ReadinessFact(props: Readonly<{ fact: ProjectReadinessFactV1; serverId: string; projectId: string;

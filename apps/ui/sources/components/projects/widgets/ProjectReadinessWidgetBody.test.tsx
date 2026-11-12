@@ -111,6 +111,9 @@ it('selects the saved Environment and renders its source evidence without a Sess
         channelIds: ['channel.email'], phases: ['open', 'recovered'] } },
   ]);
   try {
+    await vi.waitFor(() => expect(screen.findByTestId('readiness.ready.header')).toBeTruthy());
+    expect(screen.findHostByTestId('readiness.health')).toBeFalsy();
+    await act(async () => screen.pressByTestId('readiness.ready.header'));
     await vi.waitFor(() => expect(screen.findByTestId('readiness.health')).toBeTruthy());
     expect(reads).toEqual([{ serverId: identity, machineId: 'controller', projectId: 'project',
       environments: [{ environmentId: 'staging', expectedRevision: 8 }] }]);
@@ -145,7 +148,9 @@ it('shows the owner refusal and recovers through explicit Refresh', async () => 
       .some(card => card.props.diagnosticCode === 'machine_unavailable')).toBe(true));
     unavailable = false;
     await act(async () => screen.pressByTestId('readiness.refresh'));
-    await vi.waitFor(() => expect(screen.findByTestId('readiness.secrets')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.findByTestId('readiness.ready.header')).toBeTruthy());
+    await act(async () => screen.pressByTestId('readiness.ready.header'));
+    expect(screen.findByTestId('readiness.secrets')).toBeTruthy();
     expect(screen.findAllByType(SurfaceStateCard).some(card => card.props.diagnosticCode === 'machine_unavailable')).toBe(false);
   } finally { await screen.unmount(); }
 });
@@ -197,5 +202,41 @@ it('opens the existing Health Event editor for the exact source and controller b
     await act(async () => screen.findByType(TriggerPopover).props.onRequestClose());
     expect(screen.findAllByType(TriggerPopover)).toEqual([]);
     expect(homes.requests.filter(request => (request.method === 'POST' && new URL(request.path, 'https://home.test').pathname === '/v1/sessions') || request.path.includes('/v1/actions/workflow.trigger.add'))).toEqual([]);
+  } finally { await screen.unmount(); }
+});
+
+it('says the Environments could not be read, never also that there are none', async () => {
+  await homes.reset();
+  const serverId = await homes.addHome({ name: 'Readiness', serverUrl: 'https://readiness-unread.test',
+    serverIdentityId: `srv_${'9'.repeat(32)}`, accountId: 'alice', currentAccount: true });
+  await loadSyncSingletonForTests();
+  const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+  await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://readiness-unread.test')!.token! });
+  homes.answer(serverId, '/v1/deployments/environments', { status: 503, body: { ok: false, error: 'deployment_store_unavailable' } });
+  const target = { kind: 'project' as const, projectKey: 'project', source: { serverId,
+    source: ProjectSourceV1Schema.parse({ id: 'project', revision: 1, name: 'App', audience: [], createdByAccountId: 'alice' }) } };
+  const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+    <ProjectReadinessWidgetBody target={target} testID="readiness" />
+  </AccountNoticeInvestigationBoundary>);
+  await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).map(card => card.props.kind)).toContain('unavailable'), { timeout: 20000 });
+  expect(screen.findAllByType(SurfaceStateCard).map(card => card.props.kind)).toEqual(['unavailable']);
+});
+
+
+it('keeps unavailable facts visible while ready facts fold without another read or write', async () => {
+  const { screen, reads } = await readinessScreen([
+    { kind: 'ci', owner: 'forgeCI', status: 'ready', reason: 'ci_source_present' },
+    { kind: 'security', owner: 'forgeSecurity', status: 'unavailable', reason: 'source_transport_unavailable' },
+  ]);
+  try {
+    await vi.waitFor(() => expect(screen.findByTestId('readiness.security')).toBeTruthy());
+    expect(screen.findHostByTestId('readiness.ci')).toBeFalsy();
+    await act(async () => screen.pressByTestId('readiness.ready.header'));
+    await vi.waitFor(() => expect(screen.findByTestId('readiness.ci')).toBeTruthy());
+    expect(screen.findByTestId('readiness.security')).toBeTruthy();
+    expect(reads).toHaveLength(1);
+    expect(homes.requests.filter(request => request.method === 'POST'
+      && (new URL(request.path, 'https://home.test').pathname === '/v1/sessions'
+        || request.path.includes('/v1/actions/workflow.trigger.add')))).toEqual([]);
   } finally { await screen.unmount(); }
 });
