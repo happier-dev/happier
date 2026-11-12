@@ -72,7 +72,7 @@ const en = {
       'No machine is online to download it now; each one installs it when a session first uses it.',
     trustTitle: "What you're trusting",
     trustBody: ({ name }: Name) =>
-      `${name} runs as a program on your machines, with your access to them.`,
+      `${name} runs as a program on your machines, with your access to them. The ACP Registry checks that it starts and offers sign-in, not what it does. It is not signed. Nothing downloads until you add it, and nothing runs until you start a session.`,
     checksumVerified: 'Checksum verified',
     checksumVerifiedBody:
       "Each machine checks its download against the registry's SHA-256 before anything runs.",

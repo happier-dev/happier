@@ -496,16 +496,12 @@ export function AgentAddController(props: AgentAddModalProps & Readonly<{
               : {})}
           />
         ),
-        footer: (
+        footer: selectedFormat === 'happier-npm' ? (
           <View style={styles.note} testID={`${TEST_ID}.trustNote`}>
             <Icon name="shield-check" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-            <Text variant="meta" style={styles.noteText}>
-              {selectedFormat === 'happier-npm'
-                ? t('capabilities.agentAdd.plugin.listTrustNote')
-                : t('capabilities.agentAdd.trustNote')}
-            </Text>
+            <Text variant="meta" style={styles.noteText}>{t('capabilities.agentAdd.plugin.listTrustNote')}</Text>
           </View>
-        ),
+        ) : null,
       },
       renderDetail: (row, ctx) => {
         const added = ctx.added ? adds.get(row.key) : null;
@@ -557,18 +553,6 @@ export function AgentAddController(props: AgentAddModalProps & Readonly<{
         );
       },
       detailFooter: (row) => {
-        const note = (
-          <View style={styles.note}>
-            <Icon
-              name="lock"
-              size={ICON_SIZE.xs}
-              color={theme.colors.text.secondary}
-            />
-            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
-              {t('capabilities.agentAdd.footerNote')}
-            </Text>
-          </View>
-        );
         if (row.status?.kind === 'builtIn' && !separate.has(row.key)) {
           const entry = row.status.entry;
           return {
@@ -637,7 +621,6 @@ export function AgentAddController(props: AgentAddModalProps & Readonly<{
         const addedResult = adds.get(row.key);
         const addedState = addedResult && 'definitionId' in addedResult ? addedResult : null;
         return {
-          provenance: note,
           ...(addedState
             ? {
                 afterAdd: {

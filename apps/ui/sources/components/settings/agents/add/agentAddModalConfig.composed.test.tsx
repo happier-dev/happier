@@ -304,3 +304,26 @@ it('From a command shows the custom-agent form in the dialog, and Save opens the
     expect(env.acpWrites()).toBe(1);
     expect(modal.onClose).toHaveBeenCalled();
 });
+
+
+it('offers first use when every compatible machine is offline, including a requested Now draft', async () => {
+    await setup('offline-install-choice');
+    const modal = await mount({ ...callbacks(), sourceId: ACP });
+    await waitForHomeGovernance(() => expect(modal.config().catalog.items).toHaveLength(100));
+    const { AgentRegistryDetail } = await import('./AgentRegistryDetail');
+    const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+    const onDraft = vi.fn();
+    const row = modal.config().catalog.items[0];
+    const detail = await renderSettingsView(<AgentRegistryDetail row={row} sourceTitle="ACP Registry" sourceRevision="offline"
+        machines={[{ machineId: 'linux', name: 'Linux', platform: 'linux', arch: 'x64', offline: true }]}
+        serverId={null} added={null} onRetryInstall={async () => {}} existingDefinitionId={null}
+        targetSelection={{ candidates: [], pickerRows: [], state: { kind: 'unselected', candidates: [] },
+            selectedTarget: null, selectedTargetServerMatchesActiveAccount: false, canExecute: false,
+            selectTarget: () => undefined, clearTarget: () => undefined, resolveExecutionTarget: () => null }}
+        onDraft={onDraft} initialChoice="now" testID="offline-agent" />);
+    await waitForHomeGovernance(() => expect(onDraft.mock.lastCall?.[0].item).not.toBeNull());
+    const choice = detail.findAll(node => node.type === SegmentedChoiceItem)[0];
+    expect(choice?.props.value).toBe('firstUse');
+    expect(choice?.props.options.find((option: { id: string }) => option.id === 'now').disabled).toBe(true);
+    expect(onDraft.mock.lastCall?.[0].choice).toBe('firstUse');
+});

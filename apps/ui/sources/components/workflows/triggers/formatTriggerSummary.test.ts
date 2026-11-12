@@ -141,3 +141,11 @@ describe('formatTriggerSetSummary', () => {
             .toBe(`workflows.triggers.summary.more(first=${first},count=1)`);
     });
 });
+
+
+it('keeps advanced cron expressions in trigger details and summarizes the schedule in collection metadata', () => {
+    const trigger = cron('0 0 1 1 *');
+    expect(formatTriggerSummary(trigger)).toContain('0 0 1 1 *');
+    expect(formatTriggerSetSummary([trigger])).toBe('workflows.triggers.summary.schedule');
+    expect(formatTriggerSetSummary([cron('0 9 * * *')])).toBe(formatTriggerSummary(cron('0 9 * * *')));
+});

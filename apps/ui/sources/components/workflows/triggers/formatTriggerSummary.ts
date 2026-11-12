@@ -221,7 +221,10 @@ export function formatTriggerSetSummary(
     if (first === undefined) return t('workflows.triggers.summary.manual');
     // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM"); a spent
     // one-time schedule says how it ended ("Done · Once at …"), a pending one keeps its due time.
-    const when = formatTriggerSummary(first);
+    const when = first.kind === 'schedule' && first.schedule?.kind === 'cron'
+        && parseSimpleSchedule(first.schedule.scheduleExpr ?? '') === null
+        ? t('workflows.triggers.summary.schedule')
+        : formatTriggerSummary(first);
     const once = readOnceScheduleState(first, lastRunState);
     const state = once === 'done' ? t('common.done') : once === 'missed' ? t('workflows.runState.missed')
         : first.enabled === false ? t('workflows.triggers.row.off') : null;

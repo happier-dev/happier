@@ -130,11 +130,7 @@ export function AgentRegistryDetail(
   const payload = item?.payload;
   const agent =
     payload?.kind === 'agent' ? payload.agent : null;
-  const [choice, setChoice] = React.useState<AgentInstallChoice>(props.initialChoice ?? 'now');
-  const { onDraft } = props;
-  React.useEffect(() => {
-    onDraft({ item, sourceRevision, choice });
-  }, [item, sourceRevision, choice, onDraft]);
+  const [requestedChoice, setChoice] = React.useState<AgentInstallChoice>(props.initialChoice ?? 'now');
   const addedDefinitionId = props.added?.definitionId ?? null;
   const { onAddedPresented } = props;
   React.useEffect(() => {
@@ -151,6 +147,11 @@ export function AgentRegistryDetail(
   const nowNames = fits
     .filter(({ fit, machine }) => fit.kind === 'can_run' && !machine.offline)
     .map(({ machine }) => machine.name);
+  const choice = nowNames.length === 0 ? 'firstUse' : requestedChoice;
+  const { onDraft } = props;
+  React.useEffect(() => {
+    onDraft({ item, sourceRevision, choice });
+  }, [item, sourceRevision, choice, onDraft]);
   // Online machines answer the question now; a long tail of away machines folds into one line.
   const offlineFits = fits.filter(({ machine }) => machine.offline);
   const foldedOffline = offlineFits.length > OFFLINE_SHOWN_MAX ? offlineFits.length : 0;
@@ -367,6 +368,8 @@ export function AgentRegistryDetail(
               {
                 id: 'now',
                 label: t('capabilities.agentAdd.detail.installNow'),
+                disabled: nowNames.length === 0,
+                unavailableReason: nowNames.length === 0 ? t('capabilities.agentAdd.detail.installNoneNow') : undefined,
               },
               {
                 id: 'firstUse',
@@ -408,18 +411,6 @@ export function AgentRegistryDetail(
             showChevron={false}
           />
         ) : null}
-        <Item
-          title={t('capabilities.agentAdd.detail.checkedByRegistry')}
-          subtitle={t('capabilities.agentAdd.detail.checkedByRegistryBody')}
-          icon={
-            <Icon
-              name="check-circle"
-              size={ICON_SIZE.sm}
-              color={theme.colors.text.secondary}
-            />
-          }
-          showChevron={false}
-        />
       </ItemGroup>
 
       {file ? (
