@@ -91,12 +91,12 @@ describe('Docker Sandboxes managed provisioner roles', () => {
       stderr: new TextEncoder().encode('not signed in to Docker; try: sbx login') })) };
     await expect(nativeModule.createDockerSandboxesProvider(process, executable, 123).options()).rejects.toMatchObject({
       code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true,
-      details: { nativeCause: { localCause: 'not_signed_in' } },
     });
     try {
       await nativeModule.createDockerSandboxesProvider(process, executable, 123).options();
     } catch (error) {
       expect(isPluginError(error)).toBe(true);
+      expect(error).not.toHaveProperty('details.nativeCause');
     }
   });
 

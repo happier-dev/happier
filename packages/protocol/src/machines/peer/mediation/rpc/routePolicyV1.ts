@@ -599,7 +599,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   actionSpecServerRequired(WORKFLOW_RUN_START_METHOD, 'auth',
     'Workflow Start requires current requester Machine admission before its Account-owned Run accepts work.', WORKFLOW_RUN_START_METHOD, 'use', undefined, true),
   serverRequired(RPC_METHODS.DAEMON_AGENTS_INSTALL_START, 'auth',
-    'Use starts requester-scoped Agent install and update jobs; Machine uninstall remains Manage-only at Action admission.', 'use') satisfies MachineRpcRoutePolicyV1,
+    'Use starts requester-scoped Agent install and update jobs; Machine uninstall remains Manage-only at the daemon, which alone sees the E2EE intent.', 'use') satisfies MachineRpcRoutePolicyV1,
   serverRequired(RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, 'auth',
     'Use cancels only the admitted requester Account\'s Agent install jobs.', 'use') satisfies MachineRpcRoutePolicyV1,
   actionSpecServerRequired(ACTION_INVOKE_ACTION_ID_V1, 'auth',

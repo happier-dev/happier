@@ -68,8 +68,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
         const result = await run(['template', 'ls', '--quiet'], signal);
         const stderr = new TextDecoder().decode(result.stderr);
         if (/not signed in to Docker/iu.test(stderr)) {
-          throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true,
-            details: { nativeCause: { localCause: 'not_signed_in' } } });
+          throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true });
         }
         if (completed(result) && !result.stdoutTruncated) {
           const templateIds = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout).split(/\r?\n/u).filter(Boolean);
