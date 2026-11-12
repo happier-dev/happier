@@ -12,6 +12,7 @@ import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     encodePlainArtifactStoredContent,
     PluginAvailabilityActionHttpPathsV1,
+    PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema,
     PluginAvailabilityCollectionWritersClaimActionOutputV1Schema,
     PluginAvailabilityCollectionWritersClaimActionInputV1Schema,
@@ -505,6 +506,10 @@ describe("plugin Availability operations", () => {
         const service = operations();
         const listed = await service.listIntentIds({ accountId: ACCOUNT_ID, input: {} });
         const exact = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
+        // CLI execution selection and UI hydration consume these strict Action readers.
+        // Exercise the real producer so adding a declaration cannot leave its reader behind.
+        expect(PluginAvailabilityIntentReadActionOutputV1Schema.parse(exact)).toMatchObject(exact);
+        expect(PluginAvailabilityIntentsListActionOutputV1Schema.parse(listed)).toMatchObject(listed);
         expect(listed.intentReads[0]?.response.currentDeclaration?.manifest).toEqual(manifest);
         expect(exact.machineDeclarations?.[0]?.declaration.manifest).toEqual(manifest);
         expect(listed.intentReads[0]?.response.machineDeclarations).toEqual([{

@@ -1,6 +1,6 @@
 import type { DaemonPluginStructuredMessageActionInvocationV1 } from '@happier-dev/protocol';
 import { arePluginMachineMaterializationRefsEqual, arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -214,8 +214,21 @@ export async function deriveMountedPluginInvocationCaller(input: Readonly<{
             && entry.identity.pluginId === pluginId
             && entry.identity.localId === binding.contributionLocalId
         ));
-        if (mountedContribution) {
-            contributionIdentity = mountedContribution.identity;
+        // Embedded setup and picker surfaces use the declaring Event/input type
+        // as their caller, just as the projection's shared embedded-mount owner does.
+        const setupEvent = mountedContribution ? undefined : contributes.automationEligibleEvents?.find(({ event }) => (
+            event.identity.pluginId === pluginId
+            && matchesCallerContributionId(event.identity.localId)
+            && event.automation.source.setupSurface !== undefined
+        ));
+        const inputPicker = mountedContribution || setupEvent ? undefined : contributes.inputTypes?.find((entry) => {
+            if (entry.pluginId !== pluginId || entry.identity.pluginId !== pluginId
+                || !matchesCallerContributionId(entry.identity.localId) || !entry.definition.picker) return false;
+            return qualifyPluginContributionReferenceV1(entry.definition.picker, pluginId).pluginId === pluginId;
+        });
+        const mountedIdentity = mountedContribution?.identity ?? setupEvent?.event.identity ?? inputPicker?.identity;
+        if (mountedIdentity) {
+            contributionIdentity = mountedIdentity;
         } else {
             // A target-owned embedded surface is mounted under its contributor
             // identity, rather than a top-level view id. Only cold admission's

@@ -10,7 +10,67 @@ import { readCurrentAccountPluginExecutionSelection } from '../accountPluginActi
 import type { ResolvedWorkItemsContribution } from '@/plugins/projection/registry/types';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+
+it('admits current Event setup and typed picker mounts through their declared contributor identities', async () => {
+    const pluginId = 'com.acme.embedded';
+    const machineId = 'embedded-machine';
+    const manifest = createPluginManifestV2Fixture({ id: pluginId, engines: { happier: '>=0.0.0' }, contributes: {
+        ui: { renderers: [{ id: 'form', kind: 'declarative', root: { kind: 'text', text: 'Configure' } }],
+            views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'form' }] },
+        actions: [{ id: 'setup', title: 'Setup', execution: { target: 'daemon' }, scopes: ['global'],
+            surfaces: ['plugin'], dangerLevel: 'safe', inputSchema: { type: 'object' },
+            resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, { type: 'object' }) }],
+        events: ['configured', 'headless'].map(id => ({ id, kind: 'event', title: id,
+            payloadSchema: { type: 'object' }, automation: { v: 1, eligible: true, source: {
+                sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+                sourceConfigSchema: { type: 'object' }, setupActionRef: { pluginId, localId: 'setup' },
+                ...(id === 'configured' ? { setupSurface: { renderer: 'form' } } : {}),
+            } } })),
+        inputTypes: [{ id: 'destination', title: 'Destination', semantic: 'destination', valueSchema: { type: 'string' }, picker: 'form' },
+            { id: 'plain-value', title: 'Plain value', semantic: 'plain', valueSchema: { type: 'string' } }],
+    } });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest,
+        files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("setup", async () => ({})); }' } }],
+        async resolveContributes(happyHomeDir) { return createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })); },
+        runtimeOptions: { resolveCurrentMachineId: () => machineId,
+            resolveCurrentMachineExecutionOriginContext: () => ({ serverIdentityId: 'srv_embedded', machineId }) },
+    });
+    try {
+        const { registry } = fixture;
+        const occurrenceId = registry.readPluginOccurrenceId?.(pluginId);
+        const sourceCustody = registry.readPluginSourceCustody?.(pluginId);
+        if (!occurrenceId || !sourceCustody) throw new Error('Expected admitted embedded source');
+        expect(registry.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);
+        expect(registry.isPluginOccurrenceCurrent?.(pluginId, occurrenceId)).toBe(true);
+        const materializationRef = registry.resolveCurrentPluginMaterializationRef?.(pluginId);
+        const binding = { pluginId, occurrenceId, sourceCustody, contributionLocalId: 'configured',
+            ...(materializationRef ? { materializationRef } : {}) };
+        const derive = (contributionLocalId: string, overrides: Partial<DaemonPluginStructuredMessageActionMountedBinding> = {}) =>
+            deriveMountedPluginInvocationCaller({ request: { machineId, invocationSurface: 'ui', invocation: {
+                kind: 'mountedPluginSurface', mountedBinding: { ...binding, contributionLocalId, ...overrides },
+            } }, registry, resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
+            resolveExecutionOriginContext: () => ({ serverIdentityId: 'srv_embedded', machineId }) });
+        expect((await derive('page')).status).toBe('available');
+        for (const contributionLocalId of ['configured', 'destination']) {
+            const caller = await derive(contributionLocalId);
+            expect(caller.status, contributionLocalId).toBe('available');
+            if (caller.status !== 'available') throw new Error('Expected declared embedded caller');
+            expect(caller.caller.contribution).toEqual({ id: contributionLocalId, qualifiedId: `${pluginId}/${contributionLocalId}` });
+            expect(await caller.isMountedCallerCurrent()).toBe(true);
+            expect(await derive(contributionLocalId, { occurrenceId: 'retired' })).toEqual({ status: 'unavailable' });
+            expect(await derive(contributionLocalId, { pluginId: 'other.plugin' })).toEqual({ status: 'unavailable' });
+            expect(await derive(contributionLocalId, { materializationRef: { pluginId, machineId: 'other-machine', materializationId: 'foreign' } }))
+                .toEqual({ status: 'unavailable' });
+        }
+        for (const contributionLocalId of ['headless', 'plain-value', 'form', 'forged'])
+            expect(await derive(contributionLocalId), contributionLocalId).toEqual({ status: 'unavailable' });
+    } finally { await fixture.dispose(); }
+});
 
 describe('Account nested Action caller provenance', () => {
     it('uses current Account declaration custody without a Machine occurrence and retires changed or disabled callers', async () => {

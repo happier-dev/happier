@@ -605,7 +605,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
           readService: async (subject, signal) => {
             const { MachineServicesDetailResultV1Schema } = await import('@happier-dev/protocol/actions/specs/machine/services');
             const result = MachineServicesDetailResultV1Schema.parse(await machineResourceDeps.machineServiceAction!({
-              actionId: 'machines.services.detail', input: { serverId: projectHomeId, ...subject }, context: { signal }, signal,
+              actionId: 'machines.services.detail', input: { serverId: projectHomeId, machineId: subject.machineId, serviceId: subject.serviceId }, context: { signal }, signal,
             }));
             return result.kind === 'service' ? result.service : null;
           },
@@ -1497,6 +1497,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     workspaceFilesSearch: filesystemDeps.workspaceFilesSearch,
     workflowEventsList: machineInventoryDeps.workflowEventsList,
     machinesAgentsList: machineInventoryDeps.machinesAgentsList,
+    machinePluginProjectionRead: machineInventoryDeps.machinePluginProjectionRead,
     machineAgentSignInStart: machineInventoryDeps.machineAgentSignInStart,
     machineAgentSignInStatus: machineInventoryDeps.machineAgentSignInStatus,
     machineAgentSignInCancel: machineInventoryDeps.machineAgentSignInCancel,

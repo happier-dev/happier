@@ -137,7 +137,7 @@ it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
                 return await actionExecutor.execute(actionId, input, { ...context, actionsSettings });
             } },
             invokeContributedAction: async () => { throw new Error('unexpected_contributed_action'); } });
-        const healthChecks = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet,
+        const healthChecks = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet,
             readObserver: () => ({ machineId: caller.machineId, installationId: 'installation' }), now: () => now,
             openDomainArtifact: async () => { throw new Error('service_has_no_domain'); } }).bind(seed, { actions, http });
         if (!healthChecks) throw new Error('health_service_required');
@@ -160,6 +160,10 @@ it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
     await initial.cycle();
     expect(initial.owner.readPublicProjection().kind).toBe('available');
     expect(admissions.map(value => value.eventRef.localId), JSON.stringify(statuses)).toEqual(['health-check-failed']);
+    if (mode === 'rejected') expect(statuses).toContainEqual(expect.objectContaining({
+        kind: 'source', state: 'observing', code: 'none', observedDelta: 1, admittedDelta: 0, skippedDelta: 1,
+        lastDispositionAt: now, nextRetryAt: null,
+    }));
     expect(notices.rows.size).toBe(1);
     expect(notices.writes).toHaveBeenCalledTimes(1);
     const starts = mode === 'admitted' || mode === 'rejoined';
