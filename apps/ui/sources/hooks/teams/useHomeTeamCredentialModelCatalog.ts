@@ -2,15 +2,13 @@ import * as React from 'react';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { projectAgentProviderBrokerApplications } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
-import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { teamsUnavailableReason, type TeamsDirectoryUnavailableHome } from '@/components/settings/teams/teamsDirectoryViewState';
 
 import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCatalog } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { getTeamCredentialResourceCatalogSnapshot, getTeamCredentialResourceCatalogsSelectionKey, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentProviderRequirements, readAccountProviderDeclarations, readAccountAgentConnectedAccountServiceKeys } from '@/providers/catalog/accountProviderDeclarations';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentTeamCredentialDemand } from '@/providers/catalog/accountProviderDeclarations';
+import { mergeTeamCredentialCatalogResourcesV1 } from '@happier-dev/protocol/teams';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -56,8 +54,9 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
     const projection = input.declarationProjection !== undefined ? input.declarationProjection
         : declarationState.phase === 'ready' ? declarationState.inputs?.pluginProjectionV2 ?? null : null;
     const declarationContext = React.useMemo(() => providerDeclarationContext(input.machineId, projection), [input.machineId, projection]);
-    const requirements = React.useMemo(() =>
-        resolveAccountAgentProviderRequirements(input.agentTargetKey ?? '', declarationContext),
+    // One derivation (protocol owner) of the applications and services this Agent can use here.
+    const demand = React.useMemo(() => input.agentTargetKey
+        ? resolveAccountAgentTeamCredentialDemand(input.agentTargetKey, declarationContext) : null,
     [input.agentTargetKey, declarationContext]);
     const directory = useTeamsDirectory({ enabled: enabled && serverId !== '', serverIds: serverId ? [serverId] : [] });
     const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
@@ -70,19 +69,11 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         return { rows, rowsKey: JSON.stringify(rows.map(row => [row.address.serverId, row.address.teamId])) };
     }, [directory.rows]);
     const applications = React.useMemo<readonly (ProviderBrokerApplicationBindingV1 | undefined)[]>(() => {
-        if (!input.agentTargetKey) return [undefined];
         // Generic Connected Account choices do not require model compatibility.
         // Unknown requirements admit no model application and keep `current` false.
-        if (requirements.kind === 'unknown') return [undefined];
-        const providers = readAccountProviderDeclarations(declarationContext).flatMap(declaration => {
-            const parsed = parseProviderContributionIdentityV1(declaration.contributionKey);
-            return parsed ? [{ identity: parsed.identity, definition: declaration.definition }] : [];
-        });
-        return [undefined, ...projectAgentProviderBrokerApplications({
-            providers, agentTargetKey: input.agentTargetKey,
-            acceptedProtocols: requirements.requirements.acceptsProtocols,
-        })];
-    }, [input.agentTargetKey, declarationContext, requirements]);
+        if (!demand || demand.requirements === null) return [undefined];
+        return [undefined, ...demand.applications];
+    }, [demand]);
     const executionMachineId = input.machineId?.trim() || undefined;
     const { demands, demandsKey } = React.useMemo(() => ({
         demands: rows.flatMap(row => applications.map(application => ({ row, application }))),
@@ -129,14 +120,13 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
                 reload: reloadHomeCatalog,
             };
         }
-        const resourcesByKey = new Map<string, TeamCredentialResourceCatalogEntryV1>();
-        const connectedServiceKeys = input.agentTargetKey
-            ? readAccountAgentConnectedAccountServiceKeys(input.agentTargetKey, declarationContext) : null;
+        const pages: (readonly TeamCredentialResourceCatalogEntryV1[])[] = [];
+        const connectedServiceKeys = demand?.connectedServiceKeys ?? null;
         const teamNameById: Record<string, string> = {};
         const homeNameByTeamId: Record<string, string> = {};
         const resourceStatusByKey = new Map<string, TeamCredentialResourceStatus>();
         let current = directory.kind !== 'loading' && !directory.partial
-            && (!input.agentTargetKey || requirements.kind === 'known');
+            && (!demand || demand.requirements !== null);
         if (directory.kind === 'loading' && !condition) condition = { reason: 'loading', retryable: false };
         for (const { row, application } of demands) {
             teamNameById[row.address.teamId] = row.team.name;
@@ -155,43 +145,20 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             }
             if (snapshot?.error && (!condition || condition.reason === 'loading')) condition = teamsUnavailableReason(snapshot.error);
             else if (snapshot?.status !== 'ready' && !condition) condition = { reason: 'loading', retryable: false };
+            pages.push(snapshot?.data ?? []);
             for (const resource of snapshot?.data ?? []) {
-                // Broker protocol compatibility does not make a Connected Service
-                // credential applicable to an Agent that never declared its service.
-                if (connectedServiceKeys !== null && resource.sourcePresentation?.kind === 'connected_service'
-                    && !connectedServiceKeys.includes(buildQualifiedPluginContributionKey(resource.sourcePresentation.service))) continue;
                 const key = `${resource.teamId}:${resource.id}`;
                 const previousStatus = resourceStatusByKey.get(key);
                 if (!previousStatus || previousStatus.kind === 'current' || status.kind === 'failed' || status.kind === 'homeUnreachable') {
                     resourceStatusByKey.set(key, status);
                 }
-                const previous = resourcesByKey.get(key);
-                if (!previous) {
-                    resourcesByKey.set(key, resource);
-                    continue;
-                }
-                // Preserve application/source alternatives for the Machine's
-                // canonical resolver; gathering must not preselect one here.
-                const modelKeys = new Set<string>();
-                const providerModels = [...previous.providerModels, ...resource.providerModels].filter(model => {
-                    const selection = model.selection;
-                    const modelKey = JSON.stringify([selection.teamId, selection.resourceId, selection.expectedResourceRevision,
-                        selection.agentTargetKey, selection.modelId, selection.deliveryMode,
-                        model.application.agentTargetKey, model.application.implementationIdentity.pluginId,
-                        model.application.implementationIdentity.localId, model.application.endpointTemplateId,
-                        model.application.protocol, model.sourceRevision, model.nativeSource?.providerTicket]);
-                    if (modelKeys.has(modelKey)) return false;
-                    modelKeys.add(modelKey);
-                    return true;
-                });
-                resourcesByKey.set(key, {
-                    ...(previous.providerModels.length > 0 || resource.providerModels.length === 0 ? previous : resource),
-                    connectedServiceSelections: previous.connectedServiceSelections.length > 0
-                        ? previous.connectedServiceSelections : resource.connectedServiceSelections,
-                    providerModels,
-                });
             }
         }
+        // Gathering, the connected-service filter and model alternatives come from the protocol owner.
+        const resourcesByKey = mergeTeamCredentialCatalogResourcesV1(pages, connectedServiceKeys, {
+            requireProviderModels: Boolean(demand && demand.applications.length > 0),
+        });
+        for (const key of [...resourceStatusByKey.keys()]) if (!resourcesByKey.has(key)) resourceStatusByKey.delete(key);
         const resources = [...resourcesByKey.values()];
         return Object.freeze({
             resources: resources.length > 0 ? Object.freeze(resources) : EMPTY_RESOURCES,
@@ -204,7 +171,7 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         });
         // snapshotVersion is the scoped store change signal.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directory.kind, directory.partial, directory.unavailableHomes, enabled, input.agentTargetKey, declarationContext, requirements, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
+    }, [directory.kind, directory.partial, directory.unavailableHomes, enabled, demand, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
 
     const needsMachineProjection = Boolean(input.agentTargetKey && executionMachineId
         && discovered.resources.some(resource => resource.providerModels.length > 0));

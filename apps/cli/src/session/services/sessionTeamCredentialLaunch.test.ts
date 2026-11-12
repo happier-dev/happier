@@ -40,6 +40,35 @@ const options: SpawnSessionOptions = {
 const applications = resource.providerModels.map(entry => entry.application);
 
 describe('Session Team launch composition', () => {
+  it.each(['pi', 'codex', 'opencode'])('refuses a completed empty broker catalog through %s spawn admission', async agentId => {
+    const agentTargetKey = buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.' + agentId, localId: agentId } });
+    const empty = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource, providerModels: [],
+      ...(agentId === 'pi' ? { sourcePresentation: { kind: 'connected_service',
+        service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } } } : {}),
+    });
+    const agentApplications = applications.map(application => ({ ...application, agentTargetKey }));
+    const launchOptions: SpawnSessionOptions = { directory: '/tmp/empty-broker',
+      modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: 'muse-spark-1.2' } },
+      ...(agentId === 'pi'
+        ? { connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': selection } } }
+        : { teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: resource.id,
+          teamId: resource.teamId, expectedResourceRevision: resource.resourceRevision, deliveryMode: 'brokered' }] }),
+    };
+    // Home Action is the transport boundary; catalog decoding, merging, admission
+    // and strict public spawn failure projection all run unchanged.
+    const error: unknown = await normalizeSessionTeamCredentialLaunch({ options: launchOptions, agentId, agentTargetKey,
+      contributions: readCurrentContributionRegistry(), applications: agentApplications,
+      readCatalog: () => readSessionTeamCredentialResourceCatalog({ applications: agentApplications, teamIds: [resource.teamId],
+        homeDomainAction: async () => ({ resources: [empty], nextCursor: null }),
+      }),
+    }).catch(failure => failure);
+    expect(error).toMatchObject({ code: 'broker_unavailable' });
+    if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw new Error('Expected typed broker refusal');
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.code,
+    }))).toMatchObject({ launchError: { code: 'broker_unavailable' } });
+  });
+
   it.each([undefined, 'native-model'])('refuses a shared native source without a delivery application before model selection (%s)', async modelId => {
     const museTarget = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'muse', sourceKind: 'built_in' });
     const failure = await normalizeSessionTeamCredentialLaunch({

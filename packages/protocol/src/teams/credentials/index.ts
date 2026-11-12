@@ -9,3 +9,4 @@ export * from './sessionBindingV1.js';
 export * from './sourceCandidatesV1.js';
 export * from './readinessV1.js';
 export * from './runnerSelectionV1.js';
+export * from './teamCredentialModelCatalogV1.js';

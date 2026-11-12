@@ -2,6 +2,7 @@ import type { ActionExecutorDeps, ProviderBrokerApplicationBindingV1, TeamCreden
 import { TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourcePageV1Schema,
   type TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { mergeTeamCredentialCatalogResourcesV1 } from '@happier-dev/protocol/teams/credentials/teamCredentialModelCatalogV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { projectTeamCredentialLaunchFailure, readTeamCredentialLaunchFailureCode,
   SessionTeamCredentialLaunchUnavailableError, type TeamCredentialLaunchFailurePhase } from './sessionTeamCredentialLaunchError';
@@ -107,6 +108,7 @@ export async function readSessionTeamCredentialResourceCatalog(input: Readonly<{
     teamIds = discovered;
   }
   const resourcesById = new Map<string, TeamCredentialResourceCatalogEntryV1>();
+  const pages: (readonly TeamCredentialResourceCatalogEntryV1[])[] = [];
   for (const application of input.applications.length > 0 ? input.applications : [undefined]) {
     const resources = await readSpawnConnectedServicesTeamResources({
       homeDomainAction: input.homeDomainAction, teamIds, ...(application ? { application } : {}),
@@ -114,14 +116,14 @@ export async function readSessionTeamCredentialResourceCatalog(input: Readonly<{
       ...(input.executionMachineId ? { executionMachineId: input.executionMachineId } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
+    pages.push(resources);
     for (const resource of resources) {
       const prior = resourcesById.get(resource.id);
       if (prior && (prior.teamId !== resource.teamId || prior.resourceRevision !== resource.resourceRevision)) {
         throw new SessionTeamCredentialLaunchUnavailableError('resource_changed', 'catalog_revision');
       }
-      const basis = resource.providerModels.some(model => model.availability === 'available') ? resource : prior ?? resource;
-      resourcesById.set(resource.id, { ...basis, providerModels: [...(prior?.providerModels ?? []), ...resource.providerModels] });
+      resourcesById.set(resource.id, resource);
     }
   }
-  return [...resourcesById.values()];
+  return [...mergeTeamCredentialCatalogResourcesV1(pages, null, { requireProviderModels: input.applications.length > 0 }).values()];
 }

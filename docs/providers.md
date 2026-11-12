@@ -2412,15 +2412,28 @@ development-source contracts, not loaded-runtime certification.
 In development source, a Connected Account authentication mode may explicitly
 declare access-only Direct delivery. The custodian source owner exports only the
 access token, its finite future expiry and declared non-secret metadata through
-the existing recipient envelope. Muse device login uses this route: its native
-files materializer omits the custodian's inference key and any refresh token,
-and native Muse obtains its own inference key on the member's Machine. There is
-no expiry timer; the next launch or existing post-failure acquisition obtains
-current material. A Session that outlives its token may need Resume. Existing
-credentials without the new declaration metadata require reconnect; an absent
-or expired token expiry is unavailable for this route. Manual API keys retain
+the existing recipient envelope. Muse device login and imported Meta OAuth
+logins declare this route. Native materialization omits the custodian's inference
+key and any refresh token; Muse obtains its own inference key on the member's
+Machine. Existing accounts gain the current export declaration at daemon registry
+publication and natural credential acquisition. At Direct acquisition, the existing
+credential enrichment owner derives a missing expiry from a JWT's reported
+expiration when available. An imported login without a determinable expiry keeps
+its brokered route and reports why native delivery requires Meta sign-in again.
+Native `expires_at` normalization is not implemented until its units are verified.
+There is no expiry timer; the next launch or existing post-failure acquisition
+obtains current material. A Session that outlives its token may need Resume.
+An absent or expired token expiry is unavailable for Direct delivery. Manual API keys retain
 the existing manual Direct export contract. Brokered-only Muse selections still
 follow the existing early compatibility refusal.
+
+Withdrawal clears delivered credential files from retained daemon materialization
+homes at the next existing Team reconciliation. The materialization manifest
+records the admitted Team resource and exact secret paths; replacing the source
+replaces that ownership. Session and Run settings and resume state remain intact.
+An already admitted Agent process removes its selected native credential file
+when it exits through the existing Agent identity cleanup. For Muse that file
+contains both the delivered access token and the member's derived inference key.
 
 Brokered usage limits block brokered choices only. Current Direct model rows
 remain selectable under that limit; reconnect, withdrawal and missing or stale

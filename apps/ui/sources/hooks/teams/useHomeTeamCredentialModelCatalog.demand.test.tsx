@@ -4,6 +4,8 @@ import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protoco
 
 import { createDeferred, renderHook, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { buildTeamCredentialModelPickerSections } from '@/components/sessions/modelPicker/buildTeamCredentialModelPickerSections';
+import { resourceShortUnavailableLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 
 const home = createHomeGovernanceHarness();
@@ -35,6 +37,49 @@ afterEach(async () => {
 });
 
 describe('Account-scoped Team credential catalog demand', () => {
+    it.each(['pi', 'codex', 'opencode'])('settles a completed empty broker catalog for %s and recovers on refresh', async agent => {
+        const agentTargetKey = 'agent:happier.agent.' + agent + '/' + agent;
+        const serverId = await home.addHome({ name: 'Empty broker catalog', serverUrl: 'https://empty-' + agent + '.example.test',
+            accountId: 'recipient', teamsEnabled: true, credentialResourcesEnabled: true });
+        home.answer(serverId, '/v1/teams/list', { body: { items: [teamSummaryFixture({ id: 'team-1' })], nextCursor: null } });
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'muse-share-1111', teamId: 'team-1',
+            displayName: 'Shared source', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            connectedServiceSelections: [{ source: 'team_resource', resourceId: 'muse-share-1111', deliveryMode: 'brokered' }],
+            sourcePresentation: { kind: 'connected_service', service: agent === 'pi'
+                ? { pluginId: 'happier.agent.muse', localId: 'muse-account' }
+                : { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }, providerModels: [] });
+        home.answer(serverId, LIST, { body: { resources: [resource], nextCursor: null } });
+        home.answer(serverId, DISCOVER, { body: { resources: [resource], nextCursor: null, failures: [] } });
+        const catalog = await renderHook(() => ({
+            models: useHomeTeamCredentialModelCatalog({ serverId, enabled: true, agentTargetKey, declarationProjection: null }),
+            generic: useHomeTeamCredentialModelCatalog({ serverId, enabled: true }),
+        }));
+        await waitForHomeGovernance(() => expect(catalog.getCurrent().models.current).toBe(true));
+        const settled = catalog.getCurrent().models;
+        expect(settled.resources).toHaveLength(1);
+        expect(settled.resources[0]).toMatchObject({ readiness: { kind: 'broker_unavailable', reason: 'catalog_empty' }, recoveryAction: 'retry' });
+        expect(catalog.getCurrent().generic.resources[0]?.readiness.kind).toBe('available');
+        const options = buildTeamCredentialModelPickerSections({ declarationContext: { kind: 'account' }, agentTargetKey,
+            nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(), providerProjectionAuthoritative: true,
+            teamCredentialResources: settled.resources, teamCredentialResourceStatusByKey: settled.resourceStatusByKey,
+            teamNameById: settled.teamNameById, homeNameByTeamId: settled.homeNameByTeamId })[0]?.options;
+        expect(options?.[0]).toMatchObject({ availability: 'unavailable',
+            unavailableReason: resourceShortUnavailableLabel({ kind: 'broker_unavailable' }) });
+        // A later explicit refresh replaces the empty observation through the same transport.
+        const repaired = { ...resource, providerModels: [{
+            selection: { kind: 'team_credential_provider_model', teamId: resource.teamId, resourceId: resource.id,
+                expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey, modelId: 'recovered-model' },
+            descriptor: { id: 'recovered-model', name: 'Recovered model' }, sourceRevision: 'source-1', availability: 'available',
+            application: { agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                endpointTemplateId: 'responses', protocol: 'openai-responses' },
+        }] };
+        home.answer(serverId, LIST, { body: { resources: [repaired], nextCursor: null } });
+        home.answer(serverId, DISCOVER, { body: { resources: [repaired], nextCursor: null, failures: [] } });
+        await act(async () => { await catalog.getCurrent().models.reload(); });
+        await waitForHomeGovernance(() => expect(catalog.getCurrent().models.resources[0]?.readiness.kind).toBe('available'));
+    });
+
     it('admits Connected Service credentials only for the selected Agent, including populated broker model catalogs', async () => {
         const serverId = await home.addHome({ name: 'Agent-scoped Home', serverUrl: 'https://agent-catalog.example.test',
             accountId: 'account-ada', teamsEnabled: true, credentialResourcesEnabled: true });
