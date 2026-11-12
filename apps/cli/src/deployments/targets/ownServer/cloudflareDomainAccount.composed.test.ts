@@ -2,6 +2,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { writeFile } from 'node:fs/promises';
 import fastify from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import nacl from 'tweetnacl';
 import * as undici from 'undici';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -57,6 +58,7 @@ import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerDomainNative } from './ownServerDomainNative';
 import { materializeCaddyDomainRouteV1 } from './caddyRouteMaterialization';
+import { enableExternalActionHttpBody } from '../../../../../server/sources/app/api/utils/externalActionHttpBody';
 
 // Genuine network boundary: Node's HTTP adapter uses Undici; retain its real
 // Agent and replace only fetch with the same boundary used by Bun below.
@@ -74,7 +76,8 @@ it.each(['connector grant authorization refused', 'create connector grant author
     'remove unprepared configuration without version', 'remove unprepared null configuration', 'remove unprepared malformed configuration',
     'remove unprepared DNS optional pagination', 'remove unprepared tunnel optional pagination'] as const)(
     'runs the admitted Domain Action and its selected Account child before native work: %s', async scenario => withSocketTempDir(async directory => {
-    const app = fastify();
+    const app = fastify().withTypeProvider<ZodTypeProvider>();
+    enableExternalActionHttpBody(app);
     const privateWrites: string[] = [];
     app.addHook('onRequest', async request => {
         if (request.method === 'POST' && request.url === '/v1/artifacts') privateWrites.push(request.url);
@@ -409,8 +412,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
         }
         if (path.endsWith('/dns_records/acknowledged-dns-record')) {
             if (method === 'DELETE') { dnsRemoved = true; trace.push('vendor-dns-removed'); return Response.json({ success: true, result: { id: dnsRecord.id } }); }
-            return scenario === 'vendor unknown' ? Response.json({ success: false, errors: [{ code: 1000 }] }, { status: 503 })
-                : dnsRemoved ? Response.json({ success: false }, { status: 404 }) : Response.json({ success: true, result: dnsRecord });
+            return dnsRemoved ? Response.json({ success: false }, { status: 404 }) : Response.json({ success: true, result: dnsRecord });
         }
         if (path.endsWith('/dns_records')) {
             if (method === 'POST') {
@@ -418,6 +420,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 expect(await request.json()).toMatchObject({ type: 'CNAME', name: content.hostname,
                     content: 'reviewed-tunnel.cfargotunnel.com', proxied: true });
                 if (scenario === 'authored domain DNS refused') return Response.json({ success: false, errors: [{ code: 10000 }] }, { status: 403 });
+                if (scenario === 'vendor unknown') return Response.json({ success: false, errors: [{ code: 1000 }] }, { status: 503 });
                 return Response.json({ success: true, result: dnsRecord });
             }
             const page = Number(url.searchParams.get('page') ?? 1);
@@ -734,7 +737,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
         } else {
             expect(preparedBody).toMatchObject({ cloudflarePreparation: { tunnelId: 'reviewed-tunnel',
                 owned: [{ hostname: content.hostname, expectedService: 'http://172.18.0.2:9381' }],
-                dnsOwnership: scenario === 'partial grant' ? [] : [{ hostname: content.hostname, recordId: dnsRecord.id }], connectors: grantedMembers.map(machineId => ({ machineId,
+                dnsOwnership: scenario === 'partial grant' || scenario === 'vendor unknown' ? [] : [{ hostname: content.hostname, recordId: dnsRecord.id }], connectors: grantedMembers.map(machineId => ({ machineId,
                     installationId: installation(machineId), ...vendorController.connector, networkName: 'environment_default', grantRef: grants.get(machineId) })) } });
             expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(2);
             if (scenario === 'vendor unknown' || scenario === 'partial grant') expect(nativeJobs).toEqual([]);

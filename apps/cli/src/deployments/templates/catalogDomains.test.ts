@@ -18,6 +18,7 @@ import { createOwnServerDomainActions } from '@/deployments/targets/ownServer/ow
 import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { readEnvironmentSecretLaunchAdmissionForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -38,7 +39,7 @@ import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/accoun
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
@@ -50,7 +51,7 @@ import { createRegistryHostV1, DeploymentTemplateV1Schema, REGISTRY_ACTION_OUTPU
     type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { DeploymentEnvironmentContentV1Schema, DeploymentDomainContentV1Schema,
-    DeploymentEnvironmentTemplateSetInputV1Schema } from '@happier-dev/deployment-protocol';
+    DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -148,14 +149,19 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             seq: 1, createdAt: 1, updatedAt: 1 });
         put(link.contentArtifactId, 'deployment-target-link.v1', linkedTarget.content);
         vi.spyOn(axios, 'post').mockImplementation(async (url, value, config) => {
+            const availability = readBundledPluginAvailabilityHttpFixture(new URL(url).pathname, value);
+            if (availability) return { status: 200, data: availability };
             if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
             if (url.endsWith('/v1/artifacts')) {
                 const mutation = readCarrierMutation(value); const id = String(mutation.id);
                 const header = decodePlainArtifactStoredContent(String(mutation.header));
-                if (header && typeof header === 'object' && 'kind' in header && header.kind === DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1) {
+                if (header && typeof header === 'object' && 'kind' in header
+                    && (header.kind === DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 || header.kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1)) {
                     const body = decodePlainArtifactStoredContent(String(mutation.body));
                     if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string') throw new Error('Invalid Domain Artifact body');
-                    contents.set(id, DeploymentDomainContentV1Schema.parse(JSON.parse(body.body)));
+                    contents.set(id, header.kind === DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1
+                        ? DeploymentDomainContentV1Schema.parse(JSON.parse(body.body))
+                        : DeploymentEnvironmentContentV1Schema.parse(JSON.parse(body.body)));
                 }
                 artifactRows.set(id, { ...mutation, ownerAccountId: accountId, access: 'owner', publicAudience: 'none',
                     encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
@@ -185,7 +191,16 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             if (request.method === 'GET' && request.url?.includes('/environments/')) {
                 if (new URL(request.url).pathname.endsWith('/deployments')) return { status: 200, data: { ok: true, items: [], nextCursor: null } };
                 return { status: 200, data: { ok: true, environment: environment.environment,
-                    targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+                    targetLinks: environment.targetLinks.map(item => item.targetLink), secretScope: environment.secretScope } };
+            }
+            if (request.url?.endsWith('/bindings')) {
+                const input = DeploymentBindingsSetStorageInputV1Schema.parse(readCarrierMutation(request.data));
+                environment.content = DeploymentEnvironmentContentV1Schema.parse(contents.get(input.contentArtifactId));
+                Object.assign(environment.environment, { contentArtifactId: input.contentArtifactId,
+                    contentHeaderVersion: input.contentHeaderVersion, contentBodyVersion: input.contentBodyVersion });
+                environment.environment.revision++;
+                writes.push('deployments.bindings.set');
+                return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision } };
             }
             if (request.url?.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [] } };
             if (request.url?.endsWith('/deploy')) {
@@ -350,7 +365,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             deploymentTemplateInstantiate: templates.instantiate,
             deploymentAction: async (actionId, input, context, review) => actionId === 'deployments.environments.create'
                 ? templates.instantiateCreate(DeploymentEnvironmentCreateIntentInputV1Schema.parse(input), context, review)
-                : actionId === 'deployments.deploy' ? installed.deploymentAction(actionId, input, context)
+                : actionId === 'deployments.deploy' || actionId === 'deployments.bindings.set' ? installed.deploymentAction(actionId, input, context)
                 : domainActions(actionId, input, context),
         });
         const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ mode: 'apply', serverId: 'srv_template_home',
@@ -510,7 +525,8 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         }
         const unavailable = outcome === 'nativeFailure' || outcome === 'discoveryFailure';
         const failureCode = outcome === 'nativeFailure' ? 'native_effect_failed' : unavailable ? 'service_unavailable' : 'native_route_unavailable';
-        if (state !== 'failed') expect(result.ok ? undefined : result, JSON.stringify({ unhandledRequests, writes })).toBeUndefined();
+        if (state !== 'failed') expect(result.ok ? undefined : result, JSON.stringify({ unhandledRequests, writes,
+            failureCode: result.ok ? undefined : result.errorCode })).toBeUndefined();
         expect(result).toMatchObject(state === 'failed'
             ? { ok: false, errorCode: failureCode, details: { kind: 'partial', phase: 'domains',
                 environmentId: environment.environment.id, errorCode: failureCode } }

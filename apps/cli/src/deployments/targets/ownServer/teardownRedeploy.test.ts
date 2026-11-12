@@ -167,7 +167,9 @@ it('deploys after native teardown and preserves a later activation failure witho
             expect(phases.slice(before)).not.toContain('restore');
             if (unhealthy) {
                 expect(fresh.receipt.deployment.state).toBe('failed');
-                expect(fresh.receipt.content.failure).toEqual({ code: 'native_failed', phase: 'activate' });
+                expect(fresh.receipt.content.failure).toEqual({ code: 'native_failed', phase: 'activate',
+                    requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
+                    failureCause: { phase: 'deployment.failure', errorClass: 'Error', errorCode: 'native_failed', httpStatus: null } });
                 expect(await docker.readRunningImageConfig('app')).toBeNull();
             } else {
                 expect(fresh.receipt.content.failure).toBeUndefined();

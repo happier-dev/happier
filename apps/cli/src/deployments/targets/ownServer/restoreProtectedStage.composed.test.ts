@@ -32,7 +32,7 @@ describe('restore through the canonical native admission owner', () => {
                 if (argv.includes('config')) return completed(JSON.stringify({ id: repositoryId, version: 2 }));
                 if (argv.includes('snapshots')) return completed(JSON.stringify([{ id: snapshotId, tree: treeId,
                     hostname: source.snapshot.hostname, time: source.snapshot.time, paths: source.snapshot.paths, tags: source.snapshot.tags }]));
-                if (argv.includes('tree')) return completed(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
+                if (argv.includes('blob')) return completed(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
                 return { ...completed(), stdoutChecksumSha256: checksum, stdoutBytes: 123 };
             }
             if (request.kind === 'restoreStream') return { ...completed(), producer: { exitCode: 0, checksumSha256: checksum, bytes: 123 } };
@@ -43,8 +43,10 @@ describe('restore through the canonical native admission owner', () => {
                 return completed();
             }
             if (request.kind === 'integrity') return completed();
+            if (request.kind === 'service' && request.stdin !== undefined) return completed();
             if (request.argv[0] === 'createdb') { names.add('restore_stage'); return completed(); }
             const sql = request.argv.at(-1) ?? '';
+            if (sql.startsWith('SELECT current_user =')) return completed('t');
             if (sql.startsWith('SELECT')) return completed(JSON.stringify([...names]));
             const rename = /ALTER DATABASE "([^"]+)" RENAME TO "([^"]+)"/u.exec(sql);
             if (!rename) throw new Error('Unexpected native database command');
@@ -70,11 +72,11 @@ describe('restore through the canonical native admission owner', () => {
                     } });
                 } };
             const terminal = await confirmDeploymentRestoreV1(input);
+            expect(stop.signal.aborted, JSON.stringify({ terminal, names: [...names], protectedStages, pending })).toBe(true);
             await expect(admission.runStage(context, async () => { throw new Error('Unstarted stage ran after Stop'); }))
                 .rejects.toMatchObject({ code: 'cancelled' });
             return terminal;
         });
-        expect(stop.signal.aborted).toBe(true);
         expect(names.has('app'), 'Stop must never settle with the canonical database absent').toBe(true);
         expect(writersRunning).toBe(true);
         expect(protectedStages).toBe(1);

@@ -212,7 +212,9 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
                 return;
             }
             if (!details.operation) throw new Error('Missing actual operation receipt');
-            if (scenario !== 'service') expect(details).not.toHaveProperty('requiredFact');
+            if (scenario !== 'service') expect(details).toMatchObject({
+                requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/),
+            });
             const receipt = await runtime.handlers.getV2({ operationId: details.operation.operationId },
                 { callerAuthority: 'account_automation' });
             expect(receipt).toMatchObject({ operation: { operationId: details.operation.operationId,
