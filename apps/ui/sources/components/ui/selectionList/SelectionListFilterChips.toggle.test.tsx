@@ -14,3 +14,8 @@ it('draws an on chip exactly as wide as an off one: the fill says it is on, a gl
   expect(on.findByTestId('chip')?.props['aria-checked']).toBe(true);
   expect(on.findAll((node) => node.props.name === 'check')).toHaveLength(0);
 });
+
+it('announces the chooser as a listbox', async () => {
+  const screen = await renderScreen(<SelectionListFilterChip filter={{ id: 'scope', testID: 'scope', label: 'Scope', selectedId: 'a', options: [{ id: 'a', label: 'Alpha' }, { id: 'b', label: 'Bravo' }], onChange: () => {} }} />);
+  expect(screen.findByTestId('scope')?.props['aria-haspopup']).toBe('listbox');
+});

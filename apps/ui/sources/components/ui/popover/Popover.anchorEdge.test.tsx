@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
@@ -28,11 +28,13 @@ afterEach(() => {
 
 type AnchorRect = Readonly<{ left: number; top: number; width: number; height: number }>;
 
+// Collect the real owner graph before interaction deadlines begin.
+const { Popover } = await import('./Popover');
+const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
 /** A fixed-width picker (520 wide) hung from a chip, as the composer's list pickers are. */
-async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | 'auto') {
-    const { Popover } = await import('./Popover');
-    const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
-    const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | 'auto', onAnchorHidden?: () => void) {
     const portalRootNode = {
         measureInWindow: (cb: any) => cb(0, 0, 1000, 800),
         measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0),
@@ -43,6 +45,8 @@ async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | '
             <OverlayPortalProvider>
                 <Popover
                     open
+                    dismissWhenAnchorHidden={Boolean(onAnchorHidden)}
+                    onRequestClose={onAnchorHidden}
                     backdrop={false}
                     anchor={{ kind: 'rect', rect: anchor }}
                     portal={{ native: true, matchAnchorWidth: false, anchorAlign }}
@@ -67,6 +71,13 @@ async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | '
 }
 
 describe('Popover: a fixed-width popover hangs from its anchor edge', () => {
+    it('dismisses an opted-in tooltip when its anchor leaves the viewport, preserving partially visible anchors', async () => {
+        const dismiss = vi.fn();
+        await renderPicker({ left: 200, top: 790, width: 100, height: 32 }, 'start', dismiss);
+        expect(dismiss).not.toHaveBeenCalled();
+        await renderPicker({ left: 200, top: 801, width: 100, height: 32 }, 'start', dismiss);
+        expect(dismiss).toHaveBeenCalled();
+    });
     it('hangs a start-aligned popover from the anchor\'s end edge when the start edge leaves it no room', async () => {
         // A chip at x=600..700 in a 1000-wide window: a 520-wide popover from x=600 would cross the edge.
         const { left, width } = await renderPicker({ left: 600, top: 400, width: 100, height: 32 }, 'start');

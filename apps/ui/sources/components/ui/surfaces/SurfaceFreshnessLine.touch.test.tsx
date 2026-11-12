@@ -15,7 +15,7 @@ vi.mock('react-native', async () => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("keeps the recovery link's finger reach inside the line's own padding, so the next row keeps its taps", async () => {
+it("extends the recovery link vertically to 44 px without changing its drawn height", async () => {
   // The primary pointer is read once per app load, so this lives in its own file.
   vi.stubGlobal('navigator', { maxTouchPoints: 1 });
   const screen = await renderScreen(
@@ -34,8 +34,8 @@ it("keeps the recovery link's finger reach inside the line's own padding, so the
   const frame = screen.root.findAll(
     (node) => node.props?.dataSet?.happierHitArea === 'true',
   )[0]!;
-  // The 44 px target alone would reach 10 above and below; the strip's block padding is 6.
-  expect([-frame.props.style.top, -frame.props.style.bottom]).toEqual([6, 6]);
+  // The 24 px drawing reaches the 44 px target through ten invisible pixels on either side.
+  expect([-frame.props.style.top, -frame.props.style.bottom]).toEqual([10, 10]);
 });
 
 it("lets an inline (page header) Retry reach a line's target height through its hit area, not its drawn height (R139)", async () => {
@@ -57,6 +57,6 @@ it("lets an inline (page header) Retry reach a line's target height through its 
   const frame = screen.root.findAll(
     (node) => node.props?.dataSet?.happierHitArea === 'true',
   )[0]!;
-  // Drawn at the words' 16 px; the hit area reaches 8 above and below, to the line's 32 px target.
-  expect([-frame.props.style.top, -frame.props.style.bottom]).toEqual([8, 8]);
+  // Drawn at the words' 16 px; fourteen invisible pixels above and below reach 44 px.
+  expect([-frame.props.style.top, -frame.props.style.bottom]).toEqual([14, 14]);
 });

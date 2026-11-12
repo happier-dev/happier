@@ -35,6 +35,7 @@ import { SurfaceStateCard, SurfaceStateContentContext, type SurfaceStateAction, 
 import { projectWidgetGroupCellContent } from '@happier-dev/plugin-ui/components';
 import { SurfaceStateSizeProvider, useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ItemRowActionsTitleContext } from '@/components/ui/lists/ItemRowActions';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -443,7 +444,10 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         </View>
     ) : null;
 
-    const controls = props.grip ? <View style={styles.chrome}>{props.menu}{props.grip}</View> : props.menu;
+    const menu = props.menu ? <ItemRowActionsTitleContext.Provider value={typeof props.title === 'string' ? props.title : props.accessibilityLabel ?? null}>
+        {props.menu}
+    </ItemRowActionsTitleContext.Provider> : props.menu;
+    const controls = props.grip ? <View style={styles.chrome}>{menu}{props.grip}</View> : menu;
     // A plain widget is a section of its column (lab crows B): with a mouse or trackpad its controls rest out of
     // sight and appear while the pointer is over it or focus is inside it. A finger cannot hover, so on touch they
     // stay shown; a card always shows them.

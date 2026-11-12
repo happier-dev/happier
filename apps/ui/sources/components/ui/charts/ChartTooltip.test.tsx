@@ -30,6 +30,26 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 const { ChartTooltip } = await import('./ChartTooltip');
 
 describe('ChartTooltip', () => {
+    it('keeps pointer inspection but hides repeated marks from keyboard and assistive technology', async () => {
+        const screen = await renderScreen(<ChartTooltip testID="repeat" keyboard={false} title="Rainfall" value="12 mm" accentColor="blue"><View /></ChartTooltip>);
+        const trigger = screen.findByTestId('repeat-trigger')!;
+        expect(trigger.props.focusable).toBe(false);
+        expect(trigger.props['aria-hidden']).toBe(true);
+        act(() => trigger.props.onHoverIn());
+        expect(screen.findByType('Popover' as never).props.open).toBe(true);
+    });
+    it('associates a tooltip with its trigger and keeps it open across trigger focus and hover', async () => {
+        const screen = await renderScreen(<ChartTooltip testID="semantic" title="Monday" value="2" accentColor="red"><View /></ChartTooltip>);
+        const trigger = screen.findByTestId('semantic-trigger')!;
+        act(() => trigger.props.onFocus());
+        const tooltip = screen.findByTestId('semantic')!;
+        expect(tooltip.props.role).toBe('tooltip');
+        expect(trigger.props['aria-describedby']).toBe(tooltip.props.nativeID);
+        act(() => { trigger.props.onHoverIn(); trigger.props.onBlur(); });
+        expect(screen.findByType('Popover' as never).props.open).toBe(true);
+        act(() => trigger.props.onHoverOut());
+        expect(screen.findByType('Popover' as never).props.open).toBe(false);
+    });
     it('reports selected semantic values through the host overlay trigger on touch and keyboard focus', async () => {
         let selected = false;
         const screen = await renderScreen(<ChartTooltip testID="exact" title="Monday" value="North 0.00004, South unknown" accentColor="#007AFF"

@@ -28,6 +28,136 @@ vi.mock('react-native-keyboard-controller', async () => {
 const { ModalProvider } = await import('./ModalProvider');
 const { Modal } = await import('./ModalManager');
 const { useIsInsideModalBoundary } = await import('./context/ModalBoundaryContext');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
+const { ChartTooltip } = await import('@/components/ui/charts/ChartTooltip');
+const { SelectionListFilterChip } = await import('@/components/ui/selectionList/SelectionListFilterChips');
+
+it('moves DOM focus with headerless listbox roving focus, skipping disabled choices', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => root.render(<ModalProvider><SelectionListFilterChip filter={{
+            id: 'roving', testID: 'roving-chip', label: 'Scope', selectedId: 'a', onChange: () => {},
+            options: [{ id: 'a', label: 'Alpha' }, { id: 'b', label: 'Bravo', disabled: true }, { id: 'c', label: 'Charlie' }],
+        }} /></ModalProvider>));
+        const trigger = container.querySelector<HTMLButtonElement>('[data-testid="roving-chip"]')!;
+        await act(async () => { trigger.focus(); trigger.click(); });
+        const option = (id: string) => document.querySelector<HTMLElement>(`[data-testid="roving-chip:${id}"]`)!;
+        await vi.waitFor(() => expect(document.activeElement).toBe(option('a')));
+        await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+        expect(document.activeElement).toBe(option('c'));
+        expect(option('c').tabIndex).toBe(0);
+        expect(option('a').getAttribute('aria-selected')).toBe('true');
+        await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })));
+        expect(document.activeElement).toBe(option('a'));
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        expect(document.activeElement).toBe(trigger);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it('keeps a repeated chart mark out of sequential keyboard focus and assistive technology', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => root.render(<ChartTooltip testID="repeated-mark" keyboard={false} title="North" value="40" accentColor="blue"><span>North</span></ChartTooltip>));
+        const trigger = container.querySelector<HTMLElement>('[data-testid="repeated-mark-trigger"]')!;
+        expect(trigger.tabIndex).toBe(-1);
+        expect(trigger.getAttribute('aria-hidden')).toBe('true');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it.each(['focus', 'hover'] as const)('dismisses a tooltip on Escape without moving focus (%s)', async input => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => root.render(<ModalProvider>
+            <ChartTooltip testID="escape-tooltip" title="North" value="40" accentColor="blue"
+                renderTrigger={interaction => <button data-testid="tooltip-opener"
+                    onFocus={() => interaction.onFocusChange(true)} onBlur={() => interaction.onFocusChange(false)}
+                    onMouseEnter={() => interaction.onHoverChange(true)} onMouseLeave={() => interaction.onHoverChange(false)}>
+                    Inspect North
+                </button>}><span>North</span></ChartTooltip>
+            <button data-testid="other-control">Other control</button>
+        </ModalProvider>));
+        const opener = container.querySelector<HTMLButtonElement>('[data-testid="tooltip-opener"]')!;
+        const other = container.querySelector<HTMLButtonElement>('[data-testid="other-control"]')!;
+        await act(async () => {
+            if (input === 'focus') opener.focus();
+            else {
+                other.focus();
+                opener.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            }
+        });
+        await vi.waitFor(() => expect(document.querySelector('[role="tooltip"]')).not.toBeNull());
+        const focusedBeforeEscape = document.activeElement;
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        await vi.waitFor(() => expect(document.querySelector('[role="tooltip"]')).toBeNull());
+        expect(document.activeElement).toBe(focusedBeforeEscape);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it('returns an asynchronously admitted prompt to its persistent opener', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let admit!: () => void;
+    const admission = new Promise<void>(resolve => { admit = resolve; });
+    try {
+        await act(async () => root.render(<ModalProvider><HappierPressable testID="async-prompt-opener" accessibilityLabel="New view"
+            onPress={async () => { await admission; void Modal.prompt('New view', 'Name the view'); }} /></ModalProvider>));
+        const opener = container.querySelector<HTMLButtonElement>('[data-testid="async-prompt-opener"]')!;
+        await act(async () => { opener.focus(); opener.click(); });
+        await act(async () => admit());
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="web-prompt-input"]')).not.toBeNull());
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+    } finally {
+        admit();
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+it('returns a prompt opened from a transient menu item to the persistent menu trigger', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    function Harness() {
+        const [open, setOpen] = React.useState(false);
+        return <ModalProvider><DropdownMenu open={open} onOpenChange={setOpen}
+            items={[{ id: 'new', title: 'New view', testID: 'new-view-menu-item' }]} selectedId={null}
+            onSelect={() => { void Modal.prompt('New view', 'Name the view'); }}
+            trigger={({ toggle }) => <button data-testid="prompt-opener" onClick={toggle}>Views</button>} />
+        </ModalProvider>;
+    }
+    try {
+        await act(async () => root.render(<Harness />));
+        const opener = container.querySelector<HTMLButtonElement>('[data-testid="prompt-opener"]')!;
+        await act(async () => { opener.focus(); opener.click(); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="new-view-menu-item"]')).not.toBeNull());
+        const item = document.querySelector<HTMLElement>('[data-testid="new-view-menu-item"]')!;
+        await act(async () => { item.focus(); item.click(); });
+        await vi.waitFor(() => expect(document.querySelector('input')).not.toBeNull());
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
 
 // Connect QA r1109a: a wide/phone transition lost the selected mode and credential draft;
 // publishing a late anchor similarly returned the person to Add account's initial state.

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -13,19 +14,12 @@ const viewport = vi.hoisted(() => ({ width: 320, height: 800 }));
 // document boundary exists before any import and the case below presses a key through its listener.
 const documentInput = vi.hoisted(() => {
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
-    const listeners = new Map<string, (event: unknown) => void>();
-    const document = {
-        addEventListener: (type: string, listener: (event: unknown) => void) => { listeners.set(type, listener); },
-        getElementById: (_id: string) => null,
-    };
-    (globalThis as { document?: unknown }).document = document;
+    const document = globalThis.document;
     // The pointer owner reads hardware identity once, including during imports of shared chrome.
-    (globalThis as { window?: unknown }).window = {
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)', media: query }),
-    };
-    return { listeners, document, previousWindow };
+    Object.defineProperty(window, 'matchMedia', { configurable: true,
+        value: (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)', media: query }),
+    });
+    return { document, previousWindow };
 });
 afterAll(() => {
     if (documentInput.previousWindow) Object.defineProperty(globalThis, 'window', documentInput.previousWindow);
@@ -48,6 +42,10 @@ vi.unmock('@/components/ui/icons/Icon');
 vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
     return createRadixCjsModuleMock();
+});
+vi.mock('@/utils/web/reactDomCjs', async () => {
+    const { createReactDomCjsRendererMock } = await import('@/dev/testkit/mocks/reactDomCjs');
+    return createReactDomCjsRendererMock();
 });
 
 const vendorIconState = vi.hoisted(() => ({ renderText: false }));
@@ -144,6 +142,17 @@ describe('ItemRowActions', () => {
         await screen.pressByTestIdAsync('group-menu.trigger');
         expect(screen.findByTestId('removeGroup')).not.toBeNull();
         expect(named(screen.getTextContent())).toBe(0);
+    });
+
+    it.each(['Enter', ' '])('opens overflow from %s without a synthesized click', async key => {
+        const screen = await renderScreen(React.createElement(CurrentItemRowActions, {
+            title: 'Widget', overflowOnly: true, overflowTriggerTestID: 'keyboard-menu',
+            actions: [{ id: 'rename', title: 'Rename', icon: 'pencil', onPress: vi.fn() }],
+        }));
+        const trigger = screen.findByTestId('keyboard-menu')!;
+        const target = {};
+        await act(async () => trigger.props.onKeyDown({ key, target, currentTarget: target, preventDefault: vi.fn(), stopPropagation: vi.fn() }));
+        expect(screen.findByTestId('keyboard-menu')!.props.accessibilityState.expanded).toBe(true);
     });
 
     it('routes shortcuts only from the mounted overflow control and renders custom content only while open', async () => {
@@ -602,9 +611,13 @@ describe('ItemRowActions', () => {
             ? Object.assign({}, ...style.filter(Boolean))
             : (style ?? {})) as Record<string, unknown>;
         (globalThis as { document?: unknown }).document = documentInput.document;
-        documentInput.listeners.get('keydown')?.({ key: 'Tab' });
+        const focusedButton = document.createElement('button');
+        document.body.append(focusedButton);
+        focusedButton.focus();
+        documentInput.document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
         const base = flatten(action!.props.style({ pressed: false, focused: false }));
         const focused = flatten(action!.props.style({ pressed: false, focused: true }));
+        focusedButton.remove();
 
         // The drawn control is the whole box; its hit area belongs to the shared owner.
         expect(Number(base.width)).toBe(28);

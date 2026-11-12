@@ -230,7 +230,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 } : null,
                 sheet ? styles.sheetFrame : null,
             ]}>
-                {dismiss ? <SheetGrabber onDismiss={dismiss} panHandlers={drag.panHandlers} {...(props.testID ? { testID: `${props.testID}.grabber` } : {})} /> : null}
+                {dismiss ? <SheetGrabber panHandlers={drag.panHandlers} {...(props.testID ? { testID: `${props.testID}.grabber` } : {})} /> : null}
                 {hasHeader ? (
                     <ModalCardHeader
                         leading={props.leading}

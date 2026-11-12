@@ -83,11 +83,8 @@ describe('sheet drag to dismiss', () => {
         );
         const grabber = dismissible.findByTestId('sheet.grabber');
         expect(grabber).not.toBeNull();
-        // A direct tap and assistive technology use the same dismissal owner.
-        await dismissible.pressByTestIdAsync('sheet.grabber');
-        expect(dismiss).toHaveBeenCalledTimes(1);
-        grabber!.props.onAccessibilityAction({ nativeEvent: { actionName: 'activate' } });
-        expect(dismiss).toHaveBeenCalledTimes(2);
+        expect(grabber!.props.accessibilityRole).toBeUndefined();
+        expect(grabber!.props.accessible).toBe(false);
         standardCleanup();
 
         const fixed = await renderScreen(

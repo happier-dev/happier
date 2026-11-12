@@ -1285,6 +1285,17 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         })
         : undefined;
 
+    React.useLayoutEffect(() => {
+        if (!IS_WEB || typeof document === 'undefined' || showSearchHeader || !activeDescendantId || pointerFocusedOptionIdRef.current !== null) return;
+        const listbox = document.getElementById(listboxId);
+        // Input-owned lists announce their active descendant from the combobox. A
+        // headerless list instead moves its existing DOM focus with the roving row.
+        if (!listbox?.contains(document.activeElement)) return;
+        const row = document.getElementById(activeDescendantId);
+        const target = row && (row.tabIndex >= 0 ? row : row.querySelector<HTMLElement>('[tabindex="0"]'));
+        target?.focus({ preventScroll: true });
+    }, [activeDescendantId, listboxId, showSearchHeader]);
+
 
     // FR3-1 / FR3-8 — identity-free measure mirror. An explicit
     // `mode='measure'` SelectionListBody, so the hidden measure subtree never

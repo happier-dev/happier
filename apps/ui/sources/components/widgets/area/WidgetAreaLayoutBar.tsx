@@ -1,3 +1,4 @@
+import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import * as React from 'react';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
@@ -6,6 +7,7 @@ import {
   HAPPIER_FOCUS_RING_DELEGATED_STYLE,
   happierFocusRingStyle,
   HappierTabMarker,
+  HappierPressable,
   HappierTabs,
   isHappierFocusVisible,
   type HappierTabDescriptor,
@@ -470,7 +472,9 @@ function LayoutCurrentNameMenu(
       placement="bottom"
       matchTriggerWidth={false}
       trigger={({ toggle }) => (
-        <Pressable
+        <HappierPressable
+          hitTarget={HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE}
+          hitReach={{ left: 0, right: 0 }}
           testID={testID}
           onPress={toggle}
           onFocus={(event) =>
@@ -515,7 +519,7 @@ function LayoutCurrentNameMenu(
             size={ICON_SIZE.xs}
             color={theme.colors.text.tertiary}
           />
-        </Pressable>
+        </HappierPressable>
       )}
     />
   );

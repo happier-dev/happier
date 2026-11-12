@@ -215,6 +215,8 @@ type PopoverCommonProps = Readonly<{
     accessibilityLabel?: string;
     /** Move focus into the popover after it opens when the content is menu-like. */
     autoFocusOnOpen?: boolean;
+    /** Dismiss a transient reading once its anchor leaves the measured viewport. */
+    dismissWhenAnchorHidden?: boolean;
     /**
      * `hoverCard`: a preview the resting pointer opened (`useHoverPreviewPopover`'s `popoverLayer`). It stacks
      * under every popover or menu someone opened, whichever mounted last, so it never covers their rows.
@@ -553,6 +555,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         children,
     } = props;
     const open = requestedOpen;
+    const closeForHiddenAnchor = props.dismissWhenAnchorHidden ? onRequestClose : undefined;
     const phone = useDeviceType() === 'phone';
     // A phone panel spans the screen less its gutters, above or below its trigger (`phonePresentation`).
     const spansPhone = phone && props.phonePresentation === 'panel';
@@ -838,14 +841,19 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     }, [open]);
 
     const requestClose = React.useCallback((reason: PopoverCloseReason) => {
+        // A tooltip leaves focus on its trigger or another control. Returning it there
+        // would steal focus and can reopen the tooltip through the trigger's focus handler.
+        const ownsFocus = Platform.OS !== 'web' || (
+            typeof document !== 'undefined' && getContentDomElement()?.contains(document.activeElement) === true
+        );
         onRequestClose?.();
-        if (reason !== 'dismiss') {
+        if (reason !== 'dismiss' && ownsFocus) {
             const restored = restoreFocusToBestTarget(resolvedFocusReturnRef, activationFocusReturnRef);
             if (!restored) {
                 restoreFocusToBestTarget(undefined, focusReturnFallbackRef);
             }
         }
-    }, [focusReturnFallbackRef, onRequestClose, resolvedFocusReturnRef]);
+    }, [focusReturnFallbackRef, getContentDomElement, onRequestClose, resolvedFocusReturnRef]);
 
     const requestAndroidBackClose = React.useCallback(() => {
         requestClose('back');
@@ -1298,6 +1306,16 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                 return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
             })();
 
+            if (closeForHiddenAnchor && (
+                anchorRect.x + anchorRect.width <= boundaryRect.x
+                || anchorRect.x >= boundaryRect.x + boundaryRect.width
+                || anchorRect.y + anchorRect.height <= boundaryRect.y
+                || anchorRect.y >= boundaryRect.y + boundaryRect.height
+            )) {
+                closeForHiddenAnchor();
+                return true;
+            }
+
             // Shrink the usable boundary so the popover doesn't sit flush to the container edges.
             // (This also makes maxHeight/maxWidth clamping respect the margin.)
             let effectiveBoundaryRect: WindowRect = {
@@ -1482,7 +1500,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         } else {
             scheduleFrame(() => { void measureWithRetries(0); });
         }
-    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
+    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, closeForHiddenAnchor, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;

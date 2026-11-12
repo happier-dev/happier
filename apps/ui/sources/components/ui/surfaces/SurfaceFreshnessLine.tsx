@@ -1,3 +1,4 @@
+import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { HAPPIER_FRESHNESS_LINE_METRICS, HappierFreshnessClauses, HappierFreshnessLine, HappierPressable, resolveHappierFreshnessText } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -122,11 +123,8 @@ export function SurfaceFreshnessLine(props: Readonly<{
                         testID={action.testID ?? (props.testID ? `${props.testID}-action${index === 0 ? '' : `-${index}`}` : undefined)}
                         accessibilityRole="button"
                         accessibilityLabel={action.label}
-                        // The link's finger reach stays inside the line's own block padding (a chip has none): past
-                        // it lies the next row, whose own target it would take taps from.
-                        // An inline link is drawn at its words' height and reaches a line's target height through its hit area.
-                        hitReach={inline ? { top: INLINE_LINK_REACH_PX, bottom: INLINE_LINK_REACH_PX }
-                            : { top: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx, bottom: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx }}
+                        hitTarget={HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE}
+                        hitReach={{ left: 0, right: 0 }}
                         disabled={action.disabled}
                         busy={action.busy}
                         onPress={action.onPress}
@@ -172,9 +170,6 @@ function renderEmphasis(text: string, emphasis: string | undefined): React.React
     if (!emphasis || at < 0) return text;
     return <>{text.slice(0, at)}<Text style={stylesheet.emphasis}>{emphasis}</Text>{text.slice(at + emphasis.length)}</>;
 }
-
-/** What an inline link adds above and below its words to reach a freshness line's target height. */
-const INLINE_LINK_REACH_PX = (HAPPIER_FRESHNESS_LINE_METRICS.minHeightPx - HAPPIER_FRESHNESS_LINE_METRICS.text.lineHeight) / 2;
 
 const stylesheet = StyleSheet.create((theme) => ({
     actions: {

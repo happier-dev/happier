@@ -27,6 +27,7 @@ type ChartTooltipProps = Readonly<{
         onHoverChange: (hovered: boolean) => void;
         onFocusChange: (focused: boolean) => void;
         onPress: () => void;
+        describedBy?: string;
     }>) => React.ReactNode;
     /**
      * Layout style for the trigger wrapper — charts whose marks own their flex
@@ -98,6 +99,7 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
         triggerStyle,
     } = props;
     const anchorRef = React.useRef<View>(null);
+    const tooltipId = React.useId();
     const [open, setOpen] = React.useState(false);
     // On pointer devices a press is always preceded by hover-in (which already
     // opened the tooltip) — the press must then KEEP it open, or every click
@@ -131,6 +133,7 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
     }
 
     const interaction = {
+        describedBy: open ? tooltipId : undefined,
         onPress: () => {
             void commands.invoke('activate');
         },
@@ -157,8 +160,11 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
                     testID={resolvedTriggerTestID}
                     accessibilityRole="button"
                     focusable={props.keyboard !== false}
+                    tabIndex={props.keyboard === false ? -1 : 0}
                     accessible={props.keyboard !== false}
+                    aria-hidden={props.keyboard === false ? true : undefined}
                     accessibilityLabel={props.accessibilityLabel ?? `${title}: ${value}`}
+                    aria-describedby={interaction.describedBy}
                     onPress={(event) => { event?.stopPropagation?.(); interaction.onPress(); }}
                     onFocus={() => interaction.onFocusChange(true)}
                     onBlur={() => interaction.onFocusChange(false)}
@@ -171,6 +177,7 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
             <Popover
                 open={open}
                 anchorRef={anchorRef}
+                dismissWhenAnchorHidden
                 placement="top"
                 gap={8}
                 portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'center' }}
@@ -180,7 +187,7 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
             >
                 {() => (
                     <FloatingOverlay scrollEnabled={false}>
-                        <View testID={testID} style={styles.tooltipContent}>
+                        <View testID={testID} nativeID={tooltipId} role="tooltip" style={styles.tooltipContent}>
                             <View style={styles.tooltipTitleRow}>
                                 <View style={[styles.tooltipDot, { backgroundColor: accentColor }]} />
                                 <Text numberOfLines={2} style={styles.tooltipTitle}>{title}</Text>

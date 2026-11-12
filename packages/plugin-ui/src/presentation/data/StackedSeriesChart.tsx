@@ -429,11 +429,12 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const bucketControl = (bucket: HappierSeriesBucket, index: number, visual: ReactNode, style: HappierPortableStyle | undefined,
     hitReach: HappierHitReach, key: string | number = bucket.id, withDatum = false) => {
     const datum = defaultDatum && withDatum;
+    const exactReading = nativeDense ? datumOf(bucket) : null;
     const control = (interaction?: HappierChartDatumInteraction) => <HappierPressable
     hitReach={hitReach}
     testID={props.testID ? `${props.testID}-bucket-${bucket.id}` : undefined}
     controlRef={(control) => { if (control) controls.current.set(bucket.id, control); else controls.current.delete(bucket.id); }}
-    accessibilityLabel={describe(bucket)} selected={selectedId === bucket.id}
+    accessibilityLabel={exactReading ? `${exactReading.label}: ${exactReading.value}` : describe(bucket)} selected={selectedId === bucket.id}
     onPress={() => { select(bucket.id); interaction?.onPress(); }}
     onHoverChange={interaction?.onHoverChange}
     onFocusChange={(focused) => { plotHasFocus.current = focused; if (focused) setSelectedId(bucket.id); interaction?.onFocusChange(focused); }}
@@ -780,6 +781,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       columns={[{ label: props.label }, ...props.series.map((entry) => ({ label: entry.label }))]}
       // Details keeps every meaningful digit (a display formatter may abbreviate); coordinates read in the caller's words.
       rows={geometry.buckets.map((bucket) => [describeHappierSeriesCoordinate(bucket, reading), ...bucket.values.map((entry) => entry.value === null ? unknown : magnitude(entry.value))])}
+      rowDatums={geometry.buckets.map(datumOf)}
       testID={props.testID ? `${props.testID}-values` : undefined} /></View> : null}
   </View>;
 }

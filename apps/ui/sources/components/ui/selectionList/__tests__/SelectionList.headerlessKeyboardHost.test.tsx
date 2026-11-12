@@ -1,7 +1,10 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+
+import { SelectionList } from '../SelectionList';
 
 import type { SelectionListProps, SelectionListStep } from '../_types';
 
@@ -58,8 +61,6 @@ function defaultProps(overrides: Partial<SelectionListProps> = {}): SelectionLis
 
 describe('SelectionList headerless keyboard host (FR3-4)', () => {
     it('handles ArrowDown via the headerless keyboard host', async () => {
-        const { act } = await import('react-test-renderer');
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps()} />);
         const container = screen.findByTestId('sl');
         expect(container).not.toBeNull();
@@ -81,8 +82,6 @@ describe('SelectionList headerless keyboard host (FR3-4)', () => {
     });
 
     it('routes Escape to onRequestClose via the headerless keyboard host', async () => {
-        const { act } = await import('react-test-renderer');
-        const { SelectionList } = await import('../SelectionList');
         const onRequestClose = vi.fn();
         const screen = await renderScreen(
             <SelectionList {...defaultProps({ onRequestClose })} />,
@@ -101,8 +100,6 @@ describe('SelectionList headerless keyboard host (FR3-4)', () => {
     });
 
     it('routes Enter to onSelect on the focused option via the headerless keyboard host', async () => {
-        const { act } = await import('react-test-renderer');
-        const { SelectionList } = await import('../SelectionList');
         const onSelect = vi.fn();
         const screen = await renderScreen(
             <SelectionList {...defaultProps({ onSelect })} />,
@@ -129,7 +126,6 @@ describe('SelectionList headerless keyboard host (FR3-4)', () => {
         // When the header is mounted, the input row owns the keyboard event
         // surface. The container key handler must NOT be added too, otherwise
         // events would fire twice when bubbling up from the input.
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
                 {...defaultProps({

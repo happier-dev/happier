@@ -63,6 +63,13 @@ const overflow = (screen: Screen, testID: string) =>
   measure(screen, testID, { bar: 300, viewport: 200, strip: 520 });
 
 describe('WidgetAreaLayoutBar', () => {
+  it('keeps the drawn name menu compact with a 44 px hit target', async () => {
+    const { readHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
+    const screen = await renderScreen(<WidgetAreaLayoutBar layouts={[DASHBOARDS[0]]} labels={LABELS} selectedId="overview" onSelect={vi.fn()} onCreate={null} actions={null} testID="bar" />);
+    const trigger = screen.findHostByTestId('bar.current')!;
+    await act(async () => trigger.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 36 } } }));
+    expect(readHitArea(screen.findHostByTestId('bar.current')!, { width: 100, height: 36 }).height).toBeGreaterThanOrEqual(44);
+  });
   it('names a lone layout as the page title with its menu, never a strip of one tab', async () => {
     const onCreate = vi.fn();
     const screen = await renderScreen(

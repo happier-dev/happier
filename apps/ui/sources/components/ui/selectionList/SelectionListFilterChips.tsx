@@ -129,7 +129,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                         : [`${filter.label}: ${[valueLabel, filter.valueQualifier].filter(Boolean).join(' · ')}`, filter.note].filter(Boolean).join(', ')}
                     {...(filter.accessibilityHint === undefined ? {} : { accessibilityHint: filter.accessibilityHint })}
                     expanded={canOpen ? open : undefined}
-                    hasPopup={canOpen ? 'dialog' : undefined}
+                    hasPopup={canOpen ? filter.renderPopoverContent ? 'dialog' : 'listbox' : undefined}
                     disabled={!canOpen && !clearable && !toggleable}
                     // The row of chips scrolls sideways, so its viewport clips: a chip's reach stops at the row's own top padding.
                     hitReach={props.placement === 'row' ? { top: theme.space.s2 } : undefined}
@@ -172,6 +172,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
             </View>
             <Popover
                 open={open && canOpen}
+                autoFocusOnOpen
                 anchorRef={anchorRef}
                 placement="bottom"
                 gap={6}

@@ -895,7 +895,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 compactActionIds={[]}
                 overflowMaxHeightCap={WIDGET_MENU_MAX_HEIGHT_PX}
                 overflowTriggerTestID={`${testID}.menuTrigger`}
-                overflowTriggerAccessibilityLabel={`${t('widgetAdd.widgetOptions')}: ${title}`}
+                overflowTriggerAccessibilityLabel={t('widgetAdd.widgetOptions')}
                 renderOverflowSurface={menuSurface}
                 onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
                 renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${testID}.size`)}

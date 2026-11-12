@@ -41,6 +41,7 @@ vi.mock('react-native', async () => {
 });
 
 import { Pressable } from 'react-native';
+import { SelectionList } from '../SelectionList';
 
 const EXPANDED_TEST_ID = 'inline-controls';
 
@@ -148,7 +149,6 @@ function sectionsForSelection(selectedId: string | null): ReadonlyArray<Selectio
 
 describe('SelectionList — a declared columns config settles the pattern before layout', () => {
     it('opens a columned pane as a grid on the FIRST frame and never promotes it', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
                 {...defaultProps({
@@ -169,7 +169,6 @@ describe('SelectionList — a declared columns config settles the pattern before
     });
 
     it('keeps the pattern across a resize over and back through the column threshold', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
                 {...defaultProps({
@@ -199,7 +198,6 @@ describe('SelectionList — selection and filtering cannot move the pattern', ()
         screen: Screen;
         selectTo: (nextSelectedId: string | null) => Promise<void>;
     }> {
-        const { SelectionList } = await import('../SelectionList');
         const element = (nextSelectedId: string | null) => (
             <SelectionList
                 {...defaultProps({
@@ -260,7 +258,6 @@ describe('SelectionList — selection and filtering cannot move the pattern', ()
 
 describe('SelectionList — the grid describes the columns it actually paints', () => {
     it('numbers each card as a row of its own when a column runs shorter', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
                 {...defaultProps({

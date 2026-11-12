@@ -42,7 +42,7 @@ export type HappierDataRowsProps = Readonly<{
   rowShares?: readonly (number | null)[];
   density?: 'compact' | 'comfortable';
   renderRow?: (row: readonly HappierDataValue[], visual: ReactNode, index: number) => ReactNode;
-  /** An admitted exact amount for domain units; explicit null means its inline value is already exact. */
+  /** An admitted exact row reading, including domain units; tables announce it without changing cells. Explicit null keeps the inline reading. */
   rowDatums?: readonly (HappierChartDatum | null)[];
   /** A row's identity action stays beside its independently inspectable amount, never around it. */
   renderIdentity?: (row: readonly HappierDataValue[], visual: ReactNode, index: number) => ReactNode;
@@ -249,13 +249,16 @@ export function HappierDataTable(props: HappierDataRowsProps) {
           </View>
         ))}
       </View>
-      {props.rows.map((row, rowIndex) => (
+      {props.rows.map((row, rowIndex) => {
+        const datum = props.rowDatums?.[rowIndex];
+        return (
         <View
           key={rowIndex}
           role="row"
           accessible
           accessibilityLabel={[...(props.marks?.[rowIndex] ? [props.marks[rowIndex]!.label] : []),
-            ...props.columns.map((column, index) => readable(column, row[index], text.locale)).filter((value): value is string => value !== null)].join(', ')}
+            ...(datum ? [`${datum.label}: ${datum.value}`]
+              : props.columns.map((column, index) => readable(column, row[index], text.locale)).filter((value): value is string => value !== null))].join(', ')}
           testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
           style={{ flexDirection: 'row', columnGap: HAPPIER_DATA_METRICS.columnGapPx, paddingVertical: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
             ...(rowIndex < props.rows.length - 1 ? divider : {}) }}
@@ -275,7 +278,8 @@ export function HappierDataTable(props: HappierDataRowsProps) {
             );
           })}
         </View>
-      ))}
+        );
+      })}
       {props.incomplete ? <IncompleteLine text={props.incomplete} styles={text} testID={props.testID} /> : null}
     </View>
   );

@@ -23,7 +23,7 @@ import {
     type HappierTabLabels,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -367,18 +367,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     tabDisabled: {
         opacity: HAPPIER_SEGMENTED_METRICS.disabledOpacity,
     },
-    /**
-     * The PRESS FRAME. Transparent and paint-free: it exists only to be big enough to hit. Its
-     * vertical padding is cancelled by an equal negative margin (applied per render — see the
-     * vertical budget below), so the pointer box reclaims the track's inset while the row still
-     * measures the drawn segment. The frame ends up exactly the size of the track: no overhang.
-     *
-     * This is plain box model rather than `hitSlop` on purpose: react-native-web 0.21 implements
-     * `hitSlop` only in its legacy `Touchable` export — `Pressable` and `View` never read it — and
-     * the desktop app IS the web bundle. A slop-declared target there is a target that does not
-     * exist, which is why an earlier fix reached for a visible `minHeight` instead and made every
-     * segmented control ~15px taller than it should be.
-     */
+    /** The drawn frame keeps its geometry; useHappierHitArea supplies native slop or a web hit frame. */
     tabFrame: {
         // Equal mode: grow/shrink/basis as longhands (NOT the `flex: 1`
         // shorthand). On react-native-web the shorthand emits CSS `flex: 1`
@@ -580,8 +569,7 @@ function SlidingThumb(props: Readonly<{
 
 /**
  * One segment's press target. The segment keeps its designed height under every pointer; the shared
- * hit-area owner reaches the finger target (or the WCAG pointer floor) past it, through the track
- * padding it owns and never sideways over a flush sibling.
+ * hit-area owner reaches the finger target vertically without reaching sideways over a flush sibling.
  */
 const SegmentedTabPressable = React.forwardRef<React.ElementRef<typeof Pressable>, PressableProps & Readonly<{
     style: StyleProp<ViewStyle>;
@@ -589,8 +577,8 @@ const SegmentedTabPressable = React.forwardRef<React.ElementRef<typeof Pressable
     const { style, children, onLayout, ...rest } = props;
     const hitArea = useHappierHitArea({
         restingStyle: () => style,
-        hitTarget: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE,
-        hitReach: { left: 0, right: 0, top: SEGMENT_TRACK_PADDING_PX, bottom: SEGMENT_TRACK_PADDING_PX },
+        hitTarget: HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE,
+        hitReach: { left: 0, right: 0 },
     });
     const measure = hitArea.onLayout;
     const handleLayout = React.useCallback((event: LayoutChangeEvent) => {

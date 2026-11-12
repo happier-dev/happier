@@ -434,17 +434,8 @@ describe('SegmentedTabBar', () => {
     );
   });
 
-  /**
-   * The hit area may fill the track and may NOT leave it.
-   *
-   * A segment has no sibling above or below it INSIDE the track, which is why its hit area can grow
-   * at all — but the track is not the end of the world. Every consumer stacks this bar against
-   * something: in the model card the next control's own segmented bar is ~13px below, so a hit area
-   * overhanging the track by 10-12px on each side would put two tab targets on top of one another.
-   * The track's own padding is the only vertical space this component owns, so that is all it
-   * reaches, and nothing sideways: segments are flush siblings.
-   */
-  it('never lets a hit area leave the track it sits in, and draws nothing larger for it', async () => {
+  // A01 owner ruling: 44 px vertically, own width horizontally; drawn geometry stays fixed.
+  it('reaches the vertical target without overlapping flush siblings or changing the drawing', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const { Platform } = await import('react-native');
     const { HappierUiPlatformProvider } =
@@ -476,9 +467,9 @@ describe('SegmentedTabBar', () => {
           );
           const drawn = { width: 80, height: compact ? 20 : 28 };
           await act(async () => {
-            requireTab(screen, 'seg:alpha').props.onLayout?.({
-              nativeEvent: { layout: { x: 0, y: 0, ...drawn } },
-            });
+            TABS.forEach((tab, index) => requireTab(screen, `seg:${tab.id}`).props.onLayout?.({
+              nativeEvent: { layout: { x: index * drawn.width, y: 0, ...drawn } },
+            }));
           });
           const frame = flattenStyle(
             requireTab(screen, 'seg:alpha').props.style,
@@ -490,7 +481,7 @@ describe('SegmentedTabBar', () => {
           const trackPadding = HAPPIER_SEGMENTED_METRICS.trackPaddingPx;
           const context = `${platform}/${compact ? 'compact' : 'regular'}`;
           expect(`${context}: ${area.insets.top}`).toBe(
-            `${context}: ${Math.min((target - drawn.height) / 2, trackPadding)}`,
+            `${context}: ${(target - drawn.height) / 2}`,
           );
           expect(`${context}: ${area.insets.bottom}`).toBe(
             `${context}: ${area.insets.top}`,
@@ -498,6 +489,12 @@ describe('SegmentedTabBar', () => {
           // Segments are flush siblings: the horizontal budget is zero.
           expect(area.insets.left).toBe(0);
           expect(area.insets.right).toBe(0);
+          for (const tab of TABS) {
+            const segment = readHitArea(requireTab(screen, `seg:${tab.id}`), drawn);
+            expect(segment.height).toBeGreaterThanOrEqual(44);
+            expect(segment.width).toBeGreaterThanOrEqual(24);
+            expect(segment.insets.left + segment.insets.right).toBe(0);
+          }
           expect(trackPadding).toBeGreaterThan(0);
         }
       } finally {
@@ -506,12 +503,7 @@ describe('SegmentedTabBar', () => {
     }
   });
 
-  /**
-   * CEILING, recorded honestly: the hit area stops at the track, so the 44pt/48dp platform floor is
-   * NOT reached by a dense bar. What the control does clear on every variant is WCAG 2.2 Level AA
-   * SC 2.5.8 (24 x 24 CSS px), which DESIGN.md routes a dense pointer layout to.
-   */
-  it('clears the WCAG minimum target on the icon-only path without reaching the platform floor', async () => {
+  it('reaches 44 vertically and at least 24 horizontally on the icon-only path', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const { Platform } = await import('react-native');
     const { readHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
@@ -542,7 +534,7 @@ describe('SegmentedTabBar', () => {
           });
           const context = `${platform}/${compact ? 'compact' : 'regular'}`;
           // An icon bar is as tall as a label bar (the lab's 28, 20 compact), drawn the same under every pointer;
-          // the compact one reaches the WCAG 24 through its hit area.
+          // invisible vertical reach supplies the 44 px target.
           expect(`${context}: ${drawnHeight}`).toBe(
             `${context}: ${compact ? 20 : 28}`,
           );
@@ -550,7 +542,7 @@ describe('SegmentedTabBar', () => {
           expect(`${context}: ${area.height >= WCAG_MINIMUM_TARGET_PX}`).toBe(
             `${context}: true`,
           );
-          expect(area.height).toBeLessThan(44);
+          expect(area.height).toBeGreaterThanOrEqual(44);
         }
       } finally {
         (Platform as { OS: string }).OS = previousPlatform;

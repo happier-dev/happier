@@ -65,7 +65,6 @@ export function PhoneAskSheet(
     >
       {close ? (
         <SheetGrabber
-          onDismiss={close}
           panHandlers={drag.panHandlers}
           testID="phone-ask-sheet.grabber"
         />

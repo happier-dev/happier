@@ -15,6 +15,9 @@ import { resolveHappierFocusRingVisible, useHappierHitArea, useHappierItemOverfl
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
+/** The owning frame supplies its title; null uses the row's title while the frame has an editable title node. */
+export const ItemRowActionsTitleContext = React.createContext<string | null | undefined>(undefined);
+
 export interface ItemRowActionsProps {
     title: string;
     /** Widget/page chrome opts into its containing current-context owner. */
@@ -125,6 +128,7 @@ function CurrentContextItemRowActions(props: ItemRowActionsContentProps) {
 }
 
 function ItemRowActionsContent(props: ItemRowActionsContentProps) {
+    const ownerTitle = React.useContext(ItemRowActionsTitleContext);
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { width: windowWidth } = usePresentationWindowDimensions();
@@ -140,10 +144,12 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     const overflowAnchorRef = React.useRef<View>(null);
     const requestPopoverCloseRef = React.useRef<PopoverRenderProps['requestClose']>(() => setShowOverflow(false));
     const onOverflowTriggerKeyDown = React.useCallback((event: OverflowTriggerKeyEvent) => {
-        if (event.target !== event.currentTarget || !props.onOverflowTriggerKeyDown?.(event.key)) return;
+        if (event.target !== event.currentTarget) return;
+        if (event.key === 'Enter' || event.key === ' ') setShowOverflow(true);
+        else if (!props.onOverflowTriggerKeyDown?.(event.key)) return;
         event.preventDefault();
         event.stopPropagation();
-    }, [props.onOverflowTriggerKeyDown]);
+    }, [props.onOverflowTriggerKeyDown, setShowOverflow]);
 
     const compactIds = React.useMemo(() => new Set(props.compactActionIds ?? []), [props.compactActionIds]);
     const pinnedIds = React.useMemo(() => new Set(props.pinnedActionIds ?? []), [props.pinnedActionIds]);
@@ -314,7 +320,8 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     }, [actionControlFrame, actionHitArea, iconSize, props, theme.colors.border.focus, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
-        const accessibilityLabel = props.overflowTriggerAccessibilityLabel ?? t('common.moreActions');
+        const label = props.overflowTriggerAccessibilityLabel ?? t('common.moreActions');
+        const accessibilityLabel = ownerTitle === undefined ? label : `${label}: ${ownerTitle ?? props.title}`;
         const accessibilityHint = t('common.moreActionsHint');
         const toggleOverflow = () => setShowOverflow((v) => !v);
         const onRequestClose = () => setShowOverflow(false);
@@ -380,6 +387,7 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                 {showOverflow && props.renderOverflowSurface ? props.renderOverflowSurface({ children: content, onRequestClose }) : showOverflow ? (
                     <Popover
                         open={showOverflow}
+                        autoFocusOnOpen
                         anchorRef={overflowAnchorRef}
                         placement={overflowPlacement}
                         gap={10}
@@ -412,7 +420,7 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                 ) : null}
             </View>
         );
-    }, [actionControlFrame, actionHitArea, iconSize, onOverflowTriggerKeyDown, overflowActionSections, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
+    }, [actionControlFrame, actionHitArea, iconSize, onOverflowTriggerKeyDown, overflowActionSections, overflowPlacement, overflowPortal, ownerTitle, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
 
     return (
         <View style={[styles.container, { gap }]}>

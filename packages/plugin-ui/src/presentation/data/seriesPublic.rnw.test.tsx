@@ -7,6 +7,34 @@ import { buildPublicSessionDeclarativeView } from '../../../../../apps/server/so
 import { externalChartVisual } from '../../../fixtures/external-authoring/src/sessionVisuals.js';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
+import { HappierUiPlatformProvider } from '../../environment/context.js';
+
+it.each(['web', 'ios'] as const)('retains units, exact precision, zero and unknown in %s series Details', platform => {
+  for (const units of [
+    { label: 'Cost', value: 30.05874, exact: '30.05874', format: (value: number) => `$${value.toFixed(2)}`, unit: '$' },
+    { label: 'Tokens', value: 4186010, exact: '4,186,010', format: (value: number) => `${value === 0 ? '0' : '4.2M'} tokens`, unit: 'tokens' },
+  ]) {
+    const view = mountThroughReactNativeWeb(<HappierUiPlatformProvider platform={{ platform, colorScheme: 'light' }}>
+      <StackedSeriesChart theme={theme} label={units.label} variant="bar" size="full" width={30} testID="unit-series"
+        unknownLabel="Not received" valueFormatter={units.format} formattedReadings
+        series={[{ id: 'measured', label: 'Measured', points: [
+          { id: 'amount', x: 'Amount', y: units.value }, { id: 'zero', x: 'Zero', y: 0 }, { id: 'unknown', x: 'Unknown', y: null },
+        ] }]} />
+    </HappierUiPlatformProvider>);
+    try {
+      act(() => view.container.querySelector<HTMLElement>('[data-testid="unit-series-values-toggle"]')!.click());
+      const values = view.container.querySelector<HTMLElement>('[data-testid="unit-series-values"]')!;
+      const rows = [...values.querySelectorAll<HTMLElement>('[role="row"], [role="button"]')];
+      const amount = rows.find(row => row.getAttribute('aria-label')?.includes('Amount'))!;
+      const zero = rows.find(row => row.getAttribute('aria-label')?.includes('Zero'))!;
+      const unknown = rows.find(row => row.getAttribute('aria-label')?.includes('Unknown'))!;
+      expect(amount.getAttribute('aria-label')).toContain(units.exact);
+      expect(amount.getAttribute('aria-label')).toContain(units.unit);
+      expect(zero.getAttribute('aria-label')).toContain(units.format(0));
+      expect(unknown.getAttribute('aria-label')).toContain('Not received');
+    } finally { view.unmount(); }
+  }
+});
 
 it.each(['bar', 'line', 'area'] as const)('renders the same native and Session declarative %s series with identical geometry, exact values and accessibility', variant => {
   const root = { ...externalChartVisual.item.source.document.root, style: variant };
@@ -26,7 +54,6 @@ it.each(['bar', 'line', 'area'] as const)('renders the same native and Session d
       )!;
       act(() => measured.__reactLayoutHandler({ nativeEvent: { layout: { x: 0, y: 0, width: 180, height: 150 } } }));
     }
-    for (const svg of native.container.querySelectorAll('svg')) expect(svg.getAttribute('aria-hidden')).toBe('true');
     for (const svg of native.container.querySelectorAll('svg')) expect(svg.getAttribute('aria-hidden')).toBe('true');
     const ink = (container: HTMLElement) => variant === 'bar'
       ? [...container.querySelectorAll<HTMLElement>('[data-testid*="-bar-"]')].map(bar => [bar.style.top, bar.style.height])

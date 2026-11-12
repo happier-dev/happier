@@ -19,6 +19,30 @@ import { buildWidgetFrameStyleActions } from './widgetFrameMenu';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+it('names widget options from each frame title and updates the name without remounting its trigger', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const frames = (title: string) => <>
+        {[title, 'Costs'].map((name, index) => <WidgetFrame key={index} testID={`named-frame-${index}`}
+            frameStyle="card" placement="home" title={name} body={{ kind: 'content', children: 'Rows' }}
+            menu={<div><ItemRowActions title="Fallback title" overflowOnly overflowTriggerTestID={`named-options-${index}`}
+                overflowTriggerAccessibilityLabel="Widget options" actions={[{ id: 'rename', title: 'Rename', onPress: () => {} }]} /></div>} />)}
+    </>;
+    try {
+        await act(async () => root.render(frames('Daily usage')));
+        const trigger = container.querySelector<HTMLElement>('[data-testid="named-options-0"]')!;
+        expect(trigger.getAttribute('aria-label')).toBe('Widget options: Daily usage');
+        expect(container.querySelector('[data-testid="named-options-1"]')?.getAttribute('aria-label')).toBe('Widget options: Costs');
+        await act(async () => root.render(frames('Daily budget')));
+        expect(container.querySelector('[data-testid="named-options-0"]')).toBe(trigger);
+        expect(trigger.getAttribute('aria-label')).toBe('Widget options: Daily budget');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 it.each([
     ['keyboard', 'frameStyle'], ['pointer', 'frameStyle'],
     ['keyboard', 'frameStyleReset'], ['pointer', 'frameStyleReset'],
