@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginDiagnosticData } from '../errors.js';
 
@@ -42,7 +43,7 @@ export function decodePluginUiResourceContent(
     ) {
         return { ok: false, diagnostic: 'resource_response_invalid' };
     }
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value.bytesBase64)) {
+    if (readPaddedBase64DecodedLength(value.bytesBase64) === null) {
         return { ok: false, diagnostic: 'resource_bytes_invalid' };
     }
     try {

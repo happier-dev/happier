@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import type { GithubTriageInvocationContext } from '../invocation.js';
 import { isExternalActionResultWithinResponseEnvelopeLimitV1 } from '@happier-dev/plugin-sdk/actions';
 import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
@@ -174,7 +175,7 @@ export async function readGithubCodeScanningLocation(input: unknown, context: Gi
     const body = record(decodeGithubJsonResponse(response));
     if (body.type !== 'file' || body.encoding !== 'base64' || typeof body.content !== 'string') return noCode({ class: 'unsupportedContract', code: 'github_code_content_unavailable' });
     const base64 = body.content.replace(/\s/gu, '');
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(base64)) return noCode(PAYLOAD_INVALID);
+    if (readPaddedBase64DecodedLength(base64) === null) return noCode(PAYLOAD_INVALID);
     const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
     if (bytes.includes(0)) return noCode({ class: 'unsupportedContract', code: 'github_code_content_binary' });
     let content: string;

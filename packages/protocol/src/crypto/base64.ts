@@ -11,7 +11,8 @@ export type Base64Variant = 'base64' | 'base64url';
 const INVALID_BASE64_CHARACTER = /[^A-Za-z0-9+/]/;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-export function readCanonicalPaddedBase64DecodedLength(input: string): number | null {
+/** Structural padded-base64 grammar; unused pad bits need not be zero. */
+export function readPaddedBase64DecodedLength(input: string): number | null {
   if (input.length % 4 !== 0) return null;
   const paddingLength = input.endsWith('==') ? 2 : input.endsWith('=') ? 1 : 0;
   const paddingStart = input.length - paddingLength;
@@ -19,13 +20,21 @@ export function readCanonicalPaddedBase64DecodedLength(input: string): number | 
   // The first non-alphabet character must be exactly the terminal padding start.
   const invalidIndex = INVALID_BASE64_CHARACTER.exec(input)?.index ?? input.length;
   if (invalidIndex !== paddingStart) return null;
+  return (input.length / 4) * 3 - paddingLength;
+}
+
+export function readCanonicalPaddedBase64DecodedLength(input: string): number | null {
+  const length = readPaddedBase64DecodedLength(input);
+  if (length === null) return null;
+  const paddingLength = input.endsWith('==') ? 2 : input.endsWith('=') ? 1 : 0;
+  const paddingStart = input.length - paddingLength;
   // Padded encodings have unused low bits in their last alphabet character.
   // Reject alternate spellings of the same bytes at the canonical boundary.
   if (paddingLength > 0) {
     const last = BASE64_ALPHABET.indexOf(input[paddingStart - 1]);
     if (paddingStart === 0 || (last & (paddingLength === 2 ? 15 : 3)) !== 0) return null;
   }
-  return (input.length / 4) * 3 - paddingLength;
+  return length;
 }
 
 function normalizeBase64ForDecoding(input: string, variant: Base64Variant): string {

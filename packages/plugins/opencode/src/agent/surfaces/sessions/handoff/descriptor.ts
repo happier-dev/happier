@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import type {
   PluginProcessResult,
 } from '@happier-dev/plugin-sdk/exec';
@@ -25,7 +26,6 @@ import {
 
 const OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const OPEN_CODE_EXPORT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
-const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 type OpenCodeSessionBundle = Readonly<{
   agentId: 'opencode';
@@ -40,7 +40,7 @@ function estimateBase64DecodedBytes(value: string): number {
 }
 
 function decodeOpenCodeImportExportJson(exportJsonBase64: string): string {
-  if (!BASE64_PATTERN.test(exportJsonBase64)) {
+  if (readPaddedBase64DecodedLength(exportJsonBase64) === null) {
     throw new Error('Invalid OpenCode handoff export payload encoding');
   }
 

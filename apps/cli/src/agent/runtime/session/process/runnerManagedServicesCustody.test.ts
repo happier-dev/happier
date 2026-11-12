@@ -284,6 +284,19 @@ describe('runner managed-services Provider custody', () => {
         });
     });
 
+    it.each([4, 16])('admits %i MiB canonical stdin through the custody producer', mib => {
+        const spec = encodeRunnerManagedServiceSpecWireV1({
+            id: 'worker', mode: { kind: 'spawn', endpoint: { kind: 'none' },
+                launch: { executable: { kind: 'systemTool', id: 'gateway' }, stdin: Buffer.alloc(mib * 1024 * 1024, 97) } },
+        });
+        const request = { v: 1, kind: 'supervise', scope: providerScope('session-worker-wire', 'provider-p'), spec };
+        expect(RunnerManagedServicesCustodyRequestV1Schema.safeParse(request).success).toBe(true);
+        const withStdin = (base64: string) => ({ ...request, spec: { ...spec,
+            mode: { ...spec.mode, launch: { executable: { kind: 'systemTool', id: 'gateway' }, stdin: { t: 'bytes', base64 } } } } });
+        expect(RunnerManagedServicesCustodyRequestV1Schema.safeParse(withStdin('AB==')).success).toBe(false);
+        expect(RunnerManagedServicesCustodyRequestV1Schema.safeParse(withStdin('AA==')).success).toBe(true);
+    });
+
     it.each(['environment', 'files'] as const)('round-trips authored %s credential destinations without name ceilings', kind => {
         const scope = providerScope('session-credential-wire', 'provider-p');
         const keys = Array.from({ length: 257 }, (_, index) => `TOKEN_${index}_${'X'.repeat(256)}`);

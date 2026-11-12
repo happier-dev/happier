@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import {
   classifyVoiceProviderHttpFailure,
   type VoiceCredentialAccess,
@@ -60,7 +61,7 @@ async function materializeApiKey(
   if (!credentials.raw) throw providerError('credential_unavailable');
   const materialized = await credentials.raw.materialize({
     kind: 'httpHeaders',
-    origin,
+    origin: origin,
     headerNames: [GOOGLE_API_KEY_HEADER],
   }, { signal });
   if (materialized.kind !== 'httpHeaders') throw providerError('credential_unavailable');
@@ -286,7 +287,7 @@ async function synthesize(
   }, { signal: context.signal });
   const json = readJson(response, [secret]) as { audioContent?: unknown };
   const encoded = clean(json.audioContent, base64EncodedLength(GOOGLE_CLOUD_TTS_MAX_OUTPUT_BYTES));
-  if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
+  if (!encoded || readPaddedBase64DecodedLength(encoded) === null) {
     throw providerError('provider_response_invalid');
   }
   const bytes = new Uint8Array(Buffer.from(encoded, 'base64'));

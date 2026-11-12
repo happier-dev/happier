@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/plugin-sdk/scm';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { parseGithubWorkflowDefinitionV1, type GithubWorkflowDefinitionV1 } from './workflowDefinition.js';
@@ -40,7 +41,7 @@ export async function readGithubWorkflowDefinitionV1(client: GithubApiClientV1, 
       const body = githubRecord(result.value);
       if (body.type !== 'file' || body.encoding !== 'base64' || typeof body.content !== 'string') throw new RangeError('Unsupported workflow Contents response');
       const content = body.content.replace(/\s/gu, '');
-      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(content)) throw new RangeError('Invalid workflow encoding');
+      if (readPaddedBase64DecodedLength(content) === null) throw new RangeError('Invalid workflow encoding');
       definition = retained.get(key);
       if (definition === undefined) {
         definition = parseGithubWorkflowDefinitionV1(decodeBase64(content));

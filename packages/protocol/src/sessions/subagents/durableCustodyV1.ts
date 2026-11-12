@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
@@ -35,7 +36,7 @@ export type SessionSubagentCustodyContentFingerprintV1 = z.infer<typeof SessionS
 const SessionSubagentCustodyContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.strictObject({
     t: z.literal('encrypted'),
-    c: z.string().check(z.minLength(1), maxCodeUnits(MAX_SESSION_SUBAGENT_CUSTODY_ENCRYPTED_CONTENT_CODE_UNITS), z.regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)),
+    c: z.string().check(z.minLength(1), maxCodeUnits(MAX_SESSION_SUBAGENT_CUSTODY_ENCRYPTED_CONTENT_CODE_UNITS), z.refine((value) => readPaddedBase64DecodedLength(value) !== null)),
   }),
   z.strictObject({ t: z.literal('plain'), v: AgentRuntimeJsonValueV1Schema }),
 ]));

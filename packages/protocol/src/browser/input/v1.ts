@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 export const BrowserInputTargetV1Schema = z.literal('page');
@@ -43,7 +44,7 @@ export const BrowserClipboardInputEventV1Schema = z.strictObject({
 /** Uploads carry bytes, never a caller-selected path on the browser's Machine. */
 export const BrowserUploadFileV1Schema = z.strictObject({
   name: z.string().check(z.minLength(1), z.refine(name => !/[\\/\x00]/u.test(name) && name !== '.' && name !== '..')),
-  dataBase64: z.string().check(z.refine(value => /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value))),
+  dataBase64: z.string().check(z.refine(value => readPaddedBase64DecodedLength(value) !== null)),
 });
 export type BrowserUploadFileV1 = z.infer<typeof BrowserUploadFileV1Schema>;
 export const BrowserFileDropInputEventV1Schema = z.strictObject({

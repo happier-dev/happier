@@ -1,3 +1,4 @@
+import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomUUID } from 'node:crypto';
 
@@ -370,7 +371,7 @@ const EndpointPathSchema = lazyZodSchema(() => z.strictObject({
     endpointTemplateId: CustodyIdentityPartSchema,
     servicePath: z.string().check(z.minLength(1), z.maxLength(16_384), z.refine((value) => value.startsWith('/'))),
 }));
-const CanonicalBase64Schema = lazyZodSchema(() => z.string().check(z.regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u), z.refine((value) => Buffer.from(value, 'base64').toString('base64') === value, 'Expected canonical padded Base64')));
+const CanonicalBase64Schema = lazyZodSchema(() => z.string().check(z.refine((value) => readCanonicalPaddedBase64DecodedLength(value) !== null, 'Expected canonical padded Base64')));
 const CustodyBytesSchema = lazyZodSchema(() => z.strictObject({
     t: z.literal('bytes'),
     base64: CanonicalBase64Schema,

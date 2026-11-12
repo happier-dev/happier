@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiJsonObjectV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiReplacePageLocationResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiReadSessionResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema, PluginLiveStreamReferenceV1Schema, PluginUiLiveStreamViewingV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiRenderContextSnapshotV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiSelectedActionInputCarrierV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { ComposerDecorationResultV1Schema, ComposerFocusResultV1Schema, ComposerReadResultV1Schema, ComposerSnapshotV1Schema, ComposerTransactionResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
@@ -279,7 +280,7 @@ function readRenderContextSnapshot(value: JsonValue): Readonly<{
     });
 }
 function decodeBase64(value: string): Uint8Array {
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+    if (readPaddedBase64DecodedLength(value) === null) {
         throw new PluginUiHostApiClientError('invalid_payload', 'Host returned malformed resource bytes.');
     }
     try {
@@ -575,6 +576,7 @@ export async function createPluginUiHostApiClientFromTransport(
                     ...(message.error.details === undefined ? {} : { details: message.error.details }),
                     ...(message.error.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: message.error.actionHandlerInvocation }),
                     ...(message.error.remediation === undefined ? {} : { remediation: message.error.remediation }),
+                    ...(message.error.failureCause === undefined ? {} : { failureCause: message.error.failureCause }),
                     ...(message.error.diagnostics === undefined ? {} : { diagnostics: message.error.diagnostics }),
                 },
             ));
@@ -817,7 +819,8 @@ export async function createPluginUiHostApiClientFromTransport(
             const parsed = PluginUiActionControlRequestV1Schema.safeParse({ kind: 'bind', subscriptionId: 'binding', ...control });
             if (!parsed.success || parsed.data.kind !== 'bind') throw new PluginUiHostApiClientError('invalid_payload');
             const payload = parsed.data;
-            return await createPluginUiActionControlBinding({ controller, signal: requestOptions?.signal, lifetimeSignal: lifetime.signal,
+            return await createPluginUiActionControlBinding({ controller, signal: requestOptions?.signal,
+                withdrawalSignal: requestOptions?.withdrawalSignal, lifetimeSignal: lifetime.signal,
                 subscribe: (listener, onRetire, signal) => subscribe('actionControl', subscriptionId => ({ ...payload, subscriptionId }), listener, signal, onRetire),
                 request: (requestPayload, signal) => request('actionControl', requestPayload, signal),
             });

@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
@@ -57,7 +58,7 @@ const HostExternalSessionTranscriptFollowEventV1Schema = lazyZodSchema(() => asH
     ExternalSessionTranscriptFollowEventV1Schema,
 ));
 const BoundedTextSchema = lazyZodSchema(() => z.string().check(z.maxLength(65_536)));
-const Base64Schema = lazyZodSchema(() => z.string().check(z.regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)));
+const Base64Schema = lazyZodSchema(() => z.string().check(z.refine((value) => readPaddedBase64DecodedLength(value) !== null)));
 const SafeNonNegativeIntegerSchema =
     lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.int()));
 const CursorSchema = lazyZodSchema(() => z.string().check(z.maxLength(32_768)));

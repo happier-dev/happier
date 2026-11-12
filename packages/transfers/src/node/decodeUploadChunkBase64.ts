@@ -1,3 +1,4 @@
+import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 type DecodeUploadChunkBase64Options = Readonly<{
   // When provided, fail closed before decoding if the input would exceed this decoded byte size.
   maxDecodedBytes?: number;
@@ -19,7 +20,6 @@ export function decodeUploadChunkBase64(
   contentBase64: string,
   options?: DecodeUploadChunkBase64Options,
 ): Buffer | null {
-  const canonicalBase64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
   const maxDecodedBytes = options?.maxDecodedBytes;
   if (typeof maxDecodedBytes === 'number' && maxDecodedBytes > 0) {
     const maxEncodedChars = resolveMaxEncodedChars(maxDecodedBytes);
@@ -35,7 +35,7 @@ export function decodeUploadChunkBase64(
     }
   }
 
-  if (!canonicalBase64Pattern.test(contentBase64)) {
+  if (readPaddedBase64DecodedLength(contentBase64) === null) {
     return null;
   }
 

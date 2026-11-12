@@ -170,6 +170,17 @@ describe('managed-service endpoint read protocol', () => {
         }).success).toBe(false);
     });
 
+    it('accepts large canonical bodies through the existing 16 MiB boundary', () => {
+        const request = (bodyBase64: string) => ManagedServiceEndpointReadOpenRequestV1Schema.safeParse({
+            v: 1, requestId: '00000000-0000-4000-8000-000000000001',
+            route: exactHandleRoute(), interactive: true, method: 'POST', pathAndQuery: '/', headers: {}, bodyBase64,
+        }).success;
+        for (const size of [4, 16]) expect(request(Buffer.alloc(size * 1024 * 1024, 97).toString('base64'))).toBe(true);
+        expect(request(Buffer.alloc(16 * 1024 * 1024 + 1).toString('base64'))).toBe(false);
+        expect(request('AB==')).toBe(false);
+        expect(request('AA==')).toBe(true);
+    });
+
     it('requires continuation routes to retain the same ownership discriminator', () => {
         expect(ManagedServiceEndpointReadNextRequestV1Schema.safeParse({
             v: 1,

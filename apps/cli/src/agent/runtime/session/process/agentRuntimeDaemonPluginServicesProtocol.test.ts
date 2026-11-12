@@ -1053,3 +1053,25 @@ describe('runner daemon PluginServices v1 protocol', () => {
         }).success).toBe(false);
     });
 });
+
+// Large binary values must survive the runner's actual encoder/schema boundary on Bun.
+describe('runner base64 grammar', () => {
+    it.each([4, 16])('accepts %i MiB encoded results and filesystem writes', mib => {
+        const bytes = Buffer.alloc(mib * 1024 * 1024, 97);
+        expect(RunnerDaemonPluginServiceResultV1Schema.safeParse({
+            kind: 'plugin_services.result_v1', requestId: 'r',
+            value: encodeRunnerDaemonPluginServiceWireValueV1(bytes),
+        }).success).toBe(true);
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
+            kind: 'plugin_fs.write_file_v1', requestId: 'r', invocationId: 'i',
+            path: { root: 'pluginData', relativePath: 'large.bin' }, data: bytes.toString('base64'),
+        }).success).toBe(true);
+    });
+    it('preserves structural byte spellings and rejects malformed bytes', () => {
+        const result = (base64: string) => RunnerDaemonPluginServiceResultV1Schema.safeParse({
+            kind: 'plugin_services.result_v1', requestId: 'r', value: { t: 'bytes', base64 },
+        }).success;
+        for (const value of ['', 'AA==', 'AB==']) expect(result(value)).toBe(true);
+        for (const value of ['A', 'AA==\n', 'A===', 'AA-_']) expect(result(value)).toBe(false);
+    });
+});

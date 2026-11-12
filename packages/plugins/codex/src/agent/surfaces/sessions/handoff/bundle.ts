@@ -1,3 +1,4 @@
+import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import type {
   AgentTerminalSessionStateUpdate,
   HandoffImportResultV1,
@@ -114,15 +115,11 @@ function invalidCodexHandoffBundle(message: string): never {
 function decodeCanonicalBase64(value: string, relativePath: string): Buffer {
   if (
     value.length === 0
-    || value.length % 4 !== 0
-    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+    || readCanonicalPaddedBase64DecodedLength(value) === null
   ) {
     return invalidCodexHandoffBundle(`Codex handoff rollout has invalid base64 content: ${relativePath}`);
   }
   const content = Buffer.from(value, 'base64');
-  if (content.byteLength === 0 || content.toString('base64') !== value) {
-    return invalidCodexHandoffBundle(`Codex handoff rollout has invalid base64 content: ${relativePath}`);
-  }
   return content;
 }
 
