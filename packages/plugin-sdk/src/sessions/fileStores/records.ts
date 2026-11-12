@@ -3,6 +3,9 @@ import type { AgentExternalSessionTranscriptItem } from '../../externalSessions.
 import { isRecord, parseTimestampMs, readString } from './recordValues.js';
 export { isRecord, parseJsonLine, parseTimestampMs, readString, readTrimmedString } from './recordValues.js';
 
+/** Fixed presentation for native content this reader cannot interpret. */
+export const AGENT_UNSUPPORTED_CONTENT_TEXT = 'Agent emitted an unsupported content block.';
+
 /**
  * A native record this reader cannot interpret is still a readable transcript
  * item. Keep its source identity for paging, but never disclose its native body
@@ -20,7 +23,7 @@ export function createExternalSessionUnsupportedTranscriptItem(params: Readonly<
     createdAtMs: params.createdAtMs,
     messageRole: 'agent',
     raw: { role: 'agent', content: { type: 'acp', agentId: params.agentId,
-      data: { type: 'message', message: 'Agent emitted an unsupported content block.' } } },
+      data: { type: 'message', message: AGENT_UNSUPPORTED_CONTENT_TEXT } } },
   };
 }
 

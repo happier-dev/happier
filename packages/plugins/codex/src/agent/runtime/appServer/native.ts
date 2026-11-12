@@ -581,6 +581,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
         messageId: event.localId,
         role: 'user',
         text: event.text,
+        ...(event.nativeContent ? { nativeContent: event.nativeContent } : {}),
         ...(event.turnId ? { turnId: event.turnId } : {}),
       };
     case 'usage-observed':

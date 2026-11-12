@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
+import { supportsAgentVoiceFunctions } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
@@ -65,6 +69,7 @@ import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import {
   areExecutionRunBackendTargetsEqual,
   resolveExecutionRunRuntimeBackendId,
+  resolveExecutionRunRuntimeBackendTarget,
 } from './backendTargets';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
@@ -362,6 +367,20 @@ export async function startExecutionRun(args: StartExecutionRunArgs): Promise<Ex
     await args.recoverRetainedRuns?.();
     const existing = args.runs.get(requestBoundRunId);
     if (existing) return projectExistingExecutionRunStartResult(existing);
+  }
+  if (args.params.intent === 'voice_agent') {
+    const contributions = args.contributions ?? readAgentCatalogSnapshot();
+    const target = resolveExecutionRunRuntimeBackendTarget(args.params.backendTarget);
+    const configuredIdentity = target?.kind === 'configuredAcpBackend'
+      ? buildConfiguredAcpAgentSelectionV1(target.backendId).agentTarget.identity : null;
+    const contribution = configuredIdentity
+      ? [...contributions.agentDefinitionsById.values()].find(agent => agent.identity?.pluginId === configuredIdentity.pluginId
+        && agent.identity.localId === configuredIdentity.localId)
+      : contributions.agentDefinitionsById.get(resolveExecutionRunRuntimeBackendId(args.params.backendTarget));
+    if (!supportsAgentVoiceFunctions({ sessions: readAgentSessionCapabilities(contribution?.richDefinition?.definition) })) {
+      throw markExecutionRunStartFailure(new VoiceAgentError('VOICE_AGENT_UNSUPPORTED',
+        'This Agent cannot receive native Voice Action functions.'), 'noRunCreated');
+    }
   }
   // Generated role guidance cannot supply an authored review scope.
   assertPreparedReviewRunStartAllowed(args.params);

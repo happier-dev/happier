@@ -1,5 +1,21 @@
 # Compatibility and version skew
 
+## Team broker job activity (unreleased 0.3)
+
+The existing opaque V1 `brokerPlacementFingerprint` in a signed Team broker
+admission binds both placement and the admitted `TeamCredentialResource.revision`.
+The Home's active-job lookup compares that binding with the resource row; a
+changed revision refuses the next request without re-evaluating source or Team
+permissions. Grant withdrawal advances the revision in its existing transaction.
+Already-open response bodies finish, and affected recipients start again to
+obtain a fresh admission, including recipients unaffected by the withdrawn grant.
+
+Home and custodian refresh together under the unpublished 0.3 direct cut.
+Earlier development admissions fail the new fingerprint comparison and require
+a fresh Start. There is no new wire field, persisted format or migration. The
+inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has no Team broker admission or route-grant contract at the corresponding paths.
+
 ## Machine-service advisory selection (unreleased 0.3)
 
 The closed `machines.services.list` input accepts optional `preflight` selectors
@@ -574,6 +590,24 @@ The inspected `../0.2` frontier `d370a14c49f3383ca145938462bdfb257f6e453c`,
 including scoped staged and unstaged paths, has no Session Action origin or
 request-attribution contract; no predecessor adapter is introduced.
 
+## Availability content-addressed declaration reads (unreleased 0.3)
+
+`intents.list` and `intent.read` project `currentDeclaration` and
+`machineDeclarations[].declaration` as `{ declarationDigestSha256 }` only; the
+previous manifest bodies (one per plugin in the census, one per Machine plus the
+current one on exact reads) are gone. `intent.read` accepts optional
+`declarationDigests` and answers `declarationBodies` with each held body once.
+Protocol, server and UI reload together: strict development readers of the old
+shape reject the identity-only envelopes, and an older server rejects the new
+input field. No stored shape changes (version-3 rows already address bodies by
+digest), so 0.2 data is unaffected; the scoped `../0.2` frontier has no
+Availability V1 intent reads, so there is no released predecessor to adapt.
+
+`materializations.read` also changes transport: rows reference a shared
+`uiArtifactSets` entry by `uiArtifactSet` index (inline `uiArtifacts` rows still
+decode). Older strict readers reject the new fields, so the same reload-together
+rule applies; reported and stored materializations are unchanged.
+
 ## Availability digest-only declaration claims (unreleased 0.3)
 
 The existing Collection-writer claim accepts either its unchanged closed full
@@ -791,8 +825,9 @@ changes in those paths, so no released predecessor adapter is added.
 ## Event source failure codes (unreleased 0.3)
 
 Availability's existing `intent.read` and paged `intents.list` responses also
-expose the optional closed `currentDeclaration`: the Account-selected manifest
-and its declaration digest, including a host-claimed release-less declaration.
+expose the optional closed `currentDeclaration`: the Account-selected
+declaration digest, including a host-claimed release-less declaration (bodies are
+read by digest; see "Availability content-addressed declaration reads").
 An explicit null means no current declaration; omission from an older producer
 does not prove eligibility. Event watcher admission and server Create share the
 canonical Event contribution reader for eligibility and source-contract version.
@@ -1317,7 +1352,10 @@ request failures over the same result. An answer lives in the UI Machine record'
 in-memory `activity` state, shared with display projections and retained by the
 record owner on same-authority content replacement. Warm display persistence
 omits it. A first census arrival answers even when all cached values match, and
-only that Machine's activity readers wake.
+only that Machine's activity readers wake. Status subscriptions compare the typed
+presence result, so a same-value first answer becomes visible without heartbeat
+rerenders. The existing legacy grace timer schedules its absolute deadline from
+wall time; an older sampled reader clock cannot postpone that deadline.
 
 The Agent settings presentation input also carries `online: null` while unknown.
 Its closed V1 envelope remains strict; this bounded presentation value grants no
@@ -8234,6 +8272,16 @@ has no tracked source-declaration protocol at this path and no scoped working
 changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Agent Session declarations add optional `functionTools: true` to
+advertise native host-function delivery on Session creation. The manifest and
+nested Session capability object remain closed; absence means unsupported. This
+is an executable declaration, not an ignorable hint. Protocol, authored Codex
+declaration, bundled projections and daemon/UI readers update together under the
+0.3 direct cut. No persisted Account/Session format or 0.2 wire request changes.
+The existing runtime `functionToolsDelivered` acknowledgment remains the actual
+launch-delivery contract.
+
 
 Unreleased 0.3 agent/MCP Usage delivery adds optional
 `accounting.coverage.sourceSummary` to the client-only `UsageQueryAccountingSchema`.

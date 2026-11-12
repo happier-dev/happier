@@ -50,6 +50,18 @@ does not select a coding Agent.
 
 ---
 
+## Local Voice Agent functions (0.3 development)
+
+The dedicated Local Voice conversation Agent declares `capabilities.sessions.functionTools: true`
+and can create Sessions. The shared `supportsAgentVoiceFunctions` reader owns this
+eligibility decision. The picker, capture admission and daemon Run admission consume
+that descriptor; ordinary MCP or coding tool support alone does not qualify an Agent.
+Codex currently implements native function delivery. OpenCode (server and ACP),
+Claude, Pi, Muse and configured ACP do not declare it. Unsupported selections use
+the existing setup-required repair before listening. The runtime's
+`functionToolsDelivered` acknowledgment verifies actual delivery, independently of
+this admission fact.
+
 ## Kimi background continuations (0.3 development)
 
 Kimi's custom runtime leaf composes the shared ACP runtime with the host's
@@ -2322,6 +2334,9 @@ pending start in the client. A refused or unsupported status read retains the ac
 outcome and exposes an observation failure through the existing Retry control; completion
 waiters receive that typed read failure. Transport loss retains progress and resumes cursor
 reads. Explicit Retry or discovery can resume a refused read after repair.
+While a surface or completion waiter observes an active job, each tick uses the job's
+small Account-scoped RPC read without re-executing a status Action. Hidden or unmounted
+surfaces release their subscription; periodic reads stop after settlement or the last observer closes.
 The store discovers jobs with `list` when reconnecting or reloading. A daemon restart loses
 job state; re-detect installed software to recover rather than treating the missing job as
 proof of success or failure. Cancellation stops the active operation and cleans its partial

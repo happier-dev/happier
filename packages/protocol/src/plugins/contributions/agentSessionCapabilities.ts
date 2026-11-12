@@ -70,6 +70,8 @@ export const PluginAgentSessionCapabilitiesV2Schema = lazyZodSchema(() => z.stri
   open: z.array(z.enum(['create', 'resume', 'fork'])).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.')),
   delivery: z.array(z.enum(['newTurn', 'steer', 'followUp'])).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.')),
   cancel: z.boolean(), configuration: z.optional(z.boolean()),
+  /** Delivers AgentSessionOpenRequest.functionTools when creating a native Session. */
+  functionTools: z.optional(z.literal(true)),
   /** Native filesystem enforcement of configuration.workspaceWrites='deny'. Absence is unsupported. */
   workspaceWrites: z.optional(z.literal('deny')),
   compaction: z.optional(PluginAgentSessionCompactionCapabilityV2Schema),
@@ -93,3 +95,11 @@ export const PluginAgentSessionCapabilitiesV2Schema = lazyZodSchema(() => z.stri
   })),
 }));
 export type PluginAgentSessionCapabilitiesV2 = z.infer<typeof PluginAgentSessionCapabilitiesV2Schema>;
+
+/** Voice starts a native Session and requires its Action functions to be delivered. */
+export function supportsAgentVoiceFunctions(capabilities: Readonly<{
+  sessions?: Readonly<{ open?: readonly string[] | null; functionTools?: boolean }> | null;
+}> | null | undefined): boolean {
+  return capabilities?.sessions?.functionTools === true
+    && capabilities.sessions.open?.includes('create') === true;
+}

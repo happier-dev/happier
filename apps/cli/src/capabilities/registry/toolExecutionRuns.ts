@@ -1,6 +1,7 @@
 import type { Capability } from '../service';
 import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { supportsAgentVoiceFunctions } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import {
   listExecutionRunProfileContributionDescriptors,
   listExecutionRunSupportedIntents,
@@ -125,13 +126,16 @@ export const executionRunsCapability: Capability = {
         const available = resolveExecutionRunBackendAvailability({
           agentContribution,
         });
+        const backendIntents = supportsAgentVoiceFunctions({
+          sessions: readAgentSessionCapabilities(agentContribution?.richDefinition?.definition),
+        }) ? intents : intents.filter((intent) => intent !== 'voice_agent');
         return [
           backendId,
           {
             available,
             intents: reviewEngineAgentIds.has(backendId)
-              ? intents
-              : intents.filter((intent) => intent !== 'review'),
+              ? backendIntents
+              : backendIntents.filter((intent) => intent !== 'review'),
             reviewScopes: reviewEngineAgentIds.has(backendId)
               ? exactPathReviewEngineAgentIds.has(backendId) ? ['worktree', 'paths'] : ['worktree']
               : [],
@@ -139,16 +143,22 @@ export const executionRunsCapability: Capability = {
           },
         ] as const;
       }),
-      ...configuredBackends.map((backend) => [
-        backend.targetKey,
-        {
-          available: backend.enabled,
-          intents: backend.enabled ? intents : intents.filter((intent) => intent !== 'review'),
-          reviewScopes: backend.enabled ? ['worktree', 'paths'] : [],
-          supportsVendorResume: false,
-          title: backend.label,
-        },
-      ] as const),
+      ...configuredBackends.map((backend) => {
+        const contribution = cliEngineRegistry.contributions.agentDefinitionsById.get(backend.agentId);
+        const backendIntents = supportsAgentVoiceFunctions({
+          sessions: readAgentSessionCapabilities(contribution?.richDefinition?.definition),
+        }) ? intents : intents.filter((intent) => intent !== 'voice_agent');
+        return [
+          backend.targetKey,
+          {
+            available: backend.enabled,
+            intents: backend.enabled ? backendIntents : backendIntents.filter((intent) => intent !== 'review'),
+            reviewScopes: backend.enabled ? ['worktree', 'paths'] : [],
+            supportsVendorResume: false,
+            title: backend.label,
+          },
+        ] as const;
+      }),
     ]) as Record<string, { available: boolean; intents: readonly string[]; supportsVendorResume: boolean }>;
 
     return {

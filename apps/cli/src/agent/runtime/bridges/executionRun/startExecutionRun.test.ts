@@ -334,6 +334,31 @@ describe('startExecutionRun', () => {
       if (previous) setActiveAccountSettingsSnapshot(previous); else clearActiveAccountSettingsSnapshot();
     }
   });
+  it.each([
+    { backendTarget: { kind: 'builtInAgent', agentId: 'claude' } },
+    { backendTarget: { kind: 'configuredAcpBackend', backendId: 'voice-bot' } },
+    { backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, contributions: { agentDefinitionsById: new Map() } },
+  ] as const)('refuses Voice before Run creation when the selected Agent has no native functions ($backendTarget.kind)', async options => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const createRuntime = vi.fn(() => { throw new Error('Native startup must not run'); });
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    try {
+      await expect(startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget: options.backendTarget,
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' },
+        ...('contributions' in options ? { contributions: options.contributions } : {}),
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime, getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {}, finishRun: async () => {},
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      })).rejects.toMatchObject({ code: 'VOICE_AGENT_UNSUPPORTED',
+        details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+      expect(runs.size).toBe(0);
+      expect(createRuntime).not.toHaveBeenCalled();
+    } finally { await voiceAgentManager.dispose(); }
+  });
+
   it.each(['delegate', 'voice_agent'] as const)('prepares the Account Launch Profile for a no-role %s run', async intent => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
@@ -1206,8 +1231,8 @@ describe('startExecutionRun', () => {
     const voiceAgentManager = {
       async start(params: { voiceAgentId: string }, options: { createRuntime: (input: Record<string, unknown>) => unknown }) {
         options.createRuntime({
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-          backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          backendId: 'codex',
           modelId: 'default',
           permissionIntent: 'default',
           start: { intent: 'voice_agent' },
@@ -1221,7 +1246,7 @@ describe('startExecutionRun', () => {
       params: {
         sessionId: 'session_voice',
         intent: 'voice_agent',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         permissionMode: 'default',
         retentionPolicy: 'resumable',
         runClass: 'long_lived',
@@ -2410,7 +2435,7 @@ describe('startExecutionRun', () => {
         params: {
           sessionId: 'session_1',
           intent: 'voice_agent',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
           permissionMode: 'read_only',
           retentionPolicy: 'resumable',
           runClass: 'long_lived',
@@ -2492,7 +2517,7 @@ describe('startExecutionRun', () => {
         params: {
           sessionId: 'session_1',
           intent: 'voice_agent',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
           permissionMode: 'read_only',
           retentionPolicy: 'resumable',
           runClass: 'long_lived',

@@ -136,6 +136,33 @@ create/resume/fork, delivery, configuration, compaction, rollback, goal,
 catalog, usage-recovery, terminal, or external-session behavior must remain
 absent and fail closed through the host's typed unavailable path.
 
+For dedicated Local Voice Agents in unreleased 0.3, declare
+`capabilities.sessions.functionTools: true` only when creating a native Session
+delivers every `AgentSessionOpenRequest.functionTools` entry and returns
+`functionToolsDelivered: true`. Local Voice needs those native functions for
+Happier Actions; ordinary coding tools or MCP support do not establish this
+capability. The picker and Start admission consume this same declaration.
+
+## Selected accounts and native homes (unreleased 0.3)
+
+An Agent that receives credentials through environment variables can still need
+a private native home for its own configuration. In
+`agents.<id>.connectedAccountLaunch.stateSharingDescriptor.nativeHome`, name
+the declared Connected Account purposes that need that home:
+
+```ts
+nativeHome: {
+  environmentKey: 'EXAMPLE_AGENT_HOME',
+  defaultRelativePath: '.example-agent',
+  purposes: ['selected-account'],
+}
+```
+
+For a selected purpose, the host prepares the home and supplies its environment
+path before launch. Use that path for the native serializer. Account selection,
+credential files, state sharing and cleanup remain with the existing host
+owners. The same declaration applies to Session launches and model preflight.
+
 ## Idle compaction (unreleased 0.3)
 
 The unreleased 0.3 contract lets bundled and external Session Agents use the same

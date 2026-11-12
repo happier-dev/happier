@@ -79,6 +79,7 @@ type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
     signal?: AbortSignal;
     admittedSessionAgentTarget?: BackendTargetRefV1;
+    admittedAgentSource?: 'session' | 'agent';
     getDaemonVoiceAgentClient: (scope: ServerAccountScope) => VoiceAgentClient;
     getCleanupSignal?: () => AbortSignal | undefined;
     setDeferredTargetSessionContext: (sessionId: string, project: () => string) => void;
@@ -168,6 +169,7 @@ export async function initializeVoiceAgentHandle({
     sessionId,
     signal,
     admittedSessionAgentTarget,
+    admittedAgentSource,
     getDaemonVoiceAgentClient,
     getCleanupSignal,
     setDeferredTargetSessionContext,
@@ -200,7 +202,7 @@ export async function initializeVoiceAgentHandle({
     const idleTtlSeconds = agentCfg.idleTtlSeconds;
     const verbosity = (agentCfg?.verbosity ?? 'short') as 'short' | 'balanced';
     const admittedVoice = voiceSettingsParse(settings.voice);
-    const agentSource = admittedSessionAgentTarget ? 'session' as const : providerChat
+    const agentSource = admittedSessionAgentTarget ? (admittedAgentSource ?? 'session') : providerChat
         ? 'agent' as const
         : (agentCfg?.agentSource ?? 'session') as 'session' | 'agent';
     const agentId = agentSource === 'agent' ? (agentCfg?.agentId ?? DEFAULT_AGENT_ID) : null;
@@ -426,7 +428,7 @@ export async function initializeVoiceAgentHandle({
     const homeCarrierMetadata = readVoiceSessionOwnerMetadataFromState(
         storage.getState(), daemonConversationSessionId ?? rpcSessionId,
     );
-    const homeDefaultBackendTarget = isGlobalVoiceAgent && agentSource === 'session' && !boundTargetSessionAddress
+    const homeDefaultBackendTarget = !admittedSessionAgentTarget && isGlobalVoiceAgent && agentSource === 'session' && !boundTargetSessionAddress
         && isVoiceConversationSystemSessionMetadata(homeCarrierMetadata)
         ? convertBackendTargetRefV2ToV1(await resolveVoiceConversationBackendTarget(
             storage.getState(),
@@ -434,7 +436,9 @@ export async function initializeVoiceAgentHandle({
             signal,
         ))
         : null;
-    if (agentSource === 'agent') {
+    if (admittedSessionAgentTarget) {
+        admittedBackendTarget = admittedSessionAgentTarget;
+    } else if (agentSource === 'agent') {
         const resolved = await resolveVoiceConfiguredAgentTarget({
             machineId: readVoiceSessionOwnerMetadataFromState(
                 storage.getState(), rpcSessionId,

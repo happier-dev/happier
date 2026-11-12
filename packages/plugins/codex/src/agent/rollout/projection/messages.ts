@@ -1,8 +1,9 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { CodexRolloutAction } from './actions.js';
 
 export type CodexProjectedRolloutEvent =
     | { type: 'codex-session-id'; id: string }
-    | { type: 'user-text'; text: string }
+    | { type: 'user-text'; text: string; clientId?: string; nativeContent?: JsonValue[] }
     | { type: 'assistant-text'; text: string; sidechainId: string | null }
     | { type: 'tool-call'; callId: string; name: string; input: unknown; sidechainId: string | null }
     | { type: 'tool-result'; callId: string; output: unknown; sidechainId: string | null; isError?: boolean }

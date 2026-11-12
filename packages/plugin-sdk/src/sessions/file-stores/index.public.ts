@@ -20,7 +20,7 @@ export { decodeJsonlByteCursor } from '../fileStores/boundedJsonlScanner.js';
 export { encodeIndexCursor } from '../fileStores/indexCursor.js';
 export { encodeJsonlByteCursor } from '../fileStores/boundedJsonlScanner.js';
 export { extractUserMessageText } from '../fileStores/records.js';
-export { createExternalSessionUnsupportedTranscriptItem } from '../fileStores/records.js';
+export { AGENT_UNSUPPORTED_CONTENT_TEXT, createExternalSessionUnsupportedTranscriptItem } from '../fileStores/records.js';
 export { findNewestSessionFileInDir } from '../fileStores/files.js';
 export { isBareSessionFileId } from '../fileStores/sessionFileNameCodec.js';
 export { listSessionFileStoreRoots } from '../fileStores/sessionDirResolver.js';
@@ -34,5 +34,6 @@ export { readSessionIdFromFileHead } from '../fileStores/sessionFileNameCodec.js
 export { resolveSessionFileStoreDirs } from '../fileStores/sessionDirResolver.js';
 export { resolveSessionFileStoreDirsSync } from '../fileStores/sessionDirResolver.js';
 export { resolveSessionFileStoreLaunchEnvironment } from '../fileStores/sessionDirResolver.js';
+export { readJsonlSessionLastActivityMs } from '../fileStores/boundedJsonlScanner.js';
 export { scanJsonlSessionFile } from '../fileStores/boundedJsonlScanner.js';
 export { sessionFileNameMatchesSessionId } from '../fileStores/sessionFileNameCodec.js';

@@ -300,6 +300,7 @@ export const CODEX_PLUGIN = definePlugin({
           surfaces: ['externalSessions'],
           sessions: {
             open: ['create', 'resume'],
+            functionTools: true,
             delivery: ['newTurn', 'steer'],
             cancel: true,
             configuration: true,

@@ -17,6 +17,8 @@ import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoice
 import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } from '@/voice/agent/resolveVoiceSessionAgentSelection';
 import { resolveVoiceConversationBackendTarget } from '@/voice/persistence/voiceConversationSession';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
+import { assertVoiceAgentBackendTargetSupported } from '@/voice/agent/voiceAgentCapabilities';
 
 import { createVoiceRunRecovery } from './voiceRunRecovery';
 import { VoiceRunStopUnconfirmedError } from './voiceRunStopReconciliation';
@@ -67,7 +69,9 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         signal: AbortSignal | undefined;
     }>();
     const voiceAgentLifetimeBySessionId = new Map<string, AbortController>();
-    const admittedSessionAgents = new Map<string, Readonly<{ backendTarget: BackendTargetRefV1; dispose(): void }>>();
+    const admittedSessionAgents = new Map<string, Readonly<{
+        backendTarget: BackendTargetRefV1; agentSource: 'session' | 'agent'; dispose(): void;
+    }>>();
 
     const clearAgentSelection = (sessionId: string): void => {
         admittedSessionAgents.get(sessionId)?.dispose();
@@ -78,7 +82,6 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         signal.throwIfAborted();
         if (admittedSessionAgents.has(sessionId)) return;
         const agent = readLocalConversationSettingsFromAccountSettings(storage.getState().settings).agent;
-        if (agent.agentSource === 'agent' || agent.providerChat?.status === 'configured') return;
         const account = captureActiveServerAccountScopeLifetime();
         if (!account) throw new Error('voice_agent_account_scope_unavailable');
         const isGlobalTarget = sessionId === VOICE_AGENT_GLOBAL_SESSION_ID;
@@ -97,17 +100,27 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         if (isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata) && !targetMetadata?.machineId) {
             throw Object.assign(new Error('voice_agent_selection_unavailable'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
         }
-        const backendTarget = isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata)
+        const configured = agent.agentSource === 'agent' || agent.providerChat?.status === 'configured'
+            ? await resolveVoiceConfiguredAgentTarget({ machineId: targetMetadata?.machineId,
+                accountScope: account.scope, signal, selection: agent }) : null;
+        if (configured && !configured.ok) {
+            throw Object.assign(new Error('voice_agent_selection_unavailable'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+        }
+        const backendTarget = configured?.ok ? convertBackendTargetRefV2ToV1(configured.backendTarget)
+            : isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata)
             ? convertBackendTargetRefV2ToV1(await resolveVoiceConversationBackendTarget(
                 storage.getState(),
                 targetMetadata.machineId,
                 signal,
             ))
             : requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(targetMetadata));
+        await assertVoiceAgentBackendTargetSupported({ target: backendTarget,
+            machineId: targetMetadata?.machineId, serverId: account.scope.serverId, signal });
         // Capture and Send are separate gestures. Keep this admitted choice for
         // their shared attempt, including handle recovery, without starting a model.
         const retirement = account.onRetire(() => clearAgentSelection(sessionId));
-        admittedSessionAgents.set(sessionId, { backendTarget, dispose: () => retirement.dispose() });
+        admittedSessionAgents.set(sessionId, { backendTarget,
+            agentSource: configured ? 'agent' : 'session', dispose: () => retirement.dispose() });
     };
 
     const trackActiveTurn = async <T>(sessionId: string, task: () => Promise<T>): Promise<T> => {
@@ -169,6 +182,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
                     sessionId,
                     signal: lifetime.signal,
                     admittedSessionAgentTarget: admittedSessionAgents.get(sessionId)?.backendTarget,
+                    admittedAgentSource: admittedSessionAgents.get(sessionId)?.agentSource,
                     getDaemonVoiceAgentClient: (scope) => new DaemonVoiceAgentClient(scope, lifetime.signal),
                     getCleanupSignal: () => voiceAgentStopPromiseBySessionId.get(sessionId)?.signal,
                     onPreparedInstructionsFor: preparedInstructionsFor => {

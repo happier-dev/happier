@@ -868,6 +868,49 @@ describe('initializeVoiceAgentHandle', () => {
         expect(admittedStart()).toMatchObject({ backendTarget: { kind: 'backend', backendId: 'codex' } });
     });
 
+    it.each(['opencode', 'claude', 'pi', 'muse'])('refuses unsupported %s before Local Voice capture', async (flavor) => {
+        const previousSession = state.sessions.s1;
+        const rows = state.sessionListRowsByServerId[state.profileScope.serverId];
+        const previousRow = rows.s1;
+        try {
+            const metadata = { ...previousSession.metadata, flavor };
+            state.sessions.s1 = createSessionFixture({ ...previousSession, metadata, metadataLayoutVersion: 0, ownerMetadataView: undefined });
+            rows.s1 = createSessionFixture({ ...previousRow, metadata, metadataLayoutVersion: 0, ownerMetadataView: undefined });
+            storage.setState({ sessions: state.sessions, sessionListRowsByServerId: state.sessionListRowsByServerId });
+            const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+            await expect(createVoiceExecutionTransport().prepareAgentSelection('s1', new AbortController().signal))
+                .rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+            expect(start).not.toHaveBeenCalled();
+        } finally {
+            state.sessions.s1 = previousSession;
+            rows.s1 = previousRow;
+            storage.setState({ sessions: state.sessions, sessionListRowsByServerId: state.sessionListRowsByServerId });
+        }
+    });
+
+    it('admits a supported fixed Agent before capture', async () => {
+        const previousSettings = state.settings;
+        try {
+            const voice = state.settings.voice;
+            const local = voice.providers.local_conversation;
+            state.settings = settingsParse({ ...state.settings, voice: { ...voice, providers: {
+                ...voice.providers, local_conversation: { ...local, config: { ...local.config,
+                    agent: { ...local.config.agent, agentSource: 'agent', agentId: 'codex' },
+                } },
+            } } });
+            storage.setState({ settings: state.settings });
+            const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+            const transport = createVoiceExecutionTransport();
+            await transport.prepareAgentSelection('s1', new AbortController().signal);
+            await transport.ensureRunning('s1');
+            expect(admittedStart()).toMatchObject({ backendTarget: { kind: 'backend', backendId: 'codex' } });
+            await transport.stop('s1');
+        } finally {
+            state.settings = previousSettings;
+            storage.setState({ settings: previousSettings });
+        }
+    });
+
     it('admits the bound coding Session Agent once for Start and delayed Send', async () => {
         const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
         const transport = createVoiceExecutionTransport();

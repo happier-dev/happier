@@ -283,6 +283,46 @@ function findFirstUserMessage(lines: readonly string[], limit: number): string |
   return null;
 }
 
+/** The one rule for a session file's last activity: its last timestamped tail record, else its header's creation time, else its mtime. */
+function resolveJsonlSessionLastActivityMs(
+  tailRecords: readonly unknown[],
+  headerCreatedAtMs: number | null,
+  mtimeMs: number,
+): number {
+  return findLastTimestampMs(tailRecords) ?? headerCreatedAtMs ?? Math.max(0, Math.trunc(mtimeMs));
+}
+
+/**
+ * `scanJsonlSessionFile`'s `lastActivityAtMs` without its title and message
+ * reads: the same tail window, and the head only when the tail holds no
+ * timestamp. For ordering a whole store by activity before reading any page's
+ * titles. `null` when the file is unreadable or (head read) has no header.
+ */
+export async function readJsonlSessionLastActivityMs(
+  filePath: string,
+  bounds: JsonlScanBoundsV1 = {},
+): Promise<number | null> {
+  const fileSystem = bounds.fileSystem ?? defaultFileSystem;
+  try {
+    const fileStat = await fileSystem.stat(filePath);
+    const tailBytes = normalizePositiveInteger(bounds.tailBytes, DEFAULT_TAIL_BYTES);
+    const tailStart = Math.max(0, fileStat.size - tailBytes);
+    const tail = await fileSystem.read(filePath, tailStart, Math.min(tailBytes, fileStat.size - tailStart));
+    const tailRecords = splitLines(tail).map(parseJsonLine).filter((record): record is unknown => record !== null);
+    if (findLastTimestampMs(tailRecords) !== null) {
+      return resolveJsonlSessionLastActivityMs(tailRecords, null, fileStat.mtimeMs);
+    }
+    const headBytes = normalizePositiveInteger(bounds.headBytes, DEFAULT_HEAD_BYTES);
+    const head = await fileSystem.read(filePath, 0, Math.min(headBytes, fileStat.size));
+    const header = splitLines(head).map(parseJsonLine).filter((record): record is unknown => record !== null)
+      .map(parseDefaultSessionHeader)
+      .find((candidate) => candidate !== null) ?? null;
+    return header ? resolveJsonlSessionLastActivityMs(tailRecords, header.createdAtMs, fileStat.mtimeMs) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function scanJsonlSessionFile(
   filePath: string,
   bounds: JsonlScanBoundsV1 = {},
@@ -304,8 +344,6 @@ export async function scanJsonlSessionFile(
     const tailStart = Math.max(0, fileStat.size - tailBytes);
     const tail = await fileSystem.read(filePath, tailStart, Math.min(tailBytes, fileStat.size - tailStart));
     const tailRecords = splitLines(tail).map(parseJsonLine).filter((record): record is unknown => record !== null);
-    const lastTimestampMs = findLastTimestampMs(tailRecords);
-    const fallbackActivity = header.createdAtMs ?? Math.max(0, Math.trunc(fileStat.mtimeMs));
 
     return {
       filePath,
@@ -315,7 +353,7 @@ export async function scanJsonlSessionFile(
       title: findTitleFromHead(headRecords, null) ?? findTitleFromTail(tailRecords, header.title),
       firstUserMessage: findFirstUserMessage(headLines, fullScanLineLimit),
       lastUserMessage: findLastUserMessage(tailRecords),
-      lastActivityAtMs: lastTimestampMs ?? fallbackActivity,
+      lastActivityAtMs: resolveJsonlSessionLastActivityMs(tailRecords, header.createdAtMs, fileStat.mtimeMs),
     };
   } catch {
     return null;

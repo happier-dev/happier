@@ -108,7 +108,11 @@ async function openCodexSession(
   goalProjection: CodexGoalProjection,
   bindSessionCatalog: CodexSessionCatalogBinder,
 ): Promise<AgentSessionRuntime> {
-  const backendMode = readCodexBackendMode(request);
+  const selectedBackendMode = readCodexBackendMode(request);
+  // Fresh host-function Sessions require the native implementation. Retained
+  // Sessions keep their captured backend identity when resuming or forking.
+  const backendMode = request.kind === 'create' && request.functionTools?.length
+    ? 'appServer' : selectedBackendMode;
   if (backendMode === 'acp') {
     if (requestHasStartupInstructions(request)) {
       throw new PluginError({

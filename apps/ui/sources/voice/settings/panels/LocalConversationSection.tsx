@@ -7,6 +7,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { isVoiceAgentSupported } from '@/voice/agent/voiceAgentCapabilities';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
@@ -220,7 +221,10 @@ export function LocalConversationSection(props: {
     acpCatalog?.catalog,
     settings.backendEnabledByTargetKey,
   ]);
-  const resolvedAgentEntries = React.useMemo(() => resolvedBackendEntries.map(entry => entry.agentCatalogEntry), [resolvedBackendEntries]);
+  const resolvedAgentEntries = React.useMemo(() => resolvedBackendEntries
+    .filter(entry => isVoiceAgentSupported(entry.agentId,
+      currentDaemonProjectionInputs?.pluginProjectionV2))
+    .map(entry => entry.agentCatalogEntry), [resolvedBackendEntries, currentDaemonProjectionInputs?.pluginProjectionV2]);
   const selectedAgentTarget = React.useMemo(() => cfg.agent.agentSource === 'agent' && !hasConfiguredProviderChat
     ? projectVoiceConfiguredAgentTarget({ selection: cfg.agent, entries: resolvedBackendEntries,
       backendEnabledByTargetKey, mergedProviderProjectionById: currentDaemonProjectionInputs?.mergedProviderProjectionById })
@@ -574,6 +578,8 @@ export function LocalConversationSection(props: {
               autoFocus
               value={String(cfg.agent.agentId ?? '')}
               onCommit={(draft) => {
+                if (!isVoiceAgentSupported(draft.trim(),
+                  currentDaemonProjectionInputs?.pluginProjectionV2)) return String(cfg.agent.agentId ?? '');
                 setCustomEntry(null);
                 const fixedVoice = withFixedAgentSource();
                 const nextVoice = applyVoiceAgentSelection(fixedVoice, { kind: 'custom', agentId: draft });

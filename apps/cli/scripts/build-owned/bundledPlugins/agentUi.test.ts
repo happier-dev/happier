@@ -42,6 +42,21 @@ function emittedMapKeys(source: string, name: string): string[] {
 }
 
 describe('bundled Agent exclusion projections', () => {
+    it('preserves admitted Agent capabilities through the bundled UI declaration', () => {
+        const admitted = ingestPluginManifestV2(CLAUDE_MANIFEST);
+        if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+        const pluginPackages: readonly BundledPluginPackage[] = [{
+            pluginPackageId: 'claude', pluginId: admitted.manifest.id, packageName: '@happier-dev/plugins-claude',
+            packageVersion: '0.0.0', agentId: 'claude', manifest: admitted.manifest,
+        }];
+        const exports: Record<string, unknown> = {};
+        runInNewContext(transpileModule(renderBundledAgentDeclarationsTs(pluginPackages), {
+            compilerOptions: { module: ModuleKind.CommonJS },
+        }).outputText, { exports });
+        const declarations = exports.BUNDLED_CANONICAL_AGENT_DECLARATIONS as Record<string, { capabilities?: unknown }>;
+        expect(declarations.claude?.capabilities).toEqual(admitted.manifest.contributes.agents?.[0]?.capabilities);
+    });
+
     it('keeps released UI order and appends admitted descriptor routing ids generically', () => {
         const claude = ingestPluginManifestV2(CLAUDE_MANIFEST);
         const muse = ingestPluginManifestV2(MUSE_MANIFEST);

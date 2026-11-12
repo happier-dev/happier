@@ -321,10 +321,14 @@ const OutputSchemas = [
     text: z.string(),
     turnId: z.optional(HostIdSchema),
     sidechainId: z.optional(HostIdSchema),
+    /** Opaque native user content retained for round trips; never host authority or rendered markup. */
+    nativeContent: z.optional(z.array(AgentRuntimeJsonValueV1Schema)),
     /** Assistant-channel text delivered by another agent (teammate or subagent hand-back), not the Agent's reply. */
     peer: z.optional(TranscriptPeerSenderV1Schema),
   }).check(z.refine((value) => value.peer === undefined || (value.role === 'assistant' && value.turnId === undefined),
-    'Peer-delivered text is Session-scoped assistant-channel text')))),
+    'Peer-delivered text is Session-scoped assistant-channel text'),
+    z.refine((value) => value.nativeContent === undefined || value.role === 'user',
+      'Opaque native content belongs to committed user messages')))),
   lazyZodSchema(() => z.strictObject({
     ...TurnEventBaseShape,
     turnId: z.optional(HostIdSchema),

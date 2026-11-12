@@ -286,4 +286,25 @@ describe('createCodexAgentRuntime', () => {
     expect(connectedAccounts.materialize).not.toHaveBeenCalled();
     expect(session).toBeDefined();
   });
+
+  it('preserves captured ACP identity when a resumed Session requests host functions', async () => {
+    const open = vi.fn(async () => createSession());
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts: createConnectedAccountsBoundary() },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+    const request = {
+      kind: 'resume' as const, sessionId: 'retained-voice', cwd: '/repo',
+      providerSessionId: 'retained-acp-thread',
+      runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'acp' } },
+      launchEnvironment: { values: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' }, unset: [] },
+      functionTools: [{ name: 'voice_action', description: 'Voice Action', inputSchema: { type: 'object' },
+        async call() { return { ok: true }; } }],
+    };
+    const session = await runtime.sessions?.open(request, context);
+    expect(open).toHaveBeenCalledWith(request, expect.any(Object));
+    expect(session?.functionToolsDelivered).not.toBe(true);
+  });
 });

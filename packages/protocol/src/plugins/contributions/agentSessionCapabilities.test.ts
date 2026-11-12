@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginAgentSessionCapabilitiesV2Schema } from './agentSessionCapabilities.js';
+import { PluginAgentSessionCapabilitiesV2Schema, supportsAgentVoiceFunctions } from './agentSessionCapabilities.js';
 
 const sessions = { open: ['create'], delivery: ['newTurn'], cancel: true };
+
+describe('Agent Session native function declaration', () => {
+  it('accepts affirmative native functions and rejects false declarations at admission', () => {
+    expect(PluginAgentSessionCapabilitiesV2Schema.parse({ ...sessions, functionTools: true }).functionTools).toBe(true);
+    expect(PluginAgentSessionCapabilitiesV2Schema.safeParse({ ...sessions, functionTools: false }).success).toBe(false);
+    expect(PluginAgentSessionCapabilitiesV2Schema.parse(sessions)).not.toHaveProperty('functionTools');
+  });
+  it('requires both native functions and Session creation for Voice', () => {
+    expect(supportsAgentVoiceFunctions({ sessions: { open: ['create'], functionTools: true } })).toBe(true);
+    for (const capabilities of [undefined, null, {}, { sessions: null }, { sessions: { open: ['create'] } },
+      { sessions: { open: ['create'], functionTools: false } }, { sessions: { open: ['resume'], functionTools: true } },
+      { sessions: { functionTools: true } }]) {
+      expect(supportsAgentVoiceFunctions(capabilities)).toBe(false);
+    }
+  });
+});
 
 describe('Agent Session compaction declaration', () => {
   it('accepts native and host idle declarations through the contribution boundary', () => {

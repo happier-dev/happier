@@ -51,6 +51,8 @@ import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/
 import { teamSummaryFixture } from '@/dev/testkit';
 import { readAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
+import { getBundledAgentDeclaration } from '@/agents/catalog/catalog';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -94,7 +96,7 @@ function serveBundledCodexAgent() {
     v: 2, generation: 7, familiesById: {}, agentsById: {
       codex: {
         id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, title: 'Codex',
-        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, functionTools: true } },
       },
     },
   }) });
@@ -282,7 +284,7 @@ beforeEach(async () => {
           identity: { pluginId: 'com.acme.voice', localId: 'agent' },
           title: 'Acme Voice',
           subtitle: 'External conversation Agent',
-          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, functionTools: true } },
         },
       },
       familiesById: {},
@@ -403,7 +405,7 @@ describe('LocalConversationSection', () => {
       agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, title: 'Codex',
         providerRequirements: readAccountAgentProviderRequirements(targetKey, { kind: 'account' }),
         connectedAccounts: [{ purpose: 'primary', service }],
-        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, functionTools: true } },
       } }, familiesById: { providers: { family: 'providers', entriesById: {
         'happier.provider.cliproxyapi/cliproxyapi': { id: 'happier.provider.cliproxyapi/cliproxyapi', pluginId: 'happier.provider.cliproxyapi',
           provenance: 'external', sourceKind: 'path', definition },
@@ -512,32 +514,29 @@ describe('LocalConversationSection', () => {
     expect(setVoice).not.toHaveBeenCalled();
   });
 
-  it('offers a configured Agent from destination rows without a Settings catalog root', async () => {
+  it('omits Agents without native Voice functions, including configured ACP destination rows', async () => {
+    registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
+      v: 2, generation: 7, familiesById: {}, agentsById: Object.fromEntries(
+        ['codex', 'opencode', 'claude', 'pi', 'muse'].map(id => {
+          const declaration = getBundledAgentDeclaration(id);
+          if (!declaration) throw new Error(`Expected bundled Agent ${id}`);
+          return [id, { id, identity: declaration.identity, title: id, capabilities: declaration.capabilities }];
+        }),
+      ),
+    }) });
     rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
       launch: { kind: 'command' as const, command: 'review', args: [] }, createdAt: 1, updatedAt: 1 })];
     await refreshAcpCatalog({ serverId: account!.home.id, accountId: 'voice-account' });
     const LocalConversationSection = await loadLocalConversationSection();
-    const changed = createDeferred<void>();
-    const setVoice = vi.fn<(voice: VoiceSettings) => void>(() => { changed.resolve(); });
     const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex' } });
-    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={vi.fn()} />);
     const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'));
-    const rowTargetKey = 'agent:happier.agent.custom-acp/custom-acp:definition:row-review';
-    expect(picker?.props.items.find((item: { id: string }) => item.id === rowTargetKey)).toMatchObject({ title: 'Row review' });
-    await selectDropdownOption(screen, t('settingsVoice.pages.conversations.agentTitle'),
-      'dropdown-option-agent_happier_agent_custom-acp_custom-acp_definition_row-review');
-    await changed.promise;
-    expect(setVoice).toHaveBeenCalledOnce();
-    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent).toMatchObject({
-      agentId: 'custom-acp', agentTargetKey: rowTargetKey,
-    });
-    await screen.update(<LocalConversationSection voice={setVoice.mock.calls[0]![0]} setVoice={setVoice} />);
-    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'))?.props.selectedId).toBe(rowTargetKey);
-    await expect(resolveVoiceConfiguredAgentTarget({ machineId: 'machine-1',
-      selection: readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent,
-    })).resolves.toMatchObject({ ok: true, backendTarget: {
-      kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review', sourceKind: 'configured',
-    } });
+    const choices = picker?.props.items.map((item: { id: string }) => item.id);
+    expect(choices).toContain(buildAgentUniverseBackendTargetKey('codex'));
+    for (const id of ['opencode', 'claude', 'pi', 'muse']) {
+      expect(choices).not.toContain(buildAgentUniverseBackendTargetKey(id));
+    }
+    expect(choices).not.toContain('agent:happier.agent.custom-acp/custom-acp:definition:row-review');
   });
 
   it('draws the Hands-free timing rows only while Hands-free is on', async () => {
@@ -703,7 +702,7 @@ describe('LocalConversationSection', () => {
       v: 2, generation: machineId === 'a' ? 10 : 20, familiesById: {},
       agentsById: { [`com.${machineId}.voice.agent`]: { id: `com.${machineId}.voice.agent`,
         identity: { pluginId: `com.${machineId}.voice`, localId: 'agent' }, title: `Agent ${machineId}`,
-        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, functionTools: true } },
       } },
     }) }));
     capabilitiesInvoke.mockImplementation(async (machineId) => ({ supported: true, response: { ok: true, result: {
@@ -891,17 +890,19 @@ describe('LocalConversationSection', () => {
     const field = screen.findAll((node) => node.props?.fieldTestID === 'settings.voice.local.agentId.custom.field')[0];
     expect(field).toBeDefined();
     act(() => { field.props.onCommit('claude'); });
+    expect(setVoice).not.toHaveBeenCalled();
+    act(() => { field.props.onCommit('codex'); });
 
     const selection = readLocalConversationVoiceSettings(setVoice.mock.calls[0]?.[0]).agent;
     expect(selection).toMatchObject({
-      agentId: 'claude',
+      agentId: 'codex',
       agentTargetKey: null,
       agentIdentity: null,
     });
     await expect(resolveVoiceConfiguredAgentTarget({ machineId: 'machine-1', selection })).resolves.toMatchObject({
       ok: true,
-      agentId: 'claude',
-      backendTarget: { kind: 'backend', backendId: 'claude' },
+      agentId: 'codex',
+      backendTarget: { kind: 'backend', backendId: 'codex' },
     });
   });
 
@@ -1222,7 +1223,7 @@ describe('LocalConversationSection', () => {
       v: 2, generation: 7, familiesById: {}, agentsById: {
         'com.acme.voice.agent': {
           id: 'com.acme.voice.agent', identity: { pluginId: 'com.acme.voice', localId: 'agent' },
-          title: 'Acme Voice', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+          title: 'Acme Voice', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, functionTools: true } },
           connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }],
         },
       },

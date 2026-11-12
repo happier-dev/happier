@@ -1,3 +1,4 @@
+import { AGENT_UNSUPPORTED_CONTENT_TEXT } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { createHash, randomUUID } from 'node:crypto';
 import { createCodexCompactionOperation, type CodexCompactionOperation } from './compaction.js';
 import { resolveCodexPromptCacheTtlMs } from './promptCache.js';
@@ -153,7 +154,8 @@ import {
   readProviderEventItemId,
   readProviderEventItemRecord,
   readProviderEventText,
-  readProviderUserMessageText,
+  readProviderUserMessageContent,
+  readProviderUserMessageClientId,
   readCodexTerminalOutcome,
   readModelId,
   readProviderEventTurnId,
@@ -1629,12 +1631,6 @@ export function createCodexAppServerRuntime(
     return role ? role.toLowerCase() : null;
   };
 
-  const readProviderUserMessageClientId = (notificationParams: unknown): string | null => {
-    if (readNormalizedProviderEventItemType(notificationParams) !== 'usermessage') return null;
-    const item = readProviderEventItemRecord(notificationParams);
-    return trimStringValue(item?.clientId) ?? trimStringValue(item?.client_id);
-  };
-
   const markCorrelatedProviderUserMessageAccepted = (notificationParams: unknown): void => {
     const clientUserMessageId = readProviderUserMessageClientId(notificationParams);
     if (!clientUserMessageId) return;
@@ -1653,15 +1649,19 @@ export function createCodexAppServerRuntime(
     if (readProviderUserMessageClientId(notificationParams)) return;
     const activeTurn = pendingTurn;
     const itemId = readProviderEventItemId(notificationParams);
-    const text = readProviderUserMessageText(notificationParams);
-    if (!activeTurn || !itemId || !text) return;
+    const content = readProviderUserMessageContent(notificationParams);
+    if (!activeTurn || !itemId) return;
     const localId = `codex-app-server-user:${activeTurn.sessionTurnId}:${itemId}`;
     if (publishedProviderUserMessageIds.has(localId)) return;
     publishedProviderUserMessageIds.add(localId);
+    if (!content) params.host.logger.warn('Codex native user content could not be projected', {
+      code: 'codex_native_user_content_unsupported',
+    });
     publishRuntimeEvent({
       kind: 'transcript-user-message-committed',
       localId,
-      text,
+      text: content?.text ?? AGENT_UNSUPPORTED_CONTENT_TEXT,
+      ...(content?.nativeContent ? { nativeContent: content.nativeContent } : {}),
       turnId: activeTurn.sessionTurnId,
     });
   };

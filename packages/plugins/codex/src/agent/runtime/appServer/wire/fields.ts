@@ -1,3 +1,5 @@
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
 import { readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
 
@@ -221,21 +223,50 @@ export function readProviderEventText(notificationParams: unknown, keys: readonl
   return parts.length > 0 ? parts.join('') : null;
 }
 
-function readNonEmptyStringValue(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+export function readProviderUserMessageClientId(notificationParams: unknown): string | null {
+  if (readNormalizedProviderEventItemType(notificationParams) !== 'usermessage') return null;
+  const item = readProviderEventItemRecord(notificationParams);
+  return trimStringValue(item?.clientId) ?? trimStringValue(item?.client_id);
 }
 
-export function readProviderUserMessageText(notificationParams: unknown): string | null {
+/** Shared native ingress for history and attached-client user messages (Codex 0.167 UserInput). */
+export function readProviderUserMessageContent(notificationParams: unknown): {
+  text: string;
+  nativeContent?: JsonValue[];
+} | null {
   const item = readProviderEventItemRecord(notificationParams);
-  if (!Array.isArray(item?.content)) {
-    return readProviderEventText(notificationParams, ['text', 'message']);
+  const content = item?.content;
+  if (typeof content === 'string') return content ? { text: content } : null;
+  if (content === undefined) {
+    const text = readProviderEventText(notificationParams, ['text', 'message']);
+    return text === null ? null : { text };
   }
-  const parts = item.content.flatMap((part): string[] => {
-    const record = readRecord(part);
-    const text = readNonEmptyStringValue(record?.text)
-      ?? readNonEmptyStringValue(record?.output_text)
-      ?? readNonEmptyStringValue(record?.outputText);
-    return text === null ? [] : [text];
-  });
-  return parts.length > 0 ? parts.join('\n') : null;
+  if (!Array.isArray(content)) return null;
+  const text: string[] = [];
+  let preserveContent = false;
+  for (const value of content) {
+    const part = readRecord(value);
+    if (!part) return null;
+    if (part.type === 'text' && typeof part.text === 'string') {
+      text.push(part.text);
+      if ((Array.isArray(part.text_elements) && part.text_elements.length > 0)
+        || (Array.isArray(part.textElements) && part.textElements.length > 0)) preserveContent = true;
+    } else if ((part.type === 'skill' || part.type === 'mention')
+      && typeof part.name === 'string' && typeof part.path === 'string') {
+      text.push(`[Codex ${part.type}: ${part.name} (${part.path})]`);
+      preserveContent = true;
+    } else if ((part.type === 'image' || part.type === 'audio')
+      && (typeof part.url === 'string' || typeof part.fileId === 'string')) {
+      text.push(`[Codex ${part.type}: original content retained; preview unavailable]`);
+      preserveContent = true;
+    } else if ((part.type === 'localImage' || part.type === 'localAudio') && typeof part.path === 'string') {
+      text.push(`[Codex local ${part.type === 'localImage' ? 'image' : 'audio'}: ${part.path}; preview unavailable]`);
+      preserveContent = true;
+    } else return null;
+  }
+  const display = text.join('\n');
+  if (!display) return null;
+  if (!preserveContent) return { text: display };
+  const parsed = AgentRuntimeJsonValueSchema.safeParse(content);
+  return parsed.success && Array.isArray(parsed.data) ? { text: display, nativeContent: parsed.data } : null;
 }

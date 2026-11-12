@@ -1,10 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { getVoiceActionFunctionTool } from '@happier-dev/protocol/voice/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { withCodexNativeAttachFixture } from './runtime.nativeAttach.test-support.js';
+import { createCodexAgentRuntime } from '../engine.js';
 
 describe('Codex native host function tools', () => {
+  it('delivers fresh host functions through the factory despite an ACP coding preference', async () => {
+    const runtime = await createCodexAgentRuntime({
+      plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+      agent: { id: 'codex' }, signal: new AbortController().signal,
+    });
+    const sessions = runtime.sessions;
+    if (!sessions) throw new Error('Codex Session factory is unavailable');
+    await withCodexNativeAttachFixture(async fixture => {
+      const session = await fixture.openConfiguredSession();
+      expect(session.functionToolsDelivered).toBe(true);
+      expect(fixture.requests.find(request => request.method === 'thread/start')?.params.dynamicTools)
+        .toEqual([{ type: 'function', ...getVoiceActionFunctionTool() }]);
+    }, {
+      startupInstructions: null,
+      processEnv: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 }, model: { value: 'fixture-model', updatedAtMs: 1 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 1 },
+        options: { codexBackendMode: { value: 'acp', updatedAtMs: 1 } },
+      },
+      sessionFactory: { open: (request, context) => sessions.open(request, {
+        ...context,
+        // The host ACP adapter is an external protocol boundary; the native factory stays real.
+        protocols: { acp: { open: async () => { throw new Error('ACP cannot deliver native host functions'); } } } as AgentSessionRuntimeContext['protocols'],
+      }) },
+      functionTools: [{ ...getVoiceActionFunctionTool(), async call() { return { ok: true }; } }],
+    });
+  });
   it.each([undefined, { allowedTools: [], unlistedTools: 'deny' as const }])('advertises directly callable host functions independently of native tool restrictions (%j)', async (toolRestriction) => {
     const calls: JsonValue[] = [];
     const descriptor = getVoiceActionFunctionTool();

@@ -122,6 +122,7 @@ export type CodexAppServerEvent =
       kind: 'transcript-user-message-committed';
       localId: string;
       text: string;
+      nativeContent?: Extract<AgentSessionRuntimeEvent, { kind: 'transcript-message-committed' }>['nativeContent'];
       turnId?: string;
     }>)
   | (CodexAppServerEventBase & NativeUsageObservation)
