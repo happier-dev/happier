@@ -64,7 +64,14 @@ vi.mock('@/modal', async () => {
 });
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
-    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(rpc));
+    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(request => {
+        // 4505883b9e2 added native observation. These refresh scenarios keep its
+        // transport pending, as the controller suite does, until the owner retires it.
+        if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) return new Promise(resolve => {
+            request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true });
+        });
+        return rpc(request);
+    }));
 
 
 vi.mock('./WorkspaceSourceControlView', () => ({
@@ -185,7 +192,11 @@ describe('WorkspaceRightPanelGitView (stale snapshot)', () => {
                 </CheckoutReachabilityScope>,
             );
 
-            await vi.waitFor(() => expect(storage.getState().getWorkspaceScmSnapshotError(scope())).not.toBeNull());
+            // ffc5860fd00 stops SCM reads while the checkout is unreachable.
+            // The 50e187800b1 fixture incorrectly expected a stored read failure.
+            // Keep the cached content without fabricating a failed refresh.
+            expect(rpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SCM_STATUS_SNAPSHOT }));
+            expect(storage.getState().getWorkspaceScmSnapshotError(scope())).toBeNull();
             // The page's reachability line already says it and offers Retry: one cause, one message.
             expect(screen.findHostByTestId('workspace-rightpanel-git-stale')).toBeNull();
             expect(screen.findHostByTestId('project-rightpanel-git-surface:commit')).not.toBeNull();
