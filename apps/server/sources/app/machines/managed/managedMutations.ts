@@ -181,9 +181,11 @@ export async function admitManagedControl(params: Readonly<{
         const input = request.input;
         const row = await readManagedMachineInTx(tx, { homeId: input.homeId,
             managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId });
+        const role = row.custodianAccountId === params.custodianAccountId
+            ? await resolveManagedMachineRoleInTx(tx, row, params.actorAccountId) : null;
+        if (role === null) throw new ManagedMachineError('permission_denied');
         const controller = readManagedController(row);
-        if (row.custodianAccountId !== params.custodianAccountId
-            || await resolveManagedMachineRoleInTx(tx, row, params.actorAccountId) !== "manage") {
+        if (role !== "manage") {
             throw new ManagedMachineError(request.action === 'machines.managed.power.set' && !controller
                 ? 'managed_power_required' : 'permission_denied');
         }

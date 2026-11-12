@@ -146,12 +146,30 @@ describe('Account-owned managed control without a controller', () => {
         expect(effect).toHaveBeenCalledOnce();
     });
 
-    it('returns managed_power_required rather than lending guest Manage native custody', async () => {
+    it.each([false, true])('refuses power without revealing controller absence to an Account without a role (guest access=%s)', async guestAccess => {
         const test = await createRetainedGuestFixture(false);
-        await expect(admitManagedControl({ actorAccountId: test.other.id, custodianAccountId: test.owner.id,
-            input: { action: 'machines.managed.power.set', requestId: randomUUID(), input: {
-                homeId, managedId: test.row.id, expectedRevision: test.row.intentRevision, when: 'now', intent: 'start',
-            } } })).rejects.toMatchObject({ code: 'managed_power_required' });
+        if (guestAccess) await db.managedMachine.update({ where: { id: test.row.id }, data: { enrolledMachineId: test.guest.id } });
+        const app = fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        // Authentication is the external boundary; role resolution and Home admission stay real.
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            request.userId = test.other.id;
+            request.authTokenKind = 'account';
+            request.authTokenLegacy = false;
+            request.authAuthority = 'account_automation';
+        });
+        registerManagedMachineRoutes(app as Parameters<typeof registerManagedMachineRoutes>[0]);
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control',
+                payload: { action: 'machines.managed.power.set', requestId: randomUUID(), input: {
+                    homeId, managedId: test.row.id, when: 'after-idle', intent: 'stop', afterMs: 0,
+                } } });
+            // SEC-1111H H2: no role must be refused before controller state can be disclosed.
+            expect(response.statusCode, response.body).toBe(guestAccess ? 409 : 403);
+            expect(response.json()).toEqual({ code: guestAccess ? 'managed_power_required' : 'permission_denied' });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } }))
+                .toMatchObject({ desired: 'start', desiredWhen: 'now', intentRevision: test.row.intentRevision });
+        } finally { await app.close(); }
     });
 
     it.each([false, true])('admits content-free guest activity using the managed role with controller present=%s', async withController => {
