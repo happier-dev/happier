@@ -18,18 +18,22 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
+import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { useDeploymentEnvironmentRowParts, useDeploymentEnvironmentRowSelection } from './DeploymentEnvironmentCollection';
+import { isSameDeploymentName, useDeploymentEnvironmentRowParts, useDeploymentEnvironmentRowSelection } from './DeploymentEnvironmentCollection';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
+import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 
 export const ALL_DEPLOYMENTS_ROUTE = '/projects/deployments';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
+const NO_ITEMS: readonly EnvironmentItem[] = Object.freeze([]);
 /** One demanded page of the Account-wide Environment list, as `useDeploymentInventory` returns it. */
 export type AllDeploymentsRead = Pick<
   ReturnType<typeof useDeploymentInventory>,
@@ -62,29 +66,59 @@ export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
       read={read}
       serverId={lifetime?.scope.serverId ?? null}
       lifetime={lifetime}
+      presented={demand.visible}
     />
   );
 });
 
 /** The page over one read; the dev specimen renders it over a fixture transport. */
 export const AllDeploymentsView = React.memo(function AllDeploymentsView(
-  props: Readonly<{ read: AllDeploymentsRead; serverId: string | null; lifetime?: ServerAccountScopeLifetime | null }>,
+  props: Readonly<{
+    read: AllDeploymentsRead;
+    serverId: string | null;
+    lifetime?: ServerAccountScopeLifetime | null;
+    /** Whether the page is on screen: backup coverage is read for the shown Environments only then. */
+    presented?: boolean;
+  }>,
 ) {
   const { read, serverId } = props;
   const { snapshot } = read;
   const pageStateSize = usePageSurfaceStateSize();
+  const items = snapshot.value?.items ?? NO_ITEMS;
+  const environments = React.useMemo(() => items.map((item) => item.environment), [items]);
+  const backups = useVisibleBackupCoverage(props.lifetime ?? null, environments, props.presented === true);
+  const [notBackedUpOnly, setNotBackedUpOnly] = React.useState(false);
+  const toggleNotBackedUp = React.useCallback(() => setNotBackedUpOnly((on) => !on), []);
+  const uncovered = React.useMemo(() => new Set(backups.coverage?.rows
+    .filter((row) => row.status === 'uncovered').map((row) => row.environment.id)), [backups.coverage]);
+  // The filter is offered only when it has something to show, and stays while it is on so it can be turned off.
+  const filtering = notBackedUpOnly && backups.coverage !== null;
+  const notBackedUpChip = filtering || uncovered.size > 0 ? (
+    <SelectionListFilterChip filter={{
+      id: 'all-deployments.notBackedUp',
+      testID: 'all-deployments.notBackedUp',
+      label: t('projects.deployments.notBackedUp'),
+      valueLabel: uncovered.size > 0
+        ? t('projects.deployments.notBackedUpCount', { count: uncovered.size })
+        : t('projects.deployments.notBackedUp'),
+      selected: filtering,
+      onToggle: toggleNotBackedUp,
+    }} />
+  ) : null;
   const header = (
     <PageHeader
       testID="all-deployments.header"
       title={t('projects.deployments.allTitle')}
       description={t('projects.deployments.allDescription')}
       alwaysShowTitle
+      actions={notBackedUpChip ?? undefined}
     />
   );
   const retry = React.useCallback(() => {
     void read.refresh();
   }, [read]);
-  const items = snapshot.value?.items ?? [];
+  const shownItems = React.useMemo(() => filtering ? items.filter((item) => uncovered.has(item.environment.id)) : items,
+    [filtering, items, uncovered]);
 
   if (!snapshot.value && snapshot.status === 'unavailable') {
     const withdrawn = snapshot.failure
@@ -134,7 +168,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       </ItemList>
     );
   }
+  const unresolved = backups.coverage?.unresolved ?? 0;
   return (
+    <>
+    {backups.readers}
     <ItemList testID="all-deployments">
       {header}
       {snapshot.status === 'unavailable' ? (
@@ -144,7 +181,28 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           action={{ label: t('common.retry'), onPress: retry }}
         />
       ) : null}
-      {items.length === 0 ? (
+      {filtering && unresolved > 0 && backups.coverage?.status !== 'loading' ? (
+        <ItemGroup surface="none">
+          <SurfaceStateCard
+            testID="all-deployments.backupsUnresolved"
+            kind="unavailable"
+            size="line"
+            title={t('projects.deployments.backupsUnresolved', { count: unresolved })}
+            action={{ label: t('common.retry'), onPress: backups.retry, testID: 'all-deployments.backupsUnresolved.retry' }}
+          />
+        </ItemGroup>
+      ) : null}
+      {filtering && shownItems.length === 0 && items.length > 0 ? (
+        // Nothing known uncovered: "all backed up" only when every shown Environment answered.
+        unresolved > 0 ? null : <ItemGroup surface="none">
+          <SurfaceStateCard
+            testID="all-deployments.allBackedUp"
+            kind="empty"
+            size="line"
+            title={t('projects.deployments.allBackedUp')}
+          />
+        </ItemGroup>
+      ) : items.length === 0 ? (
         // A page whose rows all belong to Projects this Account can't open still leads on to the next one.
         <ItemGroup surface="none">
           <SurfaceStateCard
@@ -155,7 +213,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           />
         </ItemGroup>
       ) : (
-        <AllDeploymentsGroups items={items} serverId={serverId} lifetime={props.lifetime ?? null} />
+        <AllDeploymentsGroups items={shownItems} serverId={serverId} lifetime={props.lifetime ?? null}
+          openBackups={filtering} />
       )}
       {paged ? (
         <ItemGroup surface="none" testID="all-deployments.paging">
@@ -180,29 +239,42 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         </ItemGroup>
       ) : null}
     </ItemList>
+    </>
   );
 });
 
 function AllDeploymentsGroups(
-  props: Readonly<{ items: readonly EnvironmentItem[]; serverId: string; lifetime: ServerAccountScopeLifetime | null }>,
+  props: Readonly<{
+    items: readonly EnvironmentItem[];
+    serverId: string;
+    lifetime: ServerAccountScopeLifetime | null;
+    /** Rows shown for "Not backed up" open where that Environment's backups are set up. */
+    openBackups?: boolean;
+  }>,
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
+  // A phone row keeps its status to one short line; the Environment it opens names the Machine.
+  const phone = useDeviceType() === 'phone';
   const parts = useDeploymentEnvironmentRowParts(
     props.items,
     'all-deployments.row',
     props.lifetime,
+    phone ? 'rail' : 'row',
   );
   const serverId = props.serverId;
+  const openBackups = props.openBackups === true;
   const selectRow = React.useCallback((row: typeof parts[number]) => {
-    router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId }));
-  }, [router, serverId]);
+    router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId,
+      ...(openBackups ? { tab: 'settings' as const, section: 'backups' as const, setup: 'backups' as const } : {}) }));
+  }, [router, serverId, openBackups]);
   const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
   const icon = React.useMemo(() => <Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />,
     [theme.colors.text.secondary]);
   // Projects keep the page's own order: the first Environment of each Project places its group. The name is the
   // admitted Source name the read carries; Projects whose name is unavailable or withdrawn share one last group,
-  // so one placeholder is never repeated down the page.
+  // so one placeholder is never repeated down the page. A Project whose only Environment carries its name needs no
+  // header to say it again: it shares one untitled sheet with its neighbours like it, in the page's order.
   const groups = React.useMemo(() => {
     const named = new Map<string, { title: string; rows: typeof rows }>();
     const unnamed: typeof rows = [];
@@ -212,7 +284,14 @@ function AllDeploymentsGroups(
       if (group) group.rows.push(row);
       else named.set(row.projectSourceId, { title: row.projectName, rows: [row] });
     }
-    const list = [...named.entries()].map(([key, group]) => ({ key, ...group }));
+    const list: { key: string; title: string | undefined; rows: typeof rows }[] = [];
+    for (const [key, group] of named) {
+      const selfNamed = group.rows.length === 1 && isSameDeploymentName(group.rows[0]!.title, group.title);
+      const previous = list[list.length - 1];
+      if (!selfNamed) list.push({ key, ...group });
+      else if (previous && previous.title === undefined) previous.rows = [...previous.rows, ...group.rows];
+      else list.push({ key, title: undefined, rows: group.rows });
+    }
     return unnamed.length ? [...list, { key: 'unnamed', title: t('projects.deployments.allOtherProject'), rows: unnamed }] : list;
   }, [rows]);
   return (

@@ -22,6 +22,12 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
+// The window is the platform boundary: a phone-width window, as the device-type owner reads it.
+const phoneWindow = vi.hoisted(() => ({ on: false }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/utils/platform/responsive')>();
+  return { ...original, useDeviceType: () => (phoneWindow.on ? 'phone' : original.useDeviceType()) };
+});
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
   return createExpoRouterMock();
@@ -29,6 +35,7 @@ const routerMock = await vi.hoisted(async () => {
 vi.mock('expo-router', () => routerMock.module);
 afterEach(() => {
   routerMock.spies.push.mockClear();
+  phoneWindow.on = false;
 });
 afterEach(standardCleanup);
 
@@ -194,5 +201,79 @@ describe('Projects → All deployments', () => {
       );
     });
     offline.controller.retire();
+  });
+
+  it('names a Project once when its only Environment carries the Project’s name, and never repeats that name as what is live', async () => {
+    const { controller } = controllerFor(() =>
+      page([
+        environment('env-maria', 'source-maria', 'maria-db', { projectSourceName: 'maria-db', liveVersionTitle: 'maria-db' }),
+        environment('env-pgb', 'source-pgb', 'pgbouncer', { projectSourceName: 'pgbouncer' }),
+        environment('env-shop-staging', 'source-shop', 'Staging', { projectSourceName: 'storefront' }),
+      ]),
+    );
+    const screen = await render(controller, 'all-deployments');
+    const text = screen.getTextContent();
+    expect(text.split('maria-db').length - 1).toBe(1);
+    expect(text.split('pgbouncer').length - 1).toBe(1);
+    // A Project whose Environment has its own name keeps its header.
+    expect(text).toContain('storefront');
+    expect(text.indexOf('maria-db')).toBeLessThan(text.indexOf('pgbouncer'));
+    expect(text.indexOf('pgbouncer')).toBeLessThan(text.indexOf('storefront'));
+    controller.retire();
+  });
+
+  it('says a row’s status in one short line on a phone, leaving its Machine to the Environment', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    // The active Home's Machine inventory, as discovery publishes it.
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a' })], true);
+    const failed = {
+      environment: createDeploymentEnvironmentHeaderV1({ id: 'env-failed', projectSourceId: 'source-shop', controllerMachineId: 'machine-a' }),
+      title: 'Staging', projectSourceName: 'storefront',
+      currentDeployment: createDeploymentReceiptHeaderV1({ id: 'receipt-failed', environmentId: 'env-failed', state: 'failed' }),
+    };
+    const wide = controllerFor(() => page([failed]));
+    const wideScreen = await render(wide.controller, 'all-deployments.row.env-failed');
+    const wideText = wideScreen.findByTestId('all-deployments.row.env-failed')!.findAll(() => true)
+      .map(node => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
+    wide.controller.retire();
+    standardCleanup();
+
+    phoneWindow.on = true;
+    const phone = controllerFor(() => page([failed]));
+    const phoneScreen = await render(phone.controller, 'all-deployments.row.env-failed');
+    const phoneText = phoneScreen.findByTestId('all-deployments.row.env-failed')!.findAll(() => true)
+      .map(node => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
+    // Wide rows name the Machine beside the status; the phone row keeps the status alone.
+    expect(wideText).toContain(' · ');
+    expect(phoneText).not.toContain(' · ');
+    phone.controller.retire();
+  });
+
+  it('keeps the last row clear of the phone floating tab bar', async () => {
+    const { SessionCockpitChromeRegistryProvider, useSessionCockpitBottomChromeHeightSetter } =
+      await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+    const floatingTabBarHeight = 83;
+    function FloatingTabBar() {
+      const setHeight = useSessionCockpitBottomChromeHeightSetter();
+      React.useEffect(() => setHeight(floatingTabBarHeight), [setHeight]);
+      return null;
+    }
+    const { controller } = controllerFor(() => page([environment('env-shop-staging', 'source-shop', 'Staging', { projectSourceName: 'storefront' })]));
+    const screen = await renderScreen(
+      <SessionCockpitChromeRegistryProvider>
+        <FloatingTabBar />
+        <Page controller={controller} />
+      </SessionCockpitChromeRegistryProvider>,
+    );
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-shop-staging'), (node) => node !== null);
+    });
+    const { StyleSheet } = await import('react-native');
+    const scroller = screen.findAll((node) => node.props.contentContainerStyle !== undefined)[0]!;
+    const { paddingBottom } = StyleSheet.flatten(scroller.props.contentContainerStyle) as { paddingBottom?: number };
+    expect(paddingBottom).toBeGreaterThanOrEqual(floatingTabBarHeight);
+    controller.retire();
   });
 });

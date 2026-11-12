@@ -187,9 +187,17 @@ function productionQualifier(protection: EnvironmentItem['environment']['protect
  * its name and Production, then the latest attempt's trouble or its running steps, else where it runs; and
  * how long ago it last changed.
  */
+/** Two names a person reads as one: a sibling that says the same name says nothing new. */
+export function isSameDeploymentName(left: string, right: string): boolean {
+  return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
+}
+
 export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem[], testIDPrefix: string,
   lifetime: ServerAccountScopeLifetime | null = null,
-  /** `rail` stands beside the selected Environment, which names its Machine and live version: two short lines. */
+  /**
+   * `rail` stands beside the selected Environment, which names its Machine and live version, and is a phone's row,
+   * whose Environment page names them: two short lines.
+   */
   presentation: 'row' | 'rail' = 'row') {
   const machineIds = React.useMemo(() => items.map((item) => item.environment.controllerMachineId), [items]);
   const machineNames = useMachineDisplayNamesById(machineIds);
@@ -225,7 +233,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         ? [latest?.text, caption].filter(Boolean).join(' · ')
         : latest ? (machine && presentation === 'row' ? `${latest.text} · ${machine}` : latest.text)
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
-        : liveVersionTitle && presentation === 'row' ? [machine, liveVersionTitle].filter(Boolean).join(' · ') : where,
+        // A live version titled like its Environment (a Store app, a Compose service) would only repeat the row's name.
+        : liveVersionTitle && presentation === 'row' && !isSameDeploymentName(liveVersionTitle, title)
+          ? [machine, liveVersionTitle].filter(Boolean).join(' · ') : where,
       leading: step ? { kind: 'step' as const, status: deploymentStepWorkStatus(step), testID: `${testIDPrefix}.${environment.id}.step` }
         : latest?.tone && currentDeployment ? { kind: 'trouble' as const, status: deploymentWorkStatus(currentDeployment.state),
             testID: `${testIDPrefix}.${environment.id}` } : null,
