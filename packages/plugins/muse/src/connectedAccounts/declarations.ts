@@ -35,7 +35,7 @@ export const museAccountDescriptor = {
         directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         credentialFieldKeys: { apiKey: 'inferenceKey' },
         fields: [{ id: 'apiKey', title: 'Meta API key', schema: { type: 'string', minLength: 1 }, secret: true }] },
-      { id: 'native-import', kind: 'manual', title: 'Import native login', credentialOrigin: 'native_import', outcomeReconciliation: 'none',
+      { id: 'native-import', kind: 'manual', accessOnlyExport: museAccessOnlyExport, title: 'Import native login', credentialOrigin: 'native_import', outcomeReconciliation: 'none',
         fields: [{ id: 'source', title: 'Source', schema: { type: 'string', enum: ['native'] }, secret: false, default: 'native',
           presentation: { control: 'select', options: [{ value: 'native', title: 'Muse login' }] } }] },
     ],

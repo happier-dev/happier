@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { requestDeviceGrantStep, type ConnectedAccountAuthCompletionResult, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { META_INFERENCE_HEADERS, META_API_KEY_ENV_KEY, MUSE_CODE_CREDENTIAL_ENV_KEY, MUSE_NATIVE_AUTH_FILE_ID } from './declarations.js';
-import { buildMuseNativeAuth, museRecord, type MuseNativeMetaAuth } from './nativeAuth.js';
+import { buildMuseNativeAuth, museRecord, resolveMuseNativeAccessExpiryMs, type MuseNativeMetaAuth } from './nativeAuth.js';
 import { parseMuseMintCompletionObservation, readMuseQuotaObservation } from './observations.js';
 
 const CLIENT_ID = '1031625952748946';
@@ -39,6 +39,9 @@ export async function stageMuseNativeCredentials(store: CredentialStore, meta: M
       ['nativeUserEmail', meta.user_email], ['nativeUserFullName', meta.user_full_name],
     ] as const).map(([key, value]) => value === undefined ? store.delete(key, options) : store.set(key, JSON.stringify(value), options)),
   ]);
+  const expiry = meta.mechanism === 'oauth' ? resolveMuseNativeAccessExpiryMs(meta.access_token) : null;
+  // Device login already staged expires_in; an import without expiry must not invent it.
+  if (expiry !== null) await store.set('expiresAtMs', String(expiry), options);
   await store.set('credentialMode', 'native', options);
 }
 
@@ -169,6 +172,21 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       },
     },
   } },
+  async enrichCredentialContext(context, options) {
+    const [mode, mechanism, token, currentExpiry] = await Promise.all([
+      'credentialMode', 'nativeMechanism', 'accountToken', 'expiresAtMs',
+    ].map(key => read(context.credentials, key, options)));
+    const connected = await museAccountConnectedResult(context.credentials, options);
+    if (mode !== 'native' || mechanism !== '"oauth"') return connected;
+    const expiry = currentExpiry && Number.isFinite(Number(currentExpiry))
+      ? Number(currentExpiry) : resolveMuseNativeAccessExpiryMs(token);
+    if (expiry === null) return { ...connected, diagnostic: {
+      code: 'access_only_expiry_unavailable', severity: 'error' as const,
+      message: "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.",
+    } };
+    if (!currentExpiry) await context.stagedCredentials.set('expiresAtMs', String(expiry), options);
+    return connected;
+  },
   async refresh() { return { status: 'reconnectRequired', diagnostic: diagnostic('connected_account_refresh_unsupported', 'explicit_reconnect_required') }; },
   async revoke() { return { status: 'remoteUnsupported' }; },
   async status(context, options) {

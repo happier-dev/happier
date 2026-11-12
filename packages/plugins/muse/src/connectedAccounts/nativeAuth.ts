@@ -37,3 +37,15 @@ export function parseMuseNativeAuth(value: unknown): MuseNativeAuthResult {
   return { status: 'supported', auth, mode: meta.mechanism === 'oauth' ? 'accountLogin' : 'apiKey' };
 }
 export function buildMuseNativeAuth(meta: MuseNativeMetaAuth): MuseNativeAuth { return { schema_version: 1, providers: { meta } }; }
+
+/** JWT NumericDate is Unix seconds (RFC 7519 section 2); reading exp does not authenticate a token. */
+export function resolveMuseNativeAccessExpiryMs(accessToken: string): number | null {
+  const parts = accessToken.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = atob(parts[1].replaceAll('-', '+').replaceAll('_', '/'));
+    const claims = museRecord(JSON.parse(new TextDecoder().decode(Uint8Array.from(payload, character => character.charCodeAt(0)))));
+    const expiry = claims?.exp;
+    return typeof expiry === 'number' && expiry > 0 && Number.isFinite(expiry * 1000) ? expiry * 1000 : null;
+  } catch { return null; }
+}
