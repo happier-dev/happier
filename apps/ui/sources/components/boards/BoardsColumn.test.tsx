@@ -129,6 +129,20 @@ describe('BoardsColumn collection search', () => {
         expect(column.findHostByTestId('boards-column:back')).toBeNull();
     });
 
+    // F2 (WHOLE-PAGE-ACCEPT-1112): every phone main screen opens on the same head as My work and Projects.
+    it('heads the phone Boards main screen with the Home line and the main-screen title row', async () => {
+        deviceState.type = 'phone';
+        route.pathname = '/boards';
+        const page = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn surface="page" /></InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(page.findHostByTestId('main-tab-nav-row')).not.toBeNull();
+        expect(page.findHostByTestId('main-header-home-line')).not.toBeNull();
+        // The magnifier and "+" are the main-screen head's, on the title row.
+        expect(page.findHostByTestId('boards-column:search:toggle')).not.toBeNull();
+        expect(page.findHostByTestId('boards-column:new:header')).not.toBeNull();
+        expect(page.findHostByTestId('boards-column:back')).toBeNull();
+    });
+
     it('keeps search behind its toggle, filters real Board names and creates from the header instead of a list row', async () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn /></InjectedAuthProvider>);
         await flushHookEffects({ runOnlyPendingTimers: true });

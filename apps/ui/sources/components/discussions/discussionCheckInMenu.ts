@@ -17,7 +17,7 @@ export type DiscussionCheckInMenuSettings = Readonly<{
 }>;
 
 /**
- * "Don't pause this Discussion" (C3 DISC-17): one checked menu row whose subtitle says what applies now —
+ * "Keep agents going here" (C3 DISC-17; positive since F11): one checked menu row whose subtitle says what applies now —
  * the Account's own value, Never here, or this Discussion's own count. Choosing it again returns to the
  * Account value; a Discussion-specific count is replaced by Never.
  */
@@ -51,7 +51,7 @@ export function buildDiscussionCheckInMenuAction(
   return {
     id: 'dont-pause',
     testID: 'session-discussion-dont-pause',
-    title: t('session.collaboration.discussion.controls.dontPause'),
+    title: t('session.collaboration.discussion.controls.keepGoing'),
     category: 'check-in',
     disabled: !ready || settings.saving,
     loading: settings.saving,

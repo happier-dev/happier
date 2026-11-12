@@ -11,7 +11,6 @@ import {
     CollectionListGroupLabel,
     CollectionNavigationRow,
 } from '@/components/ui/lists/collection/CollectionList';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
@@ -20,7 +19,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
-import type { ResolvedSettingsPageNode, SettingsPageSearchResult } from '@/components/settings/catalog/types';
+import type { ResolvedSettingsPageNode, SettingsPageIconFactory, SettingsPageSearchResult } from '@/components/settings/catalog/types';
 
 import { buildSettingsSearchRows, indexSettingsSearchPages, type SettingsSearchRow } from './settingsSearchRows';
 import { SETTINGS_SEARCH_RETURN_QUERY_PARAM } from '@/components/settings/navigation/settingsRouteRegistry';
@@ -63,6 +62,8 @@ export function useSettingsSearch(options: Readonly<{
 const SettingsSearchResultRow = React.memo(function SettingsSearchResultRow(props: Readonly<{
     title: string;
     subtitle?: string;
+    /** The mark of the page the row opens (F18): where it leads, not a repeated magnifier. */
+    icon?: SettingsPageIconFactory;
     route: string;
     testID: string;
     presentation: 'rail' | 'page';
@@ -71,16 +72,18 @@ const SettingsSearchResultRow = React.memo(function SettingsSearchResultRow(prop
     const { theme } = useUnistyles();
     const { onOpen, route } = props;
     const onPress = React.useCallback(() => onOpen(route), [onOpen, route]);
+    const icon = props.icon ? props.icon({ theme }) : undefined;
     if (props.presentation === 'page') {
         return <WorkspaceDestinationRow href={route}><Item
             rowRole="item"
             testID={props.testID} title={props.title} subtitle={props.subtitle} onPress={onPress}
+            {...(icon ? { icon } : {})}
         /></WorkspaceDestinationRow>;
     }
     return <CollectionNavigationRow
         rowRole="item"
         href={route} testID={props.testID} title={props.title} subtitle={props.subtitle}
-        icon={<Icon name="magnifying-glass" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
+        {...(icon ? { icon } : {})}
         selected={false} onPress={onPress}
     />;
 });
@@ -108,10 +111,28 @@ export const SettingsSearchResults = React.memo(function SettingsSearchResults(p
     const rowTestID = React.useCallback((row: SettingsSearchRow) => row.kind === 'setting'
         ? `${testIDPrefix}.setting.${row.id}`
         : `${testIDPrefix}.${row.id}`, [testIDPrefix]);
-    const groups = [
-        { id: 'pages', title: t('settingsSearch.pagesTitle'), rows: pageRows },
-        { id: 'settings', title: t('settingsSearch.settingsTitle'), rows: settingRows },
-    ].filter((group) => group.rows.length > 0);
+    // Settings stand under the section they live in, in ranking order of each section's first match (F18): the path
+    // is said once as the group's label, so two same-named settings read apart by where they are.
+    const groups = React.useMemo(() => {
+        const bySection = new Map<string, SettingsSearchRow[]>();
+        for (const row of settingRows) {
+            const section = row.pathLabel ?? '';
+            // Under its section label the row's subtitle keeps only the matching words.
+            const { subtitle: _withPath, ...rest } = row;
+            const shown: SettingsSearchRow = row.pathLabel ? { ...rest, ...(row.matchText ? { subtitle: row.matchText } : {}) } : row;
+            const rows = bySection.get(section);
+            if (rows) rows.push(shown);
+            else bySection.set(section, [shown]);
+        }
+        return [
+            { id: 'pages', title: t('settingsSearch.pagesTitle'), rows: pageRows },
+            ...[...bySection].map(([section, rows], index) => ({
+                id: section ? `section.${index}` : 'settings',
+                title: section || t('settingsSearch.settingsTitle'),
+                rows,
+            })),
+        ].filter((group) => group.rows.length > 0);
+    }, [pageRows, settingRows]);
 
     if (groups.length === 0) {
         const empty = (
@@ -161,7 +182,7 @@ const WindowedSearchRows = React.memo(function WindowedSearchRows(props: Readonl
             return <View testID={`${props.testIDPrefix}.group.${item.id}`}><CollectionListGroupLabel title={item.title} first={item.first} /></View>;
         }
         return <SettingsSearchResultRow route={item.row.route} testID={rowTestID(item.row)} title={item.row.title}
-            subtitle={item.row.subtitle} presentation={presentation} onOpen={onOpen} />;
+            subtitle={item.row.subtitle} icon={item.row.icon} presentation={presentation} onOpen={onOpen} />;
     }, [onOpen, presentation, rowTestID, props.testIDPrefix]);
     return (
         <ListPresentationProvider value={presentation === 'page' ? 'page' : 'grouped'}>

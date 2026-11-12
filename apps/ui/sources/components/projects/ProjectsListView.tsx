@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader';
-import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { CollectionCreateButton } from '@/components/ui/lists/collection/CollectionList';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
@@ -45,7 +44,6 @@ const PHONE_DISCLOSURE_HIT_REACH = Object.freeze({ top: 12, bottom: 12, left: 5,
  * and under it each checkout as "Machine · branch" with where it lives.
  */
 export const ProjectsListView = React.memo(() => {
-    const { theme } = useUnistyles();
     const model = useProjectsListModel();
     const openNewApp = useOpenNewApp(model.cloneRepository);
     const rowCreation = useProjectRowCreationActions(model);
@@ -69,7 +67,6 @@ export const ProjectsListView = React.memo(() => {
         open: hiddenOpen, onToggle: () => setHiddenOpen(open => !open),
         onShow: model.showHiddenProject,
     }), [model.hiddenItems, hiddenOpen, model.showHiddenProject]);
-    const phoneTabShell = usePhoneTabNavRow() !== null;
     // The page's one add (a folder, a clone, your Sources, each Team's, Manage): the title row's "+" opens it, and the
     // bar's "+" opens the same menu (owner 11-11: it replaces the inline Add project row).
     const openAddRef = React.useRef<(() => void) | null>(null);
@@ -126,10 +123,10 @@ export const ProjectsListView = React.memo(() => {
         <NavigationTitleChromeProvider showsTitle={false}>
         <ItemList presentation="grouped"
             testID="projects-list"
-            containerStyle={phoneTabShell ? undefined : { paddingTop: theme.space.s12 }}
         >
-            {/* The phone tab's head: the shell draws the Home line above, the page names itself here (the main-screen head). */}
-            {phoneTabShell ? <MainScreenHeader
+            {/* The page's head wherever it is the whole page (a phone tab, a collapsed column): the main-screen head,
+                which opens on the Home line on a phone (F2/F4). */}
+            <MainScreenHeader
                 testID="projects-header"
                 title={t('tabs.projects')}
                 search={{ value: query, onChangeText: setQuery, placeholder: t('projects.searchPlaceholder'), testID: 'projects-search' }}
@@ -138,7 +135,7 @@ export const ProjectsListView = React.memo(() => {
                     openAddRef.current = open;
                     return <CollectionCreateButton create={{ ...create, onPress: open }} />;
                 })}
-            /> : null}
+            />
             {model.rowsUnconfirmed ? (
                 <ProjectOpenResolutionCard testID="projects-list:rows" issue={model.rowsUnconfirmed}
                     onChoose={() => {}} onRetry={rowsRetry} />
@@ -184,19 +181,6 @@ export const ProjectsListView = React.memo(() => {
                 />
             ) : null}
 
-            {/* Without the main-screen head (a host that draws its own), the same "+" stays as the list's add row. */}
-            {phoneTabShell ? null : (
-                <ItemGroup>
-                    {addMenu((open) => (
-                        <Item
-                            testID="projects-list:add-row"
-                            title={t('projects.actions.addProject')}
-                            icon={<Icon name="plus" size={20} color={theme.colors.text.secondary} />}
-                            onPress={open}
-                        />
-                    ))}
-                </ItemGroup>
-            )}
             {query.trim().length > 0 && rows.length === 0 && !model.noProjects ? (
                 <ItemGroup>
                     <Item testID="projects-list:no-matches" title={t('common.noMatches')} showChevron={false} />

@@ -1517,22 +1517,22 @@ describe('DiscussionDetailsView selection', () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: 'rename',
-            title: 'Rename conversation',
+            title: 'Rename Discussion',
           }),
           expect.objectContaining({
             id: 'archive',
-            title: 'Archive conversation',
+            title: 'Archive Discussion',
           }),
         ]),
       );
       expect(
         screen.tree.findAll(
-          (item) => item.props?.accessibilityLabel === 'Rename conversation',
+          (item) => item.props?.accessibilityLabel === 'Rename Discussion',
         ),
       ).toHaveLength(0);
       expect(
         screen.tree.findAll(
-          (item) => item.props?.accessibilityLabel === 'Archive conversation',
+          (item) => item.props?.accessibilityLabel === 'Archive Discussion',
         ),
       ).toHaveLength(0);
       await act(async () => {
@@ -2920,7 +2920,7 @@ describe('DiscussionDetailsView selection', () => {
         id: 'save-as-pattern',
         testID: 'discussion-save-as-pattern',
       }),
-      expect.objectContaining({ id: 'restore', title: 'Restore conversation' }),
+      expect.objectContaining({ id: 'restore', title: 'Restore Discussion' }),
     ]);
     expect(composerProps.current).toBeNull();
   });

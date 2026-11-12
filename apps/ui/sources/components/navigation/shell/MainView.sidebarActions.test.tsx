@@ -271,8 +271,9 @@ describe('MainView sidebar actions', () => {
         expect(navRow.findByType('SessionsListWrapper' as never)).toBeDefined();
     });
 
-    // Every phone tab opens on one head: the Home line and the glyphs, with the tab's own large title below.
-    it.each(['projects', 'inbox'] as const)('gives the %s tab the same nav row as Sessions, without a second bar or logo', async (tab) => {
+    // Every phone tab opens on one head: the Home line and the glyphs, with the tab's own large title below. My work
+    // and Projects draw it through their main-screen head (MainScreenHeader, F2); the Inbox has no such head yet.
+    it.each(['inbox'] as const)('gives the %s tab the same nav row as Sessions, without a second bar or logo', async (tab) => {
         platformState.isTablet = false;
         mainAppTabStateMock.activeTab = tab;
 

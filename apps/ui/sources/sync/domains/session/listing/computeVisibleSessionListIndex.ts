@@ -1497,7 +1497,10 @@ function admitSupplementalAttention(params: ComputeVisibleSessionListIndexParams
         const { supplementalAttention: _previousSupplement, ...ordinary } = item;
         return [ordinary];
     }));
-    return { ...params, source, supplementalNeedsYouSessionKeys: supplementalKeys };
+    // The supplied set is the space's include-everywhere choice: a held list without that choice and without a held
+    // outside row keeps it absent, so Needs you does not read "from everywhere" while the pointer rests on it (F3).
+    const includesEverywhere = params.supplementalNeedsYouSessionKeys !== undefined || supplementalKeys.size > 0;
+    return { ...params, source, supplementalNeedsYouSessionKeys: includesEverywhere ? supplementalKeys : undefined };
 }
 
 /** Project group headers ranked by their first Run in the served window order. */

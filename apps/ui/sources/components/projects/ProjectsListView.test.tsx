@@ -252,7 +252,8 @@ describe('ProjectsListView', () => {
         expect([...phoneRowRenders.keys()].filter(key => key !== 'projects-list-item-ref-0').length).toBe(0);
     });
 
-    it('names the page with its large title in the phone tab shell, and leaves other hosts to their own head', async () => {
+    // F2/F4: wherever the list is the whole page (a phone tab, a collapsed column) it heads with the main-screen head.
+    it('names the page with its title in the phone tab shell and wherever it is the whole page', async () => {
         const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
         const { PageHeader } = await import('@/components/ui/layout/PageHeader');
         const { ProjectsListView } = await import('./ProjectsListView');
@@ -261,7 +262,7 @@ describe('ProjectsListView', () => {
         expect(inShell.findByType(PageHeader).props.title).toBe(t('tabs.projects'));
 
         const elsewhere = await renderProjects(<ProjectsListView />);
-        expect(elsewhere.tree.root.findAllByType(PageHeader)).toHaveLength(0);
+        expect(elsewhere.findByType(PageHeader).props.title).toBe(t('tabs.projects'));
     });
 
     it('heads the phone main screen with search and "+" on the title row and lends the bar its "+" (owner 11-11)', async () => {
@@ -317,7 +318,7 @@ describe('ProjectsListView', () => {
         expect(menu?.props.items.find((item: { id: string }) => item.id === 'folder')?.submenu.items
             .map((item: { id: string; title: string }) => ({ id: item.id, title: item.title })))
             .toEqual([{ id: 'machine:m1', title: 'leeroy-mbp · m1' }, { id: 'machine:m2', title: 'leeroy-mbp · m2' }]);
-        expect(screen.findByTestId('projects-list:add-row')).toBeTruthy();
+        expect(screen.findByTestId('projects-add:header')).toBeTruthy();
         expect(screen.findByTestId('projects-add-first-machine:m1')).toBeNull();
         expect(screen.findByTestId('projects-add-first-machine:m2')).toBeNull();
     });
@@ -432,7 +433,7 @@ describe('ProjectsListView', () => {
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderProjects(<ProjectsListView />);
 
-        expect(screen.findByTestId('projects-list:add-row')).toBeTruthy();
+        expect(screen.findByTestId('projects-add:header')).toBeTruthy();
         const add = screen.findAllByType(DropdownMenu).find((menu) => menu.props.items?.some((item: { id: string }) => item.id === 'clone'));
         expect(add?.props.items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(['clone', 'manage']));
     });

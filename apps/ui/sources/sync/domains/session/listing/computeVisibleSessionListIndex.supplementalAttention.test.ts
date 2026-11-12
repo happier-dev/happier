@@ -50,6 +50,17 @@ describe('supplied out-of-space attention placement', () => {
         expect(own).not.toHaveProperty('fromEverywhere', true);
     });
 
+    // F3 (WHOLE-PAGE-ACCEPT-1112): hovering the list holds it; the header must not grow "from everywhere" on hover.
+    it.each(['both', 'top'] as const)('%s keeps Needs you own-space while the list is held under the pointer', placement => {
+        const attentionHeader = (items: readonly SessionListIndexItem[] | null) =>
+            items?.find(item => item.type === 'header' && item.headerKind === 'attention');
+        const first = computeVisibleSessionListIndex({ ...base, sessionListAttentionPlacementV1: placement })!;
+        const held = computeVisibleSessionListIndex({ ...base, sessionListAttentionPlacementV1: placement,
+            previousPresentedIndex: first, attentionInteractionHeld: true });
+        expect(attentionHeader(held)).toBeDefined();
+        expect(attentionHeader(held)).not.toHaveProperty('fromEverywhere', true);
+    });
+
     it.each(['both', 'top'] as const)('%s holds the first outside arrival without leaking a base occurrence', placement => {
         const rowById = new Map(rows);
         rowById.set('own', { ...rows.get('own')!, hasPendingPermissionRequests: false });

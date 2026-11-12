@@ -9,6 +9,18 @@ import { installSessionShellCommonModuleMocks } from '../sessionShellTestHelpers
 
 const dropdownMenuSpy = vi.fn();
 const reducedMotion = vi.hoisted(() => ({ value: false }));
+// The window size is a platform boundary: a test may stand the list on a phone.
+const deviceOverride = vi.hoisted(() => ({ type: null as 'phone' | 'tablet' | null }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/platform/responsive')>();
+    return {
+        ...actual,
+        useDeviceType: () => {
+            const measured = actual.useDeviceType();
+            return deviceOverride.type ?? measured;
+        },
+    };
+});
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => reducedMotion.value,
@@ -57,6 +69,7 @@ afterEach(() => {
     standardCleanup();
     dropdownMenuSpy.mockClear();
     reducedMotion.value = false;
+    deviceOverride.type = null;
 });
 
 describe('SessionListSearchChrome', () => {
@@ -452,6 +465,7 @@ describe('SessionListSearchChrome', () => {
     });
 
     it('on a phone tab page folds the shell line and glyphs into one nav row above the large title', async () => {
+        deviceOverride.type = 'phone';
         const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
         const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
         const screen = await renderScreen(
@@ -467,7 +481,7 @@ describe('SessionListSearchChrome', () => {
             </PhoneTabNavRowProvider>,
         );
 
-        const navRow = firstByTestId(screen.root, 'session-list-phone-nav-row');
+        const navRow = firstByTestId(screen.root, 'main-tab-nav-row');
         for (const id of ['shell-home-line', 'shell-glyphs']) {
             expect(navRow.findAllByProps({ testID: id }).length).toBeGreaterThan(0);
         }
@@ -533,7 +547,7 @@ describe('SessionListSearchChrome', () => {
             />,
         );
 
-        expect(screen.root.findAllByProps({ testID: 'session-list-phone-nav-row' })).toHaveLength(0);
+        expect(screen.root.findAllByProps({ testID: 'main-tab-nav-row' })).toHaveLength(0);
         const controls = firstByTestId(screen.root, 'session-list-search-primary-controls');
         expect(controls.findAllByProps({ testID: 'filter-control' }).length).toBeGreaterThan(0);
     });

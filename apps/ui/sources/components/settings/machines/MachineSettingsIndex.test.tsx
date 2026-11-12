@@ -482,6 +482,20 @@ describe('All machines (the Settings door index)', () => {
     ).toHaveLength(0);
   });
 
+  it('keeps one missing-value mark under each offline metric column', async () => {
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      { ...machine('machine-offline', 'Offline box', 'offline.local'), active: false },
+    ] }]);
+    const tree = await renderPage();
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+    });
+    const row = tree.findAll(node => node.props?.testID === 'machines.index.row.machine:srv_a:machine-offline')[0]!;
+    const marks = row.findAll(node => typeof node.type === 'string' && node.props?.children === '—');
+    expect(marks).toHaveLength(3);
+  });
+
   it('says why an online machine it cannot read has no figures, where its figures would stand in the table', async () => {
     await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
       machine('machine-a1', 'Machine A1', 'a.local'),
@@ -823,11 +837,36 @@ describe('All machines (the Settings door index)', () => {
     ]);
     const { AllMachinesIndex } = await import('@/components/machines/index/AllMachinesIndex');
     const { MachinesDoorProvider } = await import('@/components/machines/page/machinesDoor');
+    const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
     // The rail door on a wide screen: the list column (with its own search) is the shell column beside the index.
-    const tree = (await renderScreen(<MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>)).tree;
+    const tree = (await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+      <MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>
+    </AppShellColumnContext.Provider>)).tree;
     await flushHookEffects();
     expect(tree.findAll((node) => node.props?.testID === 'machines.index.row.machine:srv_a:machine-a1').length).toBeGreaterThan(0);
     expect(tree.findAll((node) => node.props?.testID === 'machines.index.search')).toHaveLength(0);
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.search:toggle')).toHaveLength(0);
+  });
+
+  // F7 (WHOLE-PAGE-ACCEPT-1112): a collapsed column leaves the page as the only list, so it keeps search and add.
+  it('keeps search and add on the wide page when the rail door\'s column is collapsed', async () => {
+    const offline = Array.from({ length: 9 }, (_, index) => ({
+      ...machine(`old-${index}`, `Old ${index}`, `old${index}.local`),
+      active: false,
+      activeAt: 1,
+    }));
+    await setMachines([
+      { serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('machine-a1', 'Machine A1', 'a.local'), ...offline] },
+    ]);
+    const { AllMachinesIndex } = await import('@/components/machines/index/AllMachinesIndex');
+    const { MachinesDoorProvider } = await import('@/components/machines/page/machinesDoor');
+    const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+    const tree = (await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: false }}>
+      <MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>
+    </AppShellColumnContext.Provider>)).tree;
+    await flushHookEffects();
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.search:toggle').length).toBeGreaterThan(0);
+    expect(addMenuItemIds(tree)).toContain('machine');
   });
 
   it('opens the canonical add-machine draft from both the browser and desktop collection', async () => {
@@ -871,6 +910,10 @@ describe('All machines (the Settings door index)', () => {
     };
     // The pool is added from its own section, so the tiles do not offer it twice.
     expect(tiles.props.options.map((option) => option.id)).toEqual(['machine']);
+    // F7: an empty fleet has no "0 Machines · 0 sessions working" line and no view switch with nothing to switch.
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.count')).toHaveLength(0);
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.working')).toHaveLength(0);
+    expect(tree.findAll((node) => typeof node.props?.testIDPrefix === 'string' && node.props.testIDPrefix === 'machines.index.view')).toHaveLength(0);
     expect(addMenuItemIds(tree)).toEqual(['machine', 'preset', 'pool']);
     const menu = tree.findByType('DropdownMenu' as never) as unknown as {
       props: { onSelect: (id: string) => void };

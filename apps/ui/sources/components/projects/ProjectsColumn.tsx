@@ -23,7 +23,7 @@ import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectOpenResolutionCard, ProjectRowsStaleLine, isProjectRowsPending, openProjectCandidate, useProjectRowsRetry } from './ProjectOpenResolution';
 import { ProjectActionApprovalNotice } from './ProjectActionApprovalNotice';
 import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
-import { buildProjectsTreeRows, type ProjectsTreeRow } from './projectsTreeRows';
+import { buildProjectsTreeRows, filterProjectsTreeByQuery, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
@@ -105,7 +105,9 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     const refsById = React.useMemo(() => new Map(
         [...model.groups.projectGroups, ...model.groups.hiddenProjectGroups].flatMap((group) => group.items.map((ref) => [JSON.stringify(workspaceAddressFromRefV1(ref)), ref] as const)),
     ), [model.groups.hiddenProjectGroups, model.groups.projectGroups]);
-    const projects = model.treeProjects;
+    // The title row's magnifier narrows the tree with the phone page's own filter (F4, owner 1538 #01).
+    const [query, setQuery] = React.useState('');
+    const projects = React.useMemo(() => filterProjectsTreeByQuery(model.treeProjects, query), [model.treeProjects, query]);
     // Structural rows only: a checkout's live facts are read by its Project's own tree section, so a fact
     // change never re-renders this column or the other rows.
     const rows = React.useMemo(
@@ -159,7 +161,8 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                     onPress={() => placed.activate(destination)}
                 />
             ))}
-            {/* Rows not confirmed yet: quiet rows while they load, one line with Retry when the read failed. */}
+            {/* Rows not confirmed yet: quiet rows while they load, one line with Retry when the read failed. No Projects
+                yet: the page beside the column says so with its Add (F4), so the column stays quiet. */}
             {model.rowsUnconfirmed && isProjectRowsPending(model.rowsUnconfirmed) ? (
                 <ProjectsTreeSkeletonRows testID="projects-column:loading" rows={3} />
             ) : model.rowsUnconfirmed ? (
@@ -172,14 +175,14 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         onRetry={rowsRetry}
                     />
                 </View>
-            ) : model.noProjects ? (
-                // The Projects list's own empty state, as one quiet line (nothing saved to show below either).
-                <EmptyState testID="projects-column:empty" layout="line" title={t('projects.emptyTitle')} />
             ) : model.staleRows ? (
                 // A failed refresh over the rows below: they stay at full strength, labeled as of the last read.
                 <View style={collectionListStyles.stateLine}>
                     <ProjectRowsStaleLine testID="projects-column:stale" asOf={model.staleRows.asOf} />
                 </View>
+            ) : null}
+            {query.trim().length > 0 && rows.length === 0 && !model.noProjects ? (
+                <EmptyState testID="projects-column:no-matches" layout="line" title={t('common.noMatches')} />
             ) : null}
         </>
     );
@@ -192,6 +195,13 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                 title={t('tabs.projects')}
                 // A count speaks only once there is something to count (lab `treeCol`: no "0").
                 count={model.projectCount > 0 ? model.projectCount : undefined}
+                search={{
+                    testID: 'projects-column:search',
+                    collapsible: true,
+                    value: query,
+                    onChangeText: setQuery,
+                    placeholder: t('projects.searchPlaceholder'),
+                }}
                 // What just happened to a row (Hide · Undo, an approval, an ambiguous open) is pinned under
                 // the rows, so it is in view wherever the tree is scrolled (lab p-projects HIDE).
                 footer={(

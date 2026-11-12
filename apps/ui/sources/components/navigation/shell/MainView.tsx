@@ -183,8 +183,8 @@ const PhoneMainView = React.memo((props: Readonly<{
     return (
         <View style={[styles.phoneContainer, { backgroundColor, paddingTop: insets.top }]}>
             <PhoneMainTabShell>
-                {/* The list draws the line in its own nav row, beside its controls. */}
-                {headerTab === 'sessions' ? null : <PhoneMainTabLine />}
+                {/* My work and Projects open on the line through their main-screen head; the Inbox draws it here. */}
+                {headerTab === 'inbox' ? <PhoneMainTabLine /> : null}
                 {renderTabContent()}
             </PhoneMainTabShell>
         </View>

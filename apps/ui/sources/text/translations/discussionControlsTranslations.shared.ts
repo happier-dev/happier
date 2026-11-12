@@ -1,11 +1,11 @@
 type Count = Readonly<{ count: number }>;
 type More = Readonly<{ first: string; count: number }>;
 
-/** The Discussion menu's check-in row and the composer's Send to chip (C3 DISC-17, DISC-18). */
+/** The Discussion menu's check-in row (a positive switch: on keeps agents going here, F11) and the composer's Send to chip (C3 DISC-17, DISC-18). */
 export const discussionControlsCopy = {
   en: {
     incomingMessage: 'Incoming message',
-    dontPause: 'Don’t pause this Discussion',
+    keepGoing: 'Keep agents going here',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Follows your setting: pauses after 1 turn'
@@ -21,7 +21,7 @@ export const discussionControlsCopy = {
   },
   ca: {
     incomingMessage: 'Missatge entrant',
-    dontPause: 'No posis en pausa aquesta discussió',
+    keepGoing: 'Mantén els agents en marxa aquí',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Segueix la teva configuració: s’atura després d’1 torn'
@@ -37,7 +37,7 @@ export const discussionControlsCopy = {
   },
   de: {
     incomingMessage: 'Eingehende Nachricht',
-    dontPause: 'Diese Diskussion nicht pausieren',
+    keepGoing: 'Agenten hier weiterlaufen lassen',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Folgt deiner Einstellung: pausiert nach 1 Zug'
@@ -53,7 +53,7 @@ export const discussionControlsCopy = {
   },
   es: {
     incomingMessage: 'Mensaje entrante',
-    dontPause: 'No pausar esta discusión',
+    keepGoing: 'Mantener a los agentes en marcha aquí',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Sigue tu ajuste: se pausa tras 1 turno'
@@ -69,7 +69,7 @@ export const discussionControlsCopy = {
   },
   fr: {
     incomingMessage: 'Message entrant',
-    dontPause: 'Ne pas mettre cette discussion en pause',
+    keepGoing: 'Laisser les agents continuer ici',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Suit votre réglage : pause après 1 tour'
@@ -83,7 +83,7 @@ export const discussionControlsCopy = {
   },
   it: {
     incomingMessage: 'Messaggio in arrivo',
-    dontPause: 'Non mettere in pausa questa discussione',
+    keepGoing: 'Lascia che gli agenti continuino qui',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Segue la tua impostazione: pausa dopo 1 turno'
@@ -99,7 +99,7 @@ export const discussionControlsCopy = {
   },
   ja: {
     incomingMessage: '受信メッセージ',
-    dontPause: 'このディスカッションを一時停止しない',
+    keepGoing: 'ここでは Agent を続行させる',
     inheritsTurns: ({ count }: Count) =>
       `設定に従う：${count} ターン後に一時停止`,
     inheritsNever: '設定に従う：一時停止しない',
@@ -110,7 +110,7 @@ export const discussionControlsCopy = {
   },
   pl: {
     incomingMessage: 'Wiadomość przychodząca',
-    dontPause: 'Nie wstrzymuj tej dyskusji',
+    keepGoing: 'Pozwól agentom działać tu dalej',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Według Twojego ustawienia: pauza po 1 turze'
@@ -124,7 +124,7 @@ export const discussionControlsCopy = {
   },
   pt: {
     incomingMessage: 'Mensagem recebida',
-    dontPause: 'Não pausar esta discussão',
+    keepGoing: 'Manter os agentes a trabalhar aqui',
     inheritsTurns: ({ count }: Count) =>
       count === 1
         ? 'Segue sua configuração: pausa após 1 turno'
@@ -140,7 +140,7 @@ export const discussionControlsCopy = {
   },
   ru: {
     incomingMessage: 'Входящее сообщение',
-    dontPause: 'Не ставить это обсуждение на паузу',
+    keepGoing: 'Агенты здесь работают без пауз',
     inheritsTurns: ({ count }: Count) =>
       `По вашей настройке: пауза после ходов: ${count}`,
     inheritsNever: 'По вашей настройке: без пауз',
@@ -151,7 +151,7 @@ export const discussionControlsCopy = {
   },
   'zh-Hans': {
     incomingMessage: '收到的消息',
-    dontPause: '不要暂停此讨论',
+    keepGoing: '让 Agent 在这里持续运行',
     inheritsTurns: ({ count }: Count) => `沿用你的设置：${count} 轮后暂停`,
     inheritsNever: '沿用你的设置：从不暂停',
     neverHere: '在这里，智能体会一直继续，直到你停止它们',
@@ -161,7 +161,7 @@ export const discussionControlsCopy = {
   },
   'zh-Hant': {
     incomingMessage: '收到的訊息',
-    dontPause: '不要暫停此討論',
+    keepGoing: '讓 Agent 在這裡持續執行',
     inheritsTurns: ({ count }: Count) => `沿用你的設定：${count} 輪後暫停`,
     inheritsNever: '沿用你的設定：永不暫停',
     neverHere: '在這裡，代理會一直繼續，直到你停止它們',

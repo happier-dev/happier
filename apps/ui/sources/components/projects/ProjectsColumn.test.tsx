@@ -337,11 +337,13 @@ describe('ProjectsColumn', () => {
         expect(screen.findByTestId('projects-column:tree-saved-saved')).toBeNull();
     });
 
-    it('says "no projects yet" once as a quiet line when there are no Projects and nothing saved', async () => {
+    // F4 (WHOLE-PAGE-ACCEPT-1112): the page beside the column says "no projects yet" with its Add; the column stays quiet.
+    it('leaves "no projects yet" to the page beside it when there are no Projects and nothing saved', async () => {
         workspaceRefsV1Mock = [];
         const { ProjectsColumn } = await import('./ProjectsColumn');
         const screen = await renderProjects(<ProjectsColumn />);
-        await vi.waitFor(() => expect(screen.findByTestId('projects-column:empty')).toBeTruthy());
+        await vi.waitFor(() => expect(screen.findByTestId('projects-column:add')).toBeTruthy());
+        expect(screen.findByTestId('projects-column:empty')).toBeNull();
     });
 
     it('shows saved Sources as content without repeating a no-projects message', async () => {
@@ -399,6 +401,22 @@ describe('ProjectsColumn', () => {
         ]);
         expect(screen.findAllByTestId(fixRowId)[0]?.props.selected).toBe(true);
         expect(screen.findAllByTestId(alphaRowId)[0]?.props.selected).toBe(false);
+    });
+
+    // F4 (WHOLE-PAGE-ACCEPT-1112, owner 1538 #01): the column finds a Project from its title row, as the phone page does.
+    it('keeps a magnifier on the title row that narrows the tree to matching Projects', async () => {
+        routeState.pathname = '/projects';
+        workspaceRefsV1Mock = [
+            { ...workspaceRef('ref-a', 'm1', '/Users/tester/alpha'), projectKey: 'alpha' },
+            workspaceRef('ref-c', 'm2', '/Users/tester/gamma'),
+        ];
+        const { ProjectsColumn } = await import('./ProjectsColumn');
+        const screen = await renderProjects(<ProjectsColumn />);
+        expect(rowIds(screen)).toEqual(['projects-column:tree-row-alpha', 'projects-column:tree-row-ref-c']);
+        await act(async () => { screen.findAllByTestId('projects-column:search:toggle')[0]!.props.onPress(); });
+        const field = screen.findAllByTestId('projects-column:search')[0]!;
+        await act(async () => { field.props.onChangeText('gam'); });
+        expect(rowIds(screen)).toEqual(['projects-column:tree-row-ref-c']);
     });
 
     it('waits quietly while the Project rows load and offers Retry on one line when the read failed', async () => {

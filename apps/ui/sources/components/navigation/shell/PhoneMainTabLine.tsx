@@ -7,7 +7,7 @@ import { ConnectionStatusControl, type ConnectionStatusTriggerState } from '@/co
 
 import { PhoneHomeLine } from './PhoneHomeLine';
 import { PhoneAccountAvatarButton } from './PhoneAccountAvatarButton';
-import { PhoneTabNavRowLine, PhoneTabNavRowProvider } from './phoneTabNavRow';
+import { PhoneTabNavRowLine, PhoneTabNavRowProvider, usePhoneTabNavRow } from './phoneTabNavRow';
 
 /** Space between the glyphs on the line; each one's hit area splits it, so neighbours never overlap. */
 const GLYPH_ROW_GAP_PX = 2;
@@ -37,7 +37,11 @@ export function PhoneMainTabShell(props: Readonly<{ children: React.ReactNode }>
     return <PhoneTabNavRowProvider leading={LEADING} trailing={TRAILING}>{props.children}</PhoneTabNavRowProvider>;
 }
 
-/** The head every phone tab opens on: the Home it is on, Activity and the account avatar (owner Q4, R3). */
+/**
+ * The head every phone main screen opens on: the Home it is on, Activity and the account avatar (owner Q4, R3).
+ * `MainScreenHeader` draws it above every main screen's title; a tab shell's own line and glyphs win when present.
+ */
 export function PhoneMainTabLine() {
-    return <PhoneTabNavRowLine testID="main-tab-nav-row" />;
+    const line = <PhoneTabNavRowLine testID="main-tab-nav-row" />;
+    return usePhoneTabNavRow() ? line : <PhoneMainTabShell>{line}</PhoneMainTabShell>;
 }

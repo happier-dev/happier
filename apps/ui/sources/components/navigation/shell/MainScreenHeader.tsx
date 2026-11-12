@@ -25,6 +25,8 @@ import {
 } from '@/components/ui/lists/collection/CollectionList';
 import { useDeviceType } from '@/utils/platform/responsive';
 
+import { PhoneMainTabLine } from './PhoneMainTabLine';
+
 /** The search a main screen keeps behind the magnifier on its title row. */
 export type MainScreenSearch = Readonly<{
   value: string;
@@ -61,7 +63,7 @@ export type MainScreenHeaderProps = Readonly<{
 }>;
 
 /**
- * A main screen's head (owner 11-10/11-11): the title (or the title as its scope control), then on the same row
+ * A main screen's head (owner 11-10/11-11): on a phone, the Home line above it; the title (or the title as its scope control), then on the same row
  * the magnifier that opens the search field and the "+" that runs the page's create action; the bar's "+" runs
  * the same action on a phone. What the title scopes (chips, a view switch, a count) sits right under it. The one
  * owner every main screen that is a page draws; a column-headed list draws the Collection's own header.
@@ -91,6 +93,8 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
     // the chips under it, so the band stands at the same step under the title on every main screen.
     <View style={styles.head}>
       {phone && mainScreen ? <Stack.Screen options={MAIN_SCREEN_BAR} /> : null}
+      {/* Every phone main screen opens on the same line: the Home it is on, Activity and the avatar (F2, owner Q4). */}
+      {phone && mainScreen ? <PhoneMainTabLine /> : null}
       <NavigationLargeTitleProvider largeTitle={phone}>
         <PageHeader
           {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -105,7 +109,8 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
           {...(props.details == null ? {} : { details: props.details })}
           {...(props.meta === undefined ? {} : { meta: props.meta })}
           actionsPlacement="page"
-          actionsLayout="inline"
+          // The controls hang from the title's line; the description takes the page's whole width beneath (F2).
+          actionsLayout="hang"
           actions={
             hasActions ? (
               <>

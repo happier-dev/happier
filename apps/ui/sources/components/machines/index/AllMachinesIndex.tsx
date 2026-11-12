@@ -10,6 +10,7 @@ import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation'
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { MachineWorkingCountsProvider, useMachineWorkingCount, useMachineWorkingTotal } from '@/components/machines/work/machineWorkingCounts';
 import {
     AddMachineMenu,
@@ -115,8 +116,10 @@ function AllMachinesIndexBody() {
     const door = useMachinesDoor();
     const deviceType = useDeviceType();
     const collectionLayout = useHappierCollectionLayout();
-    // The machine list stands beside this page in Settings' split layout, or as the shell column in the rail door.
-    const besideList = collectionLayout ? collectionLayout.mode === 'split' : door === 'rail' && deviceType !== 'phone';
+    const shellColumnVisible = useAppShellColumn().columnVisible;
+    // The machine list stands beside this page in Settings' split layout, or as the shell column in the rail door while
+    // that column shows; collapsed, the page is the only list and keeps search, add and configuration (F7).
+    const besideList = collectionLayout ? collectionLayout.mode === 'split' : door === 'rail' && shellColumnVisible;
     const viewModel = useMachinesSettingsViewModel();
     const addOptions = useMachineAddOptions(viewModel.visibleMachineGroups);
     const thisComputerMachineId = useThisComputerMachineId();
@@ -424,12 +427,14 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
         { id: 'list' as const, label: t('allMachines.viewList'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
         { id: 'grid' as const, label: t('allMachines.viewGrid'), icon: <Icon name="squares-four" size={16} color={theme.colors.text.secondary} /> },
     ], [language, theme.colors.text.secondary]);
-    const meta = React.useMemo(() => [
+    // An empty fleet says nothing about counts (its add section below says what to do) and has nothing to view two ways.
+    const emptyFleet = props.machineCount === 0;
+    const meta = React.useMemo(() => emptyFleet ? freshness : [
         ...(props.machineCount === null ? [] : [{ key: 'machines', text: t('allMachines.machinesCount', { count: props.machineCount }), testID: 'machines.index.count' }]),
         { key: 'working', text: t('allMachines.sessionsWorking', { count: working }), testID: 'machines.index.working' },
         ...freshness,
-    ], [freshness, language, props.machineCount, working]);
-    const viewSwitch = (
+    ], [emptyFleet, freshness, language, props.machineCount, working]);
+    const viewSwitch = emptyFleet ? null : (
         <SettingAnchor setting={MACHINES_INDEX_SETTINGS.settings.indexView}>
             <SegmentedTabBar<MachinesIndexView>
                 role="radiogroup"
@@ -455,15 +460,15 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
             actions={props.phone ? undefined : viewSwitch}
             create={props.create}
             createTrigger={props.addMenu}
-            band={props.phone ? <View style={stylesheet.phoneViewSwitch}>{viewSwitch}</View> : undefined}
+            band={props.phone && viewSwitch ? <View style={stylesheet.phoneViewSwitch}>{viewSwitch}</View> : undefined}
         />
     );
 });
 
 /**
  * One anatomy for both views (lab `rm` F, Fp, FC). The table: the machine with what it is after its name
- * ("48 cores · 125 GB"), its work, one cell per shown metric — a machine that reports nothing says why once,
- * across where its figures would stand. The phone's list: work on the name's line, the strip (or why there is
+ * ("48 cores · 125 GB"), its work, one cell per shown metric — offline machines keep missing-value marks,
+ * while an online refusal says why across its figures. The phone's list: work on the name's line, the strip (or why there is
  * none) beneath. The grid: the card body with its metric tiles.
  */
 function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean, cardAttention: ReadonlyMap<string, MachineAttentionEntry>): CollectionAnatomy<MachineIndexItem> {
@@ -484,9 +489,9 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // online passes no meta (its byline says its presence), as the table's Work cell gives it to the presence too.
         ...(phone ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
         fields: [
-            // A machine that is not online says why once, from its Work cell across the figures it cannot report.
+            // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
             { key: 'work', title: t('allMachines.columnWork'), minWidth: 104, priority: 2,
-                ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => !item.online || item.reason !== null } : {}),
+                ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => item.online && item.reason !== null } : {}),
                 render: (item) => metrics.length > 0 && (!item.online || item.reason !== null)
                     ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : <MachineWorkCell item={item} /> },
             ...(metrics.length === 0 ? [
@@ -560,7 +565,7 @@ function describeQuiet(item: MachineIndexItem, availability: MachineResourceAvai
     return null;
 }
 
-/** One metric's cell: the strip for that metric with its figure, or — in the first cell — why there is none. */
+/** One metric's cell: its figure, an offline missing-value mark, or the first cell's online refusal. */
 const MachineMetricCell = React.memo(function MachineMetricCell(props: Readonly<{
     item: MachineIndexItem;
     metric: MachineSummaryMetric;
@@ -570,7 +575,8 @@ const MachineMetricCell = React.memo(function MachineMetricCell(props: Readonly<
     const availability = useMachineResourceSummary(machineKeyOf(props.item));
     const quiet = describeQuiet(props.item, availability);
     // Why there are no figures may take a second line where few columns remain; it is never cut mid-cause.
-    const content = quiet !== null ? (props.first ? <Text numberOfLines={2} style={stylesheet.quiet}>{quiet}</Text> : null)
+    const content = !props.item.online ? <Text style={stylesheet.quiet}>—</Text>
+        : quiet !== null ? (props.first ? <Text numberOfLines={2} style={stylesheet.quiet}>{quiet}</Text> : null)
         : <MachineSummaryStrip testID={`machines.index.metric.${props.item.key}.${props.metric}`}
             availability={availability} style={props.style} metrics={[props.metric]} layout="cells" />;
     return props.first ? <MachineIndexMeter item={props.item} enabled>{content}</MachineIndexMeter> : content;

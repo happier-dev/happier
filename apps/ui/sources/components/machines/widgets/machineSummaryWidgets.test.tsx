@@ -16,6 +16,7 @@ import {
 import { createDeferred, findTestInstanceByTypeContainingText, flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { SurfaceStateContentReport } from '@/components/ui/surfaces/SurfaceStateCard';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
@@ -79,6 +80,7 @@ await import('@/sync/domains/machines/resources/machineRpc');
 const { useMachineWidgetMachine } =
   await import('@/components/machines/widgets/machineWidgetKit');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { SurfaceStateContentContext } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { machineResourceStore } =
@@ -170,6 +172,8 @@ afterEach(async () => {
 });
 
 function seed(machine: ReturnType<typeof createMachineFixture>) {
+  const previous = storage.getState().machineListByServerId[HOME]?.find(row => row.id === machine.id);
+  publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, previous ? [previous] : []);
   storage.setState({
     machineListByServerId: { [HOME]: [machine] },
     machineListStatusByServerId: { [HOME]: 'idle' },
@@ -1036,13 +1040,15 @@ describe('Machines widget presentation', () => {
   it('keeps the Machines index Update target independent while its shared card retains the unsupported metric explanation', async () => {
     const { MachinesDoorProvider } = await import('@/components/machines/page/machinesDoor');
     const { router } = await import('expo-router');
-    const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
     const serverId = getActiveServerSnapshot().serverId;
     storage.setState(state => ({ localSettings: { ...state.localSettings, machinesIndexViewV1: 'grid', uiMachineSummaryMetrics: ['cpu'] } }));
-    storage.getState().applyMachines([createMachineFixture({ id: 'older', active: true, activeAt: Date.now(), daemonState: {} })], true, { sourceServerId: serverId });
-    observeMachinePresenceForTest({ serverId, accountId: 'owner' }, ['older']);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'older', active: true, activeAt: Date.now(), daemonState: {} })]);
     boundary.rpc.mockRejectedValue(createRpcCallError({ error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }));
-    const screen = await renderScreen(<MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>);
+    const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+    // The rail door on a wide screen with the machine list column showing beside the index.
+    const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+        <MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>
+    </AppShellColumnContext.Provider>);
     await act(async () => invokeTestInstanceHandler(screen.findHostByTestId('machines.index.collection:stage'), 'onLayout', {
       nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } },
     }));
@@ -1061,7 +1067,7 @@ describe('Machines widget presentation', () => {
     const serverId = getActiveServerSnapshot().serverId;
     const offline = ['old-a', 'old-b', 'old-c'].map((id) => createMachineFixture({ id, active: false, activeAt: Date.now() - 86_400_000 }));
     const machines = [createMachineFixture({ id: 'edge', active: true, activeAt: Date.now() }), ...offline];
-    storage.getState().applyMachines(machines, true, { sourceServerId: serverId });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, machines);
     for (const size of ['medium', 'full'] as const) {
       const screen = await renderScreen(<WidgetPresentationProvider value={{ size, footprint: getWidgetSizeFootprintV1('home', size)! }}>
         <MachineFleetWidget input={{ metrics: [] }} serverId={serverId} testID="fleet" />
@@ -1077,7 +1083,7 @@ describe('Machines widget presentation', () => {
   it('says a fleet that is all offline as one line state, so the frame sizes the card to that line (owner 1111 B capture)', async () => {
     const serverId = getActiveServerSnapshot().serverId;
     const offline = ['old-a', 'old-b', 'old-c'].map((id) => createMachineFixture({ id, active: false, activeAt: Date.now() - 86_400_000 }));
-    storage.getState().applyMachines(offline, true, { sourceServerId: serverId });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, offline);
     for (const size of ['small', 'medium'] as const) {
       const reports = new Map<symbol, SurfaceStateContentReport>();
       const report = (key: symbol, value: SurfaceStateContentReport | null) => { if (value) reports.set(key, value); else reports.delete(key); };
@@ -1095,7 +1101,7 @@ describe('Machines widget presentation', () => {
 
   it('lends its frame "All machines" as the source, since it reads every machine (lab rw H)', async () => {
     const serverId = getActiveServerSnapshot().serverId;
-    storage.getState().applyMachines([createMachineFixture({ id: 'edge', active: true, activeAt: Date.now() })], true, { sourceServerId: serverId });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'edge', active: true, activeAt: Date.now() })]);
     const lent: (string | null)[] = [];
     const screen = await renderScreen(
       <WidgetFrameBodyCaptionContext.Provider value={(caption) => { lent.push(caption); }}>
@@ -1241,13 +1247,7 @@ describe('Machines widget presentation', () => {
         daemonState: { resources },
       }),
     ];
-    storage.setState({
-      machines: Object.fromEntries(
-        fleet(false).map((machine) => [machine.id, machine]),
-      ),
-      machineListByServerId: { [home]: fleet(false) },
-      machineListStatusByServerId: { [home]: 'idle' },
-    });
+    await publishMachineInventoryForTest({ serverId: home, accountId: 'owner' }, fleet(false));
     boundary.rpc.mockResolvedValue({
       state: 'reporting',
       sample: null,
@@ -1270,14 +1270,7 @@ describe('Machines widget presentation', () => {
       screen.getTextContent().indexOf('zz-edge') <
       screen.getTextContent().indexOf('nl2');
     expect(rowsBefore).toBe(true);
-    await act(async () => {
-      storage.setState({
-        machines: Object.fromEntries(
-          fleet(true).map((machine) => [machine.id, machine]),
-        ),
-        machineListByServerId: { [home]: fleet(true) },
-      });
-    });
+    await act(async () => { await publishMachineInventoryForTest({ serverId: home, accountId: 'owner' }, fleet(true)); });
     await act(async () => {
       for (let turn = 0; turn < 8; turn++) await Promise.resolve();
     });

@@ -439,14 +439,17 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                 open={addOpen}
                 onOpenChange={setAddOpen}
             />
-            <BoardReadState boardId={board.id} retained />
-            {membership.settled ? <BoardUndeterminedLine undetermined={membership.undetermined}
-                taskItemsComplete={membership.taskItemsComplete} onRetryTasks={membership.refreshTaskItems} /> : null}
-            {failure ? (
-                <View style={styles.failure}>
-                    <BoardSaveFailureLine testID="board-save-failed" failure={failure} context={{ board, membership, isHomeMounted: homes.isHomeMounted }} />
-                </View>
-            ) : null}
+            {/* The Board's state lines stand on the cards' edge, one inset for all of them (F9). */}
+            <View style={styles.lines}>
+                <BoardReadState boardId={board.id} retained />
+                {membership.settled ? <BoardUndeterminedLine undetermined={membership.undetermined}
+                    taskItemsComplete={membership.taskItemsComplete} onRetryTasks={membership.refreshTaskItems} /> : null}
+                {failure ? (
+                    <View style={styles.failure}>
+                        <BoardSaveFailureLine testID="board-save-failed" failure={failure} context={{ board, membership, isHomeMounted: homes.isHomeMounted }} />
+                    </View>
+                ) : null}
+            </View>
             {arrivals.pending.length > 0 ? (
                 <View style={styles.line}>
                     <SurfaceStateCard
@@ -533,10 +536,11 @@ const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
                 <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
             </Pressable>
             {/* An empty board's empty state already says so; the meta line only counts what is there. */}
-            {props.itemCount === null || props.itemCount === 0 ? null : <Text style={styles.meta}>· {describeBoardItemCount(props.itemCount, props.undetermined)}</Text>}
+            {/* The chip's own gap parts it from the count; "·" only joins the facts after it (F9). */}
+            {props.itemCount === null || props.itemCount === 0 ? null : <Text style={styles.meta}>{describeBoardItemCount(props.itemCount, props.undetermined)}</Text>}
             {props.needYou !== null && props.needYou > 0 ? (
                 <Text testID="board-header.need-you" style={[styles.meta, workStatusWordStyle('attention')]}>
-                    · {describeBoardNeedYouCount(props.needYou, props.undetermined)}
+                    {props.itemCount === null || props.itemCount === 0 ? '' : '· '}{describeBoardNeedYouCount(props.needYou, props.undetermined)}
                 </Text>
             ) : null}
         </View>
@@ -564,8 +568,10 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
     },
-    failure: {
+    lines: {
         paddingHorizontal: theme.space.s24,
+    },
+    failure: {
         paddingBottom: theme.space.s8,
     },
     line: {

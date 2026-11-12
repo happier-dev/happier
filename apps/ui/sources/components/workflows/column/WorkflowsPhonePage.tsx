@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
-import { PhoneMainTabLine } from '@/components/navigation/shell/PhoneMainTabLine';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -82,7 +81,6 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
         testID="workflows-column:header"
         style={{ paddingTop: safeAreaTop }}
       >
-        <PhoneMainTabLine />
         <MainScreenHeader
           testID="workflows-header"
           title={t('workflows.title')}

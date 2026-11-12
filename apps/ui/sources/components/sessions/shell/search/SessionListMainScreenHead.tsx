@@ -4,7 +4,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
-import { PhoneTabNavRowLine } from '@/components/navigation/shell/phoneTabNavRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionFilterButton } from '@/components/ui/lists/collection/CollectionFilterButton';
 import {
@@ -26,8 +25,8 @@ import { sessionListSubjectCopyKey } from '../sessionListViewEmptyStateModel';
 import type { SessionListSearchChromeProps } from './SessionListSearchChrome';
 
 /**
- * My work as a phone main screen (owner 11-11): the shell's Home line, then the one main-screen head every main screen
- * draws — the space as the title ("My work ⌄"), the magnifier and View options on its row; the
+ * My work as a phone main screen (owner 11-11): the one main-screen head every main screen draws (it opens on the
+ * Home line) — the space as the title ("My work ⌄"), the magnifier and View options on its row; the
  * spaces and their conditions right under it; the field (with its funnel) and what the search says last. Only the
  * facts are the session list's; the anatomy is the shared head's.
  */
@@ -215,7 +214,6 @@ export const SessionListMainScreenHead = React.memo(
         collapsable={false}
         testID="session-list-search-chrome"
       >
-        <PhoneTabNavRowLine testID="session-list-phone-nav-row" />
         <CollectionSpaceSwipeZone
           testID="session-list-space-swipe-zone"
           track={spaceSwipeTrack}

@@ -61,7 +61,9 @@ function listText(role: keyof typeof HAPPIER_COLLECTION_LIST_TEXT) {
 }
 
 import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
-import { usePublishPageCreateAction, type PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+// Used at render time only: the main-screen head draws this list's own magnifier and "+" from this module.
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
@@ -315,9 +317,40 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
     const phone = useDeviceType() === 'phone';
     const rowMark = phone ? phonePage?.rowMark ?? null : null;
     const pageRows = React.useMemo(() => rowMark ? { mark: rowMark } : null, [rowMark]);
+    if (phonePage && phone) {
+        // A phone page heads with the one main-screen head (F2): the Home line on a main screen, the title (or its
+        // scope control), the magnifier and "+" on its row, what the title scopes right under it. The list keeps
+        // only its rows, filters and footer.
+        const { title, titleControl, count: _count, subtitle, strip, titleAccessory, search, ...bodyProps } = listProps;
+        return (
+            <CollectionPhonePageRowsContext.Provider value={pageRows}>
+                <CollectionPhonePageBack backTestID={phonePage.backTestID} />
+                <MainScreenHeader
+                    title={title ?? ''}
+                    {...(titleControl == null ? {} : { titleControl })}
+                    {...(subtitle ? { description: subtitle.text } : {})}
+                    search={search ? {
+                        value: search.value,
+                        onChangeText: search.onChangeText,
+                        placeholder: search.placeholder,
+                        testID: search.testID ?? `${listProps.testID ?? 'collection'}:search`,
+                        ...(search.trailing == null ? {} : { trailing: search.trailing }),
+                    } : null}
+                    create={create ?? null}
+                    {...(headerAction === undefined ? {} : { createTrigger: headerAction })}
+                    {...(strip != null || titleAccessory != null ? { band: <>{strip}{titleAccessory}</> } : {})}
+                />
+                <HappierCollectionList
+                    host={collectionListPhonePageHost}
+                    {...(resolvedToolsInsetPx === undefined ? {} : { toolsInsetPx: resolvedToolsInsetPx })}
+                    {...bodyProps}
+                />
+            </CollectionPhonePageRowsContext.Provider>
+        );
+    }
     return (
         <CollectionPhonePageRowsContext.Provider value={pageRows}>
-            {phonePage ? <CollectionPhonePageHead backTestID={phonePage.backTestID} create={create ?? null} /> : null}
+            {phonePage ? <CollectionPhonePageBack backTestID={phonePage.backTestID} /> : null}
             <HappierCollectionList
                 host={surface === 'plane' ? collectionListPlaneHost : phonePage || largeTitle ? collectionListPhonePageHost : collectionListHost}
                 {...(resolvedToolsInsetPx === undefined ? {} : { toolsInsetPx: resolvedToolsInsetPx })}
@@ -345,11 +378,9 @@ export function CollectionRows(props: Readonly<{ children: React.ReactNode }>) {
     return pageRows ? <ItemGroup>{props.children}</ItemGroup> : <>{props.children}</>;
 }
 
-/** A whole phone page's head: its line under the status bar, and its create action lent to the bar's "+". */
-function CollectionPhonePageHead(props: Readonly<{ backTestID: string; create: PageCreateAction | null }>) {
+/** A whole phone page's line under the status bar: its Back on a pushed page; the main-screen head lends the bar its "+". */
+function CollectionPhonePageBack(props: Readonly<{ backTestID: string }>) {
     const back = usePhoneDestinationBack(props.backTestID);
-    const phone = useDeviceType() === 'phone';
-    usePublishPageCreateAction(phone ? props.create : null);
     return <PhonePageBackLine control={back} page />;
 }
 
