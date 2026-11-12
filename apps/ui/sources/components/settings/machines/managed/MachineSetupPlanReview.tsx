@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Text } from '@/components/ui/text/Text';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -410,8 +409,8 @@ export function describeMachineSetupReviewUnavailable(
 }
 
 /**
- * The review's closing row, shared by every setup review (Store Install on…, Set up from a preset):
- * who approves on the left, Cancel and the one primary action on the right (lab `setup/review`).
+ * The review's closing row, shared by every setup review (Store Install on…, Set up from a preset): the shared
+ * card footer (`ModalCardFooterActions`) with the setup's own facts — who approves, or why the primary waits.
  */
 export function MachineSetupReviewFooter(
   props: Readonly<{
@@ -435,69 +434,30 @@ export function MachineSetupReviewFooter(
     }>;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const prerequisite = props.prepared && props.nameOf ? describeMachineSetupReviewUnavailable(props.prepared, props.nameOf) : undefined;
   const reason = prerequisite ?? (props.primary?.disabled ? props.primary.disabledReason : undefined);
+  // The setup's Administrator row already explains a prerequisite; it stays the button's hint, not a second note.
+  const note = prerequisite !== undefined || reason === undefined && props.note === null
+    ? null : reason ?? props.note ?? t('capabilities.store.softwarePage.approvalNote');
   return (
-    <View style={footerStyles.footer}>
-      {/* The setup's Administrator row already explains this prerequisite; keep it as the button's hint too. */}
-      {prerequisite !== undefined || reason === undefined && props.note === null ? null : (
-        <View style={footerStyles.note}>
-          <Icon
-            name={reason === undefined ? 'shield-check' : 'info'}
-            size={ICON_SIZE.xs}
-            color={theme.colors.text.secondary}
-          />
-          <Text
-            variant="meta"
-            style={[footerStyles.noteText, { color: theme.colors.text.secondary }]}
-          >
-            {reason ?? props.note ?? t('capabilities.store.softwarePage.approvalNote')}
-          </Text>
-        </View>
-      )}
-      <View style={footerStyles.buttons}>
+    <ModalCardFooterActions
+      cancel={{ onPress: props.onCancel, testID: props.cancelTestID, ...(props.cancelLabel ? { title: props.cancelLabel } : {}) }}
+      note={note}
+    >
+      {props.primary ? (
         <RoundButton
-          testID={props.cancelTestID}
+          testID={props.primary.testID}
           size="normal"
-          display="secondary"
-          title={props.cancelLabel ?? t('common.cancel')}
-          onPress={props.onCancel}
+          title={props.primary.label}
+          loading={props.primary.loading}
+          disabled={props.primary.disabled || prerequisite !== undefined}
+          {...(reason === undefined ? {} : { accessibilityHint: reason })}
+          onPress={props.primary.onPress}
         />
-        {props.primary ? (
-          <RoundButton
-            testID={props.primary.testID}
-            size="normal"
-            title={props.primary.label}
-            loading={props.primary.loading}
-            disabled={props.primary.disabled || prerequisite !== undefined}
-            {...(reason === undefined ? {} : { accessibilityHint: reason })}
-            onPress={props.primary.onPress}
-          />
-        ) : null}
-      </View>
-    </View>
+      ) : null}
+    </ModalCardFooterActions>
   );
 }
-
-const footerStyles = StyleSheet.create((theme) => ({
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.space.s12,
-  },
-  note: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 200,
-  },
-  noteText: { flexShrink: 1 },
-  buttons: { flexDirection: 'row', gap: theme.space.s8, marginLeft: 'auto' },
-}));
 
 /** Items a Machine can't take or couldn't check, counted from its Plan's per-item support. */
 function supportLines(
