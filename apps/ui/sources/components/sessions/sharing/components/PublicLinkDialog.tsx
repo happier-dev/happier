@@ -390,6 +390,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 8,
         height: 8,
         borderRadius: 4,
-        backgroundColor: theme.colors.radio.dot,
+        backgroundColor: theme.colors.radio.active,
     },
 }));

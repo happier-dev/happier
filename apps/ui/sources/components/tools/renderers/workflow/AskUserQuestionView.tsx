@@ -204,7 +204,7 @@ const styles = StyleSheet.create((theme) => ({
         width: 10,
         height: 10,
         borderRadius: 5,
-        backgroundColor: theme.colors.radio.dot,
+        backgroundColor: theme.colors.radio.active,
     },
     checkboxOuter: {
         width: 20,
