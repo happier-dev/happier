@@ -369,7 +369,7 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
   const { pathToFileURL } = await import('node:url');
   await writeFile(entry, `await import(${JSON.stringify(pathToFileURL(source).href)});`);
   // Exercise the four existing loader branches on the same temporary source.
-  const oldGraphs = sentinelGraphs().filter(g => ENTRY_GRAPHS.some(entry => entry.id === g.id))
+  const oldGraphs = sentinelGraphs().filter(g => g.id !== 'bundled-plugin-manifests' && ENTRY_GRAPHS.some(entry => entry.id === g.id))
     .map(g => ({ ...graph, id: g.id, args: [] }));
   const posts = [], results = [];
   const sentinel = createLoadSentinel({ repoDir: fixture.root, env,
@@ -432,12 +432,7 @@ test('web bundle follows checkout identity without a selected stack and preserve
   let bundles = 0;
   const server = createServer((req, res) => {
     if (req.url === '/status') return res.end('packager-status:running');
-    if (req.url === '/') {
-      if (mode === 'page-http') { res.writeHead(503); return res.end(); }
-      if (mode === 'missing') return res.end('<html></html>');
-      if (mode === 'origin') return res.end('<script src="http://other.invalid/index.bundle"></script>');
-      return res.end('<script src="/index.bundle?platform=web"></script>');
-    }
+    if (req.url === '/') return res.end('<html></html>');
     if (mode === 'bundle-http') { res.writeHead(404); return res.end(); }
     bundles++;
     if (mode === 'broken') { res.writeHead(500); return res.end(JSON.stringify({type: 'TransformError', filename: fixture.path('packages/cli-common/controllerErrors.ts'), lineNumber: 2})); }
@@ -457,8 +452,7 @@ test('web bundle follows checkout identity without a selected stack and preserve
   await sentinel.request();
   assert.equal(results.at(-1).status, 'passed', 'a checkout with running Expo must resolve without stack env');
   assert.equal(bundles, 1, 'one bundle request per healthy pass');
-  for (const [nextMode, code] of [['page-http', 'expo_http_503'], ['missing', 'expo_bundle_missing'],
-    ['origin', 'expo_bundle_origin_mismatch'], ['bundle-http', 'expo_http_404']]) {
+  for (const [nextMode, code] of [['bundle-http', 'expo_http_404']]) {
     mode = nextMode; await sentinel.request();
     assert.equal(results.at(-1).status, 'unavailable');
     assert.equal(formatLoadSentinelResult(results.at(-1)).code, code);

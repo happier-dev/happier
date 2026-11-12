@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,10 +8,13 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { probeRuntimeImport } from '../utils/proc/runtimeImportProbe.mjs';
 import { createLoadSentinel, sentinelGraphs } from './load-sentinel.mjs';
 import { BUNDLED_MANIFEST_GRAPH, loadBundledManifestContracts } from './contract-manifests.mjs';
+import { ENTRY_GRAPHS, loadEntryGraph } from './entry-load.mjs';
 
 const sourceRepo = fileURLToPath(new URL('../../../../', import.meta.url));
 
-test('manifest probe rejects stale provisioner byte schemas without rewriting declarations', async t => {
+test('manifest entry and sentinel reject stale projections and invalid authored declarations', async t => {
+  assert.equal(ENTRY_GRAPHS.find(graph => graph.id === BUNDLED_MANIFEST_GRAPH.id), BUNDLED_MANIFEST_GRAPH,
+    'entry-loads must invoke the same manifest check as the sentinel');
   const fixture = await createTempFixture(t, { prefix: 'hstack-manifest-contract-' });
   const repoDir = fixture.path('repo');
   const cliDir = join(repoDir, 'apps/cli');
@@ -59,6 +63,9 @@ test('manifest probe rejects stale provisioner byte schemas without rewriting de
   delete bytesSchema.format;
   const staleBytes = JSON.stringify(stale);
   await writeFile(assetPath, staleBytes);
+  const staleEntry = await loadEntryGraph(BUNDLED_MANIFEST_GRAPH, { repoDir, env, signal: t.signal });
+  assert.equal(staleEntry.status, 'failed');
+  assert.equal(staleEntry.loadError.message, '', 'entry-loads must not publish declaration byte differences');
   const results = [], posts = [];
   await createLoadSentinel({ repoDir, env, graphs: sentinelGraphs().filter(graph => graph.id === BUNDLED_MANIFEST_GRAPH.id),
     signal: t.signal, waitForQuiet: async () => {}, onResult: result => results.push(result),
@@ -71,4 +78,11 @@ test('manifest probe rejects stale provisioner byte schemas without rewriting de
   assert.equal(failed.exitCode, 1);
   assert.ok(failed.elapsedMs > 0);
   assert.equal(await readFile(assetPath, 'utf8'), staleBytes, 'check must preserve stale bytes for their publisher');
+  await cp(join(output, 'apps/cli/assets/bundled-plugin-manifests/machine-fly.json'), assetPath);
+  await writeFile(join(pluginDir, 'src/manifest.ts'),
+    `export const PLUGIN_MANIFEST = ${JSON.stringify({ ...manifest, version: 42 })};\n`);
+  const invalidEntry = await loadEntryGraph(BUNDLED_MANIFEST_GRAPH, { repoDir, env, signal: t.signal });
+  assert.equal(invalidEntry.status, 'failed', 'entry-loads must ingest invalid authored manifests');
+  const invalidSentinel = await loadBundledManifestContracts({ repoDir, env, signal: t.signal });
+  assert.equal(invalidSentinel.status, 'failed', 'sentinel must ingest invalid authored manifests');
 });

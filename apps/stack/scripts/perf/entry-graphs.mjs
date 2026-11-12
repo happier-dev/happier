@@ -1,8 +1,18 @@
+export const BUNDLED_MANIFEST_GRAPH = Object.freeze({
+  id: 'bundled-plugin-manifests',
+  entry: 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts',
+  cwd: '.',
+  preparationComponent: 'apps/cli',
+  conditions: ['happier-source'],
+  args: ['--root', '.', '--mode', 'check', '--daemon-projections'],
+});
+
 // Source imports use the same entry owners as the existing per-package probes.
 // UI needs its canonical native-platform boundary harness; SDK needs browser
 // bundling/evaluation rather than Node's different export conditions.
 export const ENTRY_GRAPHS = Object.freeze([
   { id: 'daemon-entry-preparation', entry: 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
+  BUNDLED_MANIFEST_GRAPH,
   { id: 'daemon', entry: 'apps/cli/src/daemon/startDaemon.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
   { id: 'cli', entry: 'apps/cli/src/index.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
   { id: 'voice-inference-worker', entry: 'apps/cli/src/daemon/voiceInference/forkedWorker/workerEntry.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },

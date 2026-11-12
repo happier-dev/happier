@@ -10,7 +10,7 @@ import { describeRuntimeImportFailure, probeRuntimeImport } from '../utils/proc/
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const self = fileURLToPath(import.meta.url);
 
-import { ENTRY_GRAPHS } from './entry-graphs.mjs';
+import { BUNDLED_MANIFEST_GRAPH, ENTRY_GRAPHS } from './entry-graphs.mjs';
 export { ENTRY_GRAPHS } from './entry-graphs.mjs';
 
 export async function loadEntryGraph(graph, { signal, repoDir = repo, env = process.env, traceImports = false } = {}) {
@@ -90,6 +90,13 @@ export async function loadEntryGraph(graph, { signal, repoDir = repo, env = proc
       if (eagerRead) {
         result.firstFailingModule = join(repoDir, graph.diagnosticSourceRoot, eagerRead[1]);
         result.loadError = { ...result.loadError, code: 'runtime_import_cycle', symbol: eagerRead[3] };
+      }
+      if (graph.id === BUNDLED_MANIFEST_GRAPH.id && result.loadError) {
+        // Declaration drift includes actual/expected bytes; every consumer,
+        // including the entry-load CLI, receives only the owner and error identity.
+        const output = result.loadError.message.match(/(?:generated output differs|missing generated output): (.+?)(?: at byte \d+|$)/)?.[1];
+        if (output) result.firstFailingModule = output;
+        result.loadError = { ...result.loadError, message: '' };
       }
       return { graph: graph.id, entry: graph.entry, basis: 'current-source', ...result,
         ...(traceImports ? { importEdges } : {}),
