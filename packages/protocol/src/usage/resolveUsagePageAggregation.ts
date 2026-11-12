@@ -509,6 +509,20 @@ export function resolveUsageAccountingAsOfMs(value: UsageAnalyticsQueryResponse)
   return times.length ? Math.min(...times) : undefined;
 }
 
+/** Display currentness has no Machine/path dimension; preserve each distinct status. */
+function projectUsageAccountingSourceStates(value: UsageAnalyticsQueryResponse | undefined): UsageQuerySourceState[] {
+  const states = new Map<string, UsageQuerySourceState>();
+  for (const source of value?.coverage?.sources ?? []) {
+    const key = JSON.stringify([source.source, source.status]);
+    const previous = states.get(key);
+    if (!previous || source.asOfMs !== undefined && (previous.asOfMs === undefined || source.asOfMs > previous.asOfMs)) {
+      states.set(key, { source: source.source, status: source.status,
+        ...(source.asOfMs === undefined ? {} : { asOfMs: source.asOfMs }) });
+    }
+  }
+  return [...states.values()];
+}
+
 export type UsageWorkSourceSnapshot = Readonly<{
   query: UsageQuery;
   evidence?: readonly UsageWorkEvidence[];
@@ -893,8 +907,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       { source: 'accounting', status: snapshot?.status ?? 'not_loaded',
         ...(snapshot?.asOfMs === undefined ? {} : { asOfMs: snapshot.asOfMs }),
         ...(snapshot?.errorCode === undefined ? {} : { errorCode: snapshot.errorCode }) },
-      ...(snapshot?.value?.coverage?.sources.map(source => ({ source: source.source, status: source.status,
-        ...(source.asOfMs === undefined ? {} : { asOfMs: source.asOfMs }) })) ?? []),
+      ...projectUsageAccountingSourceStates(snapshot?.value),
       ...quotaSources,
       workSource,
       // An exact-query detail snapshot supersedes the batch-wide initial

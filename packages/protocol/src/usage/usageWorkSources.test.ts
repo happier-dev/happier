@@ -4,6 +4,7 @@ import { RPC_METHODS } from '../rpc/methods.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 import { collectUsageWorkSources } from './usageWorkSources.js';
 import { resolveUsagePageAggregation } from './resolveUsagePageAggregation.js';
+import { createRpcCallError } from '../rpc/errors.js';
 
 const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeComparison: false,
   includeQuotaHistory: false, includeSessionEvidence: false, includeWorkEvidence: true });
@@ -14,6 +15,21 @@ const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCou
 const accounting = [{ query, value, status: 'available' as const }];
 
 describe('Usage Work repository admission', () => {
+  it.each(['target_unavailable', 'RPC_FORBIDDEN'] as const)('distinguishes unavailable Work hosts from authorization failure: %s', async code => {
+    const methods: string[] = [];
+    const work = await collectUsageWorkSources({ queries: [query], accounting, assertCurrent: () => {},
+      readSession: async () => async method => {
+        methods.push(method);
+        throw createRpcCallError({ error: code, errorCode: code });
+      },
+    });
+    const result = resolveUsagePageAggregation({ queries: [query], accounting, work });
+    expect(result.results[0]?.sources.find(source => source.source === 'work')).toEqual(code === 'target_unavailable'
+      ? { source: 'work', status: 'unknown' }
+      : { source: 'work', status: 'error', errorCode: 'work_evidence_failed' });
+    expect(work[0]?.evidence ?? []).toEqual([]);
+    if (code === 'target_unavailable') expect(methods).toEqual([RPC_METHODS.SCM_BRANCH_LIST]);
+  });
   it('settles a witnessed non-repository without acquiring unusable remote pull-request evidence', async () => {
     let releaseRemote: ((value: unknown) => void) | undefined;
     const heldRemote = new Promise<unknown>(resolve => { releaseRemote = resolve; });

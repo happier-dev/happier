@@ -20,6 +20,22 @@ const accounting = UsageAnalyticsQueryResponseSchema.parse({
   v: 1, totals: { eventCount: 1, tokens, cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD' } },
 });
 
+it('projects producer coverage into distinct source states with the freshest observation', () => {
+  const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false });
+  const sources = Array.from({ length: 100 }, (_, index) => UsageAnalyticsSourceCoverageSchema.parse({
+    source: 'claude-sdk-result', path: 'runtime', status: 'partial', machineId: `machine-${index}`,
+    eventCount: 1, asOfMs: index,
+  }));
+  sources.push({ ...sources[0]!, status: 'error', asOfMs: 50 });
+  const value = { ...accounting, coverage: { status: 'partial' as const, reasons: [], missingDimensions: [], sources,
+    range: { complete: false } } };
+  const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] });
+  expect(result.results[0]?.sources.filter(source => source.source === 'claude-sdk-result')).toEqual([
+    { source: 'claude-sdk-result', status: 'partial', asOfMs: 99 },
+    { source: 'claude-sdk-result', status: 'error', asOfMs: 50 },
+  ]);
+});
+
 it('evaluates no Coach detectors for chart demand while retaining Session interval facts', () => {
   const evaluations = vi.spyOn(coachEvaluation, 'evaluateUsageCoach');
   try {

@@ -1,4 +1,5 @@
 import { RPC_METHODS } from '../rpc/methods.js';
+import { readRpcErrorCode } from '../rpc/errors.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
 import { ScmBranchListResponseSchema, type ScmBranchListRequest, type ScmBranchWorkEvidence, ScmPullRequestListResponseSchema, type ScmPullRequestListRequest } from '../scm/index.js';
 import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
@@ -36,7 +37,7 @@ export async function collectUsageWorkSources(input: Readonly<{
         const read = await input.readSession(sessionId);
         if (!read) return { status: 'unknown' };
         const readState = async (state: 'branch' | 'open' | 'closed' | 'merged'): Promise<Readonly<{
-            status: 'partial' | 'unsupported' | 'error'; evidence?: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[];
+            status: 'partial' | 'unsupported' | 'error' | 'unknown'; evidence?: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[];
             quarantine?: boolean; notRepository?: boolean;
         }>> => {
           try {
@@ -73,14 +74,18 @@ export async function collectUsageWorkSources(input: Readonly<{
             }
             // List is current-branch discovery, never proof of complete repository history.
             return { status: 'partial', evidence: response.data.workEvidence };
-          } catch {
+          } catch (error) {
             await input.assertCurrent();
+            // Home could not reach this Machine. No repository read failed;
+            // authorization and unclassified failures remain errors below.
+            if (readRpcErrorCode(error) === 'target_unavailable') return { status: 'unknown' };
             return { status: 'error', quarantine: true };
           }
         };
         // Branch discovery establishes whether this admitted workspace is a
         // repository before acquiring remote PR evidence that it cannot have.
         const branch = await readState('branch');
+        if (branch.status === 'unknown') return { status: 'unknown' };
         if (branch.notRepository) return { status: 'unsupported', evidence: [], branchEvidence: [] };
         const states = [branch, ...await Promise.all((['open', 'closed', 'merged'] as const).map(readState))];
         // An explicit empty quarantine is an admission withdrawal. A failed
@@ -89,7 +94,8 @@ export async function collectUsageWorkSources(input: Readonly<{
         if (states.some(source => source.quarantine)) return { status: 'error', evidence: [], branchEvidence: [] };
         if (states.every(source => source.status === 'error')) return { status: 'error' };
         return { status: states.some(source => source.status === 'partial') ? 'partial' as const
-            : states.some(source => source.status === 'error') ? 'error' as const : 'unsupported' as const,
+            : states.some(source => source.status === 'error') ? 'error' as const
+            : states.some(source => source.status === 'unknown') ? 'unknown' as const : 'unsupported' as const,
             evidence: states.flatMap(source => source.evidence ?? []), branchEvidence: states.flatMap(source => source.branchEvidence ?? []) };
     };
     const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => {
