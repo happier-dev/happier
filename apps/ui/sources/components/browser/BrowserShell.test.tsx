@@ -47,7 +47,14 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { browserControlActionId } from '@/sync/domains/browser/actions/controlActionId';
-import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+vi.mock('socket.io-client', async importOriginal =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -63,6 +70,10 @@ import { DaemonLocalServicePreviewSnapshotResponseV1Schema } from '@happier-dev/
 import { installImageAnnotationCanvasBoundary } from '@/dev/testkit/mocks/imageAnnotationCanvas';
 import type { ImageAnnotator } from '@/components/ui/media/annotation';
 import type { BrowserAnnotationCommitInput } from '@/components/sessions/browser/commitBrowserAnnotation';
+import { Modal, ModalProvider } from '@/modal';
+
+vi.mock('@/modal', async () =>
+  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
 
 // Vitest does not choose the platform suffix; exercise the actual web canvas used by this host.
 vi.mock('@/components/ui/media/annotation/AnnotatorCanvas', async () => await import('@/components/ui/media/annotation/AnnotatorCanvas.web'));
@@ -82,13 +93,15 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 });
 
 const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
 const previewBoundaries = new Map<string, Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>>();
 
 async function addBrowserHome(serverUrl: string) {
-  const serverIdentityId = `browser-shell:${new URL(serverUrl).hostname}`;
+  const serverIdentityId = `srv_${new URL(serverUrl).hostname}`;
   const boundary = await createExternalActionAccountHttpBoundary({
     serverUrl, serverIdentityId, accountId: 'viewer-account', machineId: 'machine_1',
-    actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0, requesterInvocation: 'none',
+    actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0, requesterInvocation: 'credentials',
     execute: input => testState.previewOpen(input),
     failure: result => {
       const parsed = ActionExecuteFailureSchema.safeParse(result);
@@ -100,10 +113,13 @@ async function addBrowserHome(serverUrl: string) {
     name: 'Browser Home', serverUrl, serverIdentityId, accountId: 'viewer-account', currentAccount: true,
     credentials: { token: testState.previewToken },
   });
-  return { id };
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(id), accountId: 'viewer-account' };
+  storage.setState({ profileScope: scope, settingsScope: scope });
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+  return { id: scope.serverId };
 }
 
-afterEach(async () => { await homes.reset(); });
+afterEach(async () => { Modal.hideAll(); await homes.reset(); });
 
 function stubCryptoRandomUuid(): void {
   let sequence = 0;
@@ -131,15 +147,6 @@ function findBrowserIframe(
 ): ReturnType<RenderScreenResult['findByType']> {
   return screen.findByType('iframe');
 }
-
-// The diagnostics drawer now renders the canonical `SegmentedTabBar`, which reads the app's motion
-// preferences from the settings store. The canonical testkit stub is the boundary owner — without it
-// the store initialisation never settles and the drawer cases time out.
-vi.mock('@/sync/domains/state/storage', async () => {
-  const { createStorageModuleStub } =
-    await import('@/dev/testkit/mocks/storage');
-  return createStorageModuleStub({});
-});
 
 vi.mock('@expo/vector-icons', async () =>
   (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
@@ -758,7 +765,7 @@ describe('BrowserShell', () => {
             if (next.itemOrder.some(id => next.itemsById[id]?.kind === 'browserAnnotation')) attached.resolve();
           }, nowMs: () => 2 }} />;
     }
-    const screen = await renderScreen(<Harness />);
+    const screen = await renderScreen(<><ModalProvider /><Harness /></>);
     const waitForAttachIdle = () => waitForTestEvent(notify => screen.tree.subscribe(notify),
       () => screen.tree.root.findAllByType(BrowserAnnotatorBar)[0]?.props.attach.busy ?? false,
       busy => busy === false);
@@ -778,18 +785,27 @@ describe('BrowserShell', () => {
     }
     settings = ActionsSettingsV1Schema.parse({ v: 1 });
     if (surface === 'ui') {
-      const { BrowserAnnotatorMount } = await import('./annotation/BrowserAnnotator');
       let pending: unknown;
       await homes.requireUiApproval(scope.serverId, 'browser.context.annotation.attachDraft');
       execute = Object.assign(async (...args: Parameters<typeof admittedExecute>) => {
         pending = await admittedExecute(...args); return pending;
       }, { actionExecute: admittedExecute.actionExecute });
-      await act(async () => {
-        const result = await screen.tree.root.findByType(BrowserAnnotatorMount).props.session.onAttach();
-        expect(getActionSpec('browser.context.annotation.attachDraft').outputSchema?.safeParse(pending).success).toBe(true);
-        expect(pending).toMatchObject({ actionId: 'browser.context.annotation.attachDraft', status: 'committed' });
-        expect(result).toEqual({ ok: true });
-      });
+      screen.pressByTestId('browser-annotator-attach');
+      await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+      expect(contextState).toBe(initial);
+      expect(commitAnnotation).not.toHaveBeenCalled();
+      expect(captureScreenshot).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+      await waitForAttachIdle();
+      expect(contextState).toBe(initial);
+      expect(commitAnnotation).not.toHaveBeenCalled();
+      screen.pressByTestId('browser-annotator-attach');
+      await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+      expect(commitAnnotation).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+      await waitForAttachIdle();
+      expect(getActionSpec('browser.context.annotation.attachDraft').outputSchema?.safeParse(pending).success).toBe(true);
+      expect(pending).toMatchObject({ actionId: 'browser.context.annotation.attachDraft', status: 'committed' });
       expect(contextState.annotationDraftByViewId[view.viewId]).toBeUndefined();
       expect(contextState.itemOrder.map(id => contextState.itemsById[id]!.kind)).toEqual(['browserAnnotation']);
       expect(commitAnnotation).toHaveBeenCalledTimes(1);
@@ -819,12 +835,14 @@ describe('BrowserShell', () => {
         const retained = createActionExecutor({ ...approvalDeps, hostActionApprovalLifetime: {
           actionId: operation.actionId, surface: 'ui', signal: lifetime.signal,
         } });
-        expect(await retained.execute(operation.actionId, operation.input, { surface: 'ui', serverId: scope.serverId,
+        const retainedResult = await retained.execute(operation.actionId, operation.input, { surface: 'ui', serverId: scope.serverId,
           runtimeAccountId: scope.accountId, actionCaller: { kind: 'host' }, authority: 'present_user', signal: lifetime.signal,
-          actionRequestId: `browser-retained:${operation.actionId}`, defaultSessionId: 'session_1', defaultSessionMachineId: 'machine_1' }))
-          .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+          actionRequestId: `browser-retained:${operation.actionId}`, defaultSessionId: 'session_1', defaultSessionMachineId: 'machine_1' });
+        expect(retainedResult, JSON.stringify(retainedResult)).toMatchObject({ ok: false,
+          errorCode: 'action_interactive_review_required', details: { reviewDigest: expect.any(String),
+            review: { actionArgs: expect.any(Object) } } });
       }
-      expect(approvalsCreate).toHaveBeenCalledTimes(4);
+      expect(approvalsCreate).toHaveBeenCalledTimes(2);
       expect(contextState).toBe(beforeApproval);
       expect(captureScreenshot).not.toHaveBeenCalled();
       expect(commitAnnotation).not.toHaveBeenCalled();
@@ -1025,10 +1043,10 @@ describe('BrowserShell', () => {
         'local_service_preview_lifecycle_refused:service_not_listening',
       ),
     );
-    testState.previewOpen.mockResolvedValue({
-      ok: false, errorCode: 'runtime_action_disabled',
-      error: 'runtime_action_disabled:localServices:local_services_preview_refused:service_not_listening',
-    });
+    testState.previewOpen.mockResolvedValue(ActionExecuteFailureSchema.parse({
+      ok: false, errorCode: 'local_services_preview_refused:service_not_listening',
+      error: 'local_services_preview_refused:service_not_listening',
+    }));
     const selectTab = vi.fn();
     const sideActions = { current: { tabs: ['files', 'services'], selectTab } };
     const render = (
@@ -1726,21 +1744,14 @@ describe('BrowserShell', () => {
     );
     // A single compact privacy/security trigger is present instead.
     expect(screen.findByTestId('browser-shell-privacy')).toBeTruthy();
+    expect(screen.findByTestId('browser-shell-privacy-status-identity')).toBeNull();
 
     // Opening the popover reveals the profile/permission/storage detail.
     await act(async () => {
       screen.pressByTestId('browser-shell-privacy');
     });
     expect(screen.findByTestId('browser-shell-privacy-status')).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-shell-privacy-status-mode-session'),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-shell-privacy-status-storage-session'),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-shell-privacy-status-permissions-active'),
-    ).toBeTruthy();
+    expect(screen.findByTestId('browser-shell-privacy-status-identity')).toBeTruthy();
   });
 
   it('9.2: renders a security-origin indicator and consolidates secondary tools into an overflow menu', async () => {
