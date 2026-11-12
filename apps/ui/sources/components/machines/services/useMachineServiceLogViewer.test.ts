@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachineServiceRowV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
@@ -8,7 +9,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequ
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
 import type { ForgeCiLogLineV1 } from '@happier-dev/forge-ci/runtime';
-import { renderHook, renderScreen, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, flushHookEffects, standardCleanup, createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -47,6 +48,114 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await restoreScope(); await homes.reset(); });
 
 describe('native log viewer authority withdrawal', () => {
+    it('counts arrivals with only changed line renders and no line renders for viewport-only changes', async () => {
+        const { useNativeLogViewer } = await import('./useMachineServiceLogViewer');
+        const { createNativeLogView } = await import('./MachineServiceLogs');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const view = createNativeLogView();
+        const read = async () => {};
+        const containsFocus = () => true;
+        const isInputFocused = () => false;
+        const rows = createRenderCommitCounter();
+        const modelRenders = createRenderCommitCounter();
+        const Row = React.memo(function Row({ line }: { line: ForgeCiLogLineV1 }) {
+            useRenderCommitCounter(rows);
+            return React.createElement('Text', null, line.plainText);
+        });
+        let current: ReturnType<typeof useNativeLogViewer> | undefined;
+        // A scale-shaped, all-row consumer deliberately makes identity loss visible:
+        // even without virtualization an append must render only the changed/new lines.
+        function Consumer({ text }: { text: string }) {
+            useRenderCommitCounter(modelRenders);
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const first = React.useMemo(() => ({ kind: 'read' as const, readAt: 1,
+                value: { kind: 'page' as const, page: { sourceRevision: 'source', text, nextCursor: null, truncated: false } } }), [text]);
+            current = useNativeLogViewer({ first, read, accountLifetime: binding, reference: null,
+                sourceKey: 'cost-contract', active: true, fileName: 'worker.log', view,
+                surfaceId: 'busy-cost', containsFocus, isInputFocused });
+            return React.createElement(React.Fragment, null,
+                current.viewer?.lines.map(line => React.createElement(Row, { key: line.id, line })));
+        }
+        const text = Array.from({ length: 1000 }, (_, i) => `row ${i}`).join('\n');
+        const screen = await renderScreen(React.createElement(Consumer, { text }));
+        expect(current!.viewer!.lines).toHaveLength(1000);
+        rows.reset();
+        await act(async () => current!.navigation.setAtLatest(false));
+        expect(rows.read().renders).toBe(0);
+        modelRenders.reset();
+        await act(async () => current!.navigation.setAtLatest(false));
+        expect(modelRenders.read().commits).toBe(0);
+        await screen.update(React.createElement(Consumer, { text: `${text}\narrival` }));
+        expect(current!.navigation.newLineCount).toBe(1);
+        expect(rows.read().renders).toBeLessThanOrEqual(2); // Previous partial line plus the new line.
+        expect(rows.read().renders).toBeGreaterThan(0);
+        rows.reset();
+        await act(async () => current!.navigation.jumpToLatest());
+        expect(current!.navigation.newLineCount).toBe(0);
+        expect(rows.read().renders).toBe(0);
+        await screen.update(React.createElement(Consumer, { text: `${text}\narrival` }));
+        expect(rows.read().renders).toBe(0);
+        await screen.unmount();
+    });
+
+    it('counts arrivals while reading above the tail, resumes latest, and reveals loaded context from Find', async () => {
+        const { useNativeLogViewer } = await import('./useMachineServiceLogViewer');
+        const { createNativeLogView } = await import('./MachineServiceLogs');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const view = createNativeLogView();
+        const read = async () => {};
+        const containsFocus = () => true;
+        const isInputFocused = () => false;
+        const first = (text: string) => ({ kind: 'read' as const, readAt: 1,
+            value: { kind: 'page' as const, page: { sourceRevision: 'source', text, nextCursor: null, truncated: false } } });
+        const hook = await renderHook(({ text, sourceKey }: { text: string; sourceKey: string }) => {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const model = useNativeLogViewer({ first: React.useMemo(() => first(text), [text]), read, accountLifetime: binding, reference: null,
+                sourceKey, active: true, fileName: 'worker.log', view, surfaceId: 'busy-log', containsFocus, isInputFocused });
+            return { ...model, accountLifetime: binding };
+        }, { initialProps: { text: 'before\nneedle\nafter', sourceKey: 'source' } });
+        await vi.waitFor(() => expect(hook.getCurrent().accountLifetime?.isCurrent()).toBe(true));
+        await flushHookEffects();
+        const leaveTail = () => hook.getCurrent().navigation.setAtLatest(false);
+        expect(hook.getCurrent().navigation.newLineCount).toBe(0);
+        await act(async () => leaveTail());
+        await hook.rerender({ text: 'before\nneedle\nafter\nnew one\nnew two', sourceKey: 'source' });
+        expect(hook.getCurrent().navigation.newLineCount).toBe(2);
+        expect(hook.getCurrent().navigation.jumpTarget).toBe(hook.getCurrent().index!.lines.at(-1));
+        expect(hook.getCurrent().follow).toBe(true); // Viewport pause keeps the pushed acquisition.
+        await act(async () => hook.getCurrent().navigation.setAtLatest(false));
+        expect(hook.getCurrent().navigation.newLineCount).toBe(2);
+        expect(hook.getCurrent().navigation.following).toBe(false);
+        const retainedLines = hook.getCurrent().viewer!.lines;
+        await act(async () => hook.getCurrent().navigation.jumpToLatest());
+        expect(hook.getCurrent().navigation.newLineCount).toBe(0);
+        expect(hook.getCurrent().navigation.following).toBe(true);
+        expect(hook.getCurrent().viewer!.lines).toBe(retainedLines);
+        await act(async () => hook.getCurrent().viewer!.find.open());
+        await act(async () => hook.getCurrent().viewer!.find.setQuery('needle'));
+        await act(async () => { hook.getCurrent().navigation.showContext({ before: 1, after: 1 }); });
+        expect(hook.getCurrent().viewer!.findSnapshot.isOpen).toBe(false);
+        expect(hook.getCurrent().viewer!.viewState?.revealedLine).toBe(2);
+        expect(hook.getCurrent().viewer!.lines.map(line => line.plainText)).toEqual(['before', 'needle', 'after']);
+        expect(hook.getCurrent().navigation.contextWindow).toEqual({ startLine: 1, endLine: 3 });
+        expect(hook.getCurrent().navigation.following).toBe(false);
+        await act(async () => hook.getCurrent().navigation.jumpToLatest());
+        expect(hook.getCurrent().navigation.contextWindow).toBeNull();
+        expect(hook.getCurrent().viewer!.lines).toHaveLength(5);
+        expect(hook.getCurrent().viewer!.viewState?.revealedLine).toBe(5);
+        await act(async () => hook.getCurrent().viewer!.find.setQuery('new two'));
+        await act(async () => { hook.getCurrent().navigation.showContext({ before: 1, after: 1 }); });
+        expect(hook.getCurrent().navigation.contextWindow).toEqual({ startLine: 4, endLine: 5 });
+        await hook.rerender({ text: 'replacement', sourceKey: 'other-source' });
+        expect(hook.getCurrent().navigation.newLineCount).toBe(0);
+        expect(hook.getCurrent().navigation.contextWindow).toBeNull();
+        expect(hook.getCurrent().viewer!.lines.map(line => line.plainText)).toEqual(['replacement']);
+        await hook.rerender({ text: '', sourceKey: 'empty-source' });
+        expect(hook.getCurrent().navigation.jumpTarget).toBeNull();
+        expect(hook.getCurrent().navigation.showContext({ before: 1, after: 1 })).toBe(false);
+        await hook.unmount();
+    });
+
     it('renders runtime rows from native pages through the shared viewer and releases hidden demand without a separate Action read', async () => {
         const reference = { hostRead: 'deployments.logs', input: { serverId, machineId: 'machine',
             installationId: 'installation', environmentId: 'environment', deploymentId: 'deployment',

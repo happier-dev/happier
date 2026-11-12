@@ -101,8 +101,68 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
         partialErrors: stale || projection?.kind === 'index' && projection.truncated });
     const clipboard = useClipboardWrite(accountLifetime?.scope,
         { enabled: input.active && index !== null });
-    const latest = React.useRef({ sourceKey, index, accountLifetime, active: input.active, fileName: input.fileName });
-    latest.current = { sourceKey, index, accountLifetime, active: input.active, fileName: input.fileName };
+    // Viewport pause is independent of acquisition pause: keep receiving pushed lines above the tail.
+    const [viewport, setViewport] = React.useState(() => ({ sourceKey, accountLifetime,
+        logId: index?.logId, atLatest: true, seenLines: index?.lines.length ?? 0 }));
+    const sameSource = viewport.sourceKey === sourceKey && viewport.accountLifetime === accountLifetime
+        && viewport.logId === index?.logId;
+    const atLatest = !sameSource || viewport.atLatest;
+    const latest = React.useRef({ sourceKey, index, accountLifetime, viewer, view: input.view,
+        active: input.active, fileName: input.fileName });
+    latest.current = { sourceKey, index, accountLifetime, viewer, view: input.view,
+        active: input.active, fileName: input.fileName };
+    const setAtLatest = React.useCallback((next: boolean) => {
+        const current = latest.current;
+        setViewport(previous => {
+            if (previous.sourceKey === current.sourceKey && previous.accountLifetime === current.accountLifetime
+                && previous.logId === current.index?.logId && previous.atLatest === next) return previous;
+            return { sourceKey: current.sourceKey, accountLifetime: current.accountLifetime,
+                logId: current.index?.logId, atLatest: next, seenLines: current.index?.lines.length ?? 0 };
+        });
+    }, []);
+    React.useEffect(() => {
+        if (sameSource) return;
+        setAtLatest(true);
+        // Excerpts belong to the admitted source, just like the unseen-line baseline.
+        if (input.view.getSnapshot()?.selection.kind !== 'all')
+            input.view.invoke({ kind: 'setSelection', selection: { kind: 'all' } });
+    }, [sameSource, setAtLatest, input.view]);
+    const jumpToLatest = React.useCallback(() => {
+        const current = latest.current;
+        const tail = current.index?.lines.at(-1);
+        if (!current.active || !tail || !current.viewer) return;
+        if (current.view.getSnapshot()?.selection.kind !== 'all')
+            current.view.invoke({ kind: 'setSelection', selection: { kind: 'all' } });
+        setFollow(true);
+        setAtLatest(true);
+        current.viewer.revealLine(tail.number);
+    }, [setAtLatest]);
+    const showContext = React.useCallback(({ before, after }: Readonly<{ before: number; after: number }>) => {
+        const current = latest.current;
+        const snapshot = current.viewer?.find.getSnapshot();
+        const match = snapshot?.status.kind === 'results' && snapshot.status.current !== null
+            ? snapshot.matches[snapshot.status.current - 1]?.line : null;
+        const firstLine = current.index?.lines[0];
+        const lastLine = current.index?.lines.at(-1);
+        if (!current.active || !match || !firstLine || !lastLine || !current.viewer) return false;
+        current.view.invoke({ kind: 'setSelection', selection: { kind: 'excerpt',
+            startLine: Math.max(firstLine.number, match.number - before),
+            endLine: Math.min(lastLine.number, match.number + after) } });
+        setAtLatest(false);
+        current.viewer.find.close();
+        current.viewer.revealLine(match.number);
+        return true;
+    }, [setAtLatest]);
+    const findStatus = viewer?.findSnapshot.status;
+    const contextTarget = findStatus?.kind === 'results' && findStatus.current !== null
+        ? viewer?.findSnapshot.matches[findStatus.current - 1]?.line ?? null : null;
+    const selection = viewer?.viewState?.selection;
+    const contextWindow = sameSource && selection?.kind === 'excerpt'
+        ? { startLine: selection.startLine, endLine: selection.endLine } : null;
+    const navigation = { atLatest, following: atLatest && follow,
+        newLineCount: atLatest ? 0 : Math.max(0, (index?.lines.length ?? 0) - viewport.seenLines),
+        jumpTarget: index?.lines.at(-1) ?? null, contextTarget, contextWindow,
+        setAtLatest, jumpToLatest, showContext };
     const copyLoaded = React.useCallback(() => {
         const current = latest.current;
         if (!current.active || !current.index || !current.accountLifetime?.isCurrent()) return Promise.resolve(false);
@@ -133,5 +193,5 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
         ? { ...firstState, value: authorityWithdrawal } : firstState;
     const followedRead = authorityWithdrawal && followed ? { ...followed, lastGoodPage: undefined } : followed;
     return { first: firstRead, readAgain, follow, setFollow, followed: followedRead, followUnavailable, stale,
-        projection, index, viewer, copyLoaded, exportLoaded };
+        projection, index, viewer, navigation, copyLoaded, exportLoaded };
 }
