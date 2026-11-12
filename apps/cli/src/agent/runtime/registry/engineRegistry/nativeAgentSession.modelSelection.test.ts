@@ -17,15 +17,32 @@ const selection = { agentTargetKey: `backend:${agentId}`, providerConnectionId: 
 async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' = 'factory') {
     const contributions = createExternalContributionFixtures(agentId);
     const opens: AgentSessionOpenRequest[] = [];
+    let observedModelId = providerBinding?.model.id ?? selection.modelId;
+    const modelListeners = new Set<() => void>();
     // The executable Agent is the external boundary; host configuration and Protocol parsing remain real.
     const nativeSession: AgentSessionRuntime = {
         send: async () => ({ status: 'admitted' }), watch: () => ({ dispose() {} }), dispose: async () => undefined,
+        updateConfiguration: async request => {
+            if (providerBinding && request.model.value !== providerBinding.model.id) throw new Error('Bound model configuration is not selectable');
+            return { status: 'applied', changed: ['model'] };
+        },
     };
     const plan = await createNativeAgentRuntimeSessionPlanFixture({
-        runtime: { sessions: { open: async request => { opens.push(request); return nativeSession; } } },
+        runtime: { sessions: { open: async (request, context) => {
+            if (request.providerBinding && request.configuration?.model.value !== request.providerBinding.model.id) {
+                throw new Error('Bound model configuration is not selectable');
+            }
+            if (request.providerBinding) context.session.services.models.bind({
+                read: () => ({ models: [], catalogConfidence: 'account_unverified', currentModelId: observedModelId }),
+                subscribe(listener) { const publish = () => listener({ models: [], catalogConfidence: 'account_unverified', currentModelId: observedModelId });
+                    modelListeners.add(publish); publish(); return { dispose: () => { modelListeners.delete(publish); } }; },
+            });
+            opens.push(request); return nativeSession;
+        } } },
         lease: createLease(agentId), backend: contributions.backend,
         agent: { ...contributions.agent, richDefinition: { ...contributions.agent.richDefinition,
             definition: { ...contributions.agent.richDefinition.definition,
+                capabilities: { sessions: { ...contributions.agent.richDefinition.definition.capabilities.sessions, configuration: true } },
                 providerRequirements: AgentProviderRequirementsV1Schema.parse({
                     acceptsProtocols: ['openai-responses'], required: {},
                     credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
@@ -59,7 +76,20 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
     } as never);
     try {
         expect(opens).toHaveLength(1);
-        if (providerBinding) expect(opens[0]!.providerBinding).toEqual(providerBinding);
+        if (providerBinding) {
+            expect(opens[0]!.providerBinding).toEqual(providerBinding);
+            expect(created.operations.models?.read().currentModelId).toBe(selection.modelId);
+            let subscribedModelId: string | null | undefined;
+            const subscription = created.operations.models?.subscribe(snapshot => { subscribedModelId = snapshot.currentModelId; });
+            expect(subscribedModelId).toBe(selection.modelId);
+            observedModelId = 'different-native-model';
+            for (const publish of modelListeners) publish();
+            expect(created.operations.models?.read().currentModelId).toBe(observedModelId);
+            expect(subscribedModelId).toBe(observedModelId);
+            subscription?.dispose();
+            const outcome = await created.operations.updateSessionRuntimeConfig?.({ modelId: selection.modelId, providerBinding });
+            expect(outcome?.status).toBe('applied');
+        }
         return AgentSessionConfigurationSnapshotV1Schema.parse(opens[0]!.configuration);
     } finally {
         await created.operations.resetOrDisposeRuntime();
@@ -74,7 +104,7 @@ describe('native model selection provenance', () => {
             upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:8741/v1', credential: 'apiKey' },
             model: { id: 'unlisted', name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
         };
-        expect((await readOpenedConfiguration({}, true, binding, delivery)).model.value).toBe(selection.modelId);
+        expect((await readOpenedConfiguration({}, true, binding, delivery)).model.value).toBe(binding.model.id);
     });
     it('preserves an exact target-qualified launch choice as explicit', async () => {
         expect((await readOpenedConfiguration({}, true)).model).toEqual({

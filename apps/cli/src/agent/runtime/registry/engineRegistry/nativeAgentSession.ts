@@ -66,6 +66,7 @@ import type {
     AgentAccountUsageRecordSnapshotInput,
     AgentAccountUsageSourceContextInput,
     AgentSessionCatalogControl,
+    AgentSessionModelsSnapshot,
     AgentSessionControlContext,
     AgentSessionGoalControl,
     AgentSessionGoalControlContext,
@@ -1173,7 +1174,7 @@ function buildNativeAgentSessionOpenInputs(
             .map(({ configId, valueId, updatedAt }) => [configId, { value: valueId, updatedAtMs: updatedAt }]),
     );
     const workspaceWrites = getWorkspaceWrites ? getWorkspaceWrites() : readSessionWorkspaceWritesV1(metadata);
-    const configuration = AgentSessionConfigurationSnapshotV1Schema.parse({
+    const configuration = projectNativeAgentProviderBindingConfiguration(AgentSessionConfigurationSnapshotV1Schema.parse({
         ...(metadata.allowedTools === undefined ? {} : { allowedTools: metadata.allowedTools }),
         ...(metadata.unlistedTools === undefined ? {} : { unlistedTools: metadata.unlistedTools }),
         ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
@@ -1193,7 +1194,7 @@ function buildNativeAgentSessionOpenInputs(
             updatedAtMs: permission?.updatedAt ?? metadataPermission?.updatedAt ?? 0,
         },
         options,
-    });
+    }), buildOptions.providerBinding);
     // Open the same driver that admitted the launch/starting mode. Retained
     // metadata can predate that selection or omit it entirely.
     const runtimeDescriptorV1 = input.bootstrap.runtimeDescriptorV1
@@ -1273,6 +1274,17 @@ function buildNativeAgentSessionOpenInputs(
     });
 }
 
+/** Runtime configuration uses the admitted Provider descriptor; native selection
+ * names remain the user's durable intent and may use an Agent-specific prefix. */
+export function projectNativeAgentProviderBindingConfiguration(
+    configuration: AgentSessionConfigurationSnapshot,
+    providerBinding: AgentSessionOpenRequest['providerBinding'],
+): AgentSessionConfigurationSnapshot {
+    return providerBinding
+        ? { ...configuration, model: { ...configuration.model, value: providerBinding.model.id } }
+        : configuration;
+}
+
 export function applyNativeAgentConfigurationUpdate(
     current: AgentSessionConfigurationSnapshot,
     update: RuntimeTurnConfigUpdate,
@@ -1294,7 +1306,7 @@ export function applyNativeAgentConfigurationUpdate(
         || typeof configOptionValue === 'boolean'
     );
     const workspaceWrites = update.workspaceWrites ?? (getWorkspaceWrites ? getWorkspaceWrites() : current.workspaceWrites);
-    const snapshot = AgentSessionConfigurationSnapshotV1Schema.parse({
+    const snapshot = projectNativeAgentProviderBindingConfiguration(AgentSessionConfigurationSnapshotV1Schema.parse({
         ...(current.allowedTools === undefined ? {} : { allowedTools: current.allowedTools }),
         ...(current.unlistedTools === undefined ? {} : { unlistedTools: current.unlistedTools }),
         ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
@@ -1313,7 +1325,7 @@ export function applyNativeAgentConfigurationUpdate(
                 [configOptionId]: { value: configOptionValue, updatedAtMs },
             }
             : current.options,
-    });
+    }), update.providerBinding);
     return {
         snapshot,
         request: {
@@ -1398,6 +1410,7 @@ type NativeAgentSessionDirectFacets = Readonly<{
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     openedWithoutConnectedServices?: () => boolean;
+    projectModelId?: (modelId: AgentSessionModelsSnapshot['currentModelId']) => AgentSessionModelsSnapshot['currentModelId'];
     getWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
     resolveMcpToolPolicy?: HostSessionRuntimeFactoryParams['resolveMcpToolPolicy'];
     prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
@@ -2169,6 +2182,10 @@ export function createNativeAgentSessionOperations(
     let nativeTurnOrdinal = 0;
     let runtimeEndedIssue: SessionRuntimeIssueV1 | null = null;
     let configuration = initialConfiguration;
+    const projectModelSnapshot = (snapshot: AgentSessionModelsSnapshot): AgentSessionModelsSnapshot =>
+        directFacets.projectModelId
+            ? { ...snapshot, currentModelId: directFacets.projectModelId(snapshot.currentModelId) }
+            : snapshot;
     const rollbackTurns: Array<Readonly<{
         turnId: string;
         requestAttribution?: UsageRequestAttribution;
@@ -3380,7 +3397,11 @@ export function createNativeAgentSessionOperations(
         },
         ...(publications
             ? {
-                models: publications.modelsSource,
+                models: Object.freeze({
+                    read: () => projectModelSnapshot(publications.modelsSource.read()),
+                    subscribe: (listener: (snapshot: AgentSessionModelsSnapshot) => void) =>
+                        publications.modelsSource.subscribe(snapshot => listener(projectModelSnapshot(snapshot))),
+                }),
                 modes: publications.modesSource,
                 supportsInFlightSteer: () => (
                     directFacets?.capabilities.delivery.includes('steer') === true
@@ -6007,6 +6028,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     scmCommandRunner: params.scmCommandRunner,
                     ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
                     openedWithoutConnectedServices: () => openedWithoutConnectedServices,
+                    projectModelId: modelId => openRequest.providerBinding && modelId === openRequest.providerBinding.model.id
+                        ? modelSelection?.ref.modelId ?? modelId : modelId,
                     ...(params.prepareTeamCredentialProviderBinding
                         ? {
                             prepareRunTeamCredentialProviderBinding: async (request: Readonly<{

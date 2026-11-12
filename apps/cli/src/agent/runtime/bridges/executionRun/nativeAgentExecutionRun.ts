@@ -46,7 +46,7 @@ import {
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 import { createExecutionRunPermissionHandler, resolveExecutionRunInputAuthority, type ExecutionRunPermissionResponder } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import type { PermissionResult } from '@/agent/permissions/BasePermissionHandler';
-import { permissionMode as normalizeExecutionRunPermissionMode } from '@/agent/executionRuns/policy/permissionMode';
+import { executionRunPermissionIntentV1 as normalizeExecutionRunPermissionMode } from '@happier-dev/protocol/actions/executionRunActionPermissionMode';
 import {
     buildExecutionRunPermissionRequestEnvelope,
     resolveExecutionRunPermissionInteractionMode,
@@ -63,6 +63,7 @@ import { issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invoca
 import {
     createNativeAgentSessionInteractionOperations,
     applyNativeAgentConfigurationUpdate,
+    projectNativeAgentProviderBindingConfiguration,
     assertNativeAgentSessionModeAvailable,
     resolveNativeAgentSessionNativeHomeService,
     resolveAgentSessionMcpLaunchConfigs,
@@ -118,6 +119,7 @@ type NativeAgentRunUsagePublisher = Readonly<{
         observation: UsageObservation;
         turnId: string | null;
         externalKey: string;
+        metadata?: Parameters<ReturnType<typeof import('@/usage/createUsageObservationPublisher').createUsageObservationPublisher>['publish']>[0]['metadata'];
     }>): void | Promise<void | UsageObservationPublishResult>;
 }>;
 
@@ -960,7 +962,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             ? { modelSelection: params.options.modelSelection }
             : {}),
         ...(params.options.configuration
-            ? { configuration: params.options.configuration }
+            ? { configuration: projectNativeAgentProviderBindingConfiguration(params.options.configuration, params.options.providerBinding) }
             : {}),
         ...(params.options.providerBinding
             ? { providerBinding: params.options.providerBinding }
@@ -2101,7 +2103,7 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                     ? { runtimeDescriptorV1: params.options.runtimeDescriptorV1 }
                     : {}),
                 ...(params.options.modelSelection ? { modelSelection: params.options.modelSelection } : {}),
-                ...(params.options.configuration ? { configuration: params.options.configuration } : {}),
+                ...(params.options.configuration ? { configuration: projectNativeAgentProviderBindingConfiguration(params.options.configuration, params.options.providerBinding) } : {}),
                 ...(params.options.providerBinding ? { providerBinding: params.options.providerBinding } : {}),
             };
             const request = withSessionRunAgentEnvironment<Extract<AgentSessionOpenRequest, { kind: 'create' | 'resume' }>>(resumeSessionId
@@ -2175,8 +2177,8 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                         },
                     } : {}),
                     ...(resumeSessionId ? { expectedProviderSessionId: resumeSessionId } : {}),
-                    ...(params.options.configuration
-                        ? { initialConfiguration: params.options.configuration }
+                    ...(request.configuration
+                        ? { initialConfiguration: request.configuration }
                         : {}),
                 });
                 unsubscribeMcpToolPolicy = sessionContext.subscribeMcpToolPolicy?.(mcpToolPolicy => {

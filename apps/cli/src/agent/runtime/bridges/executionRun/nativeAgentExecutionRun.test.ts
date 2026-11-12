@@ -1802,7 +1802,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         await host.dispose();
     });
 
-    it('carries the exact Provider selection and bounded launch inputs without persistent Session inputs', async () => {
+    it.each(['saved', 'connected_account'] as const)('carries the exact %s Provider selection and bounded launch inputs without persistent Session inputs', async source => {
         const opened: AgentExecutionRunRuntime = Object.freeze({
             async send() { return Object.freeze({ status: 'admitted' as const }); },
             async stop() { return Object.freeze({ status: 'requested' as const }); },
@@ -1812,25 +1812,32 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         const open = vi.fn(async (
             _request: AgentExecutionRunOpenRequest,
             _context: AgentRuntimeContext,
-        ) => opened);
+        ) => {
+            if (_request.providerBinding && _request.configuration?.model.value !== _request.providerBinding.model.id) {
+                throw new Error('Bound model configuration is not selectable');
+            }
+            return opened;
+        });
         const runtime: AgentRuntime = Object.freeze({
             executionRuns: Object.freeze({ open }),
         });
         const modelSelection = ProviderBoundModelRefSchema.parse({
             agentTargetKey: 'agent:happier.agent.codex/codex',
-            providerConnectionId: 'pc_openai',
-            modelId: 'gpt-5.1-codex',
+            providerConnectionId: source === 'saved' ? 'pc_openai' : null,
+            modelId: source === 'saved' ? 'gpt-5.1-codex' : 'native/gpt-5.1-codex',
         });
         const configuration = Object.freeze({
             mode: Object.freeze({ value: null, updatedAtMs: 0 }),
-            model: Object.freeze({ value: 'gpt-5.1-codex', updatedAtMs: 5 }),
+            model: Object.freeze({ value: modelSelection.modelId, updatedAtMs: 5 }),
             permissionIntent: Object.freeze({ value: 'default', updatedAtMs: 5 }),
             options: Object.freeze({
                 reasoning_effort: Object.freeze({ value: 'high', updatedAtMs: 5 }),
             }),
         });
         const providerBinding = AgentSessionProviderBindingV1Schema.parse({
-            connectionId: 'pc_openai',
+            ...(source === 'saved' ? { connectionId: 'pc_openai' } : { source: { kind: 'connected_account',
+                purpose: { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'inference' },
+                account: { service: { pluginId: 'acme.accounts', localId: 'accounts' }, accountId: 'selected' } } }),
             model: {
                 id: 'gpt-5.1-codex',
                 name: 'GPT-5.1 Codex',
@@ -1886,7 +1893,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
 
         expect(open).toHaveBeenCalledWith(expect.objectContaining({
             modelSelection,
-            configuration,
+            configuration: { ...configuration, model: { ...configuration.model, value: providerBinding.model.id } },
             providerBinding,
             runtimeDescriptorV1: options.runtimeDescriptorV1,
         }), expect.anything());
@@ -1895,6 +1902,8 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             mcpServers: expect.anything(),
             startupInstructions: expect.anything(),
         }));
+        expect(options.modelSelection).toEqual(modelSelection);
+        expect(options.configuration?.model.value).toBe(modelSelection.modelId);
         await host.dispose();
     });
 
