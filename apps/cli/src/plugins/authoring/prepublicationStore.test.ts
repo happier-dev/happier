@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildManagedPnpmEnvironment, ensureManagedPnpmCommand, managedPnpmBinPath } from '@/packagedRuntime/managedTools/pnpm/managedPnpm';
 import { materializePrepublicationAuthorWorkspacePackages, resolvePluginAuthorToolchainSpawnInvocation, runManagedPluginPnpm } from './toolchain';
@@ -24,6 +24,10 @@ async function fileBytes(root: string): Promise<number> {
 }
 
 describe('prepublication author store', () => {
+  // These real-process tests must execute the moving source, including its child role.
+  beforeEach(() => vi.stubEnv('HAPPIER_CLI_SUBPROCESS_PREFER_TSX', '1'));
+  afterEach(() => vi.unstubAllEnvs());
+
   it('installs satisfying public runtime dependencies and peers from the real materialized closure', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-author-public-closure-'));
     const projectRoot = join(root, 'author');

@@ -9,6 +9,7 @@ import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cl
 import { runPluginAuthorPhase } from './phaseLog';
 import { resolveNativeTypeScriptBin, resolvePluginUiBuildBin } from './toolEntrypoints';
 import { emitSourceAuthorDeclarations } from './sourceDeclarations';
+import { materializeAuthorPackagesInChild } from './materializationProcess';
 export { resolveNativeTypeScriptBin, resolvePluginUiBuildBin } from './toolEntrypoints';
 
 import {
@@ -27,7 +28,7 @@ import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPat
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
   findRepoRoot,
-  materializePrepublicationWorkspacePackageRoots,
+  type materializePrepublicationWorkspacePackageRoots,
   readBundledWorkspacePackageNames,
   resolveWorkspaceBundlesFromPackageJson,
   resolveWorkspaceSourceDir,
@@ -231,7 +232,7 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
   let installRoot: string | undefined;
   try {
     const bundles = remapWorkspaceBundleDestinations({ materializationRoot, bundles: params.bundles });
-    const materializedPackageNames = materializePrepublicationWorkspacePackageRoots({
+    const materializedPackageNames = await materializeAuthorPackagesInChild({
       bundles,
       rootPackageNames: params.packageNames,
     });

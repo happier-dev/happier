@@ -22,6 +22,12 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     process.exit(0);
   }
 
+  if (daemonSubcommand === 'plugin-author-materialize-worker') {
+    const { runPluginAuthorMaterializationChild } = await import('@/plugins/authoring/materializationProcess');
+    await runPluginAuthorMaterializationChild();
+    process.exit(0);
+  }
+
   if (daemonSubcommand === 'background-service-worker') {
     const { runBackgroundServiceProcessWorkerChild } = await import('@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessWorkerEntry');
     await runBackgroundServiceProcessWorkerChild({
