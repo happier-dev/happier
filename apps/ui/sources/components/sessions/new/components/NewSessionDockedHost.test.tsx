@@ -408,22 +408,28 @@ describe('web shell Docked composer', () => {
 
   it('keeps the exact composer and its open-surface lifetime current across desktop and phone widths', async () => {
     const { NewSessionComposerCard } = await import('./NewSessionComposerCard');
-    const { screen } = await openDockedDraft('Unsent café é 👩🏽‍💻 日本語');
+    const { screen, state } = await openDockedDraft('Unsent café é 👩🏽‍💻 日本語');
     const document = () => screen.tree.root.findByType(NewSessionComposerCard).props.panelProps.composerDocument!;
     const original = document();
     const before = original.readCurrentDocumentSnapshot();
+    const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const draftSnapshot = () => getSessionDraftSnapshot(getStorage().getState().settingsScope!, { kind: 'newSession', draftId: state().draftId });
     expect(before).not.toBeNull();
     expect(original.scopeSignal?.aborted).toBe(false);
     try {
       for (const width of [390, 360, 1440]) {
         boundary.width = width;
         await screen.update(<Journey />);
+        // 1b0d4ec4c0f projects repository revision: authoring autosave can advance it
+        // without changing Composer content or retiring its mounted lifetime.
+        const currentDraft = draftSnapshot();
+        expect(currentDraft).not.toBeNull();
         expect.soft(original.scopeSignal?.aborted, 'resizing must not retire an open Composer dialog').toBe(false);
         expect.soft(original.readCurrentDocumentSnapshot(), 'the original mounted document must stay current').toMatchObject({
-          ref: before!.ref, revision: before!.revision, text: before!.text,
+          ref: before!.ref, revision: currentDraft!.revision, text: before!.text,
         });
         expect.soft(document().readCurrentDocumentSnapshot()).toMatchObject({
-          ref: before!.ref, revision: before!.revision, text: before!.text,
+          ref: before!.ref, revision: currentDraft!.revision, text: before!.text,
         });
       }
     } finally {

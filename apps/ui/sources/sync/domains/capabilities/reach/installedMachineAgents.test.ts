@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createMachineAgentInventoryStore } from '@/agents/machineAgents/machineAgentInventoryStore';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { readInstalledMachineAgentIds, readInstalledMachineAgentInventory } from './installedMachineAgents';
 
 const facts = (agentId: string, installed: boolean): MachineAgentInventoryItem => ({ agentId, title: agentId,
@@ -30,20 +31,21 @@ it('keeps the daemon publication authoritative when a device has a newer partial
     store.read('machine'))).toEqual(['codex', 'gemini', 'pi']);
 });
 
-it('requires concrete installed definitions before a definition-only Agent contributes to reach', () => {
+it.each(['custom-acp', buildConfiguredAcpAgentSelectionV1('review').agentId])(
+  'requires concrete installed definitions from %s before a definition-only Agent contributes to reach', (inventoryAgentId) => {
   const published = { checkedAt: 2, installedAgentIds: ['codex', 'custom-acp'] };
   expect(readInstalledMachineAgentIds(published, undefined)).toEqual(['codex']);
   expect(readInstalledMachineAgentInventory(published, undefined).complete).toBe(false);
   expect(readInstalledMachineAgentInventory(published, undefined, []).complete).toBe(true);
   const store = createMachineAgentInventoryStore();
   store.publish('machine', { status: 'ready', lastCheckedAt: 3, items: [
-    { ...facts('custom-acp', true), definitionId: 'review', title: 'Review agent' },
-    { ...facts('custom-acp', true), definitionId: 'build', title: 'Build agent' },
-    { ...facts('custom-acp', false), definitionId: 'absent', title: 'Absent agent' },
+    { ...facts(inventoryAgentId, true), definitionId: 'review', title: 'Review agent' },
+    { ...facts(inventoryAgentId, true), definitionId: 'build', title: 'Build agent' },
+    { ...facts(inventoryAgentId, false), definitionId: 'absent', title: 'Absent agent' },
   ] });
   expect(readInstalledMachineAgentIds(published, store.read('machine'), ['review', 'build', 'absent'])).toEqual(['codex', 'custom-acp']);
   expect(readInstalledMachineAgentInventory(published, store.read('machine'), ['review', 'build', 'absent']).complete).toBe(true);
-  expect(readInstalledMachineAgentIds(undefined, store.read('machine'), ['review', 'build', 'absent'])).toEqual(['custom-acp']);
+  expect(readInstalledMachineAgentIds(undefined, store.read('machine'), ['review', 'build', 'absent'])).toEqual([inventoryAgentId]);
   expect(readInstalledMachineAgentIds(published, store.read('machine'), [])).toEqual(['codex']);
   expect(readInstalledMachineAgentIds({ checkedAt: 4, installedAgentIds: [] }, store.read('machine'))).toEqual([]);
 });

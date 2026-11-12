@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as React from 'react';
 
-import { getAgentIconSvgXml } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { readBundledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 
@@ -27,13 +28,16 @@ describe('useSessionAgentCatalogIdentity', () => {
             const host = screen.findHostByTestId('session-agent-identity');
             expect(host).not.toBeNull();
             if (expectedMark) {
-                const expectedXml = getAgentIconSvgXml(expectedMark, createThemeFixture());
-                expect(expectedXml).toEqual(expect.any(String));
-                expect(host?.props.xml).toBe(expectedXml);
+                // 8e4096d97cb moved Agent artwork onto the shared admitted-brand renderer.
+                const entry = resolveAgentCatalogProjection(expectedMark, { enabledAgentIds: [] });
+                const brand = readBundledPluginBrandPresentation(entry.installedPackage?.id, entry.title, entry.iconAgentId);
+                expect(brand).not.toBeNull();
+                expect(screen.tree.root.findByType(HappierBrandMark).props.brand).toEqual(brand);
                 expect(screen.tree.root.findAllByType(Icon)).toHaveLength(0);
             } else {
                 expect(host?.props.xml).toBeUndefined();
-                expect(screen.tree.root.findByType(Icon).props.name).toBe('stack-simple');
+                // 81535ebcb44 gives a Session without a known Agent its neutral Session glyph.
+                expect(screen.tree.root.findByType(Icon).props.name).toBe('chat-circle');
             }
         } finally {
             await screen.unmount();

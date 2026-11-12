@@ -46,7 +46,8 @@ export function useAgentCatalogIdentities(input: Readonly<{
     // loading/offline state, versions or authentication presentation.
     const readInventory = useShallow<void, ReadonlySet<string>>(() => new Set(inventoryKeys.flatMap((inventoryKey, index) =>
         machineAgentInventoryStore.read(inventoryKey).agents.filter(agent => agent.installed && agent.definitionId !== undefined
-            && machines[index]?.agentIds.includes(agent.agentId)).map(agent => buildMachineAgentInventoryKey(agent)))));
+            && machines[index]?.agentIds.some(agentId => buildMachineAgentInventoryKey({ agentId, definitionId: agent.definitionId })
+                === buildMachineAgentInventoryKey(agent))).map(agent => buildMachineAgentInventoryKey(agent)))));
     const subscribeInventory = React.useCallback((listener: () => void) => {
         const disposers = inventoryKeys.map(inventoryKey => machineAgentInventoryStore.subscribe(inventoryKey, listener));
         return () => { for (const dispose of disposers) dispose(); };

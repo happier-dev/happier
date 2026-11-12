@@ -42,7 +42,7 @@ const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/se
 const { WhereItsOnControl } = await import('@/components/capabilities/where/WhereItsOnControl');
 const { describeReach } = await import('@/components/capabilities/where/whereItsOnPresentation');
 const { summarizeMachines } = await import('@/components/settings/skills/detail/skillMachineSummary');
-const { withdrawMachinePresenceForScope, captureMachinePresenceObservation, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
+const { withdrawMachinePresenceForScope, recordMachineRequestFailed, recordMachineRequestSucceeded, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { useMcpAddPlaces } = await import('@/components/settings/mcpServers/add/useMcpAddPlaces');
 const machineDisplayNames = await import('@/utils/sessions/machineDisplayNames');
 const { useMcpSignInViewOf } = await import('@/components/settings/mcpServers/signIn/useMcpSignInViewOf');
@@ -121,7 +121,9 @@ it('uses the visible-machine owner for Reach machine totals and destinations', a
         endpoints: [{ kind: 'https', url: serverUrl }] } });
     await setActiveServerId(home.id);
     const scope = { serverId: 'srv_visible_reach', accountId: 'visible-reach-account' };
-    const machines = [createMachineFixture({ id: 'visible' }), createMachineFixture({ id: 'revoked', revokedAt: 1 })];
+    const machines = [createMachineFixture({ id: 'visible' }), createMachineFixture({ id: 'revoked', revokedAt: 1 }),
+        createMachineFixture({ id: 'replaced', replacedByMachineId: 'visible' }),
+        createMachineFixture({ id: 'runner', kind: 'ephemeral_session_runner' })];
     storage.setState({ settingsScope: scope, profileScope: scope });
     storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     const hook = await renderHook(() => useReachMachines());
@@ -131,7 +133,7 @@ it('uses the visible-machine owner for Reach machine totals and destinations', a
     } finally { await hook.unmount(); }
 });
 
-it('keeps withdrawn capability places unknown until their exact Account observes each machine again', async () => {
+it('keeps warm capability places unknown, then retains answered presence across socket withdrawal within the exact Account', async () => {
     const serverUrl = 'https://capability-presence.test';
     await network.addHome(serverUrl, 'capability-presence-account');
     const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
@@ -143,9 +145,8 @@ it('keeps withdrawn capability places unknown until their exact Account observes
     const machines = [createMachineFixture({ id: 'online', active: true, activeAt: Date.now() }),
         createMachineFixture({ id: 'offline', active: false, activeAt: 1 })].map(machine => ({ ...machine,
             metadata: { ...machine.metadata!, agentInventory: { checkedAt: 2, installedAgentIds: ['codex'] } } }));
-    storage.setState({ settingsScope: scope, profileScope: scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
-    storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    storage.setState({ settingsScope: scope, profileScope: scope });
+    storage.getState().replaceMachineDisplays(machines, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     const settings = McpServersSettingsV1Schema.parse({ v: 1, servers: [{ id: 'oauth', name: 'oauth', transport: 'http', env: {},
         remote: { url: 'https://oauth.example/mcp', headers: {}, auth: { kind: 'oauth' } }, createdAt: 1, updatedAt: 1 }], bindings: [] });
     const hook = await renderHook(() => {
@@ -154,10 +155,6 @@ it('keeps withdrawn capability places unknown until their exact Account observes
             signIn: useMcpServerSignIn(settings.servers[0]!, mcp.placeMachines) };
     });
     try {
-        expect(hook.getCurrent().skills.placeMachines.find(machine => machine.machineId === 'online')).toMatchObject({ online: true });
-        expect(hook.getCurrent().signInViewOf('oauth')?.state).toBe('not_connected');
-        expect(hook.getCurrent().signIn.view?.state).toBe('not_connected');
-        await act(async () => withdrawMachinePresenceForScope(scope));
         expect(hook.getCurrent().signInViewOf('oauth')?.state).toBe('not_connected');
         expect(hook.getCurrent().signIn.view?.state).toBe('not_connected');
         for (const places of [hook.getCurrent().skills, hook.getCurrent().mcp]) {
@@ -176,14 +173,20 @@ it('keeps withdrawn capability places unknown until their exact Account observes
                 facts: new Map([['codex', { kind: 'delivered' as const }]]), projectedAgents: ['codex'] })), ids => ids))
                 .toEqual({ summary: 'Unknown', note: undefined });
         }
-        await act(async () => captureMachinePresenceObservation({ ...scope, accountId: 'another-account' })(['online', 'offline']));
-        expect(hook.getCurrent().skills.placeMachines.every(machine => !machine.online)).toBe(true);
-        await act(async () => captureMachinePresenceObservation(scope)(['offline']));
+        await act(async () => storage.getState().applyMachines(machines, true,
+            { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }));
+        expect(hook.getCurrent().skills.placeMachines.find(machine => machine.machineId === 'online')?.online).toBe(true);
         expect(hook.getCurrent().skills.machines.find(machine => machine.machineId === 'offline')).toMatchObject({ offline: true });
-        expect(hook.getCurrent().skills.placeMachines.find(machine => machine.machineId === 'online')?.online).toBe(null);
-        expect(hook.getCurrent().signInViewOf('oauth')?.state).toBe('not_connected');
-        expect(hook.getCurrent().signIn.view?.state).toBe('not_connected');
-        await act(async () => captureMachinePresenceObservation(scope)(['online']));
+        // a4df3f74f0e: Account socket withdrawal retains the Machine's settled presence.
+        const answered = hook.getCurrent();
+        await act(async () => withdrawMachinePresenceForScope(scope));
+        expect(hook.getCurrent().skills).toBe(answered.skills);
+        expect(hook.getCurrent().mcp).toBe(answered.mcp);
+        await act(async () => recordMachineRequestFailed({ ...scope, accountId: 'another-account', machineId: 'online' }));
+        expect(hook.getCurrent().skills.placeMachines.find(machine => machine.machineId === 'online')?.online).toBe(true);
+        await act(async () => recordMachineRequestFailed({ ...scope, machineId: 'online' }));
+        expect(hook.getCurrent().skills.placeMachines.find(machine => machine.machineId === 'online')?.online).toBe(false);
+        await act(async () => recordMachineRequestSucceeded({ ...scope, machineId: 'online' }));
         expect(hook.getCurrent().skills.placeMachines.find(machine => machine.machineId === 'online')?.online).toBe(true);
         expect(hook.getCurrent().signInViewOf('oauth')?.state).toBe('not_connected');
         expect(hook.getCurrent().signIn.view?.state).toBe('not_connected');
@@ -421,8 +424,7 @@ it('composes installed Machine publication and real catalog demand into passive 
     const machine = createMachineFixture({ id: 'online', activeAt: Date.now(), metadata: {
         ...createMachineFixture().metadata!, agentInventory: { checkedAt: 2, installedAgentIds: ['codex', 'gemini'] },
     } });
-    storage.setState({ settingsScope: scope, profileScope: scope, machines: { online: machine },
-        machineListByServerId: { [scope.serverId]: [machine] }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+    storage.setState({ settingsScope: scope, profileScope: scope });
     storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     const projection = PluginProjectionV2Schema.parse({ ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {
         codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -476,8 +478,7 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
     const machine = createMachineFixture({ id: 'configured-machine', activeAt: Date.now(), metadata: {
         ...createMachineFixture().metadata!, agentInventory: { checkedAt: 2, installedAgentIds: ['codex', 'custom-acp'] },
     } });
-    storage.setState({ settingsScope: scope, profileScope: scope, machines: { [machine.id]: machine },
-        machineListByServerId: { [scope.serverId]: [machine] }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+    storage.setState({ settingsScope: scope, profileScope: scope });
     storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: ['review', 'build', 'absent'].map(id => ({
         id, name: id, title: `${id} configured agent`, launch: { kind: 'npm', package: 'fixture', version: '1.0', args: [] },
@@ -533,6 +534,8 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
         });
         expect(hook.getCurrent().mcpPlaces.agentTakes('custom-acp')).toBe('full');
         const requestsAfterProjection = network.requests.length;
+        expect(hook.getCurrent().reach.machines[0]?.agentIds).toEqual(['codex', 'custom-acp']);
+        expect(hook.getCurrent().reach.machines[0]?.agentInventoryComplete).toBe(true);
         expect(hook.getCurrent().identities.map(identity => [identity.entry.title, identity.entry.backendTargetKey, identity.entry.iconName]))
             .toEqual([
                 ['review configured agent', 'agent:happier.agent.custom-acp/custom-acp:definition:review', 'hard-drives'],
@@ -573,7 +576,9 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
         expect(renderedText()).toContain('review configured agent');
         expect(renderedText()).toContain('build configured agent');
         expect(renderedText()).not.toContain('absent configured agent');
-        expect(screen.findAll(node => node.props.name === 'hard-drives')).not.toHaveLength(0);
+        // 8e4096d97cb draws unbranded configured identities through the shared text-mark owner.
+        expect(renderedText()).toMatch(/\bR\b/);
+        expect(renderedText()).toMatch(/\bB\b/);
         await act(async () => machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
             status: 'ready', lastCheckedAt: 5, items: inventoryItems.map(item => ({ ...item, installed: item.definitionId === 'build' })),
         }));
