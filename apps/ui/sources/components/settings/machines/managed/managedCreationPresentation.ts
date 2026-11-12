@@ -203,7 +203,7 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
     if (snapshot.actionId !== 'machines.managed.acquire'
         && snapshot.actionId !== 'machines.managed.bootstrap.retry') return needsInstallation || context.guestPayloadStale === true;
     return operation?.observation === 'available' && !operation.isUnavailableProjection
-        && snapshot?.state === 'failed'
+        && (snapshot.state === 'failed' || snapshot.state === 'succeeded' && context.guestPayloadStale === true)
         && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
         && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id;
 }

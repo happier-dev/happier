@@ -46,6 +46,26 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry'] as const)(
+    'keeps Update after a successful %s receipt only for a stale installed guest', actionId => {
+      const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
+      const operation: ActionOperationProjection = {
+        serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
+        snapshot: { version: 1, operationId: 'install', revision: 2, actionId, state: 'succeeded',
+          scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Install',
+          createdAt: 1, settledAt: 2, cancellation: 'supported',
+          domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller } },
+      };
+      expect(canRetryManagedInstallation(enrolled, operation, { guestPayloadStale: true })).toBe(true);
+      expect(canRetryManagedInstallation(enrolled, operation, { guestPayloadStale: false })).toBe(false);
+      expect(canRetryManagedInstallation(enrolled, { ...operation,
+        snapshot: { ...operation.snapshot, state: 'running', settledAt: undefined } }, { guestPayloadStale: true })).toBe(false);
+      expect(canRetryManagedInstallation(enrolled, { ...operation, observation: 'unavailable' }, { guestPayloadStale: true })).toBe(false);
+      expect(canRetryManagedInstallation(enrolled, { ...operation,
+        snapshot: { ...operation.snapshot, state: 'failed', error: { errorCode: 'credential_unavailable', error: 'Reconnect' } } },
+        { guestPayloadStale: true })).toBe(false);
+    });
+
   it('offers retained guest update when the installed CLI identity is older than the controller payload', () => {
     expect(isManagedGuestPayloadStale({ installedVersion: 'local-stable-1794304155359', payloadVersion: 'local-stable-1794304155360' })).toBe(true);
     const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
