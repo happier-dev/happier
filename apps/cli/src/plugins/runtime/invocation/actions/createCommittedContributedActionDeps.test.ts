@@ -9,6 +9,8 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createPluginInvocationActionsService } from '../services/actions';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
+import { createDaemonExternalActionContributedInvoker } from '@/daemon/externalActions/createDaemonExternalActionContributedInvoker';
 import { createCommittedContributedActionInvoker, listRuntimeContributedActionDefinitions } from './createCommittedContributedActionDeps';
 
 // Login storage is an external persistence boundary. Admission, activation,
@@ -49,7 +51,8 @@ it('preserves only the canonical published PluginError envelope across committed
 });
 
 
-it('captures a nested SDK with-origin call through the committed CLI executor and rejects mismatched routing', async () => {
+it.each(['committed CLI', 'daemon external', 'daemon current-process'] as const)(
+    'captures a nested SDK with-origin call through %s and rejects mismatched routing', async path => {
   let effects = 0;
   const pluginId = 'example.committed-origin';
   const machineId = 'origin-machine';
@@ -67,16 +70,29 @@ it('captures a nested SDK with-origin call through the committed CLI executor an
       resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId }) },
   });
   try {
+    const acquireRuntimeRegistryLease = () => fixture.controller.acquireRuntimeRegistry();
+    const invoke = path === 'daemon external'
+      ? createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease })
+      : createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease });
+    const localExecutor = createCliActionExecutor({ token: 'fixture-token', sessionId: 'cli-global', mode: 'plain', ctx: null,
+      pluginActionExecutionOwner: 'current_process',
+      listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(fixture.registry, selection),
+      invokeContributedAction: invoke });
+    const actionExecutor = path === 'daemon current-process'
+      ? createDaemonPluginActionExecutor({ base: localExecutor,
+          executeInCurrentProcess: async (actionId, input, context) => {
+            if (actionId !== 'action.invoke') throw new Error('Expected contributed Action dispatch');
+            return { matched: true, result: await localExecutor.execute(actionId, input, context) };
+          },
+          requestPluginActionExecution: async () => { throw new Error('A bound plugin invocation must remain local'); } })
+      : localExecutor;
     const service = createPluginInvocationActionsService({
       invokeContributedAction: async () => { throw new Error('Targeted operations are outside this ordinary-ref test'); },
       seed: { plugin: { id: pluginId, version: '1.0.0' }, contribution: { id: 'read', qualifiedId: `${pluginId}/actions/read` },
         occurrenceId: fixture.registry.readPluginOccurrenceId!(pluginId)!,
         sourceCustody: fixture.registry.readPluginSourceCustody!(pluginId)!,
         surface: 'cli', signal: new AbortController().signal, isOccurrenceCurrent: () => true },
-      actionExecutor: createCliActionExecutor({ token: 'fixture-token', sessionId: 'cli-global', mode: 'plain', ctx: null,
-        pluginActionExecutionOwner: 'current_process',
-        listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(fixture.registry, selection),
-        invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry() }) }),
+      actionExecutor,
     });
     const action = { pluginId, localId: 'read' };
     const routing = { serverIdentityId, machineId, pluginId };
