@@ -1,4 +1,4 @@
-import { setup, DOWNLOAD_PLUGIN_ID, transferRootToken } from './approvedTransferCustody.testkit';
+import { setup, DOWNLOAD_PLUGIN_ID } from './approvedTransferCustody.testkit';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -34,17 +34,19 @@ describe('installed filesystem Action operation custody', () => {
       expect(fixture.lifecycle.getState().publishedTransferCount).toBe(0);
     } finally { await fixture.close(); }
   });
-  it.each(['agent deferred approval', 'present-person structured RPC'] as const)('completes a physical provider download as its original requester through %s until receiver ACK', async ingress => {
+  it.each(['agent deferred approval', 'present-person Account Action'] as const)('completes a physical provider download as its original requester through %s until receiver ACK', async ingress => {
     const fixture = await setup(false, true, true);
     let executionFailureCode: string | null = null;
     let downloadStatus: string | null = null;
     try {
       const destination = { destinationId: 'provider-reader' };
-      const rpc = ingress === 'present-person structured RPC';
+      const presentPerson = ingress === 'present-person Account Action';
+      // The UI's no-mount provider entry uses the original Account Action;
+      // raw structured RPC requires a real mounted or host-presented caller.
       const requested = await fixture.invoke('action.invoke', { action: { pluginId: DOWNLOAD_PLUGIN_ID, localId: 'download' },
-        input: { destination } }, 'provider-download', rpc, 'bob', rpc ? 'ui' : 'agent');
+        input: { destination } }, 'provider-download', false, 'bob', presentPerson ? 'ui' : 'agent');
       if (!requested.ok) executionFailureCode = requested.errorCode ?? null;
-      if (rpc && requested.ok) {
+      if (presentPerson && requested.ok) {
         const native = FilesystemDownloadOutputSchema.safeParse(requested.result);
         if (native.success) {
           downloadStatus = native.data.status;
@@ -52,14 +54,15 @@ describe('installed filesystem Action operation custody', () => {
         } else if (ActionApprovalRequestCreatedResultSchema.safeParse(requested.result).success) downloadStatus = 'approval_request_created';
       }
       let download: unknown;
-      if (rpc) {
+      if (presentPerson) {
         expect(requested, JSON.stringify({ downloadStatus, executionFailureCode }))
           .toMatchObject({ ok: true, result: { status: 'accepted' } });
         expect(fixture.approvalOwnerAccountId()).toBeUndefined();
         if (!requested.ok) throw new Error('Present-person provider download was refused');
         download = requested.result;
       } else {
-        expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        expect(requested, JSON.stringify({ executionFailureCode, diagnostics: fixture.readActionPhaseDiagnostics() }))
+          .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
         // The custodian's real approval writer created this Artifact; do not invent cross-Account edit access.
         expect(fixture.approvalOwnerAccountId()).toBe('alice');
         expect(fixture.lifecycle.getState().publishedTransferCount).toBe(0);
@@ -80,7 +83,7 @@ describe('installed filesystem Action operation custody', () => {
         actionId: buildQualifiedPluginContributionKey({ pluginId: DOWNLOAD_PLUGIN_ID, localId: 'download' }), requestId: 'provider-download', state: 'running' }]);
       expect((await fixture.list('alice')).items).toEqual([]);
       expect(await fixture.read(operationId, false)).toMatchObject({ kind: 'found', operation: { state: 'running' } });
-      expect(fixture.postDownloadReadRoots()).toEqual([]);
+      expect(fixture.postDownloadReadAccounts()).toEqual([]);
       const receivedPath = join(fixture.directory, 'provider.bin');
       // The normal receiver substitutes its established Machine tunnel port.
       // This in-process transport boundary reaches that real listener directly.
@@ -104,12 +107,9 @@ describe('installed filesystem Action operation custody', () => {
       expect(acknowledgment.ok).toBe(true);
       const settled = await fixture.read(operationId);
       expect(settled, JSON.stringify({ error: settled.kind === 'found' ? settled.operation.error : settled.kind,
-        continuationReads: fixture.postDownloadReadRoots().length, transferActivity: (await fixture.lifecycle.activity.read()).items.length }))
+        continuationReads: fixture.postDownloadReadAccounts().length, transferActivity: (await fixture.lifecycle.activity.read()).items.length }))
         .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { status: 'completed' } } });
-      expect(fixture.postDownloadReadRoots()).toEqual([
-        transferRootToken('bob', 'action.invoke', 'provider-download'),
-        transferRootToken('bob', 'action.invoke', 'provider-download'),
-      ]);
+      expect(fixture.postDownloadReadAccounts()).toEqual(['bob', 'bob']);
       expect(fixture.lifecycle.getState().publishedTransferCount).toBe(0);
     } finally { await fixture.close(); }
   });
@@ -134,16 +134,20 @@ describe('installed filesystem Action operation custody', () => {
     } finally { await fixture.close(); }
   });
   it.each(['decision', 'direct', 'rpcDecision', 'rpcDirect'] as const)('retains requester download custody through %s', async route => {
-    const needsApproval = route === 'decision' || route === 'rpcDecision';
-    const fixture = await setup(needsApproval);
+    const nativeUiReview = route === 'decision' || route === 'rpcDecision';
+    const fixture = await setup(nativeUiReview);
     try {
       const bytes = Buffer.from([137, 80, 78, 71, 0, 255]);
       await writeFile(join(fixture.directory, 'annotation.png'), bytes);
       let operationId: string | undefined;
+      let admission: unknown;
       const client = createPreparedFilesystemTransferClient({
         executeAction: async (actionId, input) => {
           if (actionId !== 'daemon.filesystem.download') throw new Error(`Unexpected Action: ${actionId}`);
-          const result = await fixture.invoke(actionId, input, 'annotation-download', route === 'rpcDecision' || route === 'rpcDirect');
+          const result = nativeUiReview
+            ? await fixture.invokeUiConfirmed(actionId, input, 'annotation-download', route === 'rpcDecision')
+            : await fixture.invoke(actionId, input, 'annotation-download', route === 'rpcDecision' || route === 'rpcDirect');
+          admission = result;
           const receipt = FilesystemDownloadOutputSchema.safeParse(result.ok ? result.result : null);
           if (receipt.success && receipt.data.success && receipt.data.status === 'accepted') operationId = receipt.data.operationId;
           return result;
@@ -157,19 +161,16 @@ describe('installed filesystem Action operation custody', () => {
       });
       const downloading = client.download({ targetMachineId: 'machine', rootPath: fixture.directory, path: 'annotation.png', asZip: false,
         destinationId: 'annotation-reader', destinationPath: join(fixture.directory, 'read-back.png') });
-      if (needsApproval) {
-        await Promise.race([fixture.approvalCreated, downloading.then(result => {
-          throw new Error(`Download settled before requesting approval: ${JSON.stringify(result)}`);
-        })]);
-        expect((await fixture.list()).items).toEqual([]);
-        await fixture.approve();
-      }
       const downloaded = await downloading;
-      expect(downloaded, JSON.stringify(downloaded)).toMatchObject({ success: true, status: 'completed', destinationId: 'annotation-reader', sizeBytes: bytes.length });
+      expect(downloaded, JSON.stringify({ admission, downloaded, diagnostics: fixture.readActionPhaseDiagnostics() }))
+        .toMatchObject({ success: true, status: 'completed', destinationId: 'annotation-reader', sizeBytes: bytes.length });
       expect(await readFile(join(fixture.directory, 'read-back.png'))).toEqual(bytes);
+      if (nativeUiReview) {
+        expect(fixture.readUiConfirmations()).toBe(1);
+        expect(fixture.approvalOwnerAccountId()).toBeUndefined();
+      }
       if (!operationId) throw new Error('Expected the admitted operation identity');
       expect(await fixture.read(operationId)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
-      if (needsApproval) { await fixture.approve(); expect((await fixture.list()).items).toHaveLength(1); }
     } finally { await fixture.close(); }
   });
   it('stops the actual contributed download operation and retracts its accepted source before receiver ACK', async () => {

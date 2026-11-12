@@ -10,9 +10,13 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createRequesterSessionControlRuntimeFixture } from '@/daemon/testkit/requesterSessionControlRuntimeFixture';
 import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
@@ -32,9 +36,18 @@ import type { ActionOperationRpcContext } from '@/daemon/actionOperations/action
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { defineProtocolObject, FileDownloadDestinationV1ProtocolSchema, FileDownloadResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { logger } from '@/ui/logger';
+
+const confirmationSource = new URL('../../../../ui/sources/sync/ops/actions/presentUserConfirmation.ts', import.meta.url).href;
+const { bindPresentUserActionConfirmation }: {
+  bindPresentUserActionConfirmation(actionId: 'daemon.filesystem.download', input: unknown, context: ActionExecutorContext,
+    reviewDigest?: string): ActionExecutorContext;
+} = await import(confirmationSource);
 
 const boundary = vi.hoisted(() => ({ home: '' }));
 vi.mock('@/configuration', async importOriginal => {
@@ -56,6 +69,9 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
   connectedAccounts?: StablePluginConnectedAccountsOwner) {
   boundary.home = await mkdtemp(join(tmpdir(), 'happier-approved-transfer-'));
   const directory = boundary.home;
+  // Observe the real file-log boundary; preserve its implementation and the
+  // phase owner's closed diagnostics instead of exposing the thrown value.
+  const localFileWarnings = vi.spyOn(logger, 'warnLocalFile');
   const env = createEnvKeyScope(['HAPPIER_MACHINE_RPC_WORKING_DIRECTORY']);
   env.patch({ HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: directory });
   const homeId = 'srv_transfer_custody';
@@ -71,8 +87,7 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
   let artifact: Record<string, unknown> | undefined;
   let requesterRevoked = false;
   let originalRootVerifications = 0;
-  const rootAccounts = new Map<string, string>();
-  const postDownloadReadRoots: string[] = [];
+  const postDownloadReadAccounts: string[] = [];
   let notifyApproval!: () => void;
   const approvalCreated = new Promise<void>(resolve => { notifyApproval = resolve; });
   const cancellation = new AbortController();
@@ -99,20 +114,28 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
     if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: settings }, version: 1 } };
-    if (path === '/v1/artifacts') return { status: 200, data: artifact ? [artifact] : [] };
+    if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), artifact ? [artifact] : []) };
     if (artifact && path === `/v1/artifacts/${artifact.id}`) return { status: 200, data: artifact };
+    if (/^\/v1\/artifacts\/[^/]+$/u.test(path)) return { status: 404, data: {} };
     throw new Error(`Unexpected Home read: ${path}`);
   });
   vi.spyOn(axios, 'request').mockImplementation(async options => {
     const path = new URL(String(options.url)).pathname;
     if (path !== '/v1/projects/sources' || options.method !== 'GET') throw new Error(`Unexpected Home request: ${path}`);
-    const root = options.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
-    if (typeof root !== 'string' || !rootAccounts.has(root)) return { status: 403, data: { error: 'invalid_execution_authorization' } };
-    if (options.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] === 'projects.sources.list') {
-      postDownloadReadRoots.push(root);
+    // The containing Action proof does not authorize arbitrary child HTTP.
+    // The canonical requester port spends Bob's retained Account credential;
+    // Alice's custodian/approval credential must never satisfy this boundary.
+    const authorization = options.headers?.Authorization;
+    if (![token('bob'), token('bob', true)].some(value => authorization === `Bearer ${value}`))
+      return { status: 403, data: { error: 'access_denied' } };
+    expect(options.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBeUndefined();
+    expect(options.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBeUndefined();
+    expect(options.headers?.[AUTHORITY_CEILING_HEADER_V1]).toBe('account_automation');
+    {
+      postDownloadReadAccounts.push('bob');
       // Observe the real payload disposal (including its requester release),
       // not merely the receiver ACK, before the handler's next service call.
-      if (postDownloadReadRoots.length === 1) await new Promise<void>((resolve, reject) => {
+      if (postDownloadReadAccounts.length === 1) await new Promise<void>((resolve, reject) => {
         let unsubscribe = () => {};
         const check = async () => {
           try {
@@ -132,6 +155,25 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
     const path = new URL(String(url)).pathname;
+    const availability = readBundledPluginAvailabilityHttpFixture(path, body);
+    if (availability) return { status: 200, data: availability };
+    if (path === '/v1/artifacts/read') return artifactReadResponse(body,
+      id => artifact?.id === id ? { ...artifact, id } : null);
+    if (path === '/v1/machines/machine/admission/verify') {
+      // Substitute authenticated Home HTTP, retaining the real installed
+      // receiver's complete signed admission payload and requester identity.
+      if (!body || typeof body !== 'object' || !('v' in body) || body.v !== 1
+        || !('context' in body) || !('proof' in body) || !('method' in body))
+        throw new Error('Machine admission requires its canonical signed request');
+      const { v: _version, proof: proofInput, ...rpcAdmission } = body;
+      const admission = SocketRpcMachineAdmissionContextV1Schema.parse(rpcAdmission.context);
+      const proof = MachineInstallationProofV1Schema.parse(proofInput);
+      const ok = admission.actorAccountId === 'bob' && admission.custodianAccountId === 'alice'
+        && verifyMachineInstallationProof({ publicKey: installation.publicKey, proof, payload: {
+          version: 1, accountId: 'alice', machineId: 'machine', installationId: installation.installationId, rpcAdmission,
+        } });
+      return { status: ok ? 200 : 403, data: ok ? { v: 1, ok: true } : { error: 'access_denied' } };
+    }
     if (path.endsWith('/execution-authorization/verify')) {
       if (path === '/v1/actions/action.invoke/execution-authorization/verify') {
         originalRootVerifications += 1;
@@ -215,7 +257,7 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
   const context: ActionOperationRpcContext = { machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
     installationId: installation.installationId, role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
   const invoke = async (actionId: 'daemon.filesystem.download' | 'approval.request.decide' | 'action.invoke', input: unknown, requestId: string, rpc = false,
-    actorAccountId = 'bob', surface: 'ui' | 'agent' = 'ui') => {
+    actorAccountId = 'bob', surface: 'ui' | 'agent' = 'ui', presentUserConfirmation?: ActionExecutorContext['presentUserConfirmation']) => {
     const target = { kind: 'machine' as const, machineId: 'machine' };
     const envelope = { v: 1 as const, requestId, target, input };
     const authority = surface === 'agent' ? 'account_automation' as const : 'present_user' as const;
@@ -224,9 +266,9 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
       accountId: actorAccountId, custodianAccountId: 'alice', authentication, accountEncryptionMode: 'plain', machineId: 'machine',
       installationId: installation.installationId, serverIdentityId: homeId, actionId, requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target } });
-    rootAccounts.set(authorization.token, authorization.binding.accountId);
     const boxed = sealExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
-      invocation: { caller: { kind: 'host' }, surface, authority }, installationPublicKey: decodeBase64(installation.publicKey, 'base64url'),
+      invocation: { caller: { kind: 'host' }, surface, authority, ...(presentUserConfirmation ? { presentUserConfirmation } : {}) },
+      installationPublicKey: decodeBase64(installation.publicKey, 'base64url'),
       credentials: { token: token(actorAccountId, surface === 'agent') }, randomBytes: length => new Uint8Array(randomBytes(length)) });
     if (rpc) {
       const prepared = await ingress.prepareRequesterAccountContext!({ authorization: boxed });
@@ -261,15 +303,36 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
     if (outcome.kind !== 'response') throw new Error(`Unexpected ingress result: ${JSON.stringify(outcome)}`);
     return outcome.response.execution;
   };
+  let uiConfirmations = 0;
+  const invokeUiConfirmed = async (actionId: 'daemon.filesystem.download', input: unknown, requestId: string, rpc = false) => {
+    const review = await invoke(actionId, input, requestId, rpc);
+    expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    if (review.ok || !review.details || typeof review.details !== 'object'
+      || !('reviewDigest' in review.details) || typeof review.details.reviewDigest !== 'string') {
+      throw new Error('Native confirmation must carry its canonical review digest');
+    }
+    expect(artifact).toBeUndefined();
+    expect(lifecycle.getState().publishedTransferCount).toBe(0);
+    // Only the person's Confirm press is substituted. The canonical binding,
+    // encrypted requester box and receiving review comparison remain real.
+    const confirmed = bindPresentUserActionConfirmation(actionId, input, { surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, runtimeAccountId: 'bob', serverIdentityId: homeId,
+      actionRequestId: requestId, externalActionTarget: { kind: 'machine', machineId: 'machine' },
+    }, review.details.reviewDigest);
+    uiConfirmations++;
+    return invoke(actionId, input, requestId, rpc, 'bob', 'ui', confirmed.presentUserConfirmation);
+  };
   const list = async (requester: boolean | string = true) => ActionOperationListV1ResponseSchema.parse(await machine.invokeLocalMachineAction(
     ACTION_OPERATION_RPC_METHODS_V2.list, {}, requester ? { rpcContext: typeof requester === 'string'
       ? { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: requester } } : context } : undefined));
-  return { directory, lifecycle, invoke, approvalCreated, list,
+  return { directory, lifecycle, invoke, invokeUiConfirmed, readUiConfirmations: () => uiConfirmations, approvalCreated, list,
+    readActionPhaseDiagnostics: () => localFileWarnings.mock.calls
+      .filter(([message]) => message === '[external-action-phase]').map(([, diagnostic]) => diagnostic),
     readProviderActivationFacts: () => provider?.registry.targetActivationFacts ?? [],
     approvalOwnerAccountId: () => artifact?.ownerAccountId,
     revokeRequester: () => { requesterRevoked = true; },
     originalRootVerifications: () => originalRootVerifications,
-    postDownloadReadRoots: () => [...postDownloadReadRoots],
+    postDownloadReadAccounts: () => [...postDownloadReadAccounts],
     publishWithoutRequester: (runtimeAccountId = 'caller-authored-account') => machine.createFileDownloadPublisher(homeId, {
       serverId: homeId, runtimeAccountId, externalActionTarget: { kind: 'machine', machineId: 'machine' },
     })({ name: 'asset.bin', bytes: new Uint8Array([0, 255]), destination: { destinationId: 'caller-authored-destination' } }, {

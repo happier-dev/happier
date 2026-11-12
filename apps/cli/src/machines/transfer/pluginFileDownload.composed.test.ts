@@ -63,7 +63,7 @@ describe('admitted plugin file download', () => {
         await readFile(new URL(`../../../../../packages/plugins/scm-github/${resource.path}`, import.meta.url))] as const)()] : [])));
     const fixture = await setupApprovedTransfer(false, false, false, {
       manifest: GITHUB_MANIFEST,
-      files: { ...resourceFiles, '.happier-plugin/daemon.js': 'export function activate() {}' },
+      files: { ...resourceFiles, [GITHUB_MANIFEST.entrypoints.daemon]: 'export function activate() {}' },
       // Module loading and GitHub HTTP/credentials are the fixture boundaries. The actual registered
       // release handler, filesystem service, native publisher, approvals and operation runner stay real.
       instantiateCommittedModule: () => ({ activate(api: PluginApi) {
@@ -91,7 +91,8 @@ describe('admitted plugin file download', () => {
       const request = await fixture.invoke('action.invoke', { action: { pluginId: GITHUB_MANIFEST.id, localId },
         input: { repository, repositoryId: '42', releaseId: '7', assetId: '71', destination: { destinationId: 'release-receiver' } } },
       'release-download', false, 'bob', 'agent');
-      expect(request, JSON.stringify(request)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(request, JSON.stringify({ request, diagnostics: fixture.readActionPhaseDiagnostics() }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(github.requests).toHaveLength(0);
       expect(fixture.lifecycle.getState().publishedTransferCount).toBe(0);
       const decided = await fixture.approve('alice');
