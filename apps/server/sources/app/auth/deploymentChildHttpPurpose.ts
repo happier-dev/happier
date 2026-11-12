@@ -10,20 +10,8 @@ import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployme
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { isDeploymentCandidatePublicationHttpPurposeInTx } from '@/app/deployments/deploymentPreparationAuthorization';
+import { isDeploymentCandidatePublicationHttpPurposeInTx, isDeploymentWorkspaceListHttpPurpose } from '@/app/deployments/deploymentPreparationAuthorization';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-
-/** Native source materialization selects workspace metadata; the row owner retains Account isolation. */
-export function isDeploymentWorkspaceListHttpPurpose(serverId: string,
-    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
-): boolean {
-    if (proof.method.toUpperCase() !== 'POST' || proof.path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return false;
-    const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
-    return selection.success && selection.data.serverId === serverId
-        && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
-        && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, selection.data));
-}
 
 function readArtifactId(path: string): string | null {
     const match = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(path);

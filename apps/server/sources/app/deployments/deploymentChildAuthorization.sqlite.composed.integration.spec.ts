@@ -2174,16 +2174,18 @@ describe('deployment children retain their controller Action authority', () => {
                 expect(response.statusCode, `${url} ${response.body}`).toBe(200);
             }
             const rowsPath = '/v1/account/project-rows/list';
-            // Workspace row keys use the requester's local profile alias, not the Home's stable identity.
-            const workspaceSelection = { kinds: ['workspace-ref'], serverId: 'requester-local-home-profile' };
+            // Workspace row keys carry the Home server identity (O-DEPLOY ruling 2026-11-12); no alias form.
+            const workspaceSelection = { kinds: ['workspace-ref'], serverId };
             const workspaces = await app.inject({ method: 'POST', url: rowsPath, payload: workspaceSelection,
                 headers: headers('POST', rowsPath, workspaceSelection) });
             expect(workspaces.statusCode, workspaces.body).toBe(200);
             expect(workspaces.json()).toMatchObject({ status: 'listed', rows: [] });
-            const otherRows = { ...workspaceSelection, kinds: ['relationship-graph'] };
-            await expectHttpRefusalWarning({ phase: 'deployment_restore_purpose', method: 'POST', path: rowsPath },
-                async () => { expect((await app.inject({ method: 'POST', url: rowsPath, payload: otherRows,
-                    headers: headers('POST', rowsPath, otherRows) })).statusCode).toBe(401); }, [authorization.token]);
+            for (const otherRows of [{ ...workspaceSelection, kinds: ['relationship-graph'] },
+                { ...workspaceSelection, serverId: 'requester-local-home-profile' }, { kinds: ['workspace-ref'] }]) {
+                await expectHttpRefusalWarning({ phase: 'deployment_restore_purpose', method: 'POST', path: rowsPath },
+                    async () => { expect((await app.inject({ method: 'POST', url: rowsPath, payload: otherRows,
+                        headers: headers('POST', rowsPath, otherRows) })).statusCode, JSON.stringify(otherRows)).toBe(401); }, [authorization.token]);
+            }
             const secretPath = `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`;
             const secretBody = EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId, environmentId: f.environment.id,
                 targetLinkId: f.link.id, machineId: f.member.id, installationId: f.member.installationId,
@@ -2889,16 +2891,17 @@ describe('deployment children retain their controller Action authority', () => {
             expect((await app.inject({ method: 'GET', url: unrelatedContent, headers: headers(unrelatedContent, actionId) })).statusCode)
                 .toBe(401);
             // Backup source choices read the definition's workspace (J29, #130): only the requester's own
-            // workspace references, keyed by its local profile alias; the row owner keeps Account isolation.
+            // workspace references on this Home; the row owner keeps Account isolation.
             const rowsPath = '/v1/account/project-rows/list';
             const list = (body: unknown) => app.inject({ method: 'POST', url: rowsPath, payload: body as object,
                 headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId, target,
                     installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
                     method: 'POST', path: rowsPath, body }) });
-            const workspaces = await list({ kinds: ['workspace-ref'], serverId: 'requester-local-home-profile' });
+            const workspaces = await list({ kinds: ['workspace-ref'], serverId });
             expect(workspaces.statusCode, workspaces.body).toBe(200);
             expect(workspaces.json()).toMatchObject({ status: 'listed', rows: [] });
-            for (const body of [{ kinds: ['relationship-graph'] }, { kinds: ['workspace-ref', 'relationship-graph'] }, {}]) {
+            for (const body of [{ kinds: ['relationship-graph'], serverId }, { kinds: ['workspace-ref', 'relationship-graph'], serverId }, {},
+                { kinds: ['workspace-ref'], serverId: 'requester-local-home-profile' }, { kinds: ['workspace-ref'] }]) {
                 expect((await list(body)).statusCode, JSON.stringify(body)).toBe(401);
             }
         }, { authentication: 'real' });

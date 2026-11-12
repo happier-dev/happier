@@ -21,7 +21,7 @@ import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvir
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
-import { isBackupWorkspaceRefListHttpPurpose, isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx, isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands, type DeploymentPreparationSourceRead,
+import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx, isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands, type DeploymentPreparationSourceRead,
     readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, isDeploymentPreviewPreparationReadEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
@@ -197,7 +197,7 @@ import { redactHttpRequestUrlForLog } from '@/utils/logging/redactHttpRequestUrl
 import { readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx, isDeploymentPreparationMachineReadHttpPurposeInTx,
     type DeploymentChildAdmission, type DeploymentChildMachineRead } from '@/app/deployments/deploymentChildAuthorization';
 import { projectAcceptedDeploymentDomainSecretLaunchAdmission } from '@/app/deployments/deploymentDomainService';
-import { readDeploymentChildHttpPurposeInTx, readDeploymentChildPeerGrantTarget, isDeploymentWorkspaceListHttpPurpose } from './deploymentChildHttpPurpose';
+import { readDeploymentChildHttpPurposeInTx, readDeploymentChildPeerGrantTarget } from './deploymentChildHttpPurpose';
 import { isExternalActionManagedResourceAction, readExternalActionManagedAcquireResourceInTx, resolveManagedActionMachineAdmissionInTx } from './externalActionManagedAdmission';
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import { isManagedMachineCreator } from '@/app/machines/managed/managedRead';
@@ -2575,7 +2575,7 @@ async function readDeploymentBackupHttpPurpose(verified: VerifiedSignedChildRequ
             select: { id: true, contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, actionOperationId: true } });
         if (verified.effectActionId !== verified.binding.actionId) continue;
         if (proof.method.toUpperCase() === 'POST') {
-            if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return isBackupWorkspaceRefListHttpPurpose(proof) ? {} : false;
+            if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return isDeploymentWorkspaceListHttpPurpose(verified.binding.serverIdentityId, proof) ? {} : false;
             const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
             if (!secret.success || secret.data.materialization.kind !== scope.secretKind) continue;
             const body = secret.data, materialization = secret.data.materialization;

@@ -883,13 +883,16 @@ async function readConfigurationDefaultsEnvironmentInTx(tx: Tx, binding: Externa
 }
 
 /**
- * Backup, restore and backup setup read the definition's workspace references.
- * Workspace references use requester-local profile aliases; the row reader owns Account isolation.
+ * Native deploy, backup, restore and backup setup select the definition's workspace references.
+ * Row keys carry the Home server identity (O-DEPLOY ruling 2026-11-12); the row reader owns Account isolation.
  */
-export function isBackupWorkspaceRefListHttpPurpose(proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>): boolean {
+export function isDeploymentWorkspaceListHttpPurpose(serverId: string,
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+): boolean {
     if (proof.method.toUpperCase() !== 'POST' || proof.path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return false;
     const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
-    return selection.success && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
+    return selection.success && selection.data.serverId === serverId
+        && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, selection.data));
 }
 
@@ -916,7 +919,7 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(native) && native.defaultsFor !== undefined) {
         // Backup choices read the stored definition's workspace, as a backup itself does (J29, #130).
         if (native.defaultsFor === 'backups' && effectActionId === binding.actionId
-            && isBackupWorkspaceRefListHttpPurpose(proof)) return true;
+            && isDeploymentWorkspaceListHttpPurpose(binding.serverIdentityId, proof)) return true;
         // This read-only variant never borrows update's general Artifact publication purpose.
         if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
         const environment = await readConfigurationDefaultsEnvironmentInTx(tx, binding);
