@@ -1,4 +1,5 @@
 import { projectDeploymentFailure } from './deploymentFailure';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readExpectedDownDomainReferencesForHost } from './targets/ownServer/domainRouteSelection';
 import { resolvePrivateServiceExportAdmissionForHost } from './targets/ownServer/privateServiceReference';
@@ -985,7 +986,31 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
             return result.result;
         };
-        return { executeScm: (action, input) => execute(action, { cwd, ...Object(input) }),
+        // The placed executor reads the admitted checkout itself, as the Machine's
+        // SCM handler would, narrowed to that one root. Home admitted this root
+        // once; it admits no per-child SCM hop. Another Account's live work keeps
+        // the receiving identity's child path.
+        const binding = context.externalActionExecutionAuthorization?.binding;
+        const admission = (context as RpcActionExecutorContext).machineAdmission;
+        const ownCheckoutRead = (action: string, input: Readonly<Record<string, unknown>>) =>
+            (action === 'scm.status.snapshot' || action === 'scm.file.read') && input.cwd === cwd
+            && (binding ? binding.accountId === binding.custodianAccountId
+                : !admission || admission.actorAccountId === admission.custodianAccountId);
+        const readOwnCheckout = async (action: 'scm.status.snapshot' | 'scm.file.read', input: unknown) => {
+            context.signal?.throwIfAborted();
+            const [{ executeScmActionOperation }, { resolveCwd }, { resolveFilesystemAccessPolicy }] = await Promise.all([
+                import('@/scm/actions/executeScmActionOperation'), import('@/scm/runtime'),
+                import('@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy')]);
+            const scoped = resolveCwd(cwd, cwd, resolveFilesystemAccessPolicy());
+            return executeScmActionOperation({ actionId: action, input, workingDirectory: cwd,
+                accessPolicy: { kind: 'restrictedRoots', roots: scoped.ok ? [scoped.cwd] : [] },
+                ...(context.signal ? { signal: context.signal } : {}) });
+        };
+        return { executeScm: (action, input) => {
+                const scoped = { cwd, ...Object(input) };
+                return ownCheckoutRead(action, scoped)
+                    ? readOwnCheckout(action as 'scm.status.snapshot' | 'scm.file.read', scoped) : execute(action, scoped);
+            },
             writeFile: input => execute('daemon.filesystem.writeFile', input),
             deleteFile: input => execute('daemon.filesystem.delete', input) };
     };
