@@ -14,6 +14,7 @@ import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/session
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
 import { createCliSessionActionTransport } from '@/session/transport/cliActionTransport';
@@ -257,10 +258,11 @@ function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOpti
 export type ControllerDeploymentMutationActionId =
   'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | typeof DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1;
 
-export function isControllerDeploymentMutationAction(actionId: string): actionId is ControllerDeploymentMutationActionId {
+export function isControllerDeploymentMutationAction(actionId: string, input: unknown): actionId is ControllerDeploymentMutationActionId {
   return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
     || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
-    || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1;
+    || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+      && getActionSpec(DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1).safetyForInput?.(input) !== 'safe';
 }
 
 export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>>;
@@ -1168,7 +1170,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       }
       const nativeRead = isDeploymentReadActionIdV1(actionId);
       const linkPreparation = actionId === 'deployments.targets.link' && !('contentArtifactId' in input);
-      if (!isControllerDeploymentMutationAction(actionId) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
+      if (!isControllerDeploymentMutationAction(actionId, input) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
       if (!('environmentId' in input)) return executionRunActionFailure('invalid_parameters');
       const loaded = await deploymentStorage('deployments.environments.get', {
         serverId: input.serverId, environmentId: input.environmentId,

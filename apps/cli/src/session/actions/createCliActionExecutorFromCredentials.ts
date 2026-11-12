@@ -1253,18 +1253,18 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             // Narrow the Machine branch after the local live decision above.
             if (!origin?.serverIdentityId || !machineId) return actionFailure('approval_origin_unavailable');
             if (signal?.aborted) return actionFailure('cancelled');
-            const replay = await callExactMachineRpc({ credentials, serverUrl: approvalServerApiUrl, machineId,
-              method: RPC_METHODS.APPROVAL_REQUEST_DECIDE,
-              request: { artifactId, decision, serverIdentityId: origin.serverIdentityId, originServerId: origin.serverId },
-              ...(context?.actionRequestId ? { requestId: context.actionRequestId } : {}),
-              requireCurrentMachine: true, timeoutMs: null,
+            // The requester owns this Account approval, including when its
+            // original invocation ran on a shared Machine. Reuse signed Action
+            // admission; the unsigned public decision RPC remains custodian-only.
+            const invocation = readExternalActionRequesterInvocation(context);
+            if (!invocation) return actionFailure('admission_unavailable');
+            return await dispatchOriginalAccountAction({ actionId: 'approval.request.decide',
+              input: { artifactId, decision, serverIdentityId: origin.serverIdentityId, originServerId: origin.serverId },
+              target: { kind: 'machine', machineId }, requestId: context?.actionRequestId ?? randomUUID(), credentials,
+              serverHttpBaseUrl: approvalServerApiUrl, serverIdentityId: origin.serverIdentityId,
+              invocation, authority: invocation.authority,
+              onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure,
               ...(signal ? { signal } : {}) });
-            const failure = ActionExecuteFailureSchema.safeParse(replay);
-            if (failure.success) return failure.data;
-            const value = readRecord(replay);
-            const output = getActionSpec('approval.request.decide').outputSchema?.safeParse(
-              value?.ok === true && Object.hasOwn(value, 'result') ? value.result : replay);
-            return output?.success ? { ok: true, result: output.data } : actionFailure('invalid_action_transport_output');
           }) satisfies NonNullable<ActionExecutorDeps['targetActionApprovalReplay']> }
           : {}),
       ...(!machineAdmissionTransport && params.pluginActionExecutionOwner !== 'current_process' ? {
@@ -1658,7 +1658,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           invocation: createOneShotPatInvocation(async () => actionFailure('approval_requester_unavailable')) };
       const binding = context.externalActionExecutionAuthorization?.binding;
       const workflowOrigin = binding?.workflowActionOrigin;
-      if (!context.approvedActionReplay && isControllerDeploymentMutationAction(actionId) && binding?.actionId === actionId && workflowOrigin
+      if (!context.approvedActionReplay && isControllerDeploymentMutationAction(actionId, input) && binding?.actionId === actionId && workflowOrigin
         && !workflowOrigin.sessionLeaf && !workflowOrigin.sessionAuthority) {
         try {
           const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
