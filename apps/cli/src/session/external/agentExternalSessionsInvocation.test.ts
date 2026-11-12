@@ -581,18 +581,16 @@ describe('bounded Agent External Sessions invocation', () => {
             managedEndpointRead: delegated,
             contribution: contributionWith(async (_method, request) => {
                 capturedRequest = request as AgentExternalSessionsResolveSourceRequest;
-                expect(delegated).toHaveBeenCalledOnce();
-                expect(delegated).toHaveBeenCalledWith({
-                    identity,
-                    source,
-                    signal: capturedRequest.signal,
-                });
-                selectedRead = replacementRead;
-                current = false;
+                expect(delegated).not.toHaveBeenCalled();
                 inContributionResponse = await capturedRequest.managedEndpointRead({
                     pathAndQuery: '/session?directory=workspace',
                     headers: { accept: 'application/json' },
                 });
+                selectedRead = replacementRead;
+                current = false;
+                // The next read keeps the endpoint acquired by this operation.
+                expect(await capturedRequest.managedEndpointRead({ pathAndQuery: '/session/status' }))
+                    .toMatchObject({ status: 200 });
                 return successFor('resolveSource');
             }),
         });
@@ -616,7 +614,7 @@ describe('bounded Agent External Sessions invocation', () => {
         await expect(endpointRead({ pathAndQuery: '/session/status' }))
             .rejects.toThrow('settled');
         expect(delegated).toHaveBeenCalledOnce();
-        expect(admittedRead).toHaveBeenCalledOnce();
+        expect(admittedRead).toHaveBeenCalledTimes(2);
         expect(replacementRead).not.toHaveBeenCalled();
 
         current = false;
@@ -624,7 +622,7 @@ describe('bounded Agent External Sessions invocation', () => {
             pathAndQuery: '/session',
         })).rejects.toThrow('settled');
         expect(delegated).toHaveBeenCalledOnce();
-        expect(admittedRead).toHaveBeenCalledOnce();
+        expect(admittedRead).toHaveBeenCalledTimes(2);
         expect(replacementRead).not.toHaveBeenCalled();
     });
 
@@ -635,25 +633,20 @@ describe('bounded Agent External Sessions invocation', () => {
         'resolveLinkedIdentity',
         'pageTranscript',
         'readAfterTranscript',
-    ] as const)('binds managed endpoint authority before %s contribution entry', async (method) => {
+    ] as const)('does not acquire an unused managed endpoint during %s', async (method) => {
         const delegated = vi.fn(async () => unavailableManagedEndpointRead);
         const wrapped = createWrapper({
             managedEndpointRead: delegated,
             contribution: contributionWith((calledMethod, request) => {
                 expect(calledMethod).toBe(method);
-                expect(delegated).toHaveBeenCalledOnce();
-                expect(delegated).toHaveBeenCalledWith({
-                    identity,
-                    source,
-                    signal: request.signal,
-                });
+                expect(delegated).not.toHaveBeenCalled();
                 expect(request.exec).toBe(unavailableInvocationExec);
                 return successFor(calledMethod);
             }),
         });
 
         await expect(invoke(wrapped, method)).resolves.toMatchObject({ ok: true });
-        expect(delegated).toHaveBeenCalledOnce();
+        expect(delegated).not.toHaveBeenCalled();
     });
 
     it('cancels a late managed endpoint response body after successful contribution settlement', async () => {
@@ -750,7 +743,7 @@ describe('bounded Agent External Sessions invocation', () => {
             expect((rejection as Error).message).toContain(
                 'cannot supply authentication',
             );
-            expect(delegated).toHaveBeenCalledOnce();
+            expect(delegated).not.toHaveBeenCalled();
             expect(exactRead).not.toHaveBeenCalled();
         },
     );
@@ -2340,44 +2333,6 @@ describe('bounded Agent External Sessions invocation', () => {
             cursor: 'x'.repeat(EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes + 1),
         })).resolves.toEqual({ ok: false, code: 'invalid_request', retryable: false });
         expect(observed).toHaveBeenCalledTimes(3);
-    });
-
-    it('admits the strict candidate-index preparation mode while qualifying its scan continuation', async () => {
-        const wrapped = createWrapper({
-            contribution: contributionWith((method) => method === 'listCandidates'
-                ? {
-                    ok: true,
-                    value: {
-                        candidates: [{
-                            remoteSessionId: 'scan-chunk-1',
-                            updatedAtMs: 10,
-                            linkData: { projectId: 'project-a' },
-                        }],
-                        nextCursor: 'native-scan-cursor',
-                        preparation: {
-                            kind: 'building_candidate_index',
-                            scanned: 1,
-                            total: 10,
-                        },
-                    },
-                } as AgentExternalSessionsResult<unknown>
-                : successFor(method)),
-        });
-
-        const result = await wrapped.listCandidates(requestFor('listCandidates'));
-
-        expect(result).toMatchObject({
-            ok: true,
-            value: {
-                candidates: [expect.objectContaining({ remoteSessionId: 'scan-chunk-1' })],
-                nextCursor: expect.stringMatching(/^happier_external_cursor_v1:/),
-                preparation: {
-                    kind: 'building_candidate_index',
-                    scanned: 1,
-                    total: 10,
-                },
-            },
-        });
     });
 
     it('qualifies a page tail cursor for readAfter and passes only its native value to the leaf', async () => {

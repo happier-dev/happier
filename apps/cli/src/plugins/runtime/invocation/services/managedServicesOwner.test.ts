@@ -1,3 +1,12 @@
+import { materializeConfiguredExternalSessionSourceCandidates, resolveConfiguredExternalSessionSourceAtAdmission } from '@/session/external/configuredSourceMaterializer';
+import { PLUGIN_MANIFEST as OPENCODE_DISCOVERY_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
+import { createOpenCodeExternalSessionsContribution } from '../../../../../../../packages/plugins/opencode/src/agent/surfaces/sessions/external/contribution';
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
+import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
+import { createContributionOwnedManagedServiceEndpointReadHost } from '@/session/external/contributionOwnedManagedServiceEndpointRead';
+import { discoverNativeUsageSourceMetadata } from '@/usage/collector/nativeUsageSourceDiscovery';
+import { createUnavailablePluginServices } from './unavailable';
 import { startProviderBrokerApplicationServer } from '@/providers/broker/providerBrokerApplicationServer';
 import { readManagedServiceResponseJson, readManagedServiceResponseText } from '@/plugins/testkit/managedServiceResponse';
 import { Buffer } from 'node:buffer';
@@ -8634,4 +8643,66 @@ describe('Project Local Services control composition', () => {
                 .toMatchObject({ status: 'denied', reasonCode: 'unknown_managed_service' });
         } finally { await owner.dispose(); }
     });
+});
+
+it('discovers thirteen OpenCode source metadata rows twice without spawning browse servers', async () => {
+    const ingestion = ingestPluginManifestV2(OPENCODE_DISCOVERY_MANIFEST);
+    if (!ingestion.ok) throw new Error('Invalid OpenCode fixture manifest');
+    const definition = ingestion.manifest.contributes.agents.find(agent => agent.id === 'opencode')!;
+    // Keep the real OpenCode schema/decoder; seed the observed thirteen-source scale.
+    const declarations = definition.surfaces!.externalSession!.sources;
+    const agents = [projectManifestAgentContribution({
+        definition: { ...definition, surfaces: { ...definition.surfaces, externalSession: {
+            ...definition.surfaces!.externalSession!, sources: declarations.flatMap(source =>
+                Array.from({ length: 13 }, (_, index) => ({ ...source, instances: [{
+                    kind: 'default' as const, constants: { managedEndpoint: true, directory: `/workspace/project-${index}` },
+                }] }))),
+        } } },
+        pluginId: ingestion.manifest.id, provenance: 'first_party', source: { kind: 'bundled' },
+    })];
+    const candidates = materializeConfiguredExternalSessionSourceCandidates({ agents, account: { connectedServicesV2: [] } });
+    expect(candidates).toHaveLength(13);
+    expect(await resolveConfiguredExternalSessionSourceAtAdmission({ agents, agentId: agents[0]!.id,
+        source: candidates[0]!.source, catalogEntry: null })).toMatchObject({ ok: true });
+    const retirement = new AbortController();
+    const harness = createLifecycleHarness();
+    // Only the OS process boundary is replaced. Any attempted spawn is counted
+    // and fails immediately, without launching an external tool during RED.
+    harness.exec.spawn.mockRejectedValue(new Error('OS spawn boundary reached by metadata discovery'));
+    const resolveExecutable = vi.fn(async () => { throw new Error('OS executable lookup reached by metadata discovery'); });
+    const exec = { ...harness.exec, systemTools: { ...createUnavailablePluginServices().exec.systemTools, resolve: resolveExecutable } };
+    const contribution = createOpenCodeExternalSessionsContribution({ env: {} });
+    const identity = { pluginId: ingestion.manifest.id, pluginVersion: ingestion.manifest.version,
+        agentId: 'opencode', occurrenceId: 'discovery-occurrence' };
+    const host = createContributionOwnedManagedServiceEndpointReadHost({
+        contribution, identity, cwd: '/workspace', retirementSignal: retirement.signal,
+        isOccurrenceActive: () => true,
+        createAgentInvocationServices: async input => ({
+            ...createUnavailablePluginServices(), exec,
+            managedServices: harness.owner.bindScope({
+                pluginId: input.pluginId, contributionQualifiedId: `${input.pluginId}/agents/opencode`,
+                occurrenceId: input.occurrenceId, operationId: input.correlationId,
+                isOccurrenceCurrent: () => true,
+            }, exec),
+        }),
+    })!;
+    const bounded = createBoundedAgentExternalSessionsContribution({
+        contribution, identity: { ...identity, contributionQualifiedId: `${identity.pluginId}/agents/opencode`,
+            sourceCustody: { kind: 'development', registeredRootId: 'discovery-root' } },
+        retirementSignal: retirement.signal, isCurrent: () => true,
+        managedEndpointRead: host.demand, createInvocationExec: async () => exec,
+    });
+    try {
+        for (let pass = 0; pass < 2; pass += 1) {
+            const sources = await discoverNativeUsageSourceMetadata({ agents, account: { connectedServicesV2: [] },
+                activeServerId: 'home', activeServerDir: '/workspace', signal: new AbortController().signal,
+                resolveBoundary: async () => ({ catalogEntry: null, externalSessions: bounded,
+                    occurrenceId: identity.occurrenceId, retirementSignal: retirement.signal, isCurrent: () => true }),
+            });
+            expect(sources).toHaveLength(13);
+            expect(sources.every(source => source.supported && !source.error)).toBe(true);
+            expect(resolveExecutable).toHaveBeenCalledTimes(0);
+            expect(harness.exec.spawn).toHaveBeenCalledTimes(0);
+        }
+    } finally { retirement.abort(); await harness.owner.dispose(); }
 });

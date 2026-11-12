@@ -222,17 +222,21 @@ export async function bindAgentExternalSessionsManagedEndpointRead(input: Readon
         return unavailable;
     }
     if (input.signal.aborted || !input.host) return unavailable;
-    let exactRead: AgentExternalSessionsManagedEndpointRead;
-    try {
-        exactRead = await input.host({
-            identity: input.identity,
-            source: input.source,
-            signal: input.signal,
-        });
-    } catch {
-        return unavailable;
-    }
-    if (input.signal.aborted) return unavailable;
+    // An invocation may resolve metadata without ever reading the endpoint.
+    // Retain the exact binding for this operation, acquiring it only on demand;
+    // cross-operation service reuse remains owned by managedServicesOwner.
+    let exactRead: Promise<AgentExternalSessionsManagedEndpointRead> | undefined;
+    const acquire = async (): Promise<AgentExternalSessionsManagedEndpointRead> => {
+        try {
+            return await input.host!({
+                identity: input.identity,
+                source: input.source,
+                signal: input.signal,
+            });
+        } catch {
+            return unavailable;
+        }
+    };
     return Object.freeze(async (request) => {
         if (input.signal.aborted) throw input.signal.reason;
         const requestHeaders = serializeManagedServiceEndpointReadRequestHeaders(
@@ -245,7 +249,10 @@ export async function bindAgentExternalSessionsManagedEndpointRead(input: Readon
                 headers: requestHeaders,
             });
         if (input.signal.aborted) throw input.signal.reason;
-        const response = await exactRead(admittedRequest);
+        exactRead ??= acquire();
+        const read = await exactRead;
+        if (input.signal.aborted) throw input.signal.reason;
+        const response = await read(admittedRequest);
         if (input.signal.aborted) {
             await response.body?.cancel().catch(() => undefined);
             throw input.signal.reason;
@@ -652,40 +659,13 @@ export function parseAgentExternalSessionsResolveSourceResult(value: unknown): A
         : null;
 }
 
-function parseCandidatePreparation(
-    value: unknown,
-): AgentExternalSessionsListCandidatesResult['preparation'] | null {
-    if (value === undefined) return undefined;
-    const record = readStrictRecord(value, ['kind', 'scanned'], ['total']);
-    if (
-        !record
-        || record.kind !== 'building_candidate_index'
-        || !Number.isSafeInteger(record.scanned)
-        || (record.scanned as number) < 0
-        || (
-            record.total !== undefined
-            && (
-                !Number.isSafeInteger(record.total)
-                || (record.total as number) < (record.scanned as number)
-            )
-        )
-    ) {
-        return null;
-    }
-    return Object.freeze({
-        kind: 'building_candidate_index',
-        scanned: record.scanned as number,
-        ...(record.total === undefined ? {} : { total: record.total as number }),
-    });
-}
-
 function parseListCandidatesValue(
     value: unknown,
     maxItems: number,
     identity: ContributionIdentity,
     scope: CursorScope,
 ): AgentExternalSessionsListCandidatesResult | null {
-    const record = readStrictRecord(value, ['candidates', 'nextCursor'], ['searchIncomplete', 'preparation', 'contentCoverage']);
+    const record = readStrictRecord(value, ['candidates', 'nextCursor'], ['searchIncomplete', 'contentCoverage']);
     if (!record || !Array.isArray(record.candidates) || record.candidates.length > maxItems) return null;
     const candidates = record.candidates.map(parseCandidate);
     if (candidates.some((candidate) => candidate === null)) return null;
@@ -695,20 +675,17 @@ function parseListCandidatesValue(
             ? encodeQualifiedCursor(record.nextCursor, identity, scope)
             : null;
     const searchIncomplete = parseOptionalBoolean(record.searchIncomplete);
-    const preparation = parseCandidatePreparation(record.preparation);
     const parsedCoverage = record.contentCoverage === undefined ? undefined : ExternalSessionsContentCoverageSchema.safeParse(record.contentCoverage);
     const contentCoverage = parsedCoverage === undefined ? undefined : parsedCoverage.success ? parsedCoverage.data : null;
     if (
         (record.nextCursor !== null && nextCursor === null)
         || searchIncomplete === null
-        || preparation === null
         || contentCoverage === null
     ) return null;
     return Object.freeze({
         candidates: Object.freeze(candidates as AgentExternalSessionCandidate[]),
         nextCursor,
         ...(searchIncomplete === undefined ? {} : { searchIncomplete }),
-        ...(preparation === undefined ? {} : { preparation }),
         ...(contentCoverage === undefined ? {} : { contentCoverage }),
     });
 }
