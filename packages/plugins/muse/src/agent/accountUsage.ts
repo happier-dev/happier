@@ -11,7 +11,7 @@ export async function recordMuseUsageObservation(input: Readonly<{
   signal: AbortSignal;
   logger: Pick<AgentSessionRuntimeContext['services']['logger'], 'warn'>;
 }>): Promise<void> {
-  const parsed = parseMuseUsageObservation({ usage: input.params });
+  const parsed = parseMuseUsageObservation(input.params);
   if (parsed.status !== 'supported') return;
   const source = await input.accountUsage.resolveSourceContext({ serviceId: MUSE_ACCOUNT_SERVICE_ID,
     env: input.env }, { signal: input.signal });

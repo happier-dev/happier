@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { parseMuseMintCompletionObservation, parseMuseUsageObservation } from './observations.js';
 
 describe('Muse sourced observations', () => {
+  it('normalizes native notifications, read results and canonical allowance envelopes identically', () => {
+    const usage = { observedAtMs: 1700000000000, tier: 'native-tier',
+      weekly: { usedPercent: 12, resetsAtMs: 1700001000000 },
+      window: { usedPercent: 35, resetsAtMs: 1700002000000, windowDurationMins: 300 } };
+    const read = parseMuseUsageObservation({ usage });
+    expect(read.status).toBe('supported');
+    expect(parseMuseUsageObservation(usage)).toEqual(read);
+    expect(parseMuseUsageObservation({ schemaVersion: 1, asOfMs: usage.observedAtMs,
+      allowance: { tier: usage.tier, weekly: usage.weekly, window: usage.window } })).toEqual(read);
+  });
   it('preserves source time, partial windows and over-quota without guessing durations', () => {
     expect(parseMuseUsageObservation({ usage: {
       observedAtMs: 1700000000000, tier: 'native-tier',

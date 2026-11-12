@@ -239,6 +239,18 @@ async function openMuseConversation<SessionId extends string | undefined>(
       throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse returned a different native Session identity during resume.' });
     }
     const nativeSessionId = native.sessionId;
+    if (sessionServices && sessionId) {
+      // Read the existing MSP cache once; usage/refresh mints a key. Optional
+      // allowance data must not delay Session readiness or the first turn.
+      void msp.client.request('usage/read', {}, { signal: context.signal })
+        .then(params => recordMuseUsageObservation({ params, accountUsage: sessionServices.accountUsage,
+          sessionId, env: request.launchEnvironment?.values, signal: context.signal, logger: context.services.logger }))
+        .catch(error => {
+          if (!context.signal.aborted && !closing && !ended) context.services.logger.warn('Muse initial usage read was unavailable', {
+            ...(error instanceof PluginError ? { code: error.code } : error instanceof Error ? { errorType: error.name } : {}),
+          });
+        });
+    }
     if (request.kind === 'fork' && (selectedMcp.length || explicitPermissions)) {
       // Fork inherits its profile and omits MCP bindings. Both launch selections
       // use the existing construction-only release/resume path.
