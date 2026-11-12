@@ -1222,13 +1222,13 @@ export const pt: TranslationStructure = {
   appCrash: {
       saveDiagnostics: "Salvar diagnósticos",
       diagnosticsSaveFailed: "Não foi possível salvar os diagnósticos. Os detalhes do erro continuam disponíveis. Tente novamente ou copie-os.",
-      copyFailed: "Não foi possível copiar os detalhes da falha. Tente novamente.",
-      discardFailed: "Não foi possível descartar a falha guardada. Tente novamente.",
-      restartWithoutReport: "Reiniciar sem guardar",
-      reportSaveFailed: "Não foi possível guardar os detalhes da falha. Copie-os antes de reiniciar ou tente reportar novamente.",
-      savedReportNotice: "A falha guardada aparece abaixo. Reveja e edite antes de enviar. Permanece neste dispositivo até ser enviada ou descartada.",
-      discardSavedReport: "Descartar falha guardada",
-      stackTruncated: "Pilha abreviada para este campo. A falha completa continua guardada neste dispositivo.",
+    copyFailed: "Não foi possível copiar os detalhes da falha. Tente novamente.",
+    discardFailed: "Não foi possível descartar a falha guardada. Tente novamente.",
+    restartWithoutReport: "Reiniciar sem guardar",
+    reportSaveFailed: "Não foi possível guardar os detalhes da falha. Copie-os antes de reiniciar ou tente reportar novamente.",
+    savedReportNotice: "A falha guardada aparece abaixo. Reveja e edite antes de enviar. Permanece neste dispositivo até ser enviada ou descartada.",
+    discardSavedReport: "Descartar falha guardada",
+    stackTruncated: "Pilha abreviada para este campo. A falha completa continua guardada neste dispositivo.",
     title: "Algo correu mal",
     subtitle:
       "O Happier encontrou um erro inesperado. Pode reiniciar a interface da app ou copiar os detalhes para suporte.",
@@ -1505,7 +1505,39 @@ export const pt: TranslationStructure = {
   },
 
   bugReports: {
+    reportSession: "Relatar um problema com esta sessão",
+    sessionPickerTitle: "Sessão relacionada",
+    sessionPickerSubtitle: "Escolha a sessão à qual este relato se refere.",
+    sessionPickerSearchPlaceholder: "Buscar sessões",
+    sessionPickerNoResults: "Nenhuma sessão correspondente",
+    noRelatedSession: "Nenhuma sessão relacionada",
     composer: {
+      scopeChanged: "A conta selecionada mudou. Escolha a sessão novamente antes de anexar os diagnósticos.",
+      addMoreDetails: "Adicionar mais detalhes (opcional)",
+      technicalInformation: "Informações técnicas",
+      relatedSession: "Sessão relacionada (opcional)",
+      chooseSession: "Escolher uma sessão",
+      changeSession: "Trocar sessão",
+      removeSession: "Remover sessão",
+      selectedSession: "Sessão selecionada",
+      logOptions: {
+        daemonTitle: "Logs do app e do daemon",
+        daemonDetail: "Atividade do app e logs de conexão do computador e do servidor selecionados.",
+        sessionTitle: "Logs da sessão do Happier",
+        sessionDetail: "Atividade da sessão que nos ajuda a investigar este problema.",
+        providerTitle: "Transcrição do provedor",
+        providerDetail: "Transcrição da sessão do provedor, quando necessário.",
+        technicalOnly: "Somente informações técnicas",
+        technicalOnlyDetail: "Não incluir nenhum log bruto neste relato.",
+      },
+      collection: {
+        collected: "Anexados",
+        unavailable: "Indisponíveis",
+        disabled: "Não incluídos",
+        unsupported: "Atualize a CLI para anexar estes logs",
+        skipped: "Ignorados",
+        error: "Não foi possível coletar",
+      },
       alerts: {
         previewUnavailableTitle: "Prévia indisponível",
         previewUnavailableBody:
@@ -1582,15 +1614,14 @@ export const pt: TranslationStructure = {
       },
       issueDetails: {
         title: "Descreva o problema",
-        subtitle:
-          "Forneça detalhes suficientes para que possamos reproduzir e diagnosticar rapidamente.",
+        subtitle: "Um título e uma breve descrição bastam para começar.",
         titleLabel: "Título (obrigatório)",
         titlePlaceholder: "Título curto",
         githubUsernameLabel: "Usuário do GitHub (opcional)",
         githubUsernamePlaceholder:
           "Usado como contato no corpo do issue",
-        summaryLabel: "Resumo conciso (obrigatório)",
-        summaryPlaceholder: "Resumo de um parágrafo",
+        summaryLabel: "O que aconteceu? (obrigatório)",
+        summaryPlaceholder: "Conte o que deu errado.",
         currentBehaviorLabel: "Comportamento atual (opcional)",
         currentBehaviorPlaceholder: "O que acontece de fato?",
         expectedBehaviorLabel: "Comportamento esperado (opcional)",
@@ -1649,11 +1680,9 @@ export const pt: TranslationStructure = {
         },
       },
       consent: {
-        title: "Consentimento",
-        understandTitle:
-          "Entendo que o diagnóstico pode incluir metadados técnicos",
-        understandSubtitle:
-          "Não inclua senhas, tokens de acesso ou chaves privadas.",
+        title: "Antes de enviar",
+        understandTitle: "Compartilhar este relato e os diagnósticos selecionados",
+        understandSubtitle: "O texto do relato é público. Os anexos de diagnóstico são enviados de forma privada aos mantenedores do Happier. Os logs de sessão podem incluir trechos de conversas.",
       },
       submit: {
         requiredFieldsHint:
@@ -2787,8 +2816,6 @@ export const pt: TranslationStructure = {
     },
     quota: {
       refreshing: "Atualizando uso…",
-      refreshTimedOut: "A atualização não foi concluída. A máquina que atualiza esses dados pode estar offline.",
-      refreshRateLimited: "O provedor limitou esta atualização. Exibindo o último uso conhecido.",
       loading: "Carregando…",
       error: ({ message }: { message: string }) => `Erro: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Última atualização: ${time}`,
@@ -7589,8 +7616,8 @@ export const pt: TranslationStructure = {
   },
 
   files: {
-      changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 arquivo' : `${count} arquivos`),
-      changedFilesLoadMore: 'Carregar mais arquivos',
+            changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 arquivo' : `${count} arquivos`),
+            changedFilesLoadMore: 'Carregar mais arquivos',
             revealInFiles: "Mostrar em Arquivos",
             openChanges: "Abrir alterações",
     searchPlaceholder: "Buscar arquivos...",

@@ -1200,13 +1200,13 @@ export const ru: TranslationStructure = {
   appCrash: {
       saveDiagnostics: "Сохранить диагностику",
       diagnosticsSaveFailed: "Не удалось сохранить диагностику. Сведения об ошибке по-прежнему доступны. Повторите попытку или скопируйте их.",
-      copyFailed: "Не удалось скопировать сведения о сбое. Повторите попытку.",
-      discardFailed: "Не удалось удалить сохранённый сбой. Повторите попытку.",
-      restartWithoutReport: "Перезапустить без сохранения",
-      reportSaveFailed: "Не удалось сохранить сведения о сбое. Скопируйте их перед перезапуском или повторите отправку отчёта.",
-      savedReportNotice: "Сохранённый сбой показан ниже. Проверьте и отредактируйте его перед отправкой. Он останется на устройстве до отправки или удаления.",
-      discardSavedReport: "Удалить сохранённый сбой",
-      stackTruncated: "Стек сокращён для этого поля. Полные сведения о сбое сохранены на этом устройстве.",
+    copyFailed: "Не удалось скопировать сведения о сбое. Повторите попытку.",
+    discardFailed: "Не удалось удалить сохранённый сбой. Повторите попытку.",
+    restartWithoutReport: "Перезапустить без сохранения",
+    reportSaveFailed: "Не удалось сохранить сведения о сбое. Скопируйте их перед перезапуском или повторите отправку отчёта.",
+    savedReportNotice: "Сохранённый сбой показан ниже. Проверьте и отредактируйте его перед отправкой. Он останется на устройстве до отправки или удаления.",
+    discardSavedReport: "Удалить сохранённый сбой",
+    stackTruncated: "Стек сокращён для этого поля. Полные сведения о сбое сохранены на этом устройстве.",
     title: "Что-то пошло не так",
     subtitle:
       "В Happier произошла непредвиденная ошибка. Можно перезапустить интерфейс приложения или скопировать детали для поддержки.",
@@ -1410,7 +1410,39 @@ export const ru: TranslationStructure = {
   },
 
   bugReports: {
+    reportSession: "Сообщить о проблеме с этой сессией",
+    sessionPickerTitle: "Связанная сессия",
+    sessionPickerSubtitle: "Выберите сессию, к которой относится этот отчёт.",
+    sessionPickerSearchPlaceholder: "Поиск сессий",
+    sessionPickerNoResults: "Подходящих сессий нет",
+    noRelatedSession: "Без связанной сессии",
     composer: {
+      scopeChanged: "Выбранный аккаунт изменился. Выберите сессию заново, прежде чем прикреплять диагностические данные.",
+      addMoreDetails: "Добавить подробности (необязательно)",
+      technicalInformation: "Техническая информация",
+      relatedSession: "Связанная сессия (необязательно)",
+      chooseSession: "Выбрать сессию",
+      changeSession: "Изменить сессию",
+      removeSession: "Убрать сессию",
+      selectedSession: "Сессия выбрана",
+      logOptions: {
+        daemonTitle: "Логи приложения и демона",
+        daemonDetail: "Активность приложения и логи подключения с выбранных компьютера и сервера.",
+        sessionTitle: "Логи сессии Happier",
+        sessionDetail: "Активность сессии, которая помогает нам разобраться в проблеме.",
+        providerTitle: "Переписка с провайдером",
+        providerDetail: "Переписка в сессии провайдера, если потребуется.",
+        technicalOnly: "Только техническая информация",
+        technicalOnlyDetail: "Не включать в этот отчёт никакие необработанные логи.",
+      },
+      collection: {
+        collected: "Прикреплено",
+        unavailable: "Недоступно",
+        disabled: "Не включено",
+        unsupported: "Обновите CLI, чтобы прикрепить эти логи",
+        skipped: "Пропущено",
+        error: "Не удалось собрать",
+      },
       alerts: {
         previewUnavailableTitle: "Предпросмотр недоступен",
         previewUnavailableBody: "Не удалось собрать предпросмотр диагностики.",
@@ -1484,15 +1516,14 @@ export const ru: TranslationStructure = {
       },
       issueDetails: {
         title: "Опишите проблему",
-        subtitle:
-          "Добавьте достаточно деталей, чтобы мы могли быстро воспроизвести и диагностировать.",
+        subtitle: "Для начала достаточно заголовка и краткого описания.",
         titleLabel: "Заголовок (обязательно)",
         titlePlaceholder: "Короткий заголовок",
         githubUsernameLabel: "Имя пользователя GitHub (необязательно)",
         githubUsernamePlaceholder:
           "Используется как контактная информация в тексте issue",
-        summaryLabel: "Краткое описание (обязательно)",
-        summaryPlaceholder: "Описание в один абзац",
+        summaryLabel: "Что произошло? (обязательно)",
+        summaryPlaceholder: "Расскажите, что пошло не так.",
         currentBehaviorLabel: "Текущее поведение (необязательно)",
         currentBehaviorPlaceholder: "Что происходит на самом деле?",
         expectedBehaviorLabel: "Ожидаемое поведение (необязательно)",
@@ -1551,11 +1582,9 @@ export const ru: TranslationStructure = {
         },
       },
       consent: {
-        title: "Согласие",
-        understandTitle:
-          "Я понимаю, что диагностика может включать технические метаданные",
-        understandSubtitle:
-          "Не включайте пароли, токены доступа или приватные ключи.",
+        title: "Перед отправкой",
+        understandTitle: "Поделиться этим отчётом и выбранными диагностическими данными",
+        understandSubtitle: "Текст отчёта общедоступен. Диагностические вложения отправляются приватно сопровождающим Happier. Логи сессии могут содержать фрагменты разговоров.",
       },
       submit: {
         requiredFieldsHint:
@@ -2617,8 +2646,6 @@ export const ru: TranslationStructure = {
     },
     quota: {
       refreshing: "Обновление использования…",
-      refreshTimedOut: "Обновление не завершилось. Компьютер, обновляющий эти данные, может быть не в сети.",
-      refreshRateLimited: "Провайдер ограничил это обновление. Показывается последнее известное использование.",
       loading: "Загрузка…",
       error: ({ message }: { message: string }) => `Ошибка: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Обновлено: ${time}`,
@@ -7463,8 +7490,8 @@ export const ru: TranslationStructure = {
   },
 
   files: {
-      changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 файл' : `${count} файлов`),
-      changedFilesLoadMore: 'Загрузить ещё файлы',
+            changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 файл' : `${count} файлов`),
+            changedFilesLoadMore: 'Загрузить ещё файлы',
             revealInFiles: "Показать в файлах",
             openChanges: "Открыть изменения",
     searchPlaceholder: "Поиск файлов...",
