@@ -6,7 +6,7 @@ import { installApprovalCommonModuleMocks } from '@/components/approvals/approva
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { readRuntimeFetchHost, resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -17,6 +17,7 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { Modal } from '@/modal';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 
 const vendorHttp = vi.hoisted(() => vi.fn<typeof fetch>());
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
@@ -184,6 +185,11 @@ describe('Account native power through the original reviewed role port', () => {
 });
 
 it.each([false, true])('wakes asleep retained Account compute through default preparation, public activation and its selected credential without a daemon operation, refused=%s', async refused => {
+    // Native HTTP is the intended runtime boundary; a browser requires a selected remote host.
+    // The real credential owner verifies writes through the desktop OS storage command boundary.
+    vi.stubGlobal('__TAURI_INTERNALS__', { ...createDesktopSecureStorageBoundary(),
+        metadata: { currentWindow: { label: 'main' } } });
+    expect(await readRuntimeFetchHost('https://foreground-native-power.test')).toBe('native');
     const homes = createHomeGovernanceHarness();
     installHomeGovernanceBoundaries(homes);
     onTestFinished(() => homes.reset());
@@ -356,7 +362,7 @@ it.each([false, true])('wakes asleep retained Account compute through default pr
         observation: expect.objectContaining({ power: 'running', storage: 'retained' }) })]);
     expect(result.ok && result.result).not.toHaveProperty('operation');
     expect({ admissions, submitted, reports, nativeResumes, guestBoots, roles }).toEqual({
-        admissions: 1, submitted: 1, reports: 1, nativeResumes: 1, guestBoots: 1, roles: ['power', 'inspect'] });
+        admissions: 1, submitted: 1, reports: 1, nativeResumes: 1, guestBoots: 0, roles: ['inspect', 'power', 'inspect'] });
     expect(machine.observation?.power).toBe('running');
     expect(JSON.stringify(result)).not.toContain(secret);
 });
