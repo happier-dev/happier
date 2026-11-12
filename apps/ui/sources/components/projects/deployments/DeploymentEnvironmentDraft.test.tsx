@@ -45,6 +45,114 @@ const repository = ProjectSourceRepositorySelectorV1Schema.parse({
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft Machine Home', () => {
+  it.each(['compose', 'image'] as const)('reviews a repository-free Project with its %s Environment only at final confirmation', async kind => {
+    const { useDeploymentProjectChoice } = await import('./DeploymentProjectChoice');
+    const serverId = await homes.addHome({ name: 'New app', serverUrl: `https://draft-new-project-${kind}.test`, accountId: 'alice',
+      serverIdentityId: `srv_${(kind === 'compose' ? 'b' : 'c').repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const authored: Record<string, unknown>[] = [];
+    const committed: unknown[] = [];
+    const saved: unknown[] = [];
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+            authored.push(intent);
+            const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link, ...selectors } = intent;
+            return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: { ...selectors,
+              controllerMachineId: 'runtime', contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
+              review: { creationDefaults: { values: { controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
+                sources: { controllerMachineId: 'explicit', retainPreviousDeployments: 'builtin' } } } });
+          }
+          committed.push(DeploymentEnvironmentCreateInputV1Schema.parse(input));
+          return { ok: true, environmentId: 'created-environment', projectSourceId: 'created-project', revision: 1 };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      function NewProjectDraft() {
+        const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true });
+        return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
+          definitionKind={kind} phone={false} actions={createDeploymentActions(account.accountLifetime)}
+          onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />;
+      }
+      const screen = await renderScreen(<NewProjectDraft />);
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      await act(async () => header().props.titleEditor.onChangeText('Status page'));
+      const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+      const field = (id: string) => screen.findAllByType(FieldTextInput).find(node => node.props.testID === id)!;
+      await act(async () => field('project-deployments.draft.project.newName').props.onChangeText('Operations'));
+      if (kind === 'compose') await act(async () => field('project-deployments.draft.composeDocument').props.onChangeText('services:\n  web:\n    image: nginx:stable\n'));
+      else {
+        await act(async () => field('project-deployments.draft.imageName').props.onChangeText('nginx:stable'));
+        await act(async () => field('project-deployments.draft.imagePort').props.onChangeText('80'));
+      }
+      expect(authored).toEqual([]);
+      expect(committed).toEqual([]);
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(header().props.primaryAction.disabled).toBe(false); });
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.findByTestId('project-deployments.draft.defaults')).not.toBeNull(); });
+      expect(authored).toHaveLength(1);
+      expect(authored[0]).toMatchObject({ newProject: { name: 'Operations', owner: { kind: 'account', accountId: 'alice' } }, definition: { from: kind } });
+      expect(authored[0]).not.toHaveProperty('projectSourceId');
+      expect(committed).toEqual([]);
+      expect(homes.requests.some(request => request.method === 'POST' && request.path === '/v1/projects/sources')).toBe(false);
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved).toHaveLength(1); });
+      expect(committed).toHaveLength(1);
+      expect(committed[0]).toMatchObject({ newProject: authored[0]!.newProject });
+      expect(saved).toEqual([['created-environment', { projectSourceId: 'created-project' }]]);
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
+  it('keeps the Environment draft while adding its first Machine and returns to that exact Machine', async () => {
+    const serverId = await homes.addHome({ name: 'Publish', serverUrl: 'https://publish-first-machine.test', accountId: 'alice',
+      serverIdentityId: `srv_${'a'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, []);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      await act(async () => header().props.titleEditor.onChangeText('My app'));
+      await screen.pressByTestIdAsync('project-deployments.draft.noMachine.create');
+      const { MachineCreationContinuation } = await import('@/components/machines/add/MachineCreationContinuation');
+      expect(screen.findAllByType(MachineCreationContinuation)).toHaveLength(1);
+      expect(homes.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
+      await act(async () => screen.findAllByType(MachineCreationContinuation)[0]!.props.onCancel());
+      expect(header().props.titleEditor.value).toBe('My app');
+      await screen.pressByTestIdAsync('project-deployments.draft.noMachine.create');
+      await act(async () => screen.findAllByType(MachineCreationContinuation)[0]!.props.onDraftChange({
+        kind: 'created', serverId, managedId: 'same-paid-resource',
+      }));
+      await act(async () => screen.findAllByType(MachineCreationContinuation)[0]!.props.onCancel());
+      await screen.pressByTestIdAsync('project-deployments.draft.noMachine.create');
+      expect(screen.findAllByType(MachineCreationContinuation)[0]!.props.draft).toEqual({
+        kind: 'created', serverId, managedId: 'same-paid-resource',
+      });
+      expect(homes.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
+      await act(async () => publishMachineInventoryForTest(account.accountLifetime.scope, [
+        createMachineFixture({ id: 'other', installationId: 'other-installation', activeAt: Date.now() }),
+        createMachineFixture({ id: 'created', installationId: 'created-installation', activeAt: Date.now() }),
+      ]));
+      await act(async () => screen.findAllByType(MachineCreationContinuation)[0]!.props.onArrived({ serverId, machineId: 'created' }));
+      expect(header().props.titleEditor.value).toBe('My app');
+      expect(screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')?.props.selectedId).toBe('created');
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
+      await act(async () => publishMachineInventoryForTest(account.accountLifetime.scope, [
+        createMachineFixture({ id: 'other', installationId: 'other-installation', activeAt: Date.now() }),
+      ]));
+      expect(screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')?.props.selectedId).toBe('created');
+      expect(header().props.primaryAction.disabled).toBe(true);
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
   it.each(['team', 'account-shared'] as const)('edits draft deployers through the shared choices and retains them in the creating Action (%s)', async (sourceKind) => {
     const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
@@ -229,7 +337,9 @@ describe('Environment draft Machine Home', () => {
       await fresh.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
-  it('duplicates with explicit binding choices through the creating Action and renders its refusal remedy', async () => {
+  it.each(['omit', 'reuse'] as const)('duplicates with explicit binding and data choices through the creating Action and renders its refusal remedy (%s)', async (dataChoice) => {
+    const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+    const { Switch } = await import('@/components/ui/forms/Switch');
     const { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1,
       createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const serverId = await homes.addHome({ name: 'Duplicate', serverUrl: 'https://duplicate-environment.test', accountId: 'alice',
@@ -270,8 +380,23 @@ describe('Environment draft Machine Home', () => {
       const purpose = header().props.description as string;
       expect(screen.getTextContent().split(purpose).length - 1).toBe(1);
       await screen.pressByTestIdAsync('project-deployments.draft.copy.secret:1:omit');
-      // Data comes along by an explicit choice: a new copy starts empty unless the person picks another.
-      await screen.pressByTestIdAsync('project-deployments.draft.copy.data:0:restoreBackup');
+      const dataRow = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testIDPrefix === 'project-deployments.draft.copy.data:0');
+      expect(dataRow()?.props.value).toBe('omit');
+      // Provisioning is explicit; the person can also return to leaving data unattached.
+      await screen.pressByTestIdAsync('project-deployments.draft.copy.data:0:createEmpty');
+      await screen.pressByTestIdAsync('project-deployments.draft.copy.data:0:omit');
+      expect(dataRow()?.props.value).toBe('omit');
+      if (dataChoice === 'reuse') {
+        await screen.pressByTestIdAsync('project-deployments.draft.copy.data:0:reuse');
+        expect(header().props.primaryAction.disabled).toBe(true);
+        await act(async () => screen.findAllByType(Switch).find(node => node.props.testID === 'project-deployments.draft.copy.data:0:binding:runtime:KEEP')!.props.onValueChange(true));
+        expect(header().props.primaryAction.disabled).toBe(false);
+        await screen.pressByTestIdAsync('project-deployments.draft.copy.secret:0:omit');
+        expect(header().props.primaryAction.disabled).toBe(true);
+        await screen.pressByTestIdAsync('project-deployments.draft.copy.secret:0:useSameReference');
+        expect(header().props.primaryAction.disabled).toBe(true);
+        await act(async () => screen.findAllByType(Switch).find(node => node.props.testID === 'project-deployments.draft.copy.data:0:binding:runtime:KEEP')!.props.onValueChange(true));
+      }
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
@@ -281,7 +406,9 @@ describe('Environment draft Machine Home', () => {
           { binding: { purpose: 'variable', name: 'KEEP', phase: 'runtime' }, kind: 'useSameReference' },
           { binding: { purpose: 'variable', name: 'EMPTY', phase: 'runtime' }, kind: 'omit' },
         ], values: [{ binding: { purpose: 'variable', name: 'PUBLIC', phase: 'runtime' }, kind: 'include' }],
-          data: [{ targetLinkId: 'source-data', kind: 'restoreBackup' }] },
+          data: [dataChoice === 'omit' ? { targetLinkId: 'source-data', kind: 'omit' } : {
+            targetLinkId: 'source-data', kind: 'reuse', bindings: [{ purpose: 'variable', name: 'KEEP', phase: 'runtime' }],
+          }] },
       } });
       expect(authored).not.toHaveProperty('definition');
       expect(authored).toMatchObject({ firstTargetLink: { machines: [{ machineId: 'runtime' }] } });
@@ -710,7 +837,7 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
-  it.each([false, true])('configures and inspects a platform before Save, then preserves the reviewed choice (link refusal: %s)', async linkRefused => {
+  it.each([[false, false], [true, false], [false, true]])('configures and inspects a platform before Save, then preserves the reviewed choice (link refusal: %s; target disappears: %s)', async (linkRefused, targetDisappears) => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-platform.test', accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -792,7 +919,7 @@ describe('Environment draft Machine Home', () => {
       await screen.pressByTestIdAsync('project-deployments.platform.check');
       await waitForHomeGovernance(async () => {
         await act(async () => {});
-        expect(inspections, JSON.stringify({ outcome: screen.findAllByType(DeploymentPlatformInspectState).map(node => node.props.outcome), screen: screen.getTextContent(), requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toHaveLength(1);
+        expect(inspections, JSON.stringify({ boundary: receiver.boundaryDiagnostics, outcome: screen.findAllByType(DeploymentPlatformInspectState).map(node => node.props.outcome), screen: screen.getTextContent(), requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toHaveLength(1);
       });
       expect(inspections[0]).not.toHaveProperty('environmentId');
       expect(inspections[0]).not.toHaveProperty('expectedRevision');
@@ -801,6 +928,19 @@ describe('Environment draft Machine Home', () => {
       expect(screen.findHostByTestId('project-deployments.draft.compose')).toBeNull();
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(header().props.primaryAction.disabled, screen.getTextContent()).toBe(false); });
+      if (targetDisappears) {
+        await act(async () => installed.dispose());
+        await waitForHomeGovernance(async () => { await act(async () => {});
+          expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0); });
+        const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
+        expect(screen.findAllByType(SelectionTiles)[0]!.props.value).toBe(`${pluginId}/beta`);
+        expect(header().props.primaryAction.disabled).toBe(true);
+        await act(async () => header().props.primaryAction.onPress());
+        expect(authored).toBeUndefined();
+        expect(committed).toBeUndefined();
+        await screen.unmount();
+        return;
+      }
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(authored, screen.getTextContent()).toBeDefined(); });

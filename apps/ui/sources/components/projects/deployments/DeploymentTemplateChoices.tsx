@@ -11,8 +11,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
+import { DeploymentBindingReplacementChoices } from './DeploymentBindingReplacementChoices';
 
 type Input = DeploymentTemplateInstantiateInputV1;
 export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace' | 'companions'>>;
@@ -109,16 +108,7 @@ export function DeploymentTemplateChoices(props: Readonly<{
                 onSelect={service => { setConnectionsOpen(false); onChange({ ...value, connectTo: service ? { service } : undefined }); }}
                 itemTrigger={{ title: t('capabilities.store.appPage.choices.connectApp'), placeholder: t('capabilities.store.appPage.choices.connectNone') }} />
         </ItemGroup> : null}
-        {props.services && replaceKeys.length ? <ItemGroup title={t('capabilities.store.appPage.choices.replaceTitle')}
-            description={t('capabilities.store.appPage.choices.replaceBody')}>
-            {replaceKeys.map(key => <Item key={key} title={key} titleStyle={styles.key} showChevron={false}
-                rightElement={<Switch testID={`${testID}.replace.${key}`} value={value.replace?.includes(key) ?? false}
-                    onValueChange={replace => onChange({ ...value, replace: replace ? [...(value.replace ?? []), key]
-                        : (value.replace ?? []).filter(entry => entry !== key) })} />} />)}
-        </ItemGroup> : null}
+        {props.services ? <DeploymentBindingReplacementChoices names={replaceKeys} selected={value.replace ?? []}
+            testID={testID} onChange={replace => onChange({ ...value, replace: [...replace] })} /> : null}
     </>;
 }
-
-const styles = StyleSheet.create(() => ({
-    key: Typography.mono(),
-}));

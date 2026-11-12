@@ -23,6 +23,8 @@ import { DeploymentPreviewProvenanceV1Schema } from './deploymentPreviewProvenan
 import { DeploymentEnvironmentCopyFromV1Schema } from './deploymentEnvironmentCopyV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from '../projects/workspaceRefKeyV1.js';
+import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
+import { DeploymentTargetLinkProviderIntentInputV1Schema } from './deploymentActionsV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
 import { ScmCommitOidSchema } from '../scm/commitPublication.js';
 import { ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
@@ -176,6 +178,8 @@ export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() =
   continuation: z.optional(z.discriminatedUnion('actionId', [
     z.strictObject({ actionId: z.literal('deployments.environments.create'), input: DeploymentEnvironmentCreateInputV1Schema }),
     z.strictObject({ actionId: z.literal('deployments.bindings.set'), input: DeploymentBindingsPatchInputV1Schema }),
+    z.strictObject({ actionId: z.literal('action.invoke'), input: ActionInvokeInputSchema }),
+    z.strictObject({ actionId: z.literal('deployments.targets.link'), input: DeploymentTargetLinkProviderIntentInputV1Schema }),
   ])),
   unknownSecret: z.optional(z.strictObject({ name: id, phase: z.enum(['build', 'runtime']), ref: DeploymentSecretBindingSourceV1Schema.shape.ref })),
 }));

@@ -1,13 +1,17 @@
+import { resolvePublishTargetRecommendation } from '@happier-dev/deployments';
+import { deploymentRecommendationDescription } from './deploymentRecommendationDescription';
 import * as React from 'react';
+import { MachineCreationContinuation, type MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
+import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from './DeploymentProjectChoice';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
-import type { EnvironmentSecretBindingV1, EnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1, type EnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ProjectRefSelect } from '@/components/projects/ProjectRefSelect';
@@ -35,6 +39,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -43,6 +48,9 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { deploymentActionRefusalRemedy, deploymentDefinitionLabel } from './deploymentPresentation';
+import { DeploymentMachinesEmpty } from './DeploymentMachinesEmpty';
+import { DeploymentPreparationEntry } from './DeploymentPreparation';
+import { DeploymentManagedDataProvisionEditor, type ManagedDataProvisionDraft } from './DeploymentManagedData';
 
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
@@ -91,22 +99,25 @@ export const DeploymentEnvironmentDraft = React.memo(
   function DeploymentEnvironmentDraft(
     props: Readonly<{
       lifetime: ServerAccountScopeLifetime | null;
-      sourceId: string;
+      sourceId: string | null;
+      projectChoice?: DeploymentProjectChoiceModel;
       phone: boolean;
       actions: Pick<Actions, 'prepareCreate' | 'inspectPlatformTarget' | 'link'> | null;
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: 'compose' | 'image' | null;
       onApprovalRequested: (artifactId: string) => void;
-      onSaved: (environmentId: string, next?: Readonly<{ tab?: DeploymentEnvironmentTabV1 }>) => void;
+      onSaved: (environmentId: string, next?: Readonly<{ tab?: DeploymentEnvironmentTabV1; projectSourceId?: string }>) => void;
       /** Whether this viewer can link a platform; without it the draft offers machines only. */
       platformAvailable?: boolean;
       onDiscard: () => void;
     }>,
   ) {
     const { theme } = useUnistyles();
+    const projectSelection = props.projectChoice?.selection;
+    const sourceId = props.projectChoice ? (projectSelection && 'projectSourceId' in projectSelection ? projectSelection.projectSourceId : null) : props.sourceId;
     const source =
-      useProjectSource(props.lifetime, props.sourceId).source?.source ?? null;
+      useProjectSource(props.lifetime, sourceId).source?.source ?? null;
     const allMachines = useMachineListForServer(
       props.lifetime?.scope.serverId ?? '', props.lifetime?.isCurrent() === true,
     );
@@ -118,6 +129,12 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [name, setName] = React.useState(() => props.copyFrom
       ? t('projects.deployments.copy.name', { name: props.copyFrom.content.name }) : '');
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
+    const [provisionDrafts, setProvisionDrafts] = React.useState<Readonly<Record<string, ManagedDataProvisionDraft | null>>>({});
+    const onProvisionDraftChange = React.useCallback((targetLinkId: string, draft: ManagedDataProvisionDraft | null) => {
+      setProvisionDrafts(current => ({ ...current, [targetLinkId]: draft }));
+    }, []);
+    const [creatingMachine, setCreatingMachine] = React.useState(false);
+    const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
     const [machineId, setMachineId] = React.useState<string | null>(null);
     const router = useRouter();
     // Provider choices are prepared in the existing platform editor; Create links that exact result.
@@ -125,7 +142,6 @@ export const DeploymentEnvironmentDraft = React.memo(
     const platformTargets = platforms.state.status === 'ready' ? platforms.state.targets : NO_PLATFORM_TARGETS;
     const [targetKey, setTargetKey] = React.useState<string>(MACHINE_TILE);
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
-    const onPlatform = platformTarget !== null;
     const [platformProvider, setPlatformProvider] = React.useState<DeploymentTargetLinkProviderContentV1 | null>(null);
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
     const [composeDocument, setComposeDocument] = React.useState('');
@@ -168,22 +184,31 @@ export const DeploymentEnvironmentDraft = React.memo(
     // answers; an unreachable Machine is never chosen for the person, so with none answering nothing is chosen.
     const preferredId = props.copyFrom ? copySourceMachineId(props.copyFrom) : null;
     const chosen =
-      machines.find((machine) => machine.id === machineId) ??
-      machines.find((machine) => machine.id === preferredId && answers(machine)) ??
-      machines.find(answers) ??
-      null;
+      machineId !== null ? machines.find((machine) => machine.id === machineId) ?? null :
+      machines.find((machine) => machine.id === preferredId && answers(machine)) ?? machines.find(answers) ?? null;
     const branch = ref ?? source?.defaultRef ?? null;
-    const platformEnvironment = React.useMemo(() => ({ projectSourceId: props.sourceId,
-      ...(chosen ? { controllerMachineId: chosen.id } : {}) }), [props.sourceId, chosen?.id]);
+    const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId,
+      ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, chosen?.id]);
     React.useEffect(() => setPlatformProvider(null), [platformTarget?.key, chosen?.id, source?.revision]);
     // A repository-free Project has only stored definitions; a door may also ask for one in any Project.
     const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
     const storedDefinition = definitionKind !== null;
+    const recommendation = resolvePublishTargetRecommendation({
+      definition: props.copyFrom?.content.definition ?? (definitionKind ? { from: definitionKind } : { kind: 'repository' }),
+      explicitTarget: targetKey !== MACHINE_TILE ? { id: targetKey, targetClass: 'platform' } : undefined,
+      targets: [{ id: MACHINE_TILE, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
+        : chosen && answers(chosen) ? 'available' : 'unavailable' },
+        ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const }))],
+    });
+    const offeredPlatformTargets = platformTargets.filter(target => recommendation.offeredTargetIds.includes(target.key));
+    const onPlatform = recommendation.target?.targetClass === 'platform';
+    const platformDefinitionAccepted = recommendation.offeredTargetIds.includes(targetKey);
     const imagePortNumber = Number(imagePort.trim());
     const imagePortValid = /^\d+$/.test(imagePort.trim()) && imagePortNumber >= 1 && imagePortNumber <= 65535;
     // A Compose Environment reads the chosen Machine's readiness once; required host settings and an explicit
     // Review precede its setup Plan. Saving can wait for it; nothing runs until Apply.
-    const host = useDeployHostReadiness(onPlatform ? null : props.lifetime, onPlatform ? null : chosen?.id ?? null);
+    const host = useDeployHostReadiness(onPlatform || creatingMachine ? null : props.lifetime,
+      onPlatform || creatingMachine ? null : chosen?.id ?? null);
     const [hostApply, setHostApply] = React.useState<Readonly<{ pending: boolean; error: string | null }>>(HOST_APPLY_IDLE);
     React.useEffect(() => setHostApply(HOST_APPLY_IDLE), [chosen?.id]);
     const applyHostSetup = async () => {
@@ -205,9 +230,14 @@ export const DeploymentEnvironmentDraft = React.memo(
       const output = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].safeParse(outcome.result);
       if (output.success) openActionOperationDetail({ serverId: lifetime.scope.serverId, operationId: output.data.operationId });
     };
+    const reusableBindings = copyChoices?.secrets.filter(choice => choice.kind !== 'omit' && choice.binding.purpose === 'variable')
+      .map(choice => choice.binding) ?? [];
     const valid =
-      name.trim().length > 0 &&
-      chosen !== null && (!onPlatform || platformProvider !== null) &&
+      name.trim().length > 0 && (!props.projectChoice || projectSelection != null) &&
+      (copyChoices?.data.every(choice => choice.kind === 'createEmpty' ? provisionDrafts[choice.targetLinkId] != null
+        : choice.kind !== 'reuse' || Boolean(choice.bindings?.length && choice.bindings.every(binding =>
+          reusableBindings.some(eligible => environmentSecretBindingIdentityV1(eligible) === environmentSecretBindingIdentityV1(binding))))) ?? true) &&
+      chosen !== null && platformDefinitionAccepted && (!onPlatform || platformProvider !== null) &&
       (props.copyFrom !== undefined && props.copyFrom !== null || (definitionKind === 'image'
         ? imageName.trim().length > 0 && imagePortValid
         : storedDefinition
@@ -222,7 +252,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     React.useEffect(() => {
       setPrepared(null);
       answerStepConfirmation(false);
-    }, [answerStepConfirmation, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider]);
+    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -246,10 +276,13 @@ export const DeploymentEnvironmentDraft = React.memo(
       try {
         if (!prepared) {
           const next = await actions.prepareCreate({
+            ...(projectSelection && 'newProject' in projectSelection ? { newProject: projectSelection.newProject }
+              : projectSelection ? { projectSourceId: projectSelection.projectSourceId } : {}),
             name: name.trim(),
             ...(props.copyFrom && copyChoices ? { copyFrom: {
               environmentId: props.copyFrom.environment.id, expectedRevision: props.copyFrom.environment.revision,
-              choices: copyChoices,
+              choices: { ...copyChoices, data: copyChoices.data.map(choice => choice.kind === 'createEmpty'
+                ? { targetLinkId: choice.targetLinkId, kind: 'createEmpty' as const, provision: provisionDrafts[choice.targetLinkId]! } : choice) },
             } } : { definition: definitionKind === 'image' ? {
               from: 'image', image: imageName.trim(), port: imagePortNumber,
             } : storedDefinition ? {
@@ -287,7 +320,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             return;
           }
         }
-        onSaved(created.environmentId);
+        onSaved(created.environmentId, props.projectChoice && created.projectSourceId ? { projectSourceId: created.projectSourceId } : undefined);
       } catch (error) {
         // Declining the controller's review in this step is the person's answer, not a failure.
         if (isActionApprovalDeclinedErrorCode((error as { code?: unknown } | null)?.code)) return;
@@ -305,15 +338,17 @@ export const DeploymentEnvironmentDraft = React.memo(
     };
 
     const platformStatus = platforms.state.status;
-    const targetTiles = React.useMemo((): Array<SelectionTile<string>> => [
+    const targetTiles: Array<SelectionTile<string>> = [
       { id: MACHINE_TILE, icon: 'hard-drives', title: t('projects.deployments.platformLink.onMachine'),
         subtitle: t('projects.deployments.whereDescription') },
-      ...platformTargets.map((target): SelectionTile<string> => ({
+      ...offeredPlatformTargets.map((target): SelectionTile<string> => ({
         id: target.key, title: target.title, mark: <PluginMark title={target.title} pluginId={target.pluginId} />,
         ...(target.description ? { subtitle: target.description } : {}),
       })),
+      ...(recommendation.target?.targetClass === 'platform' && !platformDefinitionAccepted ? [{ id: recommendation.target.id,
+        title: t('common.unavailable'), subtitle: recommendation.target.id, disabled: true } satisfies SelectionTile<string>] : []),
       // The tiles keep their place while the read answers; each other state says itself once, with its next step.
-      ...(platformStatus === 'loading'
+      ...(recommendation.evidence.includes('stored_definition') ? [] : platformStatus === 'loading'
         ? [{ id: LOADING_TILE, icon: 'cube', title: t('projects.deployments.platformLink.loading'), disabled: true } satisfies SelectionTile<string>]
         : platformStatus === 'failed'
           ? [{ id: RETRY_TILE, icon: 'cube', title: t('projects.deployments.platformLink.failed'), subtitle: t('common.retry') } satisfies SelectionTile<string>]
@@ -321,7 +356,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             ? [{ id: PLUGINS_TILE, icon: 'cube', title: t('projects.deployments.platformLink.usePlatform'),
                 subtitle: t('projects.deployments.platformLink.emptyBody') } satisfies SelectionTile<string>]
             : []),
-    ], [platformStatus, platformTargets]);
+    ];
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
       if (next === PLUGINS_TILE) { router.push(PLUGINS_APP_ROUTE); return; }
@@ -331,14 +366,16 @@ export const DeploymentEnvironmentDraft = React.memo(
     const machineItems = React.useMemo(
       (): DropdownMenuItem[] =>
         // Answering Machines first; every row says its presence, and an away one stays choosable.
-        [...machines].sort((left, right) => Number(presence.get(right.id)?.online === true) - Number(presence.get(left.id)?.online === true))
+        [...(machineId && !machines.some(machine => machine.id === machineId) ? [{
+          id: machineId, title: t('approvals.machineNotKnown'), subtitle: t('common.unavailable'), checked: true,
+        }] : []), ...[...machines].sort((left, right) => Number(presence.get(right.id)?.online === true) - Number(presence.get(left.id)?.online === true))
           .map((machine) => ({
             id: machine.id,
             title: getMachineDisplayName(machine, machines),
             subtitle: presence.get(machine.id)?.label || undefined,
             checked: machine.id === chosen?.id,
-          })),
-      [chosen?.id, machines, presence],
+          }))],
+      [chosen?.id, machineId, machines, presence],
     );
 
     const saveAction = {
@@ -354,6 +391,12 @@ export const DeploymentEnvironmentDraft = React.memo(
       loading: saving && !stepReview,
       testID: 'project-deployments.draft.save',
     };
+
+    if (creatingMachine && props.lifetime) return <MachineCreationContinuation
+      serverId={props.lifetime.scope.serverId} testID="project-deployments.draft.createMachine"
+      draft={machineCreationDraft} onDraftChange={setMachineCreationDraft}
+      onCancel={() => setCreatingMachine(false)}
+      onArrived={({ machineId }) => { setMachineId(machineId); setCreatingMachine(false); }} />;
 
     return (
       <View style={styles.page}>
@@ -420,14 +463,17 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : null}
           {stepReview ? (
             <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
+              summaryPlacement="host"
               preview={stepReview.preview} serverId={props.lifetime?.scope.serverId ?? null}
               testID="project-deployments.draft.confirmation" />
           ) : null}
+          {props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
+            testIDPrefix="project-deployments.draft.project"
+            description={t('capabilities.store.appPage.projectDescription')}
+            newProjectHint={t('capabilities.store.appPage.projectNewHint')} /> : null}
           <ItemGroup
             title={t('projects.deployments.whereTitle')}
-            {...(!props.platformAvailable
-              ? { description: t('projects.deployments.whereDescription') }
-              : {})}
+            description={deploymentRecommendationDescription(recommendation)}
           >
             {props.platformAvailable ? (
               <SelectionTiles<string>
@@ -435,26 +481,28 @@ export const DeploymentEnvironmentDraft = React.memo(
                 testIdPrefix="project-deployments.draft.target"
                 surface="sheet"
                 options={targetTiles}
-                value={platformTarget?.key ?? MACHINE_TILE}
+                value={targetKey}
                 onChange={chooseTarget}
                 minimumColumns={1}
                 maximumColumns={props.phone ? 1 : targetTileColumns(targetTiles.length)}
               />
             ) : null}
-            {machines.length === 0 ? (
-              <Item
-                testID="project-deployments.draft.noMachine"
-                title={t('projects.deployments.noMachineTitle')}
-                subtitle={t('projects.deployments.noMachineBody')}
-                mode="info"
-              />
+            {machines.length === 0 && machineId === null ? (
+              <DeploymentMachinesEmpty serverId={props.lifetime?.scope.serverId ?? ''} testID="project-deployments.draft" empty={
+                <Item
+                  testID="project-deployments.draft.noMachine.create"
+                  title={t('managedMachines.add.createPath')}
+                  subtitle={t('projects.deployments.noMachineBody')}
+                  onPress={() => setCreatingMachine(true)}
+                  disabled={!props.lifetime}
+                />} />
             ) : (
               <DropdownMenu
                 testID="project-deployments.draft.machine"
                 open={machineMenuOpen}
                 onOpenChange={setMachineMenuOpen}
                 items={machineItems}
-                selectedId={chosen?.id ?? null}
+                selectedId={machineId ?? chosen?.id ?? null}
                 onSelect={(id) => {
                   setMachineMenuOpen(false);
                   setMachineId(id);
@@ -477,7 +525,9 @@ export const DeploymentEnvironmentDraft = React.memo(
               />
             )}
           </ItemGroup>
-          {platformTarget && props.lifetime && actions ? (
+          {!platformDefinitionAccepted ? <SurfaceStateCard kind="unavailable" size="line"
+            title={t('common.unavailable')} /> : null}
+          {platformTarget && platformDefinitionAccepted && platformEnvironment && props.lifetime && actions ? (
             <DeploymentPlatformTargetEditor key={`${platformTarget.key}:${chosen?.id ?? ''}:${source?.revision ?? ''}`}
               name={name} environment={platformEnvironment} ownerAccountId={props.lifetime.scope.accountId}
               lifetime={props.lifetime} actions={{ inspectPlatformTarget: actions.inspectPlatformTarget, link: actions.link }}
@@ -564,6 +614,10 @@ export const DeploymentEnvironmentDraft = React.memo(
               compact={props.phone}
               onChange={setRef}
             />
+            {!onPlatform && props.lifetime && source?.repository ? <>
+              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
+              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
+            </> : null}
             </>}
           </ItemGroup>
           {props.copyFrom && copyChoices ? (
@@ -583,7 +637,10 @@ export const DeploymentEnvironmentDraft = React.memo(
                   onChange={next => {
                     if (next !== 'choose') {
                       setCopyChoices(current => current ? { ...current, secrets: current.secrets.map((row, i) => i === index
-                        ? { binding: row.binding, kind: next } : row) } : current);
+                        ? { binding: row.binding, kind: next } : row),
+                        data: next === 'omit' ? current.data.map(row => row.kind === 'reuse'
+                          ? { ...row, bindings: row.bindings?.filter(binding => environmentSecretBindingIdentityV1(binding) !== environmentSecretBindingIdentityV1(identity)) } : row) : current.data,
+                      } : current);
                       return;
                     }
                     if (!props.lifetime) return;
@@ -612,13 +669,37 @@ export const DeploymentEnvironmentDraft = React.memo(
             <ItemGroup title={t('projects.deployments.copy.dataTitle')}>
               {copyChoices.data.map((choice, index) => {
                 const link = props.copyFrom?.targetLinks.find(row => row.targetLink.id === choice.targetLinkId);
-                return <SegmentedChoiceItem<DataCopyChoice> key={choice.targetLinkId}
+                return <React.Fragment key={choice.targetLinkId}><SegmentedChoiceItem<DataCopyChoice>
                   title={link?.targetLink.targetKind ?? choice.targetLinkId}
                   testIDPrefix={`project-deployments.draft.copy.data:${index}`}
-                  value={choice.kind === 'omit' ? 'createEmpty' : choice.kind}
+                  value={choice.kind}
                   options={DATA_COPY_OPTIONS()}
-                  onChange={next => setCopyChoices(current => current ? { ...current, data: current.data.map((row, i) => i === index
-                    ? { targetLinkId: row.targetLinkId, kind: next } : row) } : current)} />;
+                  onChange={next => {
+                    setProvisionDrafts(current => ({ ...current, [choice.targetLinkId]: null }));
+                    setCopyChoices(current => current ? { ...current, data: current.data.map((row, i) => i === index
+                      ? { targetLinkId: row.targetLinkId, kind: next } : row) } : current);
+                  }} />
+                  {choice.kind === 'createEmpty' && link?.targetLink.source.kind === 'plugin' && props.lifetime ?
+                    <DeploymentCopyProvisionEditor targetLinkId={choice.targetLinkId} contribution={link.targetLink.source.contribution}
+                      lifetime={props.lifetime} disabled={saving} onChange={onProvisionDraftChange} /> : null}
+                  {choice.kind === 'reuse' ? <ItemGroup title={t('projects.deployments.copy.dataConnections')}
+                    description={t('projects.deployments.copy.dataConnectionsHint')}>
+                    {reusableBindings.length === 0 ? <SurfaceStateCard size="line" kind="unavailable"
+                      title={t('common.unavailable')} reason={t('projects.deployments.copy.dataConnectionsUnavailable')} /> : null}
+                    {reusableBindings.map(binding => {
+                      if (binding.purpose !== 'variable') return null;
+                      const identity = environmentSecretBindingIdentityV1(binding);
+                      const selected = choice.bindings?.some(row => environmentSecretBindingIdentityV1(row) === identity) ?? false;
+                      return <Item key={identity} title={binding.name} showChevron={false}
+                        rightElement={<Switch testID={`project-deployments.draft.copy.data:${index}:binding:${binding.phase}:${binding.name}`}
+                          disabled={saving} value={selected} onValueChange={include => setCopyChoices(current => current ? {
+                            ...current, data: current.data.map(row => row.targetLinkId === choice.targetLinkId && row.kind === 'reuse'
+                              ? { ...row, bindings: include ? [...row.bindings ?? [], binding]
+                                : (row.bindings ?? []).filter(entry => environmentSecretBindingIdentityV1(entry) !== identity) } : row),
+                          } : current)} />} />;
+                    })}
+                  </ItemGroup> : null}
+                </React.Fragment>;
               })}
             </ItemGroup>
           ) : null}
@@ -627,7 +708,8 @@ export const DeploymentEnvironmentDraft = React.memo(
             description={t('projects.deployments.whoMayDeployDescription')}
           >
             <DeploymentDeployerFields mode={deployerMode} principals={deployerPrincipals}
-              scope={props.lifetime?.scope ?? null} lifetime={props.lifetime} source={source} editable disabled={saving}
+              scope={props.lifetime?.scope ?? null} lifetime={props.lifetime} source={source}
+              owner={projectSelection && 'newProject' in projectSelection ? projectSelection.newProject.owner : undefined} editable disabled={saving}
               onModeChange={setDeployerMode} onChangePrincipals={setDeployerPrincipals} />
           </ItemGroup>
           <ItemGroup>
@@ -662,14 +744,20 @@ export const DeploymentEnvironmentDraft = React.memo(
   },
 );
 
+type DraftCopyDataChoice = Exclude<DeploymentEnvironmentCopyChoicesV1['data'][number], { kind: 'createEmpty' }>
+  | Readonly<{ targetLinkId: string; kind: 'createEmpty'; provision?: ManagedDataProvisionDraft }>;
+type DraftCopyChoices = Omit<DeploymentEnvironmentCopyChoicesV1, 'data'> & { data: DraftCopyDataChoice[] };
+
 type SecretCopyChoice = 'useSameReference' | 'choose' | 'omit';
-type DataCopyChoice = Exclude<DeploymentEnvironmentCopyChoicesV1['data'][number]['kind'], 'omit'>;
+type DataCopyChoice = DeploymentEnvironmentCopyChoicesV1['data'][number]['kind'];
 /** A copy's data is a deliberate choice; each option says what the new Environment gets. */
-const DATA_COPY_OPTIONS = (): ReadonlyArray<SegmentedChoiceOption<DataCopyChoice>> => [
-  { id: 'reuse', label: t('projects.deployments.copy.dataReuse'), description: t('projects.deployments.copy.dataReuseHint') },
-  { id: 'createEmpty', label: t('projects.deployments.copy.dataEmpty'), description: t('projects.deployments.copy.dataEmptyHint') },
-  { id: 'restoreBackup', label: t('projects.deployments.copy.dataRestore'), description: t('projects.deployments.copy.dataRestoreHint') },
-];
+const DATA_COPY_OPTIONS = (): ReadonlyArray<SegmentedChoiceOption<DataCopyChoice>> => Object.values({
+  omit: { id: 'omit', label: t('projects.deployments.copy.dataOmit'), description: t('projects.deployments.copy.dataOmitHint') },
+  reuse: { id: 'reuse', label: t('projects.deployments.copy.dataReuse'), description: t('projects.deployments.copy.dataReuseHint') },
+  createEmpty: { id: 'createEmpty', label: t('projects.deployments.copy.dataEmpty'), description: t('projects.deployments.copy.dataEmptyHint') },
+  restoreBackup: { id: 'restoreBackup', label: t('projects.deployments.copy.dataRestore'), description: t('projects.deployments.copy.dataRestoreHint'),
+    unavailableReason: t('projects.deployments.copy.dataRestoreUnavailable') },
+} satisfies { [Choice in DataCopyChoice]: SegmentedChoiceOption<Choice> });
 
 /** Where it runs fills whole rows: three across, or two when three would leave one tile alone (four choices). */
 function targetTileColumns(count: number): number {
@@ -695,7 +783,7 @@ function copySourceMachineId(source: DeploymentEnvironmentDetailV1): string {
 }
 
 /** Copy admission requires an explicit choice per source row; no values or credentials are opened here. */
-function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DeploymentEnvironmentCopyChoicesV1 {
+function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DraftCopyChoices {
   return {
     secrets: source.content.bindings.filter(row => row.source.kind === 'secret').map((row): DeploymentEnvironmentCopyChoicesV1['secrets'][number] => ({
       binding: copyBindingIdentity(row), kind: row.purpose === 'variable' || row.purpose === 'registry' ? 'useSameReference' : 'omit',
@@ -703,7 +791,7 @@ function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DeploymentEn
     values: source.content.bindings.filter(row => row.source.kind !== 'secret').map((row): DeploymentEnvironmentCopyChoicesV1['values'][number] => ({
       binding: copyBindingIdentity(row), kind: 'include',
     })),
-    data: source.targetLinks.filter(row => row.targetLink.role === 'data').map(row => ({ targetLinkId: row.targetLink.id, kind: 'createEmpty' })),
+    data: source.targetLinks.filter(row => row.targetLink.role === 'data').map(row => ({ targetLinkId: row.targetLink.id, kind: 'omit' })),
     retainPreviousDeployments: 'copy',
   };
 }
@@ -711,3 +799,16 @@ function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DeploymentEn
 const styles = StyleSheet.create(() => ({
   page: { flex: 1, minHeight: 0 },
 }));
+
+function DeploymentCopyProvisionEditor(props: Readonly<{
+  targetLinkId: string;
+  contribution: Readonly<{ pluginId: string; localId: string }>;
+  lifetime: ServerAccountScopeLifetime;
+  disabled: boolean;
+  onChange: (targetLinkId: string, draft: ManagedDataProvisionDraft | null) => void;
+}>) {
+  const onChange = React.useCallback((draft: ManagedDataProvisionDraft | null) => props.onChange(props.targetLinkId, draft),
+    [props.onChange, props.targetLinkId]);
+  return <DeploymentManagedDataProvisionEditor lifetime={props.lifetime} contribution={props.contribution}
+    disabled={props.disabled} onChange={onChange} />;
+}

@@ -1,5 +1,8 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentSecretBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema,
   EnvironmentSecretBindingIdentityV1Schema, EnvironmentSecretBindingV1Schema,
@@ -8,6 +11,12 @@ import { DeploymentSecretBindingSourceV1Schema, DeploymentNonSecretVariableBindi
 /** Only this non-content source/CAS reference crosses the Home storage boundary. */
 export const DeploymentEnvironmentCopySourceV1Schema = lazyZodSchema(() => z.strictObject({ environmentId: id, expectedRevision: revision }));
 export type DeploymentEnvironmentCopySourceV1 = z.infer<typeof DeploymentEnvironmentCopySourceV1Schema>;
+
+/** Full declared provision input, authored with a new explicit credential selection. */
+export const DeploymentEnvironmentCopyProvisionV1Schema = lazyZodSchema(() => z.strictObject({
+  action: asProtocolZod(PluginContributionIdentityV1Schema), input: z.record(z.string(), StrictJsonValueSchema),
+}));
+export type DeploymentEnvironmentCopyProvisionV1 = z.infer<typeof DeploymentEnvironmentCopyProvisionV1Schema>;
 
 const binding = () => ({ binding: EnvironmentSecretBindingIdentityV1Schema });
 const secretChoice = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -20,8 +29,13 @@ const valueChoice = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ ...binding(), kind: z.literal('include') }),
   z.strictObject({ ...binding(), kind: z.literal('remap'), source: DeploymentNonSecretVariableBindingSourceV1Schema }),
 ]));
-const dataChoice = lazyZodSchema(() => z.strictObject({ targetLinkId: id,
-  kind: z.enum(['omit', 'reuse', 'createEmpty', 'restoreBackup']) }));
+const dataChoice = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ targetLinkId: id, kind: z.literal('omit') }),
+  z.strictObject({ targetLinkId: id, kind: z.literal('reuse'),
+    bindings: z.optional(z.array(EnvironmentSecretBindingIdentityV1Schema)) }),
+  z.strictObject({ targetLinkId: id, kind: z.literal('createEmpty'), provision: DeploymentEnvironmentCopyProvisionV1Schema }),
+  z.strictObject({ targetLinkId: id, kind: z.literal('restoreBackup') }),
+]));
 
 /** Decisions name every source row; source preparation checks completeness and row kinds. */
 export const DeploymentEnvironmentCopyChoicesV1Schema = lazyZodSchema(() => z.strictObject({
@@ -42,6 +56,8 @@ export type DeploymentEnvironmentCopyFromV1 = z.infer<typeof DeploymentEnvironme
 /** Exact Action custody only. Fresh destination grants still belong to bindings.set. */
 export const DeploymentEnvironmentCopyPlanV1Schema = lazyZodSchema(() => z.strictObject({
   bindings: z.array(EnvironmentSecretBindingV1Schema), sourceRuntimeTargetLinkId: z.optional(id),
+  data: z.optional(z.array(z.strictObject({ targetLinkId: id, targetId: id, targetKind: id,
+    contribution: asProtocolZod(PluginContributionIdentityV1Schema), provision: DeploymentEnvironmentCopyProvisionV1Schema }))),
 }).check(z.refine(plan => new Set(plan.bindings.map(environmentSecretBindingIdentityV1)).size === plan.bindings.length,
   { message: 'Copied bindings retain unique purpose identities.' })));
 export type DeploymentEnvironmentCopyPlanV1 = z.infer<typeof DeploymentEnvironmentCopyPlanV1Schema>;

@@ -22,7 +22,7 @@ const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 afterEach(standardCleanup);
 
-it('retains a successful half of a connection pair and retries only with the provider continuation and recorded custody', async () => {
+it.each([false, true])('retains connection recovery and requires each existing variable replacement to be selected (existing=%s)', async (existing) => {
   const pooledRef = formatSharedSavedSecretRefV1('pooled');
   const directRef = formatSharedSavedSecretRefV1('direct');
   const pluginId = 'com.example.managed-database';
@@ -51,7 +51,9 @@ it('retains a successful half of a connection pair and retries only with the pro
     providerEnvironment: { kind: 'custom' as const, id: 'main' }, credentialPrincipal: { kind: 'account' as const, accountId: 'original-owner',
       purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'database.manage' },
       target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'original-token' } } } } };
-  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.accountLifetime.scope.serverId }), targetLinks: [linked] });
+  const base = createDeploymentEnvironmentDetailV1();
+  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.accountLifetime.scope.serverId }), targetLinks: [linked],
+    ...(existing ? { content: { ...base.content, bindings: ['DATABASE_URL', 'DIRECT_URL'].map(name => ({ purpose: 'variable' as const, name, phase: 'runtime' as const, source: { kind: 'value' as const, value: 'existing value' } })) } } : {}) });
   const partial = { status: 'partial', connections: { DATABASE_URL: { ref: pooledRef, resourceRevision: 3 } }, incomplete: ['DIRECT_URL'] };
   const calls: unknown[] = [];
   const bindings: unknown[] = [];
@@ -89,7 +91,18 @@ it('retains a successful half of a connection pair and retries only with the pro
     await act(async () => run()!.props.onPress());
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(calls).toHaveLength(2); });
     expect(calls[1]).toMatchObject({ previous: partial });
-    await waitForHomeGovernance(async () => { await act(async () => {}); expect(bind()!.props.disabled).toBe(false); });
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.root.findAll(node => node.props.testID === 'managed-data.connection:DIRECT_URL').length).toBeGreaterThan(0); });
+    if (existing) {
+      expect(bind()!.props.disabled).toBe(true);
+      await act(async () => bind()!.props.onPress());
+      expect(bindings).toHaveLength(0);
+      const { Switch } = await import('@/components/ui/forms/Switch');
+      const replace = (name: string) => screen.findAllByType(Switch).find(node => node.props.testID === `managed-data.replace.${name}`)!;
+      await act(async () => replace('DATABASE_URL').props.onValueChange(true));
+      expect(bind()!.props.disabled).toBe(true);
+      await act(async () => replace('DIRECT_URL').props.onValueChange(true));
+    }
+    expect(bind()!.props.disabled).toBe(false);
     await act(async () => bind()!.props.onPress());
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(bindings, JSON.stringify({
       cards: screen.findAllByType(SurfaceStateCard).map(node => ({ title: node.props.title, code: node.props.diagnosticCode })),
@@ -250,5 +263,64 @@ it('pages native branches and creates from a linked target with recorded custody
     await act(async () => run()!.props.onPress());
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(inputs).toHaveLength(4);
       expect(screen.findAllByType(RoundButton).some(node => node.props.testID === 'managed-data.link')).toBe(true); });
+  } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
+});
+
+it('authors duplicate provisioning through declared fields without executing a provider mutation', async () => {
+  const pluginId = 'com.example.managed-create';
+  const service = { pluginId: 'com.example.managed-account', localId: 'account' };
+  const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
+  const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+  const preparation = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!;
+  const common = { execution, surfaces: ['ui'] as const, hostAccess: ['manage'],
+    inputHints: { fields: [{ path: 'providerAccountId', title: 'Organization', widget: 'text', required: true }] } as const,
+    resultSchema: { type: 'object', additionalProperties: false, properties: {
+      providerIdentity: preparation.providerIdentity!, providerEnvironment: preparation.providerEnvironment!,
+      state: { type: 'string' }, status: { type: 'string' }, recovery: { type: 'string' },
+      plan: { type: 'string' }, price: { type: 'string' } } } as const,
+    connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }] };
+  const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Database',
+    hostAccess: { required: [{ id: 'manage', capability: 'connectedAccounts', reason: 'Manage a database',
+      scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
+    actions: {
+      options: { ...common, title: 'Options', dangerLevel: 'safe', readOnly: true,
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.provisionOptions'].jsonSchema, run: async () => ({}) },
+      create: { ...common, title: 'Create', dangerLevel: 'writesRemote', readOnly: false, confirmation: { title: 'Create database?' },
+        inputSchema: { ...DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema,
+          properties: { ...DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema.properties, requestKey: { type: 'string', minLength: 1 } },
+          required: [...DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema.required ?? [], 'requestKey'] }, run: async () => ({}) },
+      link: { ...common, title: 'Inspect project', dangerLevel: 'safe', readOnly: true,
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.link'].jsonSchema, run: async () => ({}) },
+    }, deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
+      targetSchema: closed, linkSchema: closed, dataV1: { projects: { provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
+  const serverId = await homes.addHome({ name: 'Create managed', serverUrl: 'https://managed-create.test',
+    serverIdentityId: 'srv_managed_create', accountId: 'owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
+  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+  const { DeploymentManagedDataProvisionEditor } = await import('./DeploymentManagedData');
+  const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+  const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+  const executed: unknown[] = [];
+  await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+    actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
+    execute: raw => { executed.push(raw); return {}; } });
+  let authored: unknown = undefined;
+  const screen = await renderScreen(<DeploymentManagedDataProvisionEditor lifetime={account.accountLifetime}
+    contribution={{ pluginId, localId: 'database' }} onChange={value => { authored = value; }} />);
+  try {
+    await waitForHomeGovernance(async () => { await act(async () => {});
+      expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1); });
+    expect(authored).toBeNull();
+    await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: { service, accountId: 'new-token' } }));
+    expect(authored).toBeNull();
+    await act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch({ providerAccountId: 'new-organization' }));
+    expect(authored).toMatchObject({ action: { pluginId, localId: 'create' }, input: {
+      credentialRef: { service, accountId: 'new-token' }, providerAccountId: 'new-organization',
+      credentialPrincipal: { purpose: { consumer: { pluginId, localId: 'create' } } }, requestKey: expect.any(String),
+    } });
+    expect((authored as { input: object }).input).not.toHaveProperty('environmentId');
+    expect(executed).toHaveLength(0);
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });
