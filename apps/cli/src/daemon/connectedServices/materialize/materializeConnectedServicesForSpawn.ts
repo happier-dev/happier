@@ -37,7 +37,7 @@ import {
   applyConnectedServiceStateSharingDescriptor,
   resolveConnectedServiceNativeHomeRoot,
 } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import { fingerprintConnectedServiceNativeHomeCredential, materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
+import { materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
 import type {
   ConnectedServiceResolvedSelection,
   ConnectedServiceMaterializedStateObservationBinding,
@@ -742,9 +742,6 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               ...(origin.teamId ? { teamId: origin.teamId } : {}),
               credentialPaths: Object.keys(materialization.files).filter(fileId =>
                 stateSharingDescriptor.authIsolation.secretEntries.includes(fileId)),
-              credentialFileDigests: Object.fromEntries(Object.entries(materialization.files)
-                .filter(([fileId]) => stateSharingDescriptor.authIsolation.secretEntries.includes(fileId))
-                .map(([fileId, contents]) => [fileId, fingerprintConnectedServiceNativeHomeCredential(contents)])),
             });
           }
           if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
@@ -768,12 +765,10 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               files: Object.freeze(nativeHomeFiles),
               existingFiles: preparedCredentialFiles,
             });
-            if (teamCredentialDeliveries.length) {
-              const manifest = await readConnectedServiceStateSharingManifest(nativeRoot);
-              // Replace ownership with this admission's produced files. A prior
-              // share must never delete a newer share's or personal credential.
-              await writeConnectedServiceStateSharingManifest(nativeRoot, { ...manifest, teamCredentialDeliveries }, undefined, manifest);
-            }
+            const manifest = await readConnectedServiceStateSharingManifest(nativeRoot);
+            // Every credential admission replaces ownership, including personal
+            // sign-in's empty set. Vendor refreshes keep this admission's ownership.
+            await writeConnectedServiceStateSharingManifest(nativeRoot, { ...manifest, teamCredentialDeliveries }, undefined, manifest);
           }));
           if (params.agentLaunchTarget) {
             const agentNativeHome = join(params.agentLaunchTarget.runtimeHome, AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH);

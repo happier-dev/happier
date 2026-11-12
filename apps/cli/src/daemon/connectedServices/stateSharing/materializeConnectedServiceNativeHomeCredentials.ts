@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -27,21 +26,12 @@ function declaredNativeHomeFiles(input: Readonly<{ targetRoot: string; declaredS
   return paths;
 }
 
-export function fingerprintConnectedServiceNativeHomeCredential(contents: Uint8Array): string {
-  return createHash('sha256').update(contents).digest('hex');
-}
-
 /** Revocation removes declared secrets without discarding retained native history. */
 export async function removeConnectedServiceNativeHomeCredentials(input: Readonly<{
   targetRoot: string;
   declaredSecretEntries: readonly string[];
-  /** Withdrawal must prove the current file is still the one the owner published. */
-  expectedFileDigests?: Readonly<Record<string, string>>;
 }>): Promise<void> {
-  const current = input.expectedFileDigests === undefined ? null : await readConnectedServiceNativeHomeCredentialFiles(input);
-  for (const [fileId, path] of declaredNativeHomeFiles(input)) {
-    if (current && (!current[fileId] || input.expectedFileDigests?.[fileId]
-      !== fingerprintConnectedServiceNativeHomeCredential(current[fileId]))) continue;
+  for (const path of declaredNativeHomeFiles(input).values()) {
     await rm(path, { recursive: true, force: true });
   }
 }

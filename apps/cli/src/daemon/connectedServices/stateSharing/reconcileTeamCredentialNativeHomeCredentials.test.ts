@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +10,6 @@ import { reconcileTeamCredentialNativeHomeCredentials } from './reconcileTeamCre
 const agentId = 'happier.agent.muse/muse';
 const deliveredAuth = '{"access_token":"dummy-access","api_key":"dummy-member-key"}';
 const delivery = { teamId: 'team-1', resourceId: 'share-1', credentialPaths: ['muse/auth.json'],
-  credentialFileDigests: { 'muse/auth.json': createHash('sha256').update(deliveredAuth).digest('hex') },
 };
 
 async function createHome(baseDir: string, key: string, storedAgentId = agentId) {
@@ -41,36 +39,6 @@ function catalog(state: 'current' | 'stale' | 'source_unavailable') {
 }
 
 describe('reconcileTeamCredentialNativeHomeCredentials', () => {
-  it('preserves a personal Muse login that replaced a delivered file while its delivery record is stale', async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), 'happier-native-personal-'));
-    try {
-      const home = await createHome(baseDir, 'csm_personal');
-      const personal = '{"access_token":"dummy-personal-access","api_key":"dummy-personal-key"}';
-      await writeFile(join(home, 'muse/auth.json'), personal);
-      await reconcileTeamCredentialNativeHomeCredentials({ baseDir,
-        homeDomainAction: async () => ({ resources: [], nextCursor: null }),
-      });
-      await expect(readFile(join(home, 'muse/auth.json'), 'utf8')).resolves.toBe(personal);
-      expect((await readConnectedServiceStateSharingManifest(home)).teamCredentialDeliveries).toEqual([]);
-    } finally { await rm(baseDir, { recursive: true, force: true }); }
-  });
-
-  it('retains a credential when an older delivery record has no written-file proof', async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), 'happier-native-unproven-'));
-    try {
-      const home = await createHome(baseDir, 'csm_unproven');
-      const manifest = await readConnectedServiceStateSharingManifest(home);
-      await writeConnectedServiceStateSharingManifest(home, { ...manifest, teamCredentialDeliveries: [{
-        teamId: delivery.teamId, resourceId: delivery.resourceId, credentialPaths: delivery.credentialPaths,
-      }] });
-      await reconcileTeamCredentialNativeHomeCredentials({ baseDir,
-        homeDomainAction: async () => ({ resources: [], nextCursor: null }),
-      });
-      expect(await readFile(join(home, 'muse/auth.json'), 'utf8')).toBe(deliveredAuth);
-      expect((await readConnectedServiceStateSharingManifest(home)).teamCredentialDeliveries).toEqual([]);
-    } finally { await rm(baseDir, { recursive: true, force: true }); }
-  });
-
   it('on the next natural reconcile removes only exact delivered credential files from Session and Run homes', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-native-withdraw-'));
     try {

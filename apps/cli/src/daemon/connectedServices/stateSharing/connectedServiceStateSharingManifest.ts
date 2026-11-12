@@ -20,8 +20,6 @@ export type TeamCredentialNativeHomeDelivery = Readonly<{
   teamId?: string;
   resourceId: string;
   credentialPaths: readonly string[];
-  /** Proof of the exact bytes published by the native-home owner. */
-  credentialFileDigests?: Readonly<Record<string, string>>;
 }>;
 
 export type ConnectedServiceStateSharingManifestV1 = Readonly<{
@@ -100,22 +98,8 @@ function parseTeamCredentialDeliveries(value: unknown): readonly TeamCredentialN
       || !Array.isArray(entry.credentialPaths) || !entry.credentialPaths.every(isSafeConnectedServiceStateSharingEntry)) {
       throw new Error('connected_service_state_sharing_manifest_invalid');
     }
-    const digests = entry.credentialFileDigests;
-    const credentialFileDigests: Record<string, string> = Object.create(null);
-    if (digests !== undefined) {
-      if (!digests || typeof digests !== 'object' || Array.isArray(digests)) {
-        throw new Error('connected_service_state_sharing_manifest_invalid');
-      }
-      for (const [path, digest] of Object.entries(digests)) {
-        if (!entry.credentialPaths.includes(path) || typeof digest !== 'string' || !/^[a-f0-9]{64}$/u.test(digest)) {
-          throw new Error('connected_service_state_sharing_manifest_invalid');
-        }
-        credentialFileDigests[path] = digest;
-      }
-    }
     return { resourceId: entry.resourceId, ...(typeof entry.teamId === 'string' ? { teamId: entry.teamId } : {}),
-      credentialPaths: entry.credentialPaths,
-      ...(digests === undefined ? {} : { credentialFileDigests }) };
+      credentialPaths: entry.credentialPaths };
   });
 }
 
