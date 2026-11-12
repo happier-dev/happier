@@ -47,7 +47,7 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({ open
 const modal = vi.hoisted(() => ({ current: null as null | Awaited<ReturnType<typeof import('@/dev/testkit/mocks/modal')['createModalModuleMock']>> }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    modal.current = createModalModuleMock();
+    modal.current = createModalModuleMock({ renderCustomModals: true });
     return modal.current.module;
 });
 vi.mock('@/components/ui/popover', async (importOriginal) => {
@@ -2055,18 +2055,22 @@ describe('MachineStorageTab', () => {
             { categoryId: 'trash' as const, size: size(34.5 * GB), canGoBytes: 0, count: 6, detailFacts: {} }],
             trash: { count: 6, allocatedBytes: 34.5 * GB, emptiesNextAt: Date.UTC(2026, 9, 17) } };
         const calls: Rpc[] = [];
+        const { ModalProvider } = modal.current!.module;
         const { screen } = await mount({ id: 'storage' }, {}, (rpc) => {
             calls.push(rpc);
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return withTrash;
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY) return { outcomes: [], freedBytes: 34.5 * GB };
             return undefined;
-        });
+        }, false, null, page => <ModalProvider>{page}</ModalProvider>);
         await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-category-trash-empty')).not.toBeNull(); });
         await act(async () => { screen.pressByTestId('machine-storage-category-trash-empty'); });
-        await act(async () => { await vi.waitFor(() => expect(modal.current!.spies.confirm).toHaveBeenCalled()); });
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('approvals.irreversibleNote'));
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         expect(calls.some(call => call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY)).toBe(false);
-        modal.current!.spies.confirm.mockResolvedValueOnce(true);
         await act(async () => { screen.pressByTestId('machine-storage-category-trash-empty'); });
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         await act(async () => { await vi.waitFor(() => expect(calls.some(call => call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY)).toBe(true)); });
     });
 
