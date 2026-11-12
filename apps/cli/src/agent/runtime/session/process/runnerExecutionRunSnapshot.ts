@@ -15,7 +15,6 @@ import type { AgentRuntimeDaemonServiceRequestV1, AgentRuntimeDaemonServiceRespo
 import type { RunnerExecutionRunSnapshotV1 } from './executionRunSnapshotProtocol';
 import { ExecutionRunScmCommitMessageScopeV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createExecutionRunCodedError } from '@/agent/runtime/bridges/executionRun/errors';
 import type { ExecutionRunProviderLaunchServices } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
@@ -88,11 +87,12 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
         createRequest: token => ({ v: 1, context: { token, sessionId: input.sessionId,
           ...(executionRunSnapshotId ? { executionRunSnapshotId } : {}) }, operation }) });
       if (!response.ok) {
-        const code = readTeamCredentialLaunchFailureCode(response.error.code);
-        if (code || response.error.code === 'execution_run_child_choice_required') {
-          throw Object.assign(createExecutionRunCodedError(response.error.code, response.error.code), { code: response.error.code });
-        }
-        return unavailable();
+        throw new PluginError({
+          code: response.error.code,
+          message: response.error.code,
+          ...(response.error.retryable === undefined ? {} : { retryable: response.error.retryable }),
+          ...(response.error.cause ? { details: { cause: response.error.cause } } : {}),
+        }, response.error.cause ? { cause: response.error.cause } : undefined);
       }
       return response.result;
     };

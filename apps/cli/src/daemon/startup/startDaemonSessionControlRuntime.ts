@@ -1,3 +1,7 @@
+import { stageObservedExit } from '@/daemon/sessions/stageObservedExit';
+import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
+import { reachHeldTargetAgent } from '@/daemon/spawn/prepareSessionTargetPlacement';
+import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
 import { resolveProviderAccountUsageAuthoritativeSource } from '../connectedServices/accountUsage/runtimeSource';
@@ -13,6 +17,8 @@ import { snapshotTrackedSessionForTemporaryThrottleResume, buildTrackedExistingS
 import { persistExplicitSessionStopUsageLimitRecoveryCancellation } from '@/daemon/connectedServices/usageLimitRecovery/explicitStop';
 import { tryReadSessionMetadataRecord, resolvePersistedConnectedServiceSwitchSessionState, resolveInactiveConnectedServiceSessionContext } from '@/daemon/connectedServices/sessionAuthSwitch/persistedState';
 import { resolveConnectedServiceMaterializationIdentityFromTrackedSession, resolveSessionConnectedServiceSwitchContinuity } from '@/daemon/connectedServices/sessionAuthSwitch/continuity';
+import type { SessionTrackingKey, TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
+import { isCurrentTrackedSession, trackedSessionForSingleSessionProcess, trackedSessionOnProcess, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 export { resolveSessionConnectedServiceSwitchContinuity } from '@/daemon/connectedServices/sessionAuthSwitch/continuity';
 import { resolveContinuationResumePromptMode, resolveConnectedServiceContinuationOriginId, readContinuationCustomResumePrompt, createConnectedServiceContinuationHandler, createSelectionPostSwitchRecoveryHandler, resolveConnectedServiceContinuationInterruptionForSwitch } from '@/daemon/connectedServices/continuation/switchRecovery';
 export { resolveContinuationResumePromptMode, resolveConnectedServiceContinuationOriginId, resolveConnectedServiceContinuationInterruptionForSwitch } from '@/daemon/connectedServices/continuation/switchRecovery';
@@ -86,6 +92,7 @@ import { readTrackedSessionMaterializedStateObservationBinding } from '../sessio
 import { rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { createRequesterSessionAccountContextCustody, findTrackedSessionByHappySessionId } from '../sessionEncryption/requesterSessionAccountContextCustody';
 
 import { createSessionStartupReadinessHandler } from './sessionStartupReadiness';
 import { projectRequesterAgentStartPolicyV1, readRequesterAgentStartPolicyV1 } from '../sessionEncryption/requesterAgentStartPolicy';
@@ -206,7 +213,7 @@ import { projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1 } 
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import { writeProviderAccountUsageRecordIdToMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
 
-import { ProviderErrorV1Schema, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { projectProviderRuntimeBindingBasis } from '@/providers/spawn/runtimeBindingBasis';
 import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
 
@@ -320,7 +327,7 @@ import {
   type RunnerManagedServicesCustodyDispatchV1,
   type RunnerManagedProviderCustodyScopeV1,
 } from '@/agent/runtime/session/process/runnerManagedServicesCustody';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { deferSessionRpcEncryption, SessionRpcTransportUnavailableError } from '@/session/services/resolveSessionTransportContext';
 import {
   preserveComposerAttachmentSelectionAcrossSessionInputTransformV1,
   validateSessionStructuredInputIngressV1,
@@ -332,7 +339,7 @@ import { settleComposerStagedMediaAdmissionV1 } from '@/session/media/settleComp
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import type { MachineRpcHandlerDeps } from '@/api/machine/rpcHandlers';
-import { withTrackedSessionRpc } from '../sessionEncryption/withTrackedSessionRpc';
+import { withTrackedSessionRpcContext } from '../sessionEncryption/withTrackedSessionRpc';
 
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import { traceRunPreparationPhase } from '@/providers/diagnostics';
@@ -361,26 +368,12 @@ import {
   readRetainedExecutionRunRecord,
   listExecutionRunMarkersForRehydration,
 } from '../executionRunRegistry';
-import { createComposedSimulatorPreviewAdapter } from '../devices/simulator/adapter';
-import { createSimulatorCaptureAdapterForResource } from '../devices/simulator/captureAdapters';
-import { createSimulatorCaptureRegistryReconciler } from '../devices/simulator/captureRegistration';
 import type { SimulatorInputLeaseManager } from '../devices/simulator/lease';
-import { createDefaultAndroidSimulatorResourcesDiscovery } from '../devices/simulator/android/discovery';
-import { createAndroidScrcpyTunnelOwner } from '../devices/simulator/android/tunnelOwner';
-import {
-  createDefaultIosSimulatorResourcesDiscovery,
-  resolveIosSimulatorCaptureAdapterAvailability,
-  resolvePinnedIosSimulatorHelperArtifact,
-} from '../devices/simulator/ios/discovery';
-import { verifyIosSimulatorHelperSignature } from '../devices/simulator/ios/signature';
-import type { IosSimulatorHelperFrameStreamOpener } from '../devices/simulator/ios/helperFrameProducer';
-import { createIosSimulatorHelperSession } from '../devices/simulator/ios/helperSession';
-import type { IosSimulatorInputCommandSender } from '../devices/simulator/ios/input';
-import { createAndroidSimulatorPlatformAdapter } from '../devices/simulator/platform/android';
-import { createIosSimulatorPlatformAdapter } from '../devices/simulator/platform/ios';
-import { createSimulatorPreviewDaemonRuntime } from '../devices/simulator/runtime';
-import { createSimulatorStreamControlBridge } from '../devices/simulator/streamControlBridge';
 import type { SimulatorPreviewRoutes } from '../devices/simulator/previewRoutes.types';
+import type { ComputerRequesterHost } from '../computer/requester';
+import type { DevicesRoleActivation } from '../roles/devices/entry';
+import { createMachineRoleActivationRuntime } from '../roles/machineRoleActivation';
+import type { MachineRolesRuntime } from '../roles/machineRolesRuntime';
 
 import { type BrowserDiagnosticsRoutes } from '../browser/diagnostics/routes';
 import { type BrowserDiagnosticsActionRoutes } from '../browser/diagnostics/actionRoutes';
@@ -389,9 +382,7 @@ import { type BrowserDiagnosticsActionRoutes } from '../browser/diagnostics/acti
 
 import { type BrowserDaemonControlRoutes } from '../browser/control/routes';
 import { type BrowserContextRoutes } from '../browser/context/routes';
-import { createComputerRoutes, type ComputerRoutes } from '../computer/routes';
-import { createRecordingSessionMediaHost } from '../recording/sessionMediaHost';
-import { DEFAULT_COMPUTER_USE_SETTINGS_V1, readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
+import type { ComputerRoutes } from '../computer/routes';
 import { type BrowserContextSource } from '../browser/context/source';
 
 
@@ -423,7 +414,7 @@ import type { BrowserRecordingRoutes } from '../browser/recording/routes';
 export type { DaemonBrowserStoragePurgeOwner } from '@/daemon/browser/control/routePublication';
 import type { DaemonBrowserStoragePurgeOwner } from '@/daemon/browser/control/routePublication';
 
-import type { BrowserSidecarControlAdapterFactory, BrowserSidecarControlAdapterFactoryInput, BrowserSidecarControlAdapterFactoryResult } from '../browser/sidecar/controlAdapter';
+import type { BrowserSidecarControlAdapterFactory, BrowserSidecarControlAdapterFactoryInput } from '../browser/sidecar/controlAdapter';
 
 import { type BrowserDaemonFeatureGate } from '../browser/featureGate';
 import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream';
@@ -432,18 +423,19 @@ import {
   type LocalServicesDaemonRuntime,
 } from '../local/services/runtime';
 import { readLocalServiceWorkspaceFacts } from '../local/services/inventory/workspaces';
-import { listSessionMarkers } from '../sessionRegistry';
+import { isPidPlaceholderSessionId, listSessionMarkers } from '../sessionRegistry';
 import {
   fetchServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { createSessionHostPlacement } from '../sessionHost/daemonSessionHost';
 import type { LocalServicesRuntimeActionRoutes } from '../local/services/actions/runtimeActionExecutor';
 import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonLocalServices';
 import type { LocalServicePreviewRoutes } from '../local/services/preview/routes';
 import { createLocalServicePublicPreviewServerRoutes } from '../local/services/public/routes';
 import { resolveHostedWebStaticAssetLifecycleSource } from '../local/services/plugins/staticAssets/source';
-import { createOnChildExited, type SessionNativeCredentialLifetimeAccount } from '../sessions/onChildExited';
+import { createOnChildExited, type ChildExit, type SessionNativeCredentialLifetimeAccount } from '../sessions/onChildExited';
 import { isSessionTerminalPermanentlyUnavailable } from '../sessions/sessionTerminalSettlement';
 import type { MachineSessionTerminalCaptureResponseV1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import type { SkillStore } from '@/prompts/skills/store/skillStore';
@@ -461,9 +453,11 @@ import {
   type StopSessionOptions,
 } from '../sessions/stopSession';
 import {
-  registerPidSpawnResourceCleanup,
+  registerSessionSpawnResourceCleanup,
   retireUpstreamAuthorityBeforeProcessStop,
-} from '../sessions/cleanupPidSessionResources';
+  type SessionAttachCleanupByKey,
+  type SpawnResourceCleanupByKey,
+} from '../sessions/cleanupSessionResources';
 import {
   isTerminalHostPhysicallyRetiredStopResult,
   type StopSessionResult,
@@ -487,7 +481,7 @@ import { findTrackedSessionByRunnerPid } from '../sessions/sessionReportCorrelat
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
-  readSessionMarkerForPid,
+  readSessionMarker,
   removeSessionMarker,
   removeSessionMarkerIfOwned,
   updateSessionMarkerActiveTurn,
@@ -767,7 +761,7 @@ import {
   resolveCurrentSessionRunnerLaunchIdentity,
   resolveSessionRunnerEntrypointIdentityFromProcessCommand,
 } from '../sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
-import { resolveSessionRunnerRuntimeState, resolveTrackedSessionRunnerActivity } from '../sessionRunnerRuntime/resolveRuntimeState';
+import { resolveProcessCommandVersionState, resolveSessionRunnerRuntimeState, resolveTrackedSessionRunnerActivity } from '../sessionRunnerRuntime/resolveRuntimeState';
 import { shouldRefreshSessionRunnerResumeIdentity } from '../sessionRunnerRuntime/resolveRestartEligibility';
 import { resolveSessionRunnerRuntimeStatusV2 } from '../sessionRunnerRuntime/resolveRuntimeStatusV2';
 import { resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness } from '../sessionRunnerRuntime/resolveAgentRuntimeCurrentness';
@@ -829,7 +823,6 @@ import { resolveTrackedConnectedServiceBindingsRaw } from '../connectedServices/
 
 import { removeRuntimeAuthFailureReportOutboxItemsForSession } from '../connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
 import { createConnectedServiceRecoverySupersessionCleaner } from '../connectedServices/continuation/continuationRecoverySupersession';
-import { createBrowserRoutePublication } from '@/daemon/browser/control/routePublication';
 import { createDaemonRunnerInvocationServices } from '@/daemon/agentRuntime/invocationServices';
 import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
 
@@ -897,19 +890,6 @@ function verifyHostedWebStaticAssetArtifact(
     return { ok: true };
   }
   return { ok: false, reasonCode: result.reasonCode };
-}
-
-function findTrackedSessionByHappySessionId(
-  trackedSessions: Iterable<TrackedSession>,
-  sessionIdRaw: string,
-): TrackedSession | null {
-  const sessionId = normalizeOptionalString(sessionIdRaw);
-  if (!sessionId) return null;
-  for (const tracked of trackedSessions) {
-    if (normalizeOptionalString(tracked.happySessionId) === sessionId)
-      return tracked;
-  }
-  return null;
 }
 
 async function resolveOwnedRetainedDevRequestAuthCapabilityPaths(
@@ -1115,9 +1095,10 @@ export async function commitConnectedServiceHotApplyRuntimeTarget(
   let previousTarget: ConnectedServiceRuntimeTarget | null = null;
   let registeredTarget: ConnectedServiceRuntimeTarget | null = null;
   try {
-    previousTarget = input.registry.getByPid(input.tracked.pid);
+    previousTarget = input.registry.getSessionTarget(input.tracked.pid, input.tracked.happySessionId, input.tracked.trackingKey);
     input.registry.registerTarget({
       pid: input.tracked.pid,
+      spawnTrackingKey: input.tracked.trackingKey,
       agentId: input.agentId,
       sessionId: input.tracked.happySessionId,
       sessionDirectory: input.tracked.spawnOptions?.directory,
@@ -1127,7 +1108,7 @@ export async function commitConnectedServiceHotApplyRuntimeTarget(
       connectedServiceSelectionsEnv:
         input.acceptedConnectedServiceSelectionsEnv,
     }, { groupApplicationTarget: input.groupApplicationTarget });
-    registeredTarget = input.registry.getByPid(input.tracked.pid);
+    registeredTarget = input.registry.getSessionTarget(input.tracked.pid, input.tracked.happySessionId, input.tracked.trackingKey);
     if (!registeredTarget) {
       throw new Error(
         'Connected-service runtime target registration was unavailable after hot apply',
@@ -1135,9 +1116,7 @@ export async function commitConnectedServiceHotApplyRuntimeTarget(
     }
     await input.afterRegister?.({ previousTarget, registeredTarget });
   } catch (error) {
-    if (registeredTarget && input.registry.getByPid(input.tracked.pid) === registeredTarget) {
-      input.registry.unregisterPid(input.tracked.pid);
-    }
+    if (registeredTarget) input.registry.unregisterTarget(registeredTarget);
     throw error;
   }
 }
@@ -1171,6 +1150,7 @@ export async function startDaemonSessionControlRuntime(
     runtimeActionExecute?: RuntimeActionExecute;
     acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     managedProviderOperationAuthority?: import('../connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
+    executeTeamCredentialBrokerAction?: import('../connectedServices/purposeBindings/teamDirectMaterialAdmission').ExecuteTeamCredentialBrokerAction;
     managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     readManagedMachinePolicyCurrent?: Parameters<
       typeof createDaemonManagedMachineActionAdapter
@@ -1248,7 +1228,7 @@ export async function startDaemonSessionControlRuntime(
         agentId: string;
         agentTargetKey: string;
         modelId: string;
-        consumer?: import('@happier-dev/protocol').ProviderBrokerConsumerV1;
+        consumer?: import('@happier-dev/protocol').ProviderBrokerRuntimeConsumerV1;
         providerSettingsOperationContext?: SavedSecretOperationContextV1;
         beginBrokerRequest?: () => import('@/providers/broker/providerBrokerApplicationFailure').SessionBrokerApplicationOutcomeRecorder | undefined;
         signal: AbortSignal;
@@ -1273,14 +1253,14 @@ export async function startDaemonSessionControlRuntime(
     onConnectedAccountRequestAuthHttpPortReady?: (port: number) => void;
     connectedServiceRuntimeRegistry?: ConnectedServiceRuntimeRegistry;
     ownedConnectedServiceRuntimeRegistry?: ConnectedServiceRuntimeRegistry;
-    pidToTrackedSession: Map<number, TrackedSession>;
+    trackedSessionsByKey: TrackedSessionMap;
     skillStore?: SkillStore;
     skillUsageRecorder?: SkillUsageRecorder;
     endedProcessRoots?: () => readonly HappierProcessRootSource[];
     retainEndedProcessRoots?: (roots: readonly HappierProcessRoot[]) => void;
-    pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-    pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-    pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
+    spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+    spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+    spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
     persistedTakeoverAdmissionWaiter?: Parameters<
       typeof executeSpawnSessionRequest
     >[0]['persistedTakeoverAdmissionWaiter'];
@@ -1328,10 +1308,16 @@ export async function startDaemonSessionControlRuntime(
     onBrowserContextRoutesReady?: (routes: BrowserContextRoutes) => void;
     onBrowserAutomationRoutesReady?: (routes: BrowserAutomationRoutes) => void;
     onSimulatorPreviewRoutesReady?: (routes: SimulatorPreviewRoutes) => void;
+    onBrowserViewDiscoveryReady?: (discovery: import('../browser/control/viewDiscovery').BrowserDaemonViewDiscovery) => void;
+    /** The `devices` role stopped: every route it published through the callbacks above is withdrawn. */
+    onDevicesRoleStopped?: () => void;
+    /** The Machine's role set (P03-ROLES-POLICY); the `devices` role follows it. Missing = every core role. */
+    machineRoles?: Pick<MachineRolesRuntime, 'activeRoles' | 'subscribe'>;
     onConnectedServicePoolSelectionReadReady?: (read: ConnectedServicePoolSelectionRead) => void;
-    spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
-    sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
-    connectedServicesRestartRequestedPids: Set<number>;
+    spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
+    sessionAttachCleanupByKey: SessionAttachCleanupByKey;
+    /** Sessions whose connected-service restart was requested and is not yet respawned. */
+    connectedServicesRestartRequestedSessions: Set<SessionTrackingKey>;
     loadTerminalHostAdapters?: () => Promise<
       Readonly<
         Partial<Record<TerminalHostAdapter['kind'], TerminalHostAdapter>>
@@ -1488,10 +1474,7 @@ export async function startDaemonSessionControlRuntime(
         request: SessionRunnerStatusGetRequestV1,
       ) => Promise<SessionRunnerRuntimeStatusV2>;
     }>;
-    onChildExited: (
-      pid: number,
-      exit: { reason: string; code: number | null; signal: string | null },
-    ) => Promise<void>;
+    onChildExited: (pid: number, exit: ChildExit) => Promise<void>;
     onTrackedSessionHealthy: (tracked: TrackedSession) => Promise<void>;
     controlPort: number;
     controlToken: string;
@@ -1541,7 +1524,7 @@ export async function startDaemonSessionControlRuntime(
     ) => ReturnType<ConnectedServiceAuthGroupGenerationConsumer['consume']>;
     requestConnectedServiceRefreshRestartSignal: (
       signalParams: Readonly<{
-        pid: number;
+        trackingKey: SessionTrackingKey;
         delayMs: number;
         preferProcessGroup?: boolean;
         shouldSignal?: () => boolean;
@@ -1630,97 +1613,21 @@ export async function startDaemonSessionControlRuntime(
   const requesterRuntimeAccess = params.resolveRequesterSessionRuntimeContext
     ? { resolve: params.resolveRequesterSessionRuntimeContext, release: params.releaseRequesterSessionRuntimeContext }
     : null;
-  const releaseSessionAccountContext = async (context: RequesterSessionRuntimeContext | null): Promise<void> => {
-    if (context && requesterRuntimeAccess) await requesterRuntimeAccess.release(context);
-  };
-  // Selecting a requester and validating an optional port's returned context
-  // are one read-only resolution phase. Callers' later effects stay outside.
-  const resolveSessionAccountContext = async (
-    sessionId: string | null,
-    retainedAttribution?: TrackedSession['requesterWorkAttributionV1'],
-    signal?: AbortSignal,
-  ): Promise<RequesterSessionRuntimeContext | null> => (async () => {
-    if (sessionId === null) return null;
-    const tracked = findTrackedSessionByHappySessionId(
-      params.pidToTrackedSession.values(),
-      sessionId,
-    );
-    const attribution =
-      retainedAttribution ??
-      tracked?.requesterWorkAttributionV1 ??
-      tracked?.spawnOptions?.requesterWorkAttributionV1;
-    const context =
-      (await requesterRuntimeAccess?.resolve(
-        sessionId,
-        attribution,
-        signal,
-      )) ?? null;
-    if (context) {
-      try {
-        if (
-          (attribution &&
-            !isDeepStrictEqual(context.bootstrap.attribution, attribution)) ||
-          !(await context.isCurrent(signal))
-        ) throw new PluginError({ code: 'requester_session_not_current' });
-        return context;
-      } catch (error) {
-        await releaseSessionAccountContext(context);
-        throw error;
-      }
-    }
-    if (
-      attribution &&
-      (attribution.accountId !== params.externalActionAccountId ||
-        attribution.serverId !== params.serverId ||
-        attribution.machineId !== params.machineId)
-    ) {
-      throw new PluginError({ code: 'requester_session_not_current' });
-    }
-    return null;
-  })();
-  const withSessionAccountContext = async <T>(
-    sessionId: string | null,
-    operation: (context: RequesterSessionRuntimeContext | null) => Promise<T>,
-    retainedAttribution?: TrackedSession['requesterWorkAttributionV1'],
-    signal?: AbortSignal,
-  ): Promise<T> => {
-    const context = await resolveSessionAccountContext(sessionId, retainedAttribution, signal);
-    try {
-      return await operation(context);
-    } finally {
-      await releaseSessionAccountContext(context);
-    }
-  };
-  const assertSessionAccountCurrent = async (
-    sessionId: string | null,
-    expected: RequesterSessionRuntimeContext | null,
-    retainedAttribution?: TrackedSession['requesterWorkAttributionV1'],
-    signal?: AbortSignal,
-  ): Promise<void> => {
-    if (sessionId === null) {
-      if (expected || controlRuntimeResourcesDisposed || isRuntimePublicationQuiescing()) {
-        throw new Error('requester_session_not_current');
-      }
-      return;
-    }
-    await assertRequesterSessionAccountContextCurrent({
-      expected,
-      signal,
-      resolveCurrent: () => resolveSessionAccountContext(sessionId, retainedAttribution, signal),
-      readTrackedContext: () =>
-        findTrackedSessionByHappySessionId(
-          params.pidToTrackedSession.values(),
-          sessionId,
-        )?.requesterSessionRuntimeContext ?? null,
-    });
-  };
-  const withSessionAccountHome = <T>(
-    context: RequesterSessionRuntimeContext | null,
-    operation: () => Promise<T>,
-  ): Promise<T> =>
-    context
-      ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, operation)
-      : operation();
+  // Machine core owns requester custody (devices and the broker consume the same owner).
+  const {
+    resolveSessionAccountContext, withSessionAccountContext, assertSessionAccountCurrent,
+    withSessionAccountHome, releaseSessionAccountContext,
+  } = createRequesterSessionAccountContextCustody({
+    trackedSessions: params.trackedSessionsByKey,
+    ...(params.resolveRequesterSessionRuntimeContext
+      ? { resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext } : {}),
+    ...(params.releaseRequesterSessionRuntimeContext
+      ? { releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext } : {}),
+    externalActionAccountId: params.externalActionAccountId ?? null,
+    serverId: params.serverId,
+    machineId: params.machineId,
+    isRetired: () => controlRuntimeResourcesDisposed || isRuntimePublicationQuiescing(),
+  });
   const prepareSessionAgentIsolationMember = createSessionAgentIsolationMemberPreparation({
     machineId: params.machineId, custodianAccountId: params.externalActionAccountId,
     agentIsolation: params.agentIsolation,
@@ -1744,19 +1651,19 @@ export async function startDaemonSessionControlRuntime(
   // other Session control reads, never to the worker custodian's credentials.
   const resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']> = async input => {
     const unavailable = { status: 'not_current', reason: 'runtime_unavailable' } as const;
-    const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), input.sessionId);
+    const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), input.sessionId);
     if (!tracked) return unavailable;
     const signal = shutdownCancellationDomains.daemonWorkSignal;
     return await withSessionAccountContext(input.sessionId, async requester => {
       const custodianAccountId = params.externalActionAccountId ?? readPreviewAccountIdFromToken(params.credentials.token);
       const accountId = requester?.bootstrap.attribution.accountId ?? custodianAccountId;
       if (accountId !== input.requestingAccountId) return { status: 'not_current', reason: 'identity_mismatch' } as const;
-      return await withTrackedSessionRpc({
+      return await withTrackedSessionRpcContext({
         tracked, credentials: params.credentials, custodianAccountId,
         serverId: params.serverId, machineId: params.machineId, serverHttpBaseUrl: params.serverBaseUrl,
         ...(requester ? { requesterBootstrap: requester.bootstrap } : {}), signal,
         isTrackedCurrent: () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing()
-          && params.pidToTrackedSession.get(tracked.pid) === tracked && tracked.reportMarkerCustody?.retiring !== true
+          && isCurrentTrackedSession(params.trackedSessionsByKey, tracked) && tracked.reportMarkerCustody?.retiring !== true
           && (!requester || tracked.requesterSessionRuntimeContext === requester),
       }, async callRpc => SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(await callRpc(
         `${input.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
@@ -1909,7 +1816,6 @@ export async function startDaemonSessionControlRuntime(
       return { type: 'unavailable', reason: 'transport_unavailable' };
     }
   };
-  let computerRoutes: ComputerRoutes | null = null;
   const connectedServiceRuntimeRegistry =
     params.connectedServiceRuntimeRegistry ??
     new ConnectedServiceRuntimeRegistry();
@@ -2034,7 +1940,7 @@ export async function startDaemonSessionControlRuntime(
   const registerTrackedConnectedServiceRuntimeTargets =
     async (): Promise<void> => {
       const candidates = Array.from(
-        params.pidToTrackedSession.values(),
+        params.trackedSessionsByKey.values(),
       ).flatMap(
         (tracked) =>
           resolveBootstrapConnectedServiceRuntimeCandidate(tracked) ?? [],
@@ -2099,6 +2005,10 @@ export async function startDaemonSessionControlRuntime(
         }
       }
     };
+  const sessionHostPlacement = createSessionHostPlacement({
+    processEnv: params.processEnv,
+    logDebug: (message, payload) => logger.debug(message, payload),
+  });
   const spawnConcurrencyGate = createSpawnConcurrencyGate(
     resolvePositiveIntEnv(
       params.processEnv.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS,
@@ -2112,7 +2022,7 @@ export async function startDaemonSessionControlRuntime(
   ): Promise<boolean> =>
     await isSessionRunnerActiveInDaemon({
       sessionId: sessionIdRaw,
-      trackedSessions: params.pidToTrackedSession.values(),
+      trackedSessions: params.trackedSessionsByKey.values(),
     });
   let latestConnectedServiceProjectionSnapshot: ConnectedServiceProjectionSnapshot | null =
     null;
@@ -2201,7 +2111,7 @@ export async function startDaemonSessionControlRuntime(
           if (fromProfileId && toProfileId && fromProfileId === toProfileId)
             return;
           const trackedForNotification =
-            Array.from(params.pidToTrackedSession.values()).find(
+            Array.from(params.trackedSessionsByKey.values()).find(
               (child) => child.happySessionId === input.sessionId,
             ) ?? null;
           await assertSessionAccountCurrent(input.sessionId, accountContext);
@@ -2453,7 +2363,7 @@ export async function startDaemonSessionControlRuntime(
   const qualifiedAuthGroupQuotaDependencies = {
     resolveRequiredModelIds: (input: Readonly<{ serviceId: QualifiedConnectedAccountServiceRef; groupId: string }>) =>
       resolveGroupRequiredModelIds({ serviceId: buildQualifiedPluginContributionKey(input.serviceId), groupId: input.groupId,
-        targets: connectedServiceRuntimeRegistry.listTargets(), trackedSessions: params.pidToTrackedSession.values() }),
+        targets: connectedServiceRuntimeRegistry.listTargets(), trackedSessions: params.trackedSessionsByKey.values() }),
     accountUsageStore: providerAccountUsageStore,
     hydrateQuotaSnapshotsForGroup: async (
       input: Parameters<ConnectedServiceQuotasCoordinator['hydrateQualifiedGroupQuotaSnapshots']>[0],
@@ -3055,8 +2965,8 @@ export async function startDaemonSessionControlRuntime(
     return snapshot;
   };
   await registerTrackedConnectedServiceRuntimeTargets();
-  const resolveCanonicalTrackedSessionId = (pid: number): string => {
-    const session = params.pidToTrackedSession.get(pid);
+  const resolveCanonicalTrackedSessionId = (trackingKey: SessionTrackingKey): string => {
+    const session = params.trackedSessionsByKey.get(trackingKey);
     const sessionId =
       typeof session?.happySessionId === 'string'
         ? session.happySessionId.trim()
@@ -3067,9 +2977,11 @@ export async function startDaemonSessionControlRuntime(
     return sessionId;
   };
 
-  let guardBrowserResourceOwner: Pick<Extract<BrowserSidecarControlAdapterFactoryResult, { ok: true }>, 'adapter' | 'readProcessRoots' | 'readResourceTargets'> | null = null;
+  // The `devices` role (simulator preview, computer use, browser runtime) loads by import() only while
+  // active; every consumer below reads its activation and gets nothing when the role is off.
+  let devicesRole: () => DevicesRoleActivation | null = () => null;
+  const devicesBrowserResources = () => devicesRole()?.browser.resourceOwner() ?? null;
   let processActionOwnerAdapters: ReturnType<typeof createProcessActionOwnerAdapters> | null = null;
-  let iosSimulatorHelperSession: ReturnType<typeof createIosSimulatorHelperSession> | null = null;
   const processOwnershipRuntime = createProcessOwnershipRuntime({
     daemonScopeKey: resolveProcessOwnerScopeKey(configuration.happyHomeDir),
     listRoots: async (snapshot, readOptions) => {
@@ -3093,8 +3005,8 @@ export async function startDaemonSessionControlRuntime(
       // Physical cleanup consumes native ownership and existing lifecycle facts.
       // Recovering unrelated Account contexts here would couple Stop/exit and
       // Left-behind observation to Home storage and requester admission latency.
-      if (readOptions.requesterAttribution !== 'retained') await Promise.all([...params.pidToTrackedSession.entries()].map(async ([pid, session]) => {
-        const sessionId = resolveCanonicalTrackedSessionId(pid);
+      if (readOptions.requesterAttribution !== 'retained') await Promise.all([...params.trackedSessionsByKey.entries()].map(async ([trackingKey, session]) => {
+        const sessionId = resolveCanonicalTrackedSessionId(trackingKey);
         if (!sessionId || session.requesterWorkAttributionV1 || session.spawnOptions?.requesterWorkAttributionV1
           || markerBySession.get(sessionId)?.requesterWorkAttributionV1) return;
         // The canonical requester lifecycle verifies Account ownership and current
@@ -3106,16 +3018,16 @@ export async function startDaemonSessionControlRuntime(
       }));
       return listHappierProcessRoots({ snapshot, bootTimeMs,
         nativeContainers: pluginRuntimeController.getState().activeRegistry?.projectManagedServices.readNativeContainerSources() ?? [],
-        trackedSessions: [...params.pidToTrackedSession.values()].map(session => ({ ...session,
+        trackedSessions: [...params.trackedSessionsByKey.values()].map(session => ({ ...session,
           requesterWorkAttributionV1: session.requesterWorkAttributionV1 ?? session.spawnOptions?.requesterWorkAttributionV1
             ?? (session.happySessionId ? markerBySession.get(session.happySessionId)?.requesterWorkAttributionV1 : undefined),
           ownerCreatedAtMs: session.happySessionId ? markerBySession.get(session.happySessionId)?.createdAt : undefined })),
         terminalRegistry: getSharedTerminalProcessRegistry(), managedServices: [...managedServices, ...readLanguageServerProcessRoots()],
         terminalRequesterAttribution: params.readTerminalRequesterAttribution,
-        helperProcesses: [...(guardBrowserResourceOwner?.readResourceTargets
-          ? guardBrowserResourceOwner.readResourceTargets().map(target => processActionOwnerAdapters?.captureBrowserRoot(target) ?? target.root)
-          : guardBrowserResourceOwner?.readProcessRoots?.() ?? []),
-          ...params.readHelperProcessRoots?.() ?? [], ...iosSimulatorHelperSession?.readProcessRoots() ?? []],
+        helperProcesses: [...(devicesBrowserResources()?.readResourceTargets
+          ? devicesBrowserResources()!.readResourceTargets!().map(target => processActionOwnerAdapters?.captureBrowserRoot(target) ?? target.root)
+          : devicesBrowserResources()?.readProcessRoots?.() ?? []),
+          ...params.readHelperProcessRoots?.() ?? [], ...devicesRole()?.readHelperProcessRoots() ?? []],
         executionRuns: runs.map(run => ({ owner: { kind: 'run', runId: run.runId, ...(run.happySessionId ? { sessionId: run.happySessionId } : {}) },
           pid: run.pid, ownerCreatedAtMs: run.startedAtMs, live: run.status === 'running',
           ...(run.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: run.requesterWorkAttributionV1 } : {}) })),
@@ -3140,10 +3052,35 @@ export async function startDaemonSessionControlRuntime(
     firstPass: processLeftBehindPass.firstPass,
     retainEndedRoots: params.retainEndedProcessRoots,
   });
-  let onChildExited: (
-    pid: number,
-    exit: { reason: string; code: number | null; signal: string | null },
-  ) => Promise<void> = async () => {};
+  // A crashed runner's held primary Agent, spared for its respawn (one custody owner).
+  const sparedHeldAgents = createSparedHeldAgentCustody({ ownerRemainder,
+    // The exit deferred this turn's end to the spare; a give-up ends it the same way.
+    endTurn: async tracked => {
+      await stageObservedExit({ trackedSession: tracked, observedAt: Date.now(),
+        enqueueExactTurnEnd: async (mutation) => {
+          const machine = params.getApiMachineForSessions();
+          if (!machine?.enqueueDaemonTerminalExactTurnEnd) throw new Error('Daemon terminal mutation custody is unavailable');
+          await machine.enqueueDaemonTerminalExactTurnEnd(mutation);
+        },
+        // The runner's marker was already released by its exit observation.
+        releaseMarkerEvidence: async () => undefined,
+      });
+    },
+    // A placed Session's held Agent lives in its target: reached under a short Session authority of its own.
+    target: (() => {
+      const reach = (tracked: TrackedSession, held: SessionHeldAgentV1, action: 'probe' | 'end') => {
+        const placement = tracked.spawnOptions?.managedTargetPlacement;
+        if (!placement || !tracked.happySessionId) return Promise.resolve(false);
+        return reachHeldTargetAgent({ request: placement, sessionKey: `respawn-${tracked.happySessionId}`,
+          requesterAccountId: tracked.spawnOptions?.requesterWorkAttributionV1?.accountId ?? readPreviewAccountIdFromToken(params.credentials.token) ?? null,
+          holderVersion: configuration.currentCliVersion, openManagedSessionTarget: request => managedMachinePolicyAdapter.openSessionTarget(request),
+          held, action });
+      };
+      return { probe: (tracked: TrackedSession, held: SessionHeldAgentV1) => reach(tracked, held, 'probe'),
+        end: async (tracked: TrackedSession, held: SessionHeldAgentV1) => { await reach(tracked, held, 'end'); } };
+    })(),
+  });
+  let onChildExited: (pid: number, exit: ChildExit) => Promise<void> = async () => {};
   let releaseExecutionRunAuthorityForRunnerExit: (
     input: Readonly<{
       runnerPid: number;
@@ -3192,7 +3129,7 @@ export async function startDaemonSessionControlRuntime(
   const retirePendingRequestAuthSourceCutoverForCurrentSuccessor = (
     pending: PendingRequestAuthSourceCutover,
   ): boolean => {
-    const matches = Array.from(params.pidToTrackedSession.values()).filter(
+    const matches = Array.from(params.trackedSessionsByKey.values()).filter(
       (tracked) =>
         normalizeOptionalString(tracked.happySessionId) === pending.sessionId,
     );
@@ -3294,7 +3231,7 @@ export async function startDaemonSessionControlRuntime(
   };
   const shutdownCancellationDomains = createDaemonShutdownCancellationDomains();
   const recoverReattachedAgentRequestAuth = async (): Promise<void> => {
-    const reattached = [...params.pidToTrackedSession.values()].filter(
+    const reattached = [...params.trackedSessionsByKey.values()].filter(
       (tracked) => tracked.reattachedFromDiskMarker === true,
     );
     if (reattached.length === 0) return;
@@ -3365,7 +3302,7 @@ export async function startDaemonSessionControlRuntime(
 
         const isTrackedPidCurrent = () => tracked.pid === trackedMapPid
           && tracked.reportMarkerCustody?.retiring !== true
-          && params.pidToTrackedSession.get(trackedMapPid) === tracked;
+          && isCurrentTrackedSession(params.trackedSessionsByKey, tracked);
         if (!isTrackedPidCurrent()) {
           unavailable('reattached_agent_lifecycle_changed');
           continue;
@@ -3563,7 +3500,7 @@ export async function startDaemonSessionControlRuntime(
             registerRedaction: redactionLease.add,
           });
           const previousAttachCleanup =
-            params.sessionAttachCleanupByPid.get(trackedMapPid) ?? null;
+            params.sessionAttachCleanupByKey.get(tracked.trackingKey) ?? null;
           let capability: ConnectedAccountRequestAuthCapabilityDescriptor | null =
             null;
           let capabilityRetired = false;
@@ -3599,9 +3536,9 @@ export async function startDaemonSessionControlRuntime(
           };
 
           // The existing reattach lifecycle owns retirement before the
-          // replacement capability is published. PID promotion transfers
-          // this same composed cleanup entry with the tracked session.
-          params.sessionAttachCleanupByPid.set(trackedMapPid, lifecycleCleanup);
+          // replacement capability is published. The entry is keyed by the
+          // tracked Session, so a PID promotion keeps it.
+          params.sessionAttachCleanupByKey.set(tracked.trackingKey, lifecycleCleanup);
           try {
             capability = await connectedAccountRequestAuthRegistry.activate({
               subject,
@@ -3633,8 +3570,8 @@ export async function startDaemonSessionControlRuntime(
                   lifecycleCleanupStarted ||
                   tracked.pid !== trackedMapPid ||
                   (tracked.sessionRunnerPid ?? tracked.pid) !== expectedPid ||
-                  params.pidToTrackedSession.get(trackedMapPid) !== tracked ||
-                  params.sessionAttachCleanupByPid.get(trackedMapPid) !==
+                  !isCurrentTrackedSession(params.trackedSessionsByKey, tracked) ||
+                  params.sessionAttachCleanupByKey.get(tracked.trackingKey) !==
                     lifecycleCleanup ||
                   resolveTrackedSessionRunnerIdentity(tracked)?.processCommandHash !== expectedProcessCommandHash ||
                   resolveTrackedSessionRunnerIdentity(tracked)?.processStartTimeMs !== expectedProcessStartTimeMs ||
@@ -3651,24 +3588,23 @@ export async function startDaemonSessionControlRuntime(
               lifecycleCleanupStarted ||
               currentPid !== trackedMapPid ||
               (tracked.sessionRunnerPid ?? tracked.pid) !== expectedPid ||
-              params.pidToTrackedSession.get(trackedMapPid) !== tracked ||
-              params.sessionAttachCleanupByPid.get(trackedMapPid) !==
+              !isCurrentTrackedSession(params.trackedSessionsByKey, tracked) ||
+              params.sessionAttachCleanupByKey.get(tracked.trackingKey) !==
                 lifecycleCleanup
             ) {
               await retireRecoveredAuthority();
               await retainedPurposeContributions.release();
               if (
                 !lifecycleCleanupStarted &&
-                params.sessionAttachCleanupByPid.get(currentPid) ===
+                params.sessionAttachCleanupByKey.get(tracked.trackingKey) ===
                   lifecycleCleanup
               ) {
                 if (previousAttachCleanup) {
-                  params.sessionAttachCleanupByPid.set(
-                    currentPid,
+                  params.sessionAttachCleanupByKey.set(tracked.trackingKey,
                     previousAttachCleanup,
                   );
                 } else {
-                  params.sessionAttachCleanupByPid.delete(currentPid);
+                  params.sessionAttachCleanupByKey.delete(tracked.trackingKey);
                 }
               }
               unavailable('reattached_agent_lifecycle_changed');
@@ -3681,16 +3617,15 @@ export async function startDaemonSessionControlRuntime(
             const currentPid = tracked.pid;
             if (
               !lifecycleCleanupStarted &&
-              params.sessionAttachCleanupByPid.get(currentPid) ===
+              params.sessionAttachCleanupByKey.get(tracked.trackingKey) ===
                 lifecycleCleanup
             ) {
               if (previousAttachCleanup) {
-                params.sessionAttachCleanupByPid.set(
-                  currentPid,
+                params.sessionAttachCleanupByKey.set(tracked.trackingKey,
                   previousAttachCleanup,
                 );
               } else {
-                params.sessionAttachCleanupByPid.delete(currentPid);
+                params.sessionAttachCleanupByKey.delete(tracked.trackingKey);
               }
             }
             unavailable('request_auth_capability_activation_failed');
@@ -3771,7 +3706,7 @@ export async function startDaemonSessionControlRuntime(
     retainedAttribution?: TrackedSession['requesterWorkAttributionV1'],
     signal?: AbortSignal,
   ): Promise<T> => {
-    const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+    const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
     const attribution = retainedAttribution ?? tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
     // Stop writes Account metadata; it must not construct Settings, secrets or
     // Connected Accounts just to stop this daemon Account's admitted runner.
@@ -3803,7 +3738,7 @@ export async function startDaemonSessionControlRuntime(
     }>,
   ): Promise<void> => {
     disconnectedTerminalHostResultsBySessionId.delete(input.sessionId);
-    const markerPids: number[] = [];
+    const markerKeys: Array<Readonly<{ trackingKey: SessionTrackingKey; pid: number }>> = [];
     for (
       let index = disconnectedTerminalHostCandidates.length - 1;
       index >= 0;
@@ -3814,12 +3749,12 @@ export async function startDaemonSessionControlRuntime(
       if (input.attachmentId && candidate.attachmentId !== input.attachmentId)
         continue;
       terminalizedDisconnectedTerminalHostIds.add(candidate.attachmentId);
-      markerPids.push(candidate.pid);
+      markerKeys.push({ trackingKey: candidate.trackingKey, pid: candidate.pid });
       disconnectedTerminalHostCandidates.splice(index, 1);
     }
     await Promise.all(
-      markerPids.map(async (pid) => {
-        await removeSessionMarker(pid).catch((error) => {
+      markerKeys.map(async ({ trackingKey, pid }) => {
+        await removeSessionMarker(trackingKey).catch((error) => {
           logger.debug(
             '[DAEMON RUN] Retired terminal host but failed to remove its disconnected marker',
             {
@@ -3860,6 +3795,7 @@ export async function startDaemonSessionControlRuntime(
         // selected runtime's existing endpoint/terminal recovery owners.
         const selected = await resolveTrackedSessionTerminalPresentation(
           {
+            trackingKey: candidate.trackingKey,
             pid: candidate.pid,
             startedBy: 'daemon',
             happySessionId: candidate.sessionId,
@@ -3889,7 +3825,7 @@ export async function startDaemonSessionControlRuntime(
       probeSessionServiceability: async (sessionId) =>
         await probeSessionRunnerServiceability({
           sessionId,
-          trackedSessions: params.pidToTrackedSession.values(),
+          trackedSessions: params.trackedSessionsByKey.values(),
           probeCapability: async () =>
             await probeAlreadyRunningExistingSessionServiceability({
               sessionId,
@@ -3943,7 +3879,7 @@ export async function startDaemonSessionControlRuntime(
   >();
   const stopSessionCore = createStopSession({
     ownerRemainder,
-    pidToTrackedSession: params.pidToTrackedSession,
+    trackedSessionsByKey: params.trackedSessionsByKey,
     retireAbsentTerminalControlServiceability: async ({ sessionId, trackedSession, metadataContext, stoppedAt }) =>
       await retireStoppedPlainRunnerControlServiceability({ sessionId, trackedSession,
         publishRetirement: expectedRunner => retireTerminalControlServiceabilityForCurrentAccount({
@@ -3953,10 +3889,10 @@ export async function startDaemonSessionControlRuntime(
         stoppedAt,
         expectedRunner,
       }, trackedSession.requesterWorkAttributionV1 ?? trackedSession.spawnOptions?.requesterWorkAttributionV1) }),
-    retireUpstreamAuthorityBeforeProcessStop: async (pid) =>
+    retireUpstreamAuthorityBeforeProcessStop: async (trackingKey) =>
       await retireUpstreamAuthorityBeforeProcessStop({
-        pid,
-        spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
+        trackingKey,
+        spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
       }),
     loadTerminalHostAdapters: params.loadTerminalHostAdapters,
     recoverStrandedTerminalControlServiceability: async ({
@@ -3987,13 +3923,13 @@ export async function startDaemonSessionControlRuntime(
     waitForTrackedRunnersExit: async ({ sessionId, trackedPids }) => {
       await waitForExistingSessionExitIfStopRequested({
         sessionId,
-        pidToTrackedSession: params.pidToTrackedSession,
+        trackedSessionsByKey: params.trackedSessionsByKey,
         timeoutMs: configuration.daemonStopSessionWaitForExitMs,
         pollIntervalMs:
           configuration.daemonStopSessionWaitForExitPollIntervalMs,
         onExitObserved: (pid, exit) => onChildExited(pid, exit),
       });
-      return trackedPids.every((pid) => !params.pidToTrackedSession.has(pid));
+      return trackedPids.every((pid) => trackedSessionsForProcess(params.trackedSessionsByKey, pid).length === 0);
     },
     onExactTerminalAttachmentRetired: async (input) => {
       physicallyRetiredTerminalAttachmentIdBySessionId.set(
@@ -4175,9 +4111,9 @@ export async function startDaemonSessionControlRuntime(
       // rejoin that launcher without probing the retiring runner's controls.
       if ((behavior.freshExplicitResumeAdmission || behavior.currentResumeAdmission) && existingSessionId && (
         sessionRunnerRespawnManager.hasPendingIntendedRestarts(existingSessionId)
-        || [...params.pidToTrackedSession.values()].some(tracked =>
+        || [...params.trackedSessionsByKey.values()].some(tracked =>
           tracked.happySessionId === existingSessionId
-          && params.connectedServicesRestartRequestedPids.has(tracked.pid))
+          && params.connectedServicesRestartRequestedSessions.has(tracked.trackingKey))
       )) {
         if (!behavior.isLaunchAdmissionCurrent()) {
           return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -4235,7 +4171,7 @@ export async function startDaemonSessionControlRuntime(
             const sessionId = normalizeOptionalString(
               options.existingSessionId,
             );
-            const tracked = [...spawnParams.pidToTrackedSession.values()].find(
+            const tracked = [...spawnParams.trackedSessionsByKey.values()].find(
               (candidate) => candidate.happySessionId === sessionId,
             );
             if (sessionId && tracked) {
@@ -4293,7 +4229,7 @@ export async function startDaemonSessionControlRuntime(
                     return missingDirectoryResult;
                   }
                   if (
-                    [...spawnParams.pidToTrackedSession.values()].some(
+                    [...spawnParams.trackedSessionsByKey.values()].some(
                       (candidate) => candidate.happySessionId === sessionId,
                     )
                   ) {
@@ -4306,12 +4242,12 @@ export async function startDaemonSessionControlRuntime(
           const existingSessionPreGate =
             await resolveExistingSessionSpawnPreGate({
               existingSessionId: options.existingSessionId,
-              pidToTrackedSession: spawnParams.pidToTrackedSession,
+              trackedSessionsByKey: spawnParams.trackedSessionsByKey,
               probeSessionRunnerPresence: async (sessionId) => await probeSessionRunnerPresence({
-                sessionId, trackedSessions: spawnParams.pidToTrackedSession.values(),
+                sessionId, trackedSessions: spawnParams.trackedSessionsByKey.values(),
               }),
               pendingSessionStartup: {
-                pidToAwaiter: spawnParams.pidToAwaiter,
+                spawnAwaiterByKey: spawnParams.spawnAwaiterByKey,
                 machineId: spawnParams.machineId,
                 happyHomeDir: configuration.happyHomeDir,
                 readSessionMetadata: async (sessionId) => {
@@ -4383,7 +4319,7 @@ export async function startDaemonSessionControlRuntime(
                 await refreshTrackedSessionsRuntimeSnapshot({
                   sessionId,
                   incomingOptions: options,
-                  trackedSessions: spawnParams.pidToTrackedSession.values(),
+                  trackedSessions: spawnParams.trackedSessionsByKey.values(),
                   readPersistedSessionMetadata:
                     readPersistedConnectedServiceSwitchSessionMetadata,
                 });
@@ -4415,6 +4351,10 @@ export async function startDaemonSessionControlRuntime(
           const spawnResult = await spawnConcurrencyGate.run(
             async () =>
               await executeSpawnSessionRequest({
+                ...(() => {
+                  const sessionHost = sessionHostPlacement.place();
+                  return sessionHost ? { sessionHost } : {};
+                })(),
                 prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requesterRuntime,
                   shutdownCancellationDomains.daemonWorkSignal, ordinaryAgentIsolationAccountSource
                     ?? (!requesterRuntime && !existingSessionId
@@ -4437,6 +4377,8 @@ export async function startDaemonSessionControlRuntime(
                   : {}),
                 retainedTerminalRecovery,
                 credentials: spawnParams.credentials,
+                // Called at spawn time only: the managed adapter is built later in this runtime.
+                openManagedSessionTarget: request => managedMachinePolicyAdapter.openSessionTarget(request),
                 deviceLocalSecretStorage: spawnParams.deviceLocalSecretStorage,
                 api: spawnParams.api,
                 ...(spawnParams.readInstalledTeamCredentialProviderModel ? {
@@ -4499,20 +4441,20 @@ export async function startDaemonSessionControlRuntime(
                       connectedServices: input.connectedServices,
                       vendorResumeId: input.vendorResumeId,
                     }),
-                pidToTrackedSession: spawnParams.pidToTrackedSession,
-                pidToAwaiter: spawnParams.pidToAwaiter,
-                pidToSpawnResultResolver: spawnParams.pidToSpawnResultResolver,
-                pidToSpawnWebhookTimeout: spawnParams.pidToSpawnWebhookTimeout,
+                trackedSessionsByKey: spawnParams.trackedSessionsByKey,
+                spawnAwaiterByKey: spawnParams.spawnAwaiterByKey,
+                spawnResultResolverByKey: spawnParams.spawnResultResolverByKey,
+                spawnWebhookTimeoutByKey: spawnParams.spawnWebhookTimeoutByKey,
                 persistedTakeoverAdmissionWaiter:
                   spawnParams.persistedTakeoverAdmissionWaiter,
                 resolveCanonicalTrackedSessionId,
                 onChildExited,
                 onTrackedSessionRegistered: () =>
                   notifySessionLiveWorkChanged(),
-                spawnResourceCleanupByPid:
-                  spawnParams.spawnResourceCleanupByPid,
-                sessionAttachCleanupByPid:
-                  spawnParams.sessionAttachCleanupByPid,
+                spawnResourceCleanupByKey:
+                  spawnParams.spawnResourceCleanupByKey,
+                sessionAttachCleanupByKey:
+                  spawnParams.sessionAttachCleanupByKey,
                 processEnv: spawnParams.processEnv,
                 resolveProvidersFeatureEnabled: () => resolveDaemonProvidersFeatureEnabled({
                   api: spawnParams.api, env: spawnParams.processEnv,
@@ -4580,7 +4522,7 @@ export async function startDaemonSessionControlRuntime(
       // The existing tracked Session owns accepted runtime resources. A
       // refused/coalesced/already-running invocation has no such owner.
       if (acquiredRequesterRuntime) await releaseUnretainedRequesterSessionRuntimeContext(acquiredRequesterRuntime,
-        [...params.pidToTrackedSession.values()].map(tracked => tracked.requesterSessionRuntimeContext));
+        [...params.trackedSessionsByKey.values()].map(tracked => tracked.requesterSessionRuntimeContext));
     }
   };
   const spawnSessionWithAdmission = async (
@@ -4597,6 +4539,16 @@ export async function startDaemonSessionControlRuntime(
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
         errorMessage: 'Daemon is shutting down',
+      };
+    }
+    // The one sessions-role refusal for every Session start (Machine RPC, control route, workflow
+    // start, host Action ingress, CLI). Completing a running Session's planned restart is not a
+    // new Session: running Sessions finish while the role is off.
+    if (params.machineRoles && !params.machineRoles.activeRoles().has('sessions') && !mayCompletePlannedRestart) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.MACHINE_ROLE_INACTIVE,
+        errorMessage: 'The sessions role is off on this Machine',
       };
     }
     const existingSessionId = normalizeOptionalString(
@@ -4751,7 +4703,7 @@ export async function startDaemonSessionControlRuntime(
     if (!normalizedSessionId) return null;
     return (
       findTrackedSessionByHappySessionId(
-        params.pidToTrackedSession.values(),
+        params.trackedSessionsByKey.values(),
         normalizedSessionId,
       ) ??
       temporaryThrottleResumeSnapshotsBySessionId.get(normalizedSessionId) ??
@@ -4964,7 +4916,7 @@ export async function startDaemonSessionControlRuntime(
       input: Parameters<typeof temporaryThrottleScheduler.enable>[0],
     ) => {
       const tracked = findTrackedSessionByHappySessionId(
-        params.pidToTrackedSession.values(),
+        params.trackedSessionsByKey.values(),
         input.sessionId,
       );
       if (tracked) {
@@ -5042,13 +4994,14 @@ export async function startDaemonSessionControlRuntime(
   const onTrackedSessionPidPromoted = ({
     fromPid,
     toPid,
+    trackedSession,
   }: Readonly<{
     fromPid: number;
     toPid: number;
     trackedSession: TrackedSession;
   }>): void => {
     connectedServiceRuntimeRegistry.transferPid(fromPid, toPid);
-    const promoted = params.pidToTrackedSession.get(toPid);
+    const promoted = isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession) ? trackedSession : undefined;
     if (promoted?.happySessionId) {
       transferVersionRuntimeRefreshCompletionWaiter(
         promoted.happySessionId,
@@ -5056,12 +5009,9 @@ export async function startDaemonSessionControlRuntime(
         toPid,
       );
     }
-    if (params.connectedServicesRestartRequestedPids.delete(fromPid)) {
-      params.connectedServicesRestartRequestedPids.add(toPid);
-    }
   };
   params.setOnTrackedSessionPidPromoted?.(onTrackedSessionPidPromoted);
-  const runnerRespawnScheduledPids = new Set<number>();
+  const runnerRespawnScheduledSessions = new Set<SessionTrackingKey>();
   type CapturedRunnerTerminal =
     | Readonly<{
         status: 'captured';
@@ -5072,8 +5022,8 @@ export async function startDaemonSessionControlRuntime(
     | Readonly<{ status: 'unavailable'; sessionId: string;
         reason?: Extract<MachineSessionTerminalCaptureResponseV1, { status: 'rejected' }>['reason'] }>;
   type RunnerTerminalCycle = {
-    entriesByPid: Map<
-      number,
+    entriesByKey: Map<
+      SessionTrackingKey,
       {
         tracked: TrackedSession;
         admission: CapturedRunnerTerminal;
@@ -5084,12 +5034,11 @@ export async function startDaemonSessionControlRuntime(
   };
   const runnerTerminalCycleBySessionId = new Map<string, RunnerTerminalCycle>();
   const removeExitedRunnerMarker = async (
-    previousPid: number,
     sessionId: string,
     tracked: TrackedSession,
   ): Promise<void> => {
     const removed = await removeSessionMarkerIfOwned({
-      pid: previousPid,
+      trackingKey: tracked.trackingKey,
       happySessionId: sessionId,
       ...(tracked.processCommandHash
         ? { processCommandHash: tracked.processCommandHash }
@@ -5098,7 +5047,7 @@ export async function startDaemonSessionControlRuntime(
         ? { processStartTimeMs: tracked.processStartTimeMs }
         : {}),
       isStillOwned: () => {
-        const current = params.pidToTrackedSession.get(previousPid);
+        const current = params.trackedSessionsByKey.get(tracked.trackingKey);
         return current === undefined || current === tracked;
       },
     });
@@ -5107,7 +5056,7 @@ export async function startDaemonSessionControlRuntime(
         '[DAEMON RUN] Exited runner marker ownership changed before release',
         {
           sessionId,
-          previousPid,
+          previousPid: tracked.pid,
         },
       );
     }
@@ -5116,7 +5065,7 @@ export async function startDaemonSessionControlRuntime(
     sessionId: string,
     entries: ReadonlyArray<
       readonly [
-        number,
+        SessionTrackingKey,
         {
           tracked: TrackedSession;
           admission: CapturedRunnerTerminal;
@@ -5125,27 +5074,27 @@ export async function startDaemonSessionControlRuntime(
     >,
   ): Promise<void> => {
     await Promise.all(
-      entries.map(async ([pid, entry]) => {
-        await removeExitedRunnerMarker(pid, sessionId, entry.tracked);
+      entries.map(async ([, entry]) => {
+        await removeExitedRunnerMarker(sessionId, entry.tracked);
       }),
     );
   };
   const settleCapturedRunnerTerminal = async (
     input: Readonly<{
       sessionId: string;
-      previousPid: number;
+      previousTrackingKey: SessionTrackingKey;
       reason: SessionRunnerRespawnTerminalReason;
     }>,
   ): Promise<void> => {
     const cycle = runnerTerminalCycleBySessionId.get(input.sessionId);
-    const entries = cycle ? Array.from(cycle.entriesByPid.entries()) : [];
-    const captured = cycle?.entriesByPid.get(input.previousPid)?.admission;
+    const entries = cycle ? Array.from(cycle.entriesByKey.entries()) : [];
+    const captured = cycle?.entriesByKey.get(input.previousTrackingKey)?.admission;
     if (input.reason === 'already_running') {
       await removeRunnerTerminalEntries(input.sessionId, entries);
       if (runnerTerminalCycleBySessionId.get(input.sessionId) === cycle) runnerTerminalCycleBySessionId.delete(input.sessionId);
       return;
     }
-    const entry = cycle?.entriesByPid.get(input.previousPid);
+    const entry = cycle?.entriesByKey.get(input.previousTrackingKey);
     if (entry && !entry.nativeBindingsReleased) {
       const released = await params.releaseSessionOwnedNativeBindings?.(input.sessionId, entry.tracked, entry.lifetimeAccount);
       entry.nativeBindingsReleased = typeof released === 'boolean' ? released : undefined;
@@ -5322,12 +5271,14 @@ export async function startDaemonSessionControlRuntime(
         readPersistedSessionMetadata:
           readPersistedConnectedServiceSwitchSessionMetadata,
       }),
-    onRespawnSuccess: ({ sessionId, previousPid }) => {
-      runnerRespawnScheduledPids.delete(previousPid);
-      params.connectedServicesRestartRequestedPids.delete(previousPid);
+    onRespawnSuccess: ({ sessionId, previousPid, previousTrackingKey }) => {
+      // The respawned runner adopted (or replaced) the spared Agent and owns it now.
+      sparedHeldAgents.handOver(sessionId);
+      runnerRespawnScheduledSessions.delete(previousTrackingKey);
+      params.connectedServicesRestartRequestedSessions.delete(previousTrackingKey);
       const cycle = runnerTerminalCycleBySessionId.get(sessionId);
       if (cycle) runnerTerminalCycleBySessionId.delete(sessionId);
-      const entries = cycle ? Array.from(cycle.entriesByPid.entries()) : [];
+      const entries = cycle ? Array.from(cycle.entriesByKey.entries()) : [];
       void (
         entries.length > 0
           ? removeRunnerTerminalEntries(sessionId, entries)
@@ -5338,7 +5289,7 @@ export async function startDaemonSessionControlRuntime(
           error,
         );
       });
-      void clearSessionMarkerConnectedServiceRestartIntent(previousPid).catch(
+      void clearSessionMarkerConnectedServiceRestartIntent(previousTrackingKey).catch(
         (error) => {
           logger.debug(
             '[DAEMON RUN] Failed to clear connected-service restart intent after respawn success',
@@ -5347,7 +5298,7 @@ export async function startDaemonSessionControlRuntime(
         },
       );
       const next = findTrackedSessionByHappySessionId(
-        params.pidToTrackedSession.values(),
+        params.trackedSessionsByKey.values(),
         sessionId,
       );
       settleVersionRuntimeRefreshCompletion(sessionId, previousPid, {
@@ -5355,11 +5306,12 @@ export async function startDaemonSessionControlRuntime(
         ...(next ? { next: summarizeSessionRunnerEndpoint(next) } : {}),
       });
     },
-    onRespawnTerminal: async ({ sessionId, previousPid, reason, detail }) => {
-      runnerRespawnScheduledPids.delete(previousPid);
-      params.connectedServicesRestartRequestedPids.delete(previousPid);
-      await settleCapturedRunnerTerminal({ sessionId, previousPid, reason });
-      await clearSessionMarkerConnectedServiceRestartIntent(previousPid);
+    onRespawnTerminal: async ({ sessionId, previousPid, previousTrackingKey, reason, detail }) => {
+      await sparedHeldAgents.end(sessionId);
+      runnerRespawnScheduledSessions.delete(previousTrackingKey);
+      params.connectedServicesRestartRequestedSessions.delete(previousTrackingKey);
+      await settleCapturedRunnerTerminal({ sessionId, previousTrackingKey, reason });
+      await clearSessionMarkerConnectedServiceRestartIntent(previousTrackingKey);
       settleVersionRuntimeRefreshCompletion(
         sessionId,
         previousPid,
@@ -5373,11 +5325,11 @@ export async function startDaemonSessionControlRuntime(
     logDebug: (message, payload) => logger.debug(message, payload),
     logWarn: (message) => logger.warn(message),
   });
-  const clearConnectedServiceRestartIntentForPid = (
-    pid: number,
+  const clearConnectedServiceRestartIntent = (
+    trackingKey: SessionTrackingKey,
     logMessage: string,
   ): void => {
-    void clearSessionMarkerConnectedServiceRestartIntent(pid).catch((error) => {
+    void clearSessionMarkerConnectedServiceRestartIntent(trackingKey).catch((error) => {
       logger.debug(logMessage, error);
     });
   };
@@ -5401,17 +5353,17 @@ export async function startDaemonSessionControlRuntime(
   // Separate entries keep overlapping begins protected until each observation settles.
   const pendingTurnBegins = new Set<Readonly<{ sessionId: string }>>();
   const readSessionRunnerLiveWork = async (tracked: TrackedSession, signal: AbortSignal) => {
-    const sessionId = resolveCanonicalTrackedSessionId(tracked.pid);
+    const sessionId = resolveCanonicalTrackedSessionId(tracked.trackingKey);
     return await withSessionAccountContext(sessionId || null, async requester =>
       await readTrackedSessionInputLiveWorkRequired({
         tracked, credentials: params.credentials, custodianAccountId: params.externalActionAccountId ?? null,
         serverId: params.serverId, machineId: params.machineId, serverHttpBaseUrl: params.serverBaseUrl,
         ...(requester ? { requesterBootstrap: requester.bootstrap } : {}),
-        isTrackedCurrent: () => params.pidToTrackedSession.get(tracked.pid) === tracked, signal,
+        isTrackedCurrent: () => isCurrentTrackedSession(params.trackedSessionsByKey, tracked), signal,
       }), undefined, signal);
   };
   const readSessionRunnerNativeRuntimeActivity = async (sessionId: string): Promise<'active' | 'settled' | 'unknown'> => {
-    const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+    const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
     if (!tracked) return 'unknown';
     return (await readSessionRunnerLiveWork(tracked, shutdownCancellationDomains.daemonWorkSignal)).nativeRuntimeActivity ?? 'unknown';
   };
@@ -5428,7 +5380,7 @@ export async function startDaemonSessionControlRuntime(
       if (begin.sessionId === sessionId) return busy('pending_foreground_begin');
     }
     const tracked = findTrackedSessionByHappySessionId(
-      params.pidToTrackedSession.values(),
+      params.trackedSessionsByKey.values(),
       sessionId,
     );
     const trackedActivity = resolveTrackedSessionRunnerActivity(tracked,
@@ -5448,7 +5400,7 @@ export async function startDaemonSessionControlRuntime(
     signal: AbortSignal,
     observingActionId?: string,
   ): Promise<PlannedRunnerRestartSignalGateResult> => {
-    const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+    const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
     if (!tracked) return 'activity_observation_unavailable';
     try {
       // The live Run manager, not visibility markers or retained status,
@@ -5456,8 +5408,8 @@ export async function startDaemonSessionControlRuntime(
       return await withSessionAccountContext(sessionId, async accountContext =>
         await withSessionAccountHome(accountContext, async () => {
           const credentials = accountContext?.bootstrap.credentials ?? params.credentials;
-          const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal });
-          if (!transport.ok || transport.sessionId !== sessionId) return 'activity_observation_unavailable';
+          const encryption = deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal,
+            unavailable: () => new Error('activity_observation_unavailable') });
           const executionRunActivityChanges = createExecutionRunLiveWorkProducer();
           while (!signal.aborted) {
             const observation = new AbortController();
@@ -5471,8 +5423,7 @@ export async function startDaemonSessionControlRuntime(
             try {
               const request = { token: credentials.token, sessionId,
                 method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_LIST}`, request: {}, timeoutMs: null, signal };
-              const raw = transport.mode === 'plain' ? await callSessionRpc({ ...request, mode: 'plain' })
-                : await callSessionRpc({ ...request, mode: 'e2ee', ctx: transport.ctx });
+              const raw = await callSessionRpc({ ...request, ...encryption });
               const { runs } = ExecutionRunListResponseSchema.parse(raw);
               await assertSessionAccountCurrent(sessionId, accountContext);
               const reason = resolveSessionRunnerActivityDisabledReason(sessionId, runs, observingActionId);
@@ -5496,10 +5447,10 @@ export async function startDaemonSessionControlRuntime(
       return await withSessionAccountContext(sessionId, async accountContext =>
         await withSessionAccountHome(accountContext, async () => {
           const credentials = accountContext?.bootstrap.credentials ?? params.credentials;
-          const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal });
-          if (!transport.ok || transport.sessionId !== sessionId) return null;
+          const encryption = deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal,
+            unavailable: () => new Error('session_runner_restart_transport_unavailable') });
           await assertSessionAccountCurrent(sessionId, accountContext);
-          const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+          const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
           if (!tracked || (tracked.sessionRunnerPid ?? tracked.pid) !== expectedPid) return null;
           return await prepareSessionRunnerRestartAdmission({ expectedPid, signal,
             onHold: attempt => {
@@ -5512,8 +5463,7 @@ export async function startDaemonSessionControlRuntime(
               const input = { token: credentials.token, sessionId,
                 method: `${sessionId}:${SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION}`, request, timeoutMs: null,
                 signal: requestSignal ?? shutdownCancellationDomains.daemonWorkSignal };
-              return transport.mode === 'plain' ? await callSessionRpc({ ...input, mode: 'plain' })
-                : await callSessionRpc({ ...input, mode: 'e2ee', ctx: transport.ctx });
+              return await callSessionRpc({ ...input, ...encryption });
             }) });
         }), undefined, signal);
     } catch (error) {
@@ -5538,7 +5488,7 @@ export async function startDaemonSessionControlRuntime(
   ): Promise<PredictiveSoftSwitchCapability> => {
     input.signal?.throwIfAborted();
     const tracked = findTrackedSessionByHappySessionId(
-      params.pidToTrackedSession.values(),
+      params.trackedSessionsByKey.values(),
       input.sessionId,
     );
     const resolvedAgentId =
@@ -5566,11 +5516,14 @@ export async function startDaemonSessionControlRuntime(
       timeoutMs,
       pollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
       onExitObserved: async (pid, exit) => {
-        if (params.pidToTrackedSession.get(pid) === tracked) await onChildExited(pid, exit);
+        if (tracked.pid === pid && isCurrentTrackedSession(params.trackedSessionsByKey, tracked)) await onChildExited(pid, exit);
       },
     });
   };
   const captureSessionRunnerRemainder = async (tracked: TrackedSession, sessionId: string) => {
+    // A hosted Session's process is the shared host: its tree holds every hosted Session's work.
+    // Retain this Session's logical owner capture, as its Stop does.
+    if (tracked.hostedSession) return await ownerRemainder.capture({ kind: 'session', sessionId });
     // This exact native tree includes Session-owned Runs, even though their
     // process tags deliberately identify the more specific logical Run owner.
     // Anchor it to the same witnessed wrapper/runner that receives the signal.
@@ -5623,8 +5576,8 @@ export async function startDaemonSessionControlRuntime(
           target: input.target,
           turnDeferralQueue: connectedServiceTurnDeferralQueue,
         },
-        restartRequestedPids: params.connectedServicesRestartRequestedPids,
-        pidToTrackedSession: params.pidToTrackedSession,
+        restartRequestedSessions: params.connectedServicesRestartRequestedSessions,
+        trackedSessionsByKey: params.trackedSessionsByKey,
         isShuttingDown: isRuntimePublicationQuiescing,
         observeRunnerRetirement: observeSessionRunnerRetirement,
         captureRunnerRemainder: captureSessionRunnerRemainder,
@@ -5643,6 +5596,7 @@ export async function startDaemonSessionControlRuntime(
             pid: signalInput.tracked.pid,
             delayMs: input.restartSignalDelayMs,
             preferProcessGroup: signalInput.tracked.startedBy === 'daemon',
+            hostedSession: signalInput.tracked.hostedSession,
             shouldSignal: signalInput.shouldSignal,
             restartDiagnostic: input.restartDiagnostic,
             recordRestartDiagnostic: recordConnectedServiceRestartDiagnostic,
@@ -5652,7 +5606,7 @@ export async function startDaemonSessionControlRuntime(
         },
         observeProcessMissing:
           observeConnectedServiceRestartProcessMissing ?? undefined,
-        clearRestartIntentForPid: clearConnectedServiceRestartIntentForPid,
+        clearRestartIntent: clearConnectedServiceRestartIntent,
         onSignalFailureLogMessage: input.onSignalFailureLogMessage,
         logDebug: (message, payload) => logger.debug(message, payload),
         logWarn: (message, payload) => logger.warn(message, payload),
@@ -5720,8 +5674,8 @@ export async function startDaemonSessionControlRuntime(
             observeSessionRunnerRetirement(tracked, sessionId, input.completionTimeoutMs ?? versionRuntimeRefreshCompletionTimeoutMs) }
         : {}),
       deferral: { kind: 'none' },
-      restartRequestedPids: params.connectedServicesRestartRequestedPids,
-      pidToTrackedSession: params.pidToTrackedSession,
+      restartRequestedSessions: params.connectedServicesRestartRequestedSessions,
+      trackedSessionsByKey: params.trackedSessionsByKey,
       isShuttingDown: isRuntimePublicationQuiescing,
       canSignal: async signal => {
         const allowed = input.canSignal ? await input.canSignal()
@@ -5741,6 +5695,7 @@ export async function startDaemonSessionControlRuntime(
           pid: signalInput.tracked.pid,
           delayMs: 0,
           preferProcessGroup: signalInput.tracked.startedBy === 'daemon',
+          hostedSession: signalInput.tracked.hostedSession,
           shouldSignal: signalInput.shouldSignal,
           onSignalFailure: signalInput.onSignalFailure,
           onProcessAlreadyMissing: signalInput.onProcessAlreadyMissing,
@@ -5904,7 +5859,7 @@ export async function startDaemonSessionControlRuntime(
             : (getActiveAccountSettingsSnapshot()?.settings ?? null);
         return await withSessionAccountHome(accountContext, async () => {
           const tracked =
-            Array.from(params.pidToTrackedSession.values()).find(
+            Array.from(params.trackedSessionsByKey.values()).find(
               (child) => child.happySessionId === builderInput.sessionId,
             ) ?? null;
           const inactiveContext = tracked
@@ -6056,7 +6011,7 @@ export async function startDaemonSessionControlRuntime(
           // reachability + deferral + mid-turn re-continue exactly once).
           const result =
             await applyConnectedServiceAuthGenerationToTrackedSession({
-              getChildren: () => Array.from(params.pidToTrackedSession.values()),
+              getChildren: () => Array.from(params.trackedSessionsByKey.values()),
               resolveInactiveSession: async ({ sessionId }) => {
                 await assertSessionAccountCurrent(sessionId, accountContext);
                 return await resolveInactiveConnectedServiceSessionContext({
@@ -6170,7 +6125,7 @@ export async function startDaemonSessionControlRuntime(
               }) => {
                 await assertSessionAccountCurrent(sessionId, accountContext);
                 const trackedForSession = findTrackedSessionByHappySessionId(
-                  params.pidToTrackedSession.values(),
+                  params.trackedSessionsByKey.values(),
                   sessionId,
                 );
                 await persistSessionConnectedServiceBindings({
@@ -6331,7 +6286,7 @@ export async function startDaemonSessionControlRuntime(
             accountUsageStore: accountContext.providerAccountUsageStore,
             resolveRequiredModelIds: request => resolveGroupRequiredModelIds({
               serviceId: buildQualifiedPluginContributionKey(request.serviceId), groupId: request.groupId,
-              targets: accountContext.connectedServiceRuntimeRegistry.listTargets(), trackedSessions: params.pidToTrackedSession.values(),
+              targets: accountContext.connectedServiceRuntimeRegistry.listTargets(), trackedSessions: params.trackedSessionsByKey.values(),
             }),
             hydrateQuotaSnapshotsForGroup: async (
               request: Parameters<ConnectedServiceQuotasCoordinator['hydrateQualifiedGroupQuotaSnapshots']>[0],
@@ -6443,7 +6398,7 @@ export async function startDaemonSessionControlRuntime(
         typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
       if (!sessionId) return { status: 'session_not_found' };
       const tracked =
-        Array.from(params.pidToTrackedSession.values()).find(
+        Array.from(params.trackedSessionsByKey.values()).find(
           (child) => child.happySessionId === sessionId,
         ) ?? null;
       if (!tracked) return { status: 'session_not_found' };
@@ -6504,7 +6459,7 @@ export async function startDaemonSessionControlRuntime(
     ): Promise<ConnectedServiceCommittedGenerationApplyResult> => {
       const sessionId = input.sessionId.trim();
       const tracked =
-        Array.from(params.pidToTrackedSession.values()).find(
+        Array.from(params.trackedSessionsByKey.values()).find(
           (child) => child.happySessionId === sessionId,
         ) ?? null;
       if (!sessionId || !tracked) {
@@ -6583,7 +6538,7 @@ export async function startDaemonSessionControlRuntime(
     ) => {
       return await applyConnectedServiceCredentialUpdate({ ...input,
         core: connectedServiceSessionAuthSwitchCore,
-        getTrackedSession: sessionId => findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId),
+        getTrackedSession: sessionId => findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId),
         applyGeneration: request => buildConnectedServiceAuthApplicationSession({
           sessionId: request.sessionId, restartReason: input.reason, commitAccountSwitchEvents: false,
           allowRestart: input.executionAuthority !== 'passive_projection', executionAuthority: input.executionAuthority,
@@ -6599,7 +6554,7 @@ export async function startDaemonSessionControlRuntime(
    */
   const requestConnectedServiceRefreshRestartSignal = async (
     signalParams: Readonly<{
-      pid: number;
+      trackingKey: SessionTrackingKey;
       delayMs: number;
       preferProcessGroup?: boolean;
       shouldSignal?: () => boolean;
@@ -6611,7 +6566,7 @@ export async function startDaemonSessionControlRuntime(
       nowMs?: () => number;
     }>,
   ): Promise<Readonly<{ signaled: boolean }>> => {
-    const tracked = params.pidToTrackedSession.get(signalParams.pid) ?? null;
+    const tracked = params.trackedSessionsByKey.get(signalParams.trackingKey) ?? null;
     if (!tracked) {
       signalParams.onSignalFailure(
         new Error('refresh_restart_tracked_session_missing'),
@@ -7004,7 +6959,7 @@ export async function startDaemonSessionControlRuntime(
         return await promoteForegroundDaemonServiceAuthority({
           happyHomeDir: configuration.happyHomeDir,
           publicReleaseRing: configuration.publicReleaseRing,
-          trackedSessions: params.pidToTrackedSession,
+          trackedSessions: params.trackedSessionsByKey,
           ...input,
         });
       },
@@ -7015,16 +6970,14 @@ export async function startDaemonSessionControlRuntime(
   const createSessionManagedProviderCustodyDispatchForSession = async (
     sessionId: string,
   ): Promise<RunnerManagedServicesCustodyDispatchV1> => {
-    const transport = await resolveSessionTransportContext({ reason: 'session-control',
+    const encryption = deferSessionRpcEncryption({ reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: sessionId,
-    });
-    if (!transport.ok || transport.sessionId !== sessionId) {
-      throw new PluginError({
+      unavailable: () => new PluginError({
         code: 'plugin_services_managed_provider_custody_unavailable',
         message: 'Runner managed Provider custody transport is unavailable',
-      });
-    }
+      }),
+    });
     return async (request, options) => {
       if (options?.signal?.aborted) {
         throw new PluginError({
@@ -7032,23 +6985,13 @@ export async function startDaemonSessionControlRuntime(
           message: 'Runner managed Provider custody operation was aborted',
         });
       }
-      const rpc = {
+      const raw = await callSessionRpc({
         token: params.credentials.token,
-        sessionId: transport.sessionId,
-        method: `${transport.sessionId}:${RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD}`,
+        sessionId,
+        method: `${sessionId}:${RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD}`,
         request,
-      };
-      const raw =
-        transport.mode === 'plain'
-          ? await callSessionRpc({
-              ...rpc,
-              mode: 'plain',
-            })
-          : await callSessionRpc({
-              ...rpc,
-              mode: 'e2ee',
-              ctx: transport.ctx,
-            });
+        ...encryption,
+      });
       if (options?.signal?.aborted) {
         throw new PluginError({
           code: 'plugin_operation_aborted',
@@ -7067,16 +7010,14 @@ export async function startDaemonSessionControlRuntime(
   const createSessionManagedServiceEndpointReadRpc = async (
     sessionId: string,
   ) => {
-    const transport = await resolveSessionTransportContext({ reason: 'session-control',
+    const encryption = deferSessionRpcEncryption({ reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: sessionId,
-    });
-    if (!transport.ok || transport.sessionId !== sessionId) {
-      throw new PluginError({
+      unavailable: () => new PluginError({
         code: 'plugin_services_managed_provider_custody_unavailable',
         message: 'Runner managed-service request transport is unavailable',
-      });
-    }
+      }),
+    });
     return Object.freeze({
       async call(
         rpcInput: Readonly<{
@@ -7086,24 +7027,15 @@ export async function startDaemonSessionControlRuntime(
           signal?: AbortSignal;
         }>,
       ): Promise<unknown> {
-        const common = {
+        return await callSessionRpc({
           token: params.credentials.token,
-          sessionId: transport.sessionId,
-          method: `${transport.sessionId}:${rpcInput.method}`,
+          sessionId,
+          method: `${sessionId}:${rpcInput.method}`,
           request: rpcInput.request,
           timeoutMs: rpcInput.timeoutMs,
           ...(rpcInput.signal ? { signal: rpcInput.signal } : {}),
-        };
-        return transport.mode === 'plain'
-          ? await callSessionRpc({
-              ...common,
-              mode: 'plain',
-            })
-          : await callSessionRpc({
-              ...common,
-              mode: 'e2ee',
-              ctx: transport.ctx,
-            });
+          ...encryption,
+        });
       },
     });
   };
@@ -7150,7 +7082,7 @@ export async function startDaemonSessionControlRuntime(
     machineId: params.machineId,
     authorizeCurrent: async ({ sessionId, runner, retainedAgent }) => {
       const tracked = findTrackedSessionByHappySessionId(
-        params.pidToTrackedSession.values(),
+        params.trackedSessionsByKey.values(),
         sessionId,
       );
       if (
@@ -7181,7 +7113,7 @@ export async function startDaemonSessionControlRuntime(
       witness,
     }) => {
       const tracked = findTrackedSessionByHappySessionId(
-        params.pidToTrackedSession.values(),
+        params.trackedSessionsByKey.values(),
         sessionId,
       );
       if (
@@ -7379,10 +7311,10 @@ export async function startDaemonSessionControlRuntime(
           if (!rawSession) return;
           await updateSessionMetadataWithRetry({ ...context, token: context.credentials.token,
             sessionId, rawSession, updater: async metadata => {
-              if (params.pidToTrackedSession.get(tracked.pid) !== tracked) return metadata;
+              if (!isCurrentTrackedSession(params.trackedSessionsByKey, tracked)) return metadata;
               const retired = await retireObservedSessionRunnerMetadata({ metadata, expectedRunner,
                 trackedSession: tracked, sessionId, happyHomeDir: configuration.happyHomeDir });
-              return params.pidToTrackedSession.get(tracked.pid) === tracked ? retired : metadata;
+              return isCurrentTrackedSession(params.trackedSessionsByKey, tracked) ? retired : metadata;
             } });
         };
         const requester = tracked.requesterSessionRuntimeContext;
@@ -7402,18 +7334,19 @@ export async function startDaemonSessionControlRuntime(
       await params.observeSessionScopeExit?.(tracked);
     },
     ownerRemainder,
-    pidToTrackedSession: params.pidToTrackedSession,
-    spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
-    sessionAttachCleanupByPid: params.sessionAttachCleanupByPid,
+    spareHeldAgent: tracked => sparedHeldAgents.spare(tracked),
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
+    sessionAttachCleanupByKey: params.sessionAttachCleanupByKey,
     getApiMachineForSessions: params.getApiMachineForSessions,
     beforeUnexpectedExitSettlement: async (tracked, _exit, lifetimeAccount) => {
       const sessionId = normalizeOptionalString(tracked.happySessionId);
       if (sessionId && tracked.startedBy === 'daemon') {
         const cycle = runnerTerminalCycleBySessionId.get(sessionId) ?? {
-          entriesByPid: new Map(),
+          entriesByKey: new Map(),
         };
         runnerTerminalCycleBySessionId.set(sessionId, cycle);
-        const previousEntry = cycle.entriesByPid.get(tracked.pid);
+        const previousEntry = cycle.entriesByKey.get(tracked.trackingKey);
         if (previousEntry?.tracked === tracked
           && (previousEntry.admission.status !== 'unavailable'
             || (previousEntry.admission.reason !== undefined
@@ -7432,7 +7365,7 @@ export async function startDaemonSessionControlRuntime(
             sessionId,
           },
         };
-        cycle.entriesByPid.set(tracked.pid, entry);
+        cycle.entriesByKey.set(tracked.trackingKey, entry);
         try {
           const captured = await params
             .getApiMachineForSessions()
@@ -7489,8 +7422,8 @@ export async function startDaemonSessionControlRuntime(
         tracked,
         exit,
         {
-          forceRestart: params.connectedServicesRestartRequestedPids.has(
-            tracked.pid,
+          forceRestart: params.connectedServicesRestartRequestedSessions.has(
+            tracked.trackingKey,
           ),
           ...(tracked.plannedRestartReason ? { restartReason: tracked.plannedRestartReason } : {}),
           ...(transientSpawnOptions
@@ -7499,21 +7432,22 @@ export async function startDaemonSessionControlRuntime(
         },
       );
       if (disposition === 'scheduled') {
-        runnerRespawnScheduledPids.add(tracked.pid);
+        runnerRespawnScheduledSessions.add(tracked.trackingKey);
       } else if (disposition === 'ignored' && tracked.happySessionId) {
-        runnerRespawnScheduledPids.delete(tracked.pid);
+        await sparedHeldAgents.end(tracked.happySessionId);
+        runnerRespawnScheduledSessions.delete(tracked.trackingKey);
         await settleCapturedRunnerTerminal({
           sessionId: tracked.happySessionId,
-          previousPid: tracked.pid,
+          previousTrackingKey: tracked.trackingKey,
           reason: 'no_restart',
         });
       } else {
-        runnerRespawnScheduledPids.delete(tracked.pid);
+        runnerRespawnScheduledSessions.delete(tracked.trackingKey);
         if (tracked.happySessionId && disposition === 'terminal') await sessionRunnerRespawnManager.awaitTerminalSettlement(tracked.happySessionId);
       }
     },
     isExitUnexpectedOverride: (tracked) => {
-      if (!params.connectedServicesRestartRequestedPids.has(tracked.pid)) {
+      if (!params.connectedServicesRestartRequestedSessions.has(tracked.trackingKey)) {
         return null;
       }
       return true;
@@ -7536,7 +7470,7 @@ export async function startDaemonSessionControlRuntime(
       });
     },
     onFinalTrackedSessionExitStaged: async ({ pid, trackedSession }) => {
-      if (params.connectedServicesRestartRequestedPids.has(pid)) return;
+      if (params.connectedServicesRestartRequestedSessions.has(trackedSession.trackingKey)) return;
       const sessionId = normalizeOptionalString(trackedSession.happySessionId);
       if (!sessionId) return;
       const terminal =
@@ -7609,22 +7543,28 @@ export async function startDaemonSessionControlRuntime(
       if (candidate) registerDisconnectedTerminalHostCandidate(candidate);
     },
   });
+  // Unready Sessions of one host share no identity: a missing or `PID-<pid>` placeholder id names none.
+  const isKnownSessionId = (sessionId: string | undefined): sessionId is string =>
+    typeof sessionId === 'string' && sessionId.length > 0 && !isPidPlaceholderSessionId(sessionId);
   onChildExited = async (pid, exit) => {
-    const trackedBeforeExit = params.pidToTrackedSession.get(pid) ?? null;
-    const startupPid = trackedBeforeExit?.spawnStartupAwaiterPid ?? pid;
-    const startupResolver = params.pidToSpawnResultResolver.get(startupPid);
-    const connectedServiceRestartWasRequested =
-      params.connectedServicesRestartRequestedPids.has(pid);
+    // A Session-addressed end (one Session of a session host) concerns only that Session.
+    const hostedBeforeExit = trackedSessionsForProcess(params.trackedSessionsByKey, pid)
+      .filter(tracked => exit.trackingKey === undefined || tracked.trackingKey === exit.trackingKey).map((tracked) => ({
+      tracked,
+      startupResolver: params.spawnResultResolverByKey.get(tracked.trackingKey),
+      // Read before the exit owner settles it: its respawn clears this Session's intent.
+      connectedServiceRestartWasRequested: params.connectedServicesRestartRequestedSessions.has(tracked.trackingKey),
+    }));
     await onChildExitedBase(pid, exit);
     notifySessionLiveWorkChanged();
-    const trackedAfterExit = params.pidToTrackedSession.get(pid) ?? null;
-    if (
-      trackedBeforeExit &&
-      ![...params.pidToTrackedSession.values()].includes(trackedBeforeExit) &&
-      startupResolver &&
-      params.pidToSpawnResultResolver.get(startupPid) === startupResolver
-    ) {
-      startupResolver(buildChildExitBeforeWebhookFailure({ pid, ...exit }));
+    for (const { tracked, startupResolver } of hostedBeforeExit) {
+      if (
+        !isCurrentTrackedSession(params.trackedSessionsByKey, tracked) &&
+        startupResolver &&
+        params.spawnResultResolverByKey.get(tracked.trackingKey) === startupResolver
+      ) {
+        startupResolver(buildChildExitBeforeWebhookFailure({ pid, ...exit }));
+      }
     }
     void params.connectedServiceGroupHomeCleanupScheduler
       ?.cleanupPendingDeletedGroupHomes()
@@ -7642,135 +7582,172 @@ export async function startDaemonSessionControlRuntime(
           error,
         );
       });
-    if (trackedBeforeExit === null || trackedAfterExit === trackedBeforeExit) {
-      return;
-    }
-    await releaseExecutionRunAuthorityForRunnerExit({
-      runnerPid: trackedBeforeExit.sessionRunnerPid ?? pid,
-      runnerIdentity: trackedBeforeExit,
-    });
-    await runnerExecutionRunSnapshots.releaseForRunnerExit(trackedBeforeExit);
-    if (trackedAfterExit !== null) {
-      logger.debug(
-        '[DAEMON RUN] PID ownership changed while observing child exit; preserving replacement runtime custody',
-        {
-          pid,
-          exitedSessionId: trackedBeforeExit.happySessionId,
-          replacementSessionId: trackedAfterExit.happySessionId,
-        },
-      );
-      return;
-    }
-    if (
-      trackedBeforeExit.agentRuntimeDaemonServiceAuthorityFilePath &&
-      trackedBeforeExit.agentRuntimeDaemonServiceCapabilityHash
-    ) {
-      await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
-        happyHomeDir: configuration.happyHomeDir,
-        publicReleaseRing: configuration.publicReleaseRing,
-        path: trackedBeforeExit.agentRuntimeDaemonServiceAuthorityFilePath,
-        capabilityDigest:
-          trackedBeforeExit.agentRuntimeDaemonServiceCapabilityHash,
-      }).catch((error) => {
-        logger.debug(
-          '[DAEMON RUN] Runner Agent authority owner cleanup failed (non-fatal)',
-          error,
-        );
-        return false;
-      });
-    }
-    delete trackedBeforeExit.agentRuntimeDaemonServiceCapabilityHash;
-    delete trackedBeforeExit.agentRuntimeDaemonServiceNativeRealtimeAdmission;
-    const restartWasRequested =
-      connectedServiceRestartWasRequested ||
-      runnerRespawnScheduledPids.has(pid);
-    if (!params.pidToTrackedSession.has(pid)) {
-      connectedServiceRuntimeRegistry.unregisterPid(pid);
-    }
-    if (connectedServiceRestartWasRequested) {
-      params.connectedServicesRestartRequestedPids.delete(pid);
-    }
-    if (trackedBeforeExit?.happySessionId) {
-      const stillLive = Array.from(params.pidToTrackedSession.values()).some(
-        (child) => child.happySessionId === trackedBeforeExit.happySessionId,
-      );
-      if (!stillLive) {
-        await connectedServiceTurnDeferralQueue.cancelSession(
-          trackedBeforeExit.happySessionId,
-          restartWasRequested ? 'session_restarting' : 'session_terminated',
-        );
+    for (const { tracked: trackedBeforeExit, connectedServiceRestartWasRequested } of hostedBeforeExit) {
+      // A wrapper→runner promotion moves the Session off this pid: like the
+      // Session's own exit, it ends this process's custody.
+      const trackedAfterExit = isCurrentTrackedSession(params.trackedSessionsByKey, trackedBeforeExit)
+        && trackedBeforeExit.pid === pid
+        ? trackedBeforeExit
+        // The host's other Sessions are not this Session's replacement; only its own successor is.
+        : exit.trackingKey !== undefined
+          ? trackedSessionsForProcess(params.trackedSessionsByKey, pid)
+            .find(tracked => tracked !== trackedBeforeExit && isKnownSessionId(trackedBeforeExit.happySessionId)
+              && tracked.happySessionId === trackedBeforeExit.happySessionId) ?? null
+          : trackedSessionForSingleSessionProcess(params.trackedSessionsByKey, pid) ?? null;
+      if (trackedAfterExit === trackedBeforeExit) continue;
+      // This Session ended in this process: drop its own target, or its spawn's unadopted bootstrap.
+      // Sessions and spawns the process still hosts keep their own targets.
+      const endedSessionId = trackedBeforeExit.happySessionId;
+      const endedTrackingKey = trackedBeforeExit.trackingKey;
+      if (trackedAfterExit?.trackingKey !== endedTrackingKey
+        && !(endedSessionId && trackedAfterExit?.happySessionId === endedSessionId)) {
+        const endedTarget = connectedServiceRuntimeRegistry.getSessionTarget(pid, endedSessionId, endedTrackingKey);
+        if (endedTarget && (endedTarget.sessionId
+          ? endedTarget.sessionId === endedSessionId
+          : endedTarget.spawnTrackingKey === endedTrackingKey)) {
+          connectedServiceRuntimeRegistry.unregisterTarget(endedTarget);
+        }
       }
-      if (!stillLive && !restartWasRequested) {
-        await computerRoutes?.closeSession(trackedBeforeExit.happySessionId);
-        connectedServiceSessionAuthSwitchCore.clearSession(
-          trackedBeforeExit.happySessionId,
+      await releaseExecutionRunAuthorityForRunnerExit({
+        runnerPid: trackedBeforeExit.sessionRunnerPid ?? pid,
+        runnerIdentity: trackedBeforeExit,
+      });
+      await runnerExecutionRunSnapshots.releaseForRunnerExit(trackedBeforeExit);
+      if (trackedAfterExit !== null) {
+        logger.debug(
+          '[DAEMON RUN] PID ownership changed while observing child exit; preserving replacement runtime custody',
+          {
+            pid,
+            exitedSessionId: trackedBeforeExit.happySessionId,
+            replacementSessionId: trackedAfterExit.happySessionId,
+          },
         );
-        const retainedTerminalCandidate =
-          disconnectedTerminalHostCandidates.find(
-            (candidate) =>
-              candidate.sessionId === trackedBeforeExit.happySessionId &&
-              !terminalizedDisconnectedTerminalHostIds.has(
-                candidate.attachmentId,
-              ),
-          );
-        const retainedTerminal = retainedTerminalCandidate
-          ? await superviseDisconnectedTerminalHost(retainedTerminalCandidate)
-          : null;
-        // The existing exact-host supervision owns absence. A surviving
-        // provider still uses these Session-scoped ports/secrets; unknown
-        // evidence stays fenced rather than becoming artifact absence.
-        if (retainedTerminal?.state === 'unknown') {
-          logger.warn(
-            '[DAEMON RUN] Session hook cleanup deferred while terminal-host retirement is unproven',
-            {
-              sessionId: trackedBeforeExit.happySessionId,
-              reason: retainedTerminal.reason,
-            },
-          );
-        }
-        if (
-          (!retainedTerminal || retainedTerminal.state === 'stopped') &&
-          !Array.from(params.pidToTrackedSession.values()).some(
-            (child) =>
-              child.happySessionId === trackedBeforeExit.happySessionId,
-          )
-        ) {
-          await disposeSessionHookArtifactsForSession({
-            happyHomeDir: configuration.happyHomeDir,
-            sessionId: trackedBeforeExit.happySessionId,
-          }).catch(() => {
-            logger.warn('[DAEMON RUN] Session hook artifact cleanup failed', {
-              sessionId: trackedBeforeExit.happySessionId,
-              reason: 'artifact_cleanup_failed',
-            });
-          });
-        }
-        await disposeTerminalAttachmentInfoForSession({
+        continue;
+      }
+      if (
+        trackedBeforeExit.agentRuntimeDaemonServiceAuthorityFilePath &&
+        trackedBeforeExit.agentRuntimeDaemonServiceCapabilityHash
+      ) {
+        await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
           happyHomeDir: configuration.happyHomeDir,
-          sessionId: trackedBeforeExit.happySessionId,
+          publicReleaseRing: configuration.publicReleaseRing,
+          path: trackedBeforeExit.agentRuntimeDaemonServiceAuthorityFilePath,
+          capabilityDigest:
+            trackedBeforeExit.agentRuntimeDaemonServiceCapabilityHash,
         }).catch((error) => {
           logger.debug(
-            '[DAEMON RUN] Terminal attachment cleanup failed (non-fatal)',
+            '[DAEMON RUN] Runner Agent authority owner cleanup failed (non-fatal)',
             error,
           );
-        });
-        // BRW-6 privacy: when a session terminates for good (no live sibling, not restarting),
-        // purge its `session`-mode browser profiles + bound on-disk partitions. Fail-closed
-        // inside the owner (failed purge marks the profile unusable + audits).
-        void purgeBrowserStorageForSessionDeleted(
-          trackedBeforeExit.happySessionId,
-        ).catch((error) => {
-          logger.debug(
-            '[DAEMON RUN] Browser storage session-delete purge failed (non-fatal)',
-            error,
-          );
+          return false;
         });
       }
-      void queueHostedWebStaticAssetSync('session_exit');
+      delete trackedBeforeExit.agentRuntimeDaemonServiceCapabilityHash;
+      delete trackedBeforeExit.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+      const restartWasRequested =
+        connectedServiceRestartWasRequested ||
+        runnerRespawnScheduledSessions.has(trackedBeforeExit.trackingKey);
+      if (trackedSessionsForProcess(params.trackedSessionsByKey, pid).length === 0) {
+        connectedServiceRuntimeRegistry.unregisterPid(pid);
+      }
+      // A wrapper→runner promotion keeps the Session (and its key) in custody.
+      if (connectedServiceRestartWasRequested && !isCurrentTrackedSession(params.trackedSessionsByKey, trackedBeforeExit)) {
+        params.connectedServicesRestartRequestedSessions.delete(trackedBeforeExit.trackingKey);
+      }
+      if (trackedBeforeExit?.happySessionId) {
+        const stillLive = Array.from(params.trackedSessionsByKey.values()).some(
+          (child) => child.happySessionId === trackedBeforeExit.happySessionId,
+        );
+        if (!stillLive) {
+          await connectedServiceTurnDeferralQueue.cancelSession(
+            trackedBeforeExit.happySessionId,
+            restartWasRequested ? 'session_restarting' : 'session_terminated',
+          );
+        }
+        if (!stillLive && !restartWasRequested) {
+          await devicesRole()?.computerRoutes()?.closeSession(trackedBeforeExit.happySessionId);
+          connectedServiceSessionAuthSwitchCore.clearSession(
+            trackedBeforeExit.happySessionId,
+          );
+          const retainedTerminalCandidate =
+            disconnectedTerminalHostCandidates.find(
+              (candidate) =>
+                candidate.sessionId === trackedBeforeExit.happySessionId &&
+                !terminalizedDisconnectedTerminalHostIds.has(
+                  candidate.attachmentId,
+                ),
+            );
+          const retainedTerminal = retainedTerminalCandidate
+            ? await superviseDisconnectedTerminalHost(retainedTerminalCandidate)
+            : null;
+          // The existing exact-host supervision owns absence. A surviving
+          // provider still uses these Session-scoped ports/secrets; unknown
+          // evidence stays fenced rather than becoming artifact absence.
+          if (retainedTerminal?.state === 'unknown') {
+            logger.warn(
+              '[DAEMON RUN] Session hook cleanup deferred while terminal-host retirement is unproven',
+              {
+                sessionId: trackedBeforeExit.happySessionId,
+                reason: retainedTerminal.reason,
+              },
+            );
+          }
+          if (
+            (!retainedTerminal || retainedTerminal.state === 'stopped') &&
+            !Array.from(params.trackedSessionsByKey.values()).some(
+              (child) =>
+                child.happySessionId === trackedBeforeExit.happySessionId,
+            )
+          ) {
+            await disposeSessionHookArtifactsForSession({
+              happyHomeDir: configuration.happyHomeDir,
+              sessionId: trackedBeforeExit.happySessionId,
+            }).catch(() => {
+              logger.warn('[DAEMON RUN] Session hook artifact cleanup failed', {
+                sessionId: trackedBeforeExit.happySessionId,
+                reason: 'artifact_cleanup_failed',
+              });
+            });
+          }
+          await disposeTerminalAttachmentInfoForSession({
+            happyHomeDir: configuration.happyHomeDir,
+            sessionId: trackedBeforeExit.happySessionId,
+          }).catch((error) => {
+            logger.debug(
+              '[DAEMON RUN] Terminal attachment cleanup failed (non-fatal)',
+              error,
+            );
+          });
+          // BRW-6 privacy: when a session terminates for good (no live sibling, not restarting),
+          // purge its `session`-mode browser profiles + bound on-disk partitions. Fail-closed
+          // inside the owner (failed purge marks the profile unusable + audits).
+          void devicesRole()?.browser.purgeForSessionDeleted(
+            trackedBeforeExit.happySessionId,
+          ).catch((error) => {
+            logger.debug(
+              '[DAEMON RUN] Browser storage session-delete purge failed (non-fatal)',
+              error,
+            );
+          });
+        }
+        void queueHostedWebStaticAssetSync('session_exit');
+      }
     }
   };
+  // Daemon restart: reattached Sessions whose process is a live session host are stopped and
+  // observed through that host (never a signal to its pid), and that host takes new Sessions.
+  const adoptedHostedSessions = sessionHostPlacement.adoptReattachedSessions({
+    trackedSessions: [...params.trackedSessionsByKey.values()],
+    observeExit: (pid, exit) => onChildExited(pid, exit),
+    // A host from before a CLI update keeps its Sessions; new Sessions start a current host.
+    isCurrentRuntime: (processCommand) =>
+      resolveProcessCommandVersionState(processCommand, resolveCurrentSessionRunnerLaunchIdentity()) !== 'stale',
+  });
+  if (adoptedHostedSessions > 0) logger.debug('[DAEMON RUN] Reattached Sessions of a live session host', { count: adoptedHostedSessions });
   observeConnectedServiceRestartProcessMissing = (tracked) => {
-    const exit = { reason: 'process-missing', code: null, signal: null };
+    // A hosted Session's end is its own; the host process and its other Sessions live on.
+    const exit = { reason: 'process-missing', code: null, signal: null,
+      ...(tracked.hostedSession ? { trackingKey: tracked.trackingKey } : {}) };
     // This is an OS observation, not an End/Stop acknowledgement. The child-exit
     // owner retains the Promise and custody; shutdown drains it before teardown.
     void onChildExited(tracked.pid, exit).catch(error => {
@@ -7911,7 +7888,7 @@ export async function startDaemonSessionControlRuntime(
         if (!candidate) return { stopResult: trackedStopResult };
         const runnerProbe = await probeSessionRunnerServiceability({
           sessionId: normalizedSessionId,
-          trackedSessions: params.pidToTrackedSession.values(),
+          trackedSessions: params.trackedSessionsByKey.values(),
           probeCapability: async () =>
             await probeAlreadyRunningExistingSessionServiceability({
               sessionId: normalizedSessionId,
@@ -7923,10 +7900,11 @@ export async function startDaemonSessionControlRuntime(
         if (runnerProbe.state !== 'runner_absent')
           return { stopResult: trackedStopResult };
 
-        const candidatePidToTrackedSession = new Map<number, TrackedSession>([
+        const candidateTrackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
           [
-            candidate.pid,
+            candidate.trackingKey,
             {
+              trackingKey: candidate.trackingKey,
               startedBy: 'daemon',
               happySessionId: normalizedSessionId,
               pid: candidate.pid,
@@ -7934,7 +7912,7 @@ export async function startDaemonSessionControlRuntime(
           ],
         ]);
         const stopDisconnectedHost = createStopSession({
-          pidToTrackedSession: candidatePidToTrackedSession,
+          trackedSessionsByKey: candidateTrackedSessionsByKey,
           expectedTerminalAttachmentId: candidate.attachmentId,
           terminalHostAdapters:
             (await params.loadTerminalHostAdapters?.()) ?? {},
@@ -8322,7 +8300,7 @@ export async function startDaemonSessionControlRuntime(
             input.recoveryInvocationSource === 'scheduler_retry'
               ? 'scheduler_retry'
               : 'daemon_report',
-          activeTurnId: Array.from(params.pidToTrackedSession.values()).find(
+          activeTurnId: Array.from(params.trackedSessionsByKey.values()).find(
             (tracked) => tracked.happySessionId === input.sessionId,
           )?.activeTurnId,
           reportId: input.interruptedOriginId,
@@ -8334,7 +8312,7 @@ export async function startDaemonSessionControlRuntime(
         const trackedRecoverySession =
           authorizedTracked ??
           findTrackedSessionByHappySessionId(
-            params.pidToTrackedSession.values(),
+            params.trackedSessionsByKey.values(),
             input.sessionId,
           );
         const authorizedInactive =
@@ -8481,7 +8459,7 @@ export async function startDaemonSessionControlRuntime(
               isCurrent: () => runtimeAuthRecoveryScheduler.readForSession(input.sessionId).some(intent =>
                 (intent.attemptId ?? buildRuntimeAuthRecoveryKey(intent)) === interruptedOriginId
                 && (intent.status === 'waiting' || intent.status === 'checking' || intent.status === 'resumed_awaiting_proof')),
-              readActiveTurnId: () => findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), input.sessionId)?.activeTurnId ?? null,
+              readActiveTurnId: () => findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), input.sessionId)?.activeTurnId ?? null,
             } } : {}),
             resolveInterruption: ({ sessionId, action, switchReason }) =>
               resolveConnectedServiceContinuationInterruptionForSwitch({
@@ -8507,7 +8485,7 @@ export async function startDaemonSessionControlRuntime(
             }),
         };
         const result = await handleConnectedServiceRuntimeAuthFailureForSession({
-          getChildren: () => Array.from(params.pidToTrackedSession.values()),
+          getChildren: () => Array.from(params.trackedSessionsByKey.values()),
           resolveInactiveSession: async ({ sessionId }) => {
             if (sessionId === input.sessionId && inactiveRecoverySession) {
               return inactiveRecoverySession;
@@ -8840,12 +8818,17 @@ export async function startDaemonSessionControlRuntime(
   const projectManagedServices: Pick<
     ReturnType<typeof createManagedServicesOwner>,
     'listProjectServices' | 'resolveProjectService' | 'readProcessRoots'
-  > & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity'>> = {
+  > & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity' | 'readLastKnownProjectServices'>> = {
     ...(params.projectManagedServiceActivity ? { activity: params.projectManagedServiceActivity } : {}),
     readProcessRoots: () =>
       pluginRuntimeController.getState().activeRegistry
         ?.projectManagedServices.readProcessRoots() ?? [],
     listProjectServices,
+    readLastKnownProjectServices: async () => {
+      const owner = pluginRuntimeController.getState().activeRegistry?.projectManagedServices;
+      if (!owner) throw Object.assign(new Error('Project service native owner is unavailable'), { code: 'project_service_bindings_unavailable' });
+      return await owner.readLastKnownProjectServices();
+    },
     resolveProjectService: (target) =>
       pluginRuntimeController
         .getState()
@@ -8887,7 +8870,7 @@ export async function startDaemonSessionControlRuntime(
     processEnv: params.processEnv,
     internalProcessPids: () => [
       process.pid,
-      ...[...params.pidToTrackedSession.values()].flatMap(session => [session.pid, readTrackedSessionProcessIdentity(session).pid]),
+      ...[...params.trackedSessionsByKey.values()].flatMap(session => [session.pid, readTrackedSessionProcessIdentity(session).pid]),
     ],
     // These are the selected Happier Home/UI endpoint authorities. The scanner admits
     // only literal-loopback HTTP(S) URLs and their exact matching bindings.
@@ -8909,7 +8892,7 @@ export async function startDaemonSessionControlRuntime(
   const resolveTrackedHostedWebStaticAssetSessionIds = (): readonly string[] =>
     Object.freeze([
       ...new Set(
-        [...params.pidToTrackedSession.values()]
+        [...params.trackedSessionsByKey.values()]
           .map((tracked) => normalizeOptionalString(tracked.happySessionId))
           .filter(
             (sessionId) =>
@@ -9009,104 +8992,6 @@ export async function startDaemonSessionControlRuntime(
     return hostedWebStaticAssetSyncPromise;
   };
   void queueHostedWebStaticAssetSync('startup');
-  const androidScrcpyTunnelOwner = createAndroidScrcpyTunnelOwner();
-  // iOS capture-availability gate (capability-truth): trust is derived ONLY from a daemon-side
-  // signature/notarization + digest verification of the vendored helper artifact. Until the
-  // signed/notarized helper is produced and pinned (see scripts/buildIosSimulatorHelper.mjs +
-  // PINNED_IOS_SIMULATOR_HELPER_ARTIFACT), this resolves to false and iOS stays fail-closed.
-  const verifyIosHelperSignature = (path: string) =>
-    verifyIosSimulatorHelperSignature({ path });
-  // Resolve the pinned vendored helper through the full digest + Developer ID signature +
-  // notarization verification chain ONCE. The same verified resolution drives both the
-  // capture-availability gate and the helper-session owner's process path, so a verified
-  // resource always has a real producer + input sender behind it (capability-truth). While the
-  // placeholder digest is pinned (no signed/notarized artifact produced yet), this fails closed.
-  const iosSimulatorHelperArtifact =
-    await resolvePinnedIosSimulatorHelperArtifact({
-      verifyHelperSignature: verifyIosHelperSignature,
-    });
-  const iosSimulatorCaptureAdapterAvailable =
-    await resolveIosSimulatorCaptureAdapterAvailability({
-      resolveHelperArtifact: async () => iosSimulatorHelperArtifact,
-    });
-  // Single long-lived `--daemon-json` helper-session owner: the iOS analog of the Android scrcpy
-  // server handle. It owns the piped child process and is BOTH the frame-stream producer
-  // (openStream) AND the input command sender (sendCommand). Constructed only when the artifact
-  // verified, so capture/input are never silently no-ops behind an unverified binary.
-  iosSimulatorHelperSession = iosSimulatorHelperArtifact.ok
-    ? createIosSimulatorHelperSession({
-        helperPath: iosSimulatorHelperArtifact.path,
-      })
-    : null;
-  const openIosSimulatorHelperStream: IosSimulatorHelperFrameStreamOpener | null =
-    iosSimulatorHelperSession ? iosSimulatorHelperSession.openStream : null;
-  const sendIosSimulatorInputCommand: IosSimulatorInputCommandSender | null =
-    iosSimulatorHelperSession ? iosSimulatorHelperSession.sendCommand : null;
-  const simulatorPreviewAdapter = createComposedSimulatorPreviewAdapter({
-    platforms: [
-      createIosSimulatorPlatformAdapter({
-        captureAdapterAvailable: iosSimulatorCaptureAdapterAvailable,
-        discoverResources: createDefaultIosSimulatorResourcesDiscovery({
-          captureAdapterAvailable: iosSimulatorCaptureAdapterAvailable,
-          verifyHelperSignature: verifyIosHelperSignature,
-        }),
-        ...(sendIosSimulatorInputCommand
-          ? { sendInputCommand: sendIosSimulatorInputCommand }
-          : {}),
-      }),
-      createAndroidSimulatorPlatformAdapter({
-        discoverResources: createDefaultAndroidSimulatorResourcesDiscovery(),
-        resolveScrcpyControl: ({ serial }) =>
-          androidScrcpyTunnelOwner.getControl({ serial }),
-        stopScrcpyControl: () => androidScrcpyTunnelOwner.stop(),
-      }),
-    ],
-  });
-  // PATCH-01 / A1: the bridge from the simulator encoder-control RPC entry point to the live
-  // capture session's `applySidebandControl` sink. `wrapCaptureAdapter` records each started
-  // session's sideband sink (keyed by the relay streamId) so `dispatchStreamControl` forwards a
-  // `simulator.quality.set` / `simulator.keyframe.request` RPC into the SAME session the relay
-  // terminator drives — not a parallel control path.
-  const simulatorStreamControlBridge = createSimulatorStreamControlBridge();
-  const simulatorPreviewRuntime = createSimulatorPreviewDaemonRuntime({
-    machineId: params.machineId,
-    adapter: simulatorPreviewAdapter,
-    dispatchStreamControl: simulatorStreamControlBridge.dispatch,
-    ...(params.simulatorInputLeaseManager
-      ? { leaseManager: params.simulatorInputLeaseManager }
-      : {}),
-    ...(params.liveStreamCaptureRegistry
-      ? {
-          captureReconciler: createSimulatorCaptureRegistryReconciler({
-            registry: params.liveStreamCaptureRegistry,
-            createAdapter: (resource) =>
-              simulatorStreamControlBridge.wrapCaptureAdapter(
-                createSimulatorCaptureAdapterForResource(resource, {
-                  android: {
-                    // Encoder-control (set_quality / request_keyframe / snapshot) + adaptive
-                    // bitrate are backed by the server-restart producer: scrcpy runs
-                    // raw_stream=true so encoder params are fixed at launch and only change
-                    // via a clean server restart through the tunnel owner (which keeps the
-                    // shared input control sender in sync).
-                    ensureServer: androidScrcpyTunnelOwner.ensureServer,
-                    restartServer: androidScrcpyTunnelOwner.restartServer,
-                    adaptiveBitrate: true,
-                  },
-                  // iOS MJPEG frame producer. openStream is supplied ONLY when the signed
-                  // helper artifact verified (capability-truth: a verified resource always
-                  // has a real producer behind it). While unverified, openStream is omitted
-                  // and the iOS branch returns the typed-unavailable capture adapter.
-                  ios: {
-                    ...(openIosSimulatorHelperStream
-                      ? { openStream: openIosSimulatorHelperStream }
-                      : {}),
-                  },
-                }),
-              ),
-          }),
-        }
-      : {}),
-  });
   const runtimeActionRouteProviderTarget = params.api as Readonly<{
     setComputerRoutesProvider?: (
       provider: (() => ComputerRoutes | null) | null,
@@ -9139,83 +9024,58 @@ export async function startDaemonSessionControlRuntime(
       provider: (() => SimulatorPreviewRoutes | null) | null,
     ) => void;
   }>;
-  // Driver installation/capture is lazy and follows an approved explicit-target Action,
-  // never daemon startup. Native lifecycle uses the already-published capture registry.
-  computerRoutes = params.liveStreamCaptureRegistry
-    ? createComputerRoutes({
-        machineId: params.machineId,
-        machineDisplayName: params.currentMachineHost ?? undefined,
-        registry: params.liveStreamCaptureRegistry,
-        defaultDisplayId: process.env.DISPLAY,
-        recording: {
-          workingDirectory: configuration.happyHomeDir,
-          ...createRecordingSessionMediaHost({
-            credentials: params.credentials, serverHttpBaseUrl: params.serverBaseUrl,
-            machineId: params.machineId, currentMachineHost: params.currentMachineHost ?? '',
-            currentMachineHomeDir: params.currentMachineHomeDir ?? '',
-            signal: shutdownCancellationDomains.daemonWorkSignal,
-            mutationCustody: params.daemonSessionMutationCustody, title: 'Computer recording',
-          }),
-        },
-        requesterHost: {
-          custodianAccountId: params.externalActionAccountId ?? null,
-          installationId: readInstallationIdentityIfExistsSync()?.installationId ?? null,
-          readHomeServerIdentityId: async signal =>
-            (await params.resolveCurrentMachineExecutionOriginContext?.(signal))?.serverIdentityId ?? null,
-          readSessionRequester: async (sessionId, signal) => {
-            try {
-              return await withSessionAccountContext(sessionId, async context => {
-                if (context) return context.bootstrap;
-                // A recovered Session without loaded requester ports is not
-                // proof of owner custody. Reuse the private-birth owner before
-                // retaining the ordinary owner's existing desktop behavior.
-                const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
-                return await resolveRequesterSessionExecutionIdentityForHost({
-                  happyHomeDir: configuration.happyHomeDir,
-                  serverId: params.requesterSessionCustodyServerId ?? params.serverId,
-                  serverHttpBaseUrl: params.serverBaseUrl, sessionId, machineId: params.machineId,
-                  hostHomeServerIdentityId: origin?.machineId === params.machineId ? origin.serverIdentityId : null,
-                  sessionCustodianAccountId: params.externalActionAccountId, credentials: params.credentials,
-                  runtimeContext: null, signal,
-                  isCurrent: () => !signal?.aborted && !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
-                });
-              }, undefined, signal);
-            } catch (cause) {
-              signal?.throwIfAborted();
-              if (cause instanceof PluginError) throw cause;
-              throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Requester desktop is unavailable' }, { cause });
-            }
-          },
-          agentIsolation: params.agentIsolation,
-          prepareNativeOperation: async request => {
-            const machine = params.getApiMachineForSessions();
-            if (!machine) throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Requester desktop is unavailable' });
-            return machine.prepareNativeOperation(request);
-          },
-        },
-        resolveProviderSettings: () => {
-          const settings = getActiveAccountSettingsSnapshot()?.settings;
-          return settings ? readComputerUseSettingsForMachine(settings, params.machineId) : DEFAULT_COMPUTER_USE_SETTINGS_V1;
-        },
-      })
-    : null;
-  runtimeActionRouteProviderTarget.setComputerRoutesProvider?.(
-    () => computerRoutes,
-  );
-  // Machine registration may finish after startup. Publish through its attachment
-  // owner so the person's controls also survive machine transport replacement.
-  params.onComputerRoutesReady?.(() => computerRoutes);
-  const browserRoutePublication = createBrowserRoutePublication({
-    params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot,
-    readSessionAccountId: sessionId => {
-      const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
-      return (tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
-        ?? tracked?.requesterSessionRuntimeContext?.bootstrap.attribution)?.accountId ?? null;
+  // Requester custody stays with machine core; the devices role's computer use consumes it.
+  const computerRequesterHost: ComputerRequesterHost = {
+    custodianAccountId: params.externalActionAccountId ?? null,
+    installationId: readInstallationIdentityIfExistsSync()?.installationId ?? null,
+    readHomeServerIdentityId: async signal =>
+      (await params.resolveCurrentMachineExecutionOriginContext?.(signal))?.serverIdentityId ?? null,
+    readSessionRequester: async (sessionId, signal) => {
+      try {
+        return await withSessionAccountContext(sessionId, async context => {
+          if (context) return context.bootstrap;
+          // A recovered Session without loaded requester ports is not
+          // proof of owner custody. Reuse the private-birth owner before
+          // retaining the ordinary owner's existing desktop behavior.
+          const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
+          return await resolveRequesterSessionExecutionIdentityForHost({
+            happyHomeDir: configuration.happyHomeDir,
+            serverId: params.requesterSessionCustodyServerId ?? params.serverId,
+            serverHttpBaseUrl: params.serverBaseUrl, sessionId, machineId: params.machineId,
+            hostHomeServerIdentityId: origin?.machineId === params.machineId ? origin.serverIdentityId : null,
+            sessionCustodianAccountId: params.externalActionAccountId, credentials: params.credentials,
+            runtimeContext: null, signal,
+            isCurrent: () => !signal?.aborted && !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
+          });
+        }, undefined, signal);
+      } catch (cause) {
+        signal?.throwIfAborted();
+        if (cause instanceof PluginError) throw cause;
+        throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Requester desktop is unavailable' }, { cause });
+      }
     },
-    shutdownSignal: shutdownCancellationDomains.daemonWorkSignal,
-    setGuardBrowserResourceOwner: (owner) => { guardBrowserResourceOwner = owner; },
+    agentIsolation: params.agentIsolation,
+    prepareNativeOperation: async request => {
+      const machine = params.getApiMachineForSessions();
+      if (!machine) throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Requester desktop is unavailable' });
+      return machine.prepareNativeOperation(request);
+    },
+  };
+  const devicesRoleActivation = createMachineRoleActivationRuntime({
+    ...(params.machineRoles ? { roles: params.machineRoles } : {}),
+    contexts: { devices: {
+      params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot, computerRequesterHost,
+      readSessionAccountId: sessionId => {
+        const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
+        return (tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
+          ?? tracked?.requesterSessionRuntimeContext?.bootstrap.attribution)?.accountId ?? null;
+      },
+      shutdownSignal: shutdownCancellationDomains.daemonWorkSignal,
+    } },
   });
-  const { refreshBrowserRouteOwners, purgeBrowserStorageForSessionDeleted, purgeBrowserStorageForLogout } = browserRoutePublication;
+  devicesRole = () => devicesRoleActivation.get('devices');
+  // Activated at the same point the devices runtimes used to be built (before control readiness).
+  await devicesRoleActivation.start();
   let managedServiceDurabilityOwner: ManagedServiceDurabilityOwner | null =
     null;
   let managedServiceEndpointReadOwner: ReturnType<
@@ -9238,22 +9098,8 @@ export async function startDaemonSessionControlRuntime(
       resolveWorkspaceSyncHandoffAdapter: () => params.resolveWorkspaceSyncHandoffAdapter?.() ?? null,
     }),
   };
-  browserRoutePublication.publishBrowserAutomationRuntimeProvisioner();
-
-  // Browser artifact verification is optional to control readiness. The same
-  // refresh owner publishes routes only after its source and feature proof;
-  // retirement disposes a late adapter before it can become reachable.
-  void refreshBrowserRouteOwners().catch((error) => {
-    logger.debug(
-      '[DAEMON RUN] Browser route startup refresh failed (non-fatal)',
-      error,
-    );
-  });
   runtimeActionRouteProviderTarget.setLocalServicesRuntimeActionRoutesProvider?.(
     () => localServicesRuntimeActionRoutes,
-  );
-  runtimeActionRouteProviderTarget.setSimulatorPreviewRoutesProvider?.(
-    () => simulatorPreviewRuntime.routes,
   );
   const localServicesMachineRpcRoutes: DaemonLocalServicesMachineRpcRoutes & Readonly<{
     localServicesInventory: LocalServicesDaemonRuntime['inventoryRoutes'];
@@ -9378,7 +9224,6 @@ export async function startDaemonSessionControlRuntime(
   params.onLocalServicesPreviewRoutesReady?.(
     localServicesRuntime.previewRoutes,
   );
-  params.onSimulatorPreviewRoutesReady?.(simulatorPreviewRuntime.routes);
   {
     const machineAccessLossReceiver: Parameters<ApiMachineClient['registerMachineAccessLossReceiver']>[0] = {
       serverId: params.serverId,
@@ -9404,18 +9249,10 @@ export async function startDaemonSessionControlRuntime(
   apiMachineForSessions?.registerLocalServicesRoutes(
     localServicesMachineRpcRoutes,
   );
-  apiMachineForSessions?.registerSimulatorPreviewRoutes(
-    simulatorPreviewRuntime.routes,
-  );
   const disposeControlRuntimeResources = async (): Promise<void> => {
     if (controlRuntimeResourcesDisposed) return;
     controlRuntimeResourcesDisposed = true;
-    browserRoutePublication.retire();
     releaseInactiveSessionControlLaunchScope();
-    runtimeActionRouteProviderTarget.setComputerRoutesProvider?.(null);
-    const retiringComputerRoutes = computerRoutes;
-    computerRoutes = null;
-    await retiringComputerRoutes?.dispose();
     await managedServiceEndpointReadOwner?.dispose();
     managedServiceEndpointReadOwner = null;
     unsubscribeConnectedServiceRuntimeTargetRegistrations();
@@ -9429,24 +9266,15 @@ export async function startDaemonSessionControlRuntime(
     // daemon. The next owner re-arms persisted custody after state publication.
     runtimeAuthRecoveryScheduler.dispose();
     temporaryThrottleScheduler.dispose();
-    await browserRoutePublication.dispose();
+    // The devices role withdraws its routes and stops its browser, recording, simulator and
+    // computer runtimes (and the iOS helper child) with the daemon.
+    await devicesRoleActivation.stop();
     runtimeActionRouteProviderTarget.setLocalServicesRuntimeActionRoutesProvider?.(
       null,
     );
-    runtimeActionRouteProviderTarget.setSimulatorPreviewRoutesProvider?.(null);
     await shutdownCancellationDomains.stopManagedLocalServices(
       localServicesRuntime,
     );
-    await browserRoutePublication.stopRecording();
-    await simulatorPreviewRuntime.stop();
-    // Tear down the long-lived iOS helper child process (SIGTERM) so a verified signed helper
-    // never outlives the daemon. No-op when iOS stayed fail-closed (no session was created).
-    await iosSimulatorHelperSession?.stop().catch((error: unknown) => {
-      logger.debug(
-        '[DAEMON RUN] Failed to stop iOS simulator helper session',
-        error,
-      );
-    });
   };
   const executionRunAccountAccess = createExecutionRunRequesterAccountAccess({
     resolveSession: resolveSessionAccountContext,
@@ -9521,7 +9349,7 @@ export async function startDaemonSessionControlRuntime(
                     refreshAttemptId,
                     authority: request.runId
                       ? context.authority
-                      : (params.pidToTrackedSession.get(context.target.pid) ??
+                      : (trackedSessionOnProcess(params.trackedSessionsByKey, context.target.pid, context.target.sessionId) ??
                         context.authority),
                   },
                 );
@@ -9593,7 +9421,7 @@ export async function startDaemonSessionControlRuntime(
         }
       },
       captureSessionAuthority: (target) => {
-        const tracked = params.pidToTrackedSession.get(target.pid);
+        const tracked = trackedSessionOnProcess(params.trackedSessionsByKey, target.pid, target.sessionId);
         if (
           !tracked ||
           !target.sessionId ||
@@ -9603,7 +9431,8 @@ export async function startDaemonSessionControlRuntime(
         return {
           identity: tracked,
           isCurrent: () =>
-            params.pidToTrackedSession.get(target.pid) === tracked &&
+            tracked.pid === target.pid &&
+            isCurrentTrackedSession(params.trackedSessionsByKey, tracked) &&
             tracked.happySessionId === target.sessionId,
         };
       },
@@ -9617,7 +9446,7 @@ export async function startDaemonSessionControlRuntime(
     runId: string,
   ): Promise<string | null> => {
     const tracked = parentSessionId === null ? undefined : findTrackedSessionByHappySessionId(
-      params.pidToTrackedSession.values(),
+      params.trackedSessionsByKey.values(),
       parentSessionId,
     );
     let attribution = parentSessionId === null
@@ -9660,7 +9489,7 @@ export async function startDaemonSessionControlRuntime(
   };
   const captureExecutionRunConnectedServicesRunnerIdentity = createExecutionRunConnectedServicesRunnerIdentityCapture({
     machineId: params.machineId, serverId: params.serverId ?? undefined, externalActionAccountId: params.externalActionAccountId ?? undefined,
-    pidToTrackedSession: params.pidToTrackedSession, getApiMachineForSessions: params.getApiMachineForSessions,
+    trackedSessionsByKey: params.trackedSessionsByKey, getApiMachineForSessions: params.getApiMachineForSessions,
     isCurrent: () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
   });
   const executionRunConnectedServicesBridge =
@@ -10491,7 +10320,7 @@ export async function startDaemonSessionControlRuntime(
       }) => {
         await assertSessionAccountCurrent(sessionId, accountContext);
         const tracked = findTrackedSessionByHappySessionId(
-          params.pidToTrackedSession.values(),
+          params.trackedSessionsByKey.values(),
           sessionId,
         );
         const trackedAgentId = resolveTrackedSessionCatalogAgentId(tracked);
@@ -10540,7 +10369,7 @@ export async function startDaemonSessionControlRuntime(
       }) => {
         await assertSessionAccountCurrent(sessionId, accountContext);
         const tracked = findTrackedSessionByHappySessionId(
-          params.pidToTrackedSession.values(),
+          params.trackedSessionsByKey.values(),
           sessionId,
         );
         const agentId = resolveTrackedSessionCatalogAgentId(tracked);
@@ -10755,7 +10584,7 @@ export async function startDaemonSessionControlRuntime(
         });
         if (admissions.status === 'failed') return admissions.result;
         const tracked = findTrackedSessionByHappySessionId(
-          params.pidToTrackedSession.values(),
+          params.trackedSessionsByKey.values(),
           sessionId,
         );
         if (!tracked)
@@ -10827,7 +10656,7 @@ export async function startDaemonSessionControlRuntime(
     // disposed, or remove it before unregistering the target. Registry
     // membership alone cannot authorize Session rematerialization.
     if (!connectedServiceRuntimeRegistry.isRunTarget(target)) {
-      const tracked = params.pidToTrackedSession.get(target.pid);
+      const tracked = trackedSessionOnProcess(params.trackedSessionsByKey, target.pid, target.sessionId);
       if (!tracked || tracked.reportMarkerCustody?.retiring === true) return false;
     }
     return connectedServiceRuntimeRegistry
@@ -11034,7 +10863,7 @@ export async function startDaemonSessionControlRuntime(
   };
   unsubscribeConnectedServiceRuntimeTargetRegistrations =
     connectedServiceRuntimeRegistry.subscribeTargetRegistrations((target) => {
-      const tracked = params.pidToTrackedSession.get(target.pid) ?? null;
+      const tracked = trackedSessionOnProcess(params.trackedSessionsByKey, target.pid, target.sessionId) ?? null;
       if (
         !connectedServiceRuntimeRegistry.isRunTarget(target) &&
         !tracked?.happySessionMetadataFromLocalWebhook
@@ -11121,7 +10950,7 @@ export async function startDaemonSessionControlRuntime(
         return;
       }
       const providerFences = new Set<string>();
-      for (const tracked of params.pidToTrackedSession.values()) {
+      for (const tracked of params.trackedSessionsByKey.values()) {
         const sessionId = normalizeOptionalString(tracked.happySessionId);
         const runnerPid = tracked.sessionRunnerPid ?? tracked.pid;
         let authorityRemoval: Promise<boolean> | null = null;
@@ -11214,16 +11043,14 @@ export async function startDaemonSessionControlRuntime(
           // through their existing owners.
           const targetedAuthorityRemoval = denyRunnerAgentAuthority();
           await updateSessionMarkerActiveTurn({
-            pid: runnerPid,
+            trackingKey: tracked.trackingKey,
             sessionId,
             activeTurnId,
           }).catch(() => false);
           await targetedAuthorityRemoval;
-          const currentTracked = params.pidToTrackedSession.get(
-            capturedRunnerIdentity.pid,
-          );
           if (
-            currentTracked !== tracked ||
+            tracked.pid !== capturedRunnerIdentity.pid ||
+            !isCurrentTrackedSession(params.trackedSessionsByKey, tracked) ||
             tracked.sessionRunnerPid !==
               capturedRunnerIdentity.sessionRunnerPid ||
             tracked.processStartTimeMs !==
@@ -11258,7 +11085,7 @@ export async function startDaemonSessionControlRuntime(
         });
         void (async () => {
           const persistedMarker = sessionId
-            ? await readSessionMarkerForPid(runnerPid)
+            ? await readSessionMarker(tracked.trackingKey)
             : null;
           const runnerIdentity = resolveTrackedSessionRunnerIdentity(tracked);
           const persistedMarkerIsExact = Boolean(
@@ -11338,11 +11165,9 @@ export async function startDaemonSessionControlRuntime(
                 // exact runner stop for a combined plugin.
                 return;
               }
-              const currentTracked = params.pidToTrackedSession.get(
-                capturedProviderRunnerIdentity.pid,
-              );
               if (
-                currentTracked !== tracked ||
+                tracked.pid !== capturedProviderRunnerIdentity.pid ||
+                !isCurrentTrackedSession(params.trackedSessionsByKey, tracked) ||
                 normalizeOptionalString(tracked.happySessionId) !== sessionId ||
                 tracked.sessionRunnerPid !==
                   capturedProviderRunnerIdentity.sessionRunnerPid ||
@@ -11433,18 +11258,18 @@ export async function startDaemonSessionControlRuntime(
   ): Promise<void> => {
     if (input.tracked.reattachedInterruptedTurnId && !input.tracked.activeTurnId) {
       await applyTrackedSessionTurnLifecycle({
-        trackedSessions: params.pidToTrackedSession.values(),
+        trackedSessions: params.trackedSessionsByKey.values(),
         sessionId: input.sessionId,
         event: 'reconcile_reattached',
         readReattachedTurnSnapshot: async sessionId => {
-          if (params.pidToTrackedSession.get(input.tracked.pid) !== input.tracked) return null;
+          if (!isCurrentTrackedSession(params.trackedSessionsByKey, input.tracked)) return null;
           const attribution = input.tracked.requesterWorkAttributionV1 ?? input.tracked.spawnOptions?.requesterWorkAttributionV1;
           return await withSessionAccountContext(sessionId, async (accountContext) => {
             const snapshot = await withSessionAccountHome(accountContext, () => fetchSessionByIdCompat({ reason: 'session-control',
               token: accountContext?.bootstrap.credentials.token ?? params.credentials.token, sessionId,
             }));
             await assertSessionAccountCurrent(sessionId, accountContext, attribution);
-            return params.pidToTrackedSession.get(input.tracked.pid) === input.tracked ? snapshot : null;
+            return isCurrentTrackedSession(params.trackedSessionsByKey, input.tracked) ? snapshot : null;
           }, attribution);
         },
       });
@@ -11472,7 +11297,7 @@ export async function startDaemonSessionControlRuntime(
     }>,
   ) => {
     const tracked = findTrackedSessionByHappySessionId(
-      params.pidToTrackedSession.values(),
+      params.trackedSessionsByKey.values(),
       input.sessionId,
     );
     if (tracked?.reattachedInterruptedTurnId || shouldRefreshSessionRunnerResumeIdentity(tracked)) {
@@ -11512,8 +11337,8 @@ export async function startDaemonSessionControlRuntime(
     return await resolveSessionRunnerRuntimeStatusV2({ state, tracked });
   };
   const onSessionStartupFailure = createOnDaemonSessionStartupFailure({
-    pidToTrackedSession: params.pidToTrackedSession,
-    pidToAwaiter: params.pidToAwaiter,
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnAwaiterByKey: params.spawnAwaiterByKey,
   });
   const externalActionAccountId = params.externalActionAccountId?.trim() ?? '';
   const externalActionInstallationIdentity = externalActionAccountId
@@ -11531,6 +11356,7 @@ export async function startDaemonSessionControlRuntime(
     : null;
   const externalActionContributedInvoker = externalActionAccountId
     ? createDaemonExternalActionContributedInvoker({
+        managedProviderOperationAuthority: params.managedProviderOperationAuthority,
         observePluginExecution: request => observeContributedPluginExecution(request),
         requestCurrentIntent: pluginActionCurrentIntent,
       })
@@ -11562,7 +11388,7 @@ export async function startDaemonSessionControlRuntime(
     >[0]['isSessionCallerCurrent']
   > = async ({ caller, signal }) => {
     if (signal?.aborted) return false;
-    const tracked = Array.from(params.pidToTrackedSession.values()).find(
+    const tracked = Array.from(params.trackedSessionsByKey.values()).find(
       (candidate) => candidate.happySessionId === caller.sessionId,
     );
     if (tracked) {
@@ -11573,7 +11399,7 @@ export async function startDaemonSessionControlRuntime(
       return (
         !signal?.aborted &&
         authority !== null &&
-        Array.from(params.pidToTrackedSession.values()).includes(tracked)
+        Array.from(params.trackedSessionsByKey.values()).includes(tracked)
       );
     }
     return foregroundAgentRuntimeAdmission.isSessionCurrent(caller.sessionId);
@@ -11620,15 +11446,15 @@ export async function startDaemonSessionControlRuntime(
     publication: DiscussionAgentPublisherPrivateRequestV1, signal?: AbortSignal,
   ) => await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
     const sessionId = publication.request.sessionId;
-    const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId,
-      ...(signal ? { signal } : {}) });
-    if (!transport.ok || transport.sessionId !== sessionId)
-      return { v: 1 as const, ok: false as const, error: 'discussion_post_denied' as const };
-    const rpc = { token: credentials.token, sessionId,
-      method: `${sessionId}:${SESSION_RPC_METHODS.DISCUSSION_AGENT_POST_V1}`,
-      request: publication, timeoutMs: null, ...(signal ? { signal } : {}) };
-    return DiscussionAgentPublisherResponseV1Schema.parse(transport.mode === 'plain'
-      ? await callSessionRpc({ ...rpc, mode: 'plain' }) : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: transport.ctx }));
+    try {
+      return DiscussionAgentPublisherResponseV1Schema.parse(await callSessionRpc({ token: credentials.token, sessionId,
+        method: `${sessionId}:${SESSION_RPC_METHODS.DISCUSSION_AGENT_POST_V1}`,
+        request: publication, timeoutMs: null, ...(signal ? { signal } : {}),
+        ...deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, ...(signal ? { signal } : {}) }) }));
+    } catch (error) {
+      if (error instanceof SessionRpcTransportUnavailableError) return { v: 1 as const, ok: false as const, error: 'discussion_post_denied' as const };
+      throw error;
+    }
   });
   const subscribeManagedMachineChanges: ApiMachineClient['onManagedMachinePolicyInvalidated'] = listener => {
     const apiMachine = params.getApiMachineForSessions();
@@ -11637,6 +11463,7 @@ export async function startDaemonSessionControlRuntime(
   };
   const managedMachinePolicyAdapter = createDaemonManagedMachineActionAdapter({
     credentials: params.credentials,
+    executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
     managedGuestLocalStop: createManagedGuestLocalStop({
       captureElevation: () => params.getApiMachineForSessions()?.captureMachineAdminAccess() ?? null,
       requestProcessExit: () => params.requestShutdown('happier-cli'),
@@ -11746,6 +11573,7 @@ export async function startDaemonSessionControlRuntime(
                   const target = privatePurpose.target;
                   const native = createDaemonManagedMachineActionAdapter({ credentials: admitted.credentials,
                     controllerCredentials: params.credentials,
+                    executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
                     subscribeManagedMachineChanges,
                     machineId: params.machineId, serverBaseUrl: admitted.serverHttpBaseUrl, serverId: params.serverId,
                     resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
@@ -11848,7 +11676,7 @@ export async function startDaemonSessionControlRuntime(
     isSessionCallerCurrent,
     isRuntimeCurrent: () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
     readTrackedSessionAttribution: sessionId => {
-      const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+      const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
       return tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
     },
   });
@@ -12096,7 +11924,7 @@ export async function startDaemonSessionControlRuntime(
         return snapshot?.scopeKey === expectedScopeKey ? snapshot : null;
       };
       const isCurrentPidOwner = () => !signal.aborted && !isRuntimePublicationQuiescing()
-        && params.pidToTrackedSession.get(tracked.pid) === tracked
+        && isCurrentTrackedSession(params.trackedSessionsByKey, tracked)
         && tracked.reportMarkerCustody?.retiring !== true
         && tracked.happySessionId === sessionId
         && (requester ? tracked.requesterSessionRuntimeContext === requester
@@ -12168,16 +11996,20 @@ export async function startDaemonSessionControlRuntime(
           const current = await (async () => {
             if (!await account.isCurrent()) return null;
             return await account.withHome(async () => {
-              const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials: account.credentials, idOrPrefix: input.sessionId, signal: readSignal });
-              if (!transport.ok || transport.sessionId !== input.sessionId || !await account.isCurrent()) return null;
-              const rpc = { token: account.credentials.token, sessionId: transport.sessionId,
-                method: `${transport.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
+              const rpc = { token: account.credentials.token, sessionId: input.sessionId,
+                method: `${input.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
                 request: SessionExecutionRunBrokerAuthorityRequestV1Schema.parse({ v: 1, executionRunId: proof.executionRunId,
                   expectedOccurrenceId: proof.executionRunOccurrenceId, expectedProviderConnectionModel: {
                     agentId: proof.agentId, agentTargetKey: basis.agentTargetKey, providerConnectionId: basis.connectionId, modelId: proof.modelId,
-                  } }), signal: readSignal };
-              return SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(transport.mode === 'plain'
-                ? await callSessionRpc({ ...rpc, mode: 'plain' }) : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: transport.ctx }));
+                  } }), signal: readSignal,
+                ...deferSessionRpcEncryption({ reason: 'session-control', credentials: account.credentials, idOrPrefix: input.sessionId, signal: readSignal }) };
+              try {
+                const response = SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(await callSessionRpc(rpc));
+                return await account.isCurrent() ? response : null;
+              } catch (error) {
+                if (error instanceof SessionRpcTransportUnavailableError) return null;
+                throw error;
+              }
             });
           })();
           return current?.status === 'current' && current.executionRunId === proof.executionRunId
@@ -12235,9 +12067,9 @@ export async function startDaemonSessionControlRuntime(
         providerBrokerBindingReleaseById.delete(bindingId);
         unregister?.();
       };
-      unregister = registerPidSpawnResourceCleanup({ pid: input.tracked.pid, spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
+      unregister = registerSessionSpawnResourceCleanup({ trackingKey: input.tracked.trackingKey, spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
         label: 'provider_managed.binding.open',
-        isCurrentPidOwner: account.isCurrentPidOwner,
+        isCurrentOwner: account.isCurrentPidOwner,
         cleanup: async () => { await cleanup?.(); } });
       if (!unregister) { await cleanup(); return null; }
       providerBrokerBindingReleaseById.set(bindingId, { sessionId: input.sessionId,
@@ -12340,7 +12172,7 @@ export async function startDaemonSessionControlRuntime(
   };
   const sessionLiveWorkProducer = createSessionLiveWorkProducer({
     startup: spawnRequestCoalescer,
-    readSessions: () => [...params.pidToTrackedSession.values()],
+    readSessions: () => [...params.trackedSessionsByKey.values()],
     readActivity: tracked => readSessionRunnerLiveWork(tracked, shutdownCancellationDomains.daemonWorkSignal),
   });
   notifySessionLiveWorkChanged = () => sessionLiveWorkProducer.notifyChanged();
@@ -12499,12 +12331,14 @@ export async function startDaemonSessionControlRuntime(
         requester ? requester.bootstrap.allowNativeAccountCredentials === true : true,
         attribution, context.signal);
     },
-    trackedSessions: params.pidToTrackedSession, spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
+    trackedSessions: params.trackedSessionsByKey, spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
     signal: shutdownCancellationDomains.daemonWorkSignal });
   let runtimeAuthFailureReportIntake: RuntimeAuthFailureReportIntake | null = null;
   const { port: controlPort, stop: stopControlServer } =
     await startDaemonControlServer({
       onRuntimeAuthFailureReportIntakeReady: intake => { runtimeAuthFailureReportIntake = intake; },
+      // Role-owned control routes (new Sessions) refuse typed while their role is off.
+      isMachineRoleActive: roleId => params.machineRoles?.activeRoles().has(roleId) ?? true,
       skillStore: params.skillStore,
       skillUsageRecorder: params.skillUsageRecorder,
       onScmDiffSummaryResultUpdated: change => params.getApiMachineForSessions()?.emitScmDiffSummaryResultUpdated(change),
@@ -12525,11 +12359,11 @@ export async function startDaemonSessionControlRuntime(
         await resolveRecoveredSpawnNonceAdmission({
           spawnNonce,
           happyHomeDir: configuration.happyHomeDir,
-          getChildren: () => Array.from(params.pidToTrackedSession.values()),
+          getChildren: () => Array.from(params.trackedSessionsByKey.values()),
           probeSessionServiceability: async (sessionId) =>
             await probeSessionRunnerServiceability({
               sessionId,
-              trackedSessions: params.pidToTrackedSession.values(),
+              trackedSessions: params.trackedSessionsByKey.values(),
               probeCapability: async () =>
                 await probeAlreadyRunningExistingSessionServiceability({
                   sessionId,
@@ -12540,8 +12374,8 @@ export async function startDaemonSessionControlRuntime(
             }),
         }),
       runtimeActionExecute: params.runtimeActionExecute,
-      pidToTrackedSession: params.pidToTrackedSession,
-      getChildren: () => Array.from(params.pidToTrackedSession.values()),
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      getChildren: () => Array.from(params.trackedSessionsByKey.values()),
       machineId: params.machineId,
       runtimeId: params.runtimeId ?? '',
       readDoctorResourceVitals: params.readDoctorResourceVitals,
@@ -12603,7 +12437,7 @@ export async function startDaemonSessionControlRuntime(
           void queueHostedWebStaticAssetSync('session_webhook');
           const normalizedSessionId = normalizeOptionalString(sessionId);
           if (!normalizedSessionId) return;
-          const tracked = [...params.pidToTrackedSession.values()].find(
+          const tracked = [...params.trackedSessionsByKey.values()].find(
             (candidate) =>
               normalizeOptionalString(candidate.happySessionId) ===
               normalizedSessionId,
@@ -12619,7 +12453,7 @@ export async function startDaemonSessionControlRuntime(
               probeSessionRunnerServiceability: async (reportedSessionId) =>
                 await probeSessionRunnerServiceability({
                   sessionId: reportedSessionId,
-                  trackedSessions: params.pidToTrackedSession.values(),
+                  trackedSessions: params.trackedSessionsByKey.values(),
                   probeCapability: async () =>
                     await probeAlreadyRunningExistingSessionServiceability({
                       sessionId: reportedSessionId,
@@ -12691,19 +12525,22 @@ export async function startDaemonSessionControlRuntime(
       agentRuntimeDaemonServices: {
         authorizeExecutionRunAction: async (operation, { sessionId, trackedSession, signal: requestSignal }) => {
           const child = operation.executionRun;
-          if (!child || params.pidToTrackedSession.get(trackedSession.pid) !== trackedSession) return false;
+          if (!child || !isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)) return false;
           const signal = AbortSignal.any([requestSignal, shutdownCancellationDomains.daemonWorkSignal]);
           return await withSessionAccountContext(sessionId, async requester => {
             const credentials = requester?.bootstrap.credentials ?? params.credentials;
             return await withSessionAccountHome(requester, async () => {
-              const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal });
-              if (!transport.ok || transport.sessionId !== sessionId) return false;
-              const rpc = { token: credentials.token, sessionId,
-                method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
-                request: { v: 1, executionRunId: child.runId, expectedOccurrenceId: child.occurrenceId }, timeoutMs: null, signal };
-              const current = SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(transport.mode === 'plain'
-                ? await callSessionRpc({ ...rpc, mode: 'plain' }) : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: transport.ctx }));
-              return params.pidToTrackedSession.get(trackedSession.pid) === trackedSession
+              let current: ReturnType<typeof SessionExecutionRunBrokerAuthorityResponseV1Schema.parse>;
+              try {
+                current = SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(await callSessionRpc({ token: credentials.token, sessionId,
+                  method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
+                  request: { v: 1, executionRunId: child.runId, expectedOccurrenceId: child.occurrenceId }, timeoutMs: null, signal,
+                  ...deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal }) }));
+              } catch (error) {
+                if (error instanceof SessionRpcTransportUnavailableError) return false;
+                throw error;
+              }
+              return isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)
                 && current.status === 'current' && current.parentSessionId === sessionId
                 && current.executionRunId === child.runId && current.occurrenceId === child.occurrenceId
                 && current.runtimeState === 'active_turn' && current.activeTurnId === operation.witness.turnId;
@@ -12718,7 +12555,7 @@ export async function startDaemonSessionControlRuntime(
               message: 'Connected Account identity observation is unavailable' } };
             if (!trackedSession || request.context.executionRunSnapshotId || observation.sessionId !== sessionId) return unavailable;
             const isCurrent = async () => !context.signal?.aborted
-              && params.pidToTrackedSession.get(trackedSession.pid) === trackedSession
+              && isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)
               && authorizeTrackedRunnerAgentDaemonServiceOperation({ tracked: trackedSession, sessionId, runner,
                 retainedAgent: context.retainedAgent, witness: undefined, allowIdleCurrentGeneration: true })
               && await context.isCurrent();
@@ -12734,7 +12571,7 @@ export async function startDaemonSessionControlRuntime(
               const groupId = binding.groupId;
               const credentials = accountContext?.bootstrap.credentials ?? params.credentials;
               const getCurrentProviderSessionId = () => {
-                if (context.signal?.aborted || params.pidToTrackedSession.get(trackedSession.pid) !== trackedSession) return null;
+                if (context.signal?.aborted || !isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)) return null;
                 const agentId = resolveTrackedSessionCatalogAgentId(trackedSession);
                 return agentId ? resolveTrackedConnectedServiceVendorResumeId({ agentId, tracked: trackedSession }) : null;
               };
@@ -12795,18 +12632,15 @@ export async function startDaemonSessionControlRuntime(
             try {
               return await runnerExecutionRunSnapshots.dispatch(request, context);
             } catch (error) {
-              // This boundary also serves SCM and native model reads. Retain
-              // the failing operation and Home disposition before returning
-              // the deliberately narrow public snapshot refusal.
+              const failure = projectRunnerDaemonPluginServicesFailure(error);
               logger.warnLocalFile('[EXECUTION RUN] Snapshot service operation failed', {
                 sessionId,
                 operation: request.operation.kind,
                 ...classifyServerEndpointError(error),
+                code: failure.code,
+                cause: failure.cause,
               });
-              const code = ProviderErrorCodeV1Schema.safeParse(error && typeof error === 'object' && 'code' in error ? error.code : undefined);
-              if (code.success) return { ok: false as const, error: { code: code.data, message: code.data } };
-              return { ok: false as const, error: { code: 'execution_run_contribution_snapshot_unavailable',
-                message: 'Execution Run executable snapshot is unavailable' } };
+              return { ok: false as const, error: failure };
             }
           }
           const executionRunSnapshotId = request.context.executionRunSnapshotId;
@@ -12881,7 +12715,7 @@ export async function startDaemonSessionControlRuntime(
             const operation = request.operation;
             const tracked = trackedSession;
             const unavailable = () => ({ ok: false as const, error: { code: 'mcp_request_auth_not_active', message: 'mcp_request_auth_not_active' } });
-            if (!tracked || tracked.happySessionId !== sessionId || params.pidToTrackedSession.get(tracked.pid) !== tracked) return unavailable();
+            if (!tracked || tracked.happySessionId !== sessionId || !isCurrentTrackedSession(params.trackedSessionsByKey, tracked)) return unavailable();
             if (operation.kind === 'mcp.request_auth.close') {
               await connectedAccountRequestAuthRegistry.retireSessionCapabilities({ parentSessionId: sessionId, materializationId: operation.materializationId });
               return { ok: true as const, result: { kind: 'mcp.request_auth.closed' as const } };
@@ -12915,7 +12749,7 @@ export async function startDaemonSessionControlRuntime(
                 const credentials = requester ? requester.bootstrap.credentials : params.credentials;
                 const snapshotLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
                 const isCurrent = () => !isRuntimePublicationQuiescing() && !shutdownCancellationDomains.daemonWorkSignal.aborted
-                  && params.pidToTrackedSession.get(tracked.pid) === tracked
+                  && isCurrentTrackedSession(params.trackedSessionsByKey, tracked)
                   && tracked.reportMarkerCustody?.retiring !== true
                   && tracked.happySessionId === sessionId
                   && (requester ? tracked.requesterSessionRuntimeContext === requester
@@ -12937,21 +12771,22 @@ export async function startDaemonSessionControlRuntime(
                     () => withSessionAccountHome(requester, () => established.readMaterialSnapshot(input))) },
                   activatePurposeBindings: activate, registry: connectedAccountRequestAuthRegistry,
                   httpPort: requireConnectedAccountRequestAuthHttpPort(), isCurrent, assertCurrent,
-                  registerLifetimeCleanup: cleanup => registerPidSpawnResourceCleanup({ pid: tracked.pid,
+                  registerLifetimeCleanup: cleanup => registerSessionSpawnResourceCleanup({ trackingKey: tracked.trackingKey,
                     label: operation.kind,
-                    spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
-                    isCurrentPidOwner: isCurrent, cleanup }),
+                    spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
+                    isCurrentOwner: isCurrent, cleanup }),
                   readExecutionRunAuthority: async (request, requestSignal) => {
                     await assertCurrent(requestSignal);
                     const response = await withSessionAccountHome(requester, async () => {
-                      const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal: requestSignal });
-                      if (!transport.ok || transport.sessionId !== sessionId) return null;
-                      const rpc = { token: credentials.token, sessionId,
-                        method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
-                        request,
-                        signal: requestSignal };
-                      return SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(transport.mode === 'plain'
-                        ? await callSessionRpc({ ...rpc, mode: 'plain' }) : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: transport.ctx }));
+                      try {
+                        return SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(await callSessionRpc({ token: credentials.token, sessionId,
+                          method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
+                          request, signal: requestSignal,
+                          ...deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal: requestSignal }) }));
+                      } catch (error) {
+                        if (error instanceof SessionRpcTransportUnavailableError) return null;
+                        throw error;
+                      }
                     });
                     await assertCurrent(requestSignal);
                     return response;
@@ -13039,7 +12874,7 @@ export async function startDaemonSessionControlRuntime(
               error: { code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable' } });
             const tracked = trackedSession;
             if (!tracked || tracked.happySessionId !== sessionId
-              || params.pidToTrackedSession.get(tracked.pid) !== tracked) return unavailable();
+              || !isCurrentTrackedSession(params.trackedSessionsByKey, tracked)) return unavailable();
             try {
               if (operation.kind === 'provider_managed.binding.close') {
                 const binding = providerBrokerBindingReleaseById.get(operation.bindingId);
@@ -13141,9 +12976,11 @@ export async function startDaemonSessionControlRuntime(
                 teamBinding.expectedResourceRevision !==
                   operation.expectedResourceRevision ||
                 selection?.agentTargetKey !== operation.agentTargetKey ||
-                selection.modelId !== operation.modelId
+                (teamBinding.deliveryMode !== 'brokered' && selection.modelId !== operation.modelId)
               )
                 return null;
+              // Brokered opens retain this accepted resource/revision; Home
+              // admits the requested exact model on every new materialization.
               return { teamId, deliveryMode: teamBinding.deliveryMode,
                 ...(teamBinding.nativeDelivery ? { nativeDelivery: teamBinding.nativeDelivery } : {}) };
             })();
@@ -13176,7 +13013,7 @@ export async function startDaemonSessionControlRuntime(
                     const evidence = tracked.teamCredentialBrokerEvidence ??= createSessionBrokerApplicationEvidence({
                       sessionId, pid: runner.pid, processStartTimeMs: runner.processStartTimeMs,
                       readActiveTurnId: () => tracked.activeTurnId ?? null,
-                      isCurrent: () => params.pidToTrackedSession.get(tracked.pid) === tracked,
+                      isCurrent: () => isCurrentTrackedSession(params.trackedSessionsByKey, tracked),
                     });
                     return evidence.beginRequest();
                   },
@@ -13224,12 +13061,12 @@ export async function startDaemonSessionControlRuntime(
               request.operation.consumer?.kind === 'execution_run'
                 ? randomUUID()
                 : null;
-            const unregisterCleanup = registerPidSpawnResourceCleanup({
-              pid: tracked.pid,
+            const unregisterCleanup = registerSessionSpawnResourceCleanup({
+              trackingKey: tracked.trackingKey,
               label: operation.kind,
-              spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
-              isCurrentPidOwner: () =>
-                params.pidToTrackedSession.get(tracked.pid) === tracked,
+              spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
+              isCurrentOwner: () =>
+                isCurrentTrackedSession(params.trackedSessionsByKey, tracked),
               cleanup: async () => {
                 await opened.cleanup();
                 if (bindingId)
@@ -13422,7 +13259,7 @@ export async function startDaemonSessionControlRuntime(
             try {
               if (request.operation.kind === 'model_transition.authorize') {
                 const tracked = findTrackedSessionByHappySessionId(
-                  params.pidToTrackedSession.values(),
+                  params.trackedSessionsByKey.values(),
                   sessionId,
                 );
                 const authorization =
@@ -13844,7 +13681,7 @@ export async function startDaemonSessionControlRuntime(
                       });
                     }
                     const tracked = findTrackedSessionByHappySessionId(
-                      params.pidToTrackedSession.values(),
+                      params.trackedSessionsByKey.values(),
                       sessionId,
                     );
                     const workingDirectory = tracked?.spawnOptions?.directory;
@@ -14224,7 +14061,7 @@ export async function startDaemonSessionControlRuntime(
         const sessionId = normalizeOptionalString(tracked.happySessionId);
         if (!sessionId) return false;
         return await updateSessionMarkerActiveTurn({
-          pid: tracked.sessionRunnerPid ?? tracked.pid,
+          trackingKey: tracked.trackingKey,
           sessionId,
           activeTurnId: admission.turnId,
           agentRuntimeDaemonServiceActiveAdmission: admission,
@@ -14234,14 +14071,14 @@ export async function startDaemonSessionControlRuntime(
         const sessionId = normalizeOptionalString(tracked.happySessionId);
         if (!sessionId) return false;
         return await updateSessionMarkerActiveTurn({
-          pid: tracked.sessionRunnerPid ?? tracked.pid,
+          trackingKey: tracked.trackingKey,
           sessionId,
           activeTurnId: tracked.activeTurnId ?? null,
           expectedAgentRuntimeDaemonServiceActiveAdmission: admission,
         });
       },
       foregroundAgentRuntimeAdmission,
-      simulatorPreview: simulatorPreviewRuntime.routes,
+      resolveSimulatorPreview: () => devicesRole()?.simulatorPreviewRoutes ?? null,
       connectedAccountRequestAuth: {
         authenticate: connectedAccountRequestAuthRegistry.authenticate,
         lookupRequestAuth: async (input) => {
@@ -14271,7 +14108,7 @@ export async function startDaemonSessionControlRuntime(
               : (getActiveAccountSettingsSnapshot()?.settings ?? null);
           return await withSessionAccountHome(accountContext, async () => {
             const interruptedOriginId =
-              Array.from(params.pidToTrackedSession.values())
+              Array.from(params.trackedSessionsByKey.values())
                 .find((tracked) => tracked.happySessionId === input.sessionId)
                 ?.activeTurnId?.trim() || null;
             await connectedServiceRecoverySupersessionCleaner({
@@ -14326,7 +14163,7 @@ export async function startDaemonSessionControlRuntime(
             // gate at respawn, binding persistence, hot-apply-in-place when eligible).
             const result = await switchSessionConnectedServiceAuth({
               core: connectedServiceSessionAuthSwitchCore,
-              getChildren: () => Array.from(params.pidToTrackedSession.values()),
+              getChildren: () => Array.from(params.trackedSessionsByKey.values()),
               resolveInactiveSession: async ({ sessionId }) => {
                 await assertSessionAccountCurrent(sessionId, accountContext);
                 return await resolveInactiveConnectedServiceSessionContext({
@@ -14486,7 +14323,7 @@ export async function startDaemonSessionControlRuntime(
               }) => {
                 await assertSessionAccountCurrent(sessionId, accountContext);
                 const tracked = findTrackedSessionByHappySessionId(
-                  params.pidToTrackedSession.values(),
+                  params.trackedSessionsByKey.values(),
                   sessionId,
                 );
                 const bindingIntents =
@@ -14596,7 +14433,7 @@ export async function startDaemonSessionControlRuntime(
       handleSessionConnectedServiceRuntimeAuthRefresh,
       handleSessionRunnerRestart: async (request, options) => {
         const tracked = findTrackedSessionByHappySessionId(
-          params.pidToTrackedSession.values(),
+          params.trackedSessionsByKey.values(),
           request.sessionId,
         );
         const expectedRunnerProcessIdentity =
@@ -14634,7 +14471,7 @@ export async function startDaemonSessionControlRuntime(
           dryRun: request.dryRun === true,
           currentIdentity: resolveCurrentSessionRunnerLaunchIdentity(),
           resolveCurrentIdentity: resolveCurrentSessionRunnerLaunchIdentity,
-          trackedSessions: Array.from(params.pidToTrackedSession.values()),
+          trackedSessions: Array.from(params.trackedSessionsByKey.values()),
           requestRestart: requestSessionRunnerVersionRuntimeRefresh,
           readNativeRuntimeActivity: readSessionRunnerNativeRuntimeActivity,
           resolveActivityDisabledReason:
@@ -14666,7 +14503,7 @@ export async function startDaemonSessionControlRuntime(
         return await withSessionAccountContext(sessionId, async (accountContext) =>
           await withSessionAccountHome(accountContext, () =>
             authorizeConnectedServiceRuntimeAuthFailureSource({
-              getChildren: () => Array.from(params.pidToTrackedSession.values()),
+              getChildren: () => Array.from(params.trackedSessionsByKey.values()),
               resolveInactiveSession: async ({
                 sessionId: inactiveSessionId,
               }) => {
@@ -14747,7 +14584,7 @@ export async function startDaemonSessionControlRuntime(
           }
           if (input.activeTurnId === null) {
             const idleCustody = await applyTrackedSessionTurnLifecycle({
-              trackedSessions: params.pidToTrackedSession.values(),
+              trackedSessions: params.trackedSessionsByKey.values(),
               sessionId: input.sessionId,
               event: input.event,
               activeTurnIdWitness: null,
@@ -14782,7 +14619,7 @@ export async function startDaemonSessionControlRuntime(
         if (input.turnId && (input.event === 'prompt_or_steer' || input.event === 'task_started')) pendingTurnBegins.add(pendingBegin);
         try {
           const turnCustody = await applyTrackedSessionTurnLifecycle({
-            trackedSessions: params.pidToTrackedSession.values(),
+            trackedSessions: params.trackedSessionsByKey.values(),
             sessionId: input.sessionId,
             event: input.event,
             ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -15031,7 +14868,7 @@ export async function startDaemonSessionControlRuntime(
                   : null
                 : input.credentialFingerprint;
             const result = await recordProviderAccountUsageSnapshotForSession({
-              getChildren: () => Array.from(params.pidToTrackedSession.values()),
+              getChildren: () => Array.from(params.trackedSessionsByKey.values()),
               store:
                 accountContext?.providerAccountUsageStore ??
                 providerAccountUsageStore,
@@ -15316,7 +15153,7 @@ export async function startDaemonSessionControlRuntime(
           await assertSessionAccountCurrent(input.sessionId, accountContext);
           return await withSessionAccountHome(accountContext, () =>
             recordProviderAccountUsageAdoptionForSession({
-              getChildren: () => Array.from(params.pidToTrackedSession.values()),
+              getChildren: () => Array.from(params.trackedSessionsByKey.values()),
               store:
                 accountContext?.providerAccountUsageStore ??
                 providerAccountUsageStore,
@@ -15362,8 +15199,9 @@ export async function startDaemonSessionControlRuntime(
           phaseStartedAt = now;
         };
         recordPhase('entered');
-        const resolveTracked = () => params.pidToTrackedSession.get(input.runnerPid)
-          ?? findTrackedSessionByRunnerPid(params.pidToTrackedSession, input.runnerPid);
+        const resolveTracked = () => trackedSessionsForProcess(params.trackedSessionsByKey, input.runnerPid)
+          .find(candidate => candidate.happySessionId === input.sessionId)
+          ?? findTrackedSessionByRunnerPid(params.trackedSessionsByKey, input.runnerPid);
         const tracked = resolveTracked();
         if (!tracked || tracked.happySessionId !== input.sessionId
           || resolveTrackedSessionRuntimeAgentId(tracked) !== input.agentId) return { status: 'unavailable' };
@@ -15388,9 +15226,9 @@ export async function startDaemonSessionControlRuntime(
               // The runner invokes this only once, after its accepted open proves
               // there are no applied CS accounts or selection environment. Later
               // reads never recreate a target invalidated by a partial hot apply.
-              if (input.initialEmpty && !connectedServiceRuntimeRegistry.getByPid(tracked.pid)) {
+              if (input.initialEmpty && !connectedServiceRuntimeRegistry.getSessionTarget(tracked.pid, input.sessionId, tracked.trackingKey)) {
                 connectedServiceRuntimeRegistry.registerTarget({
-                  pid: tracked.pid, sessionId: input.sessionId, agentId: input.agentId,
+                  pid: tracked.pid, sessionId: input.sessionId, agentId: input.agentId, spawnTrackingKey: tracked.trackingKey,
                   sessionDirectory: tracked.spawnOptions?.directory,
                   connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {} },
                   connectedServiceSelectionsEnv: {},
@@ -15434,8 +15272,9 @@ export async function startDaemonSessionControlRuntime(
             adopt: executionRunConnectedServicesBridge.adoptLiveMaterialization,
             proveRunnerLive: async (marker) => {
               if (marker.happySessionId === null) return false;
-              const tracked = params.pidToTrackedSession.get(marker.pid);
-              if (!tracked || tracked.happySessionId !== marker.happySessionId)
+              const tracked = trackedSessionsForProcess(params.trackedSessionsByKey, marker.pid)
+                .find(candidate => candidate.happySessionId === marker.happySessionId);
+              if (!tracked)
                 return false;
               return await isSessionRunnerActiveInDaemon({
                 sessionId: marker.happySessionId,
@@ -15498,7 +15337,7 @@ export async function startDaemonSessionControlRuntime(
   connectedAccountRequestAuthHttpPort = controlPort;
   params.onConnectedAccountRequestAuthHttpPortReady?.(controlPort);
   const reattachedAuthorityRefreshes = await Promise.allSettled(
-    [...params.pidToTrackedSession.values()]
+    [...params.trackedSessionsByKey.values()]
       .filter(
         (tracked) =>
           tracked.reattachedFromDiskMarker === true &&
@@ -15534,8 +15373,9 @@ export async function startDaemonSessionControlRuntime(
       clearExecutionRunConnectedServicesCleanupReceipt,
     proveRunnerLive: async (marker) => {
       if (marker.happySessionId === null) return false;
-      const tracked = params.pidToTrackedSession.get(marker.pid);
-      if (!tracked || tracked.happySessionId !== marker.happySessionId)
+      const tracked = trackedSessionsForProcess(params.trackedSessionsByKey, marker.pid)
+        .find(candidate => candidate.happySessionId === marker.happySessionId);
+      if (!tracked)
         return false;
       return await isSessionRunnerActiveInDaemon({
         sessionId: marker.happySessionId,
@@ -15660,9 +15500,9 @@ export async function startDaemonSessionControlRuntime(
   };
   processActionOwnerAdapters = createProcessActionOwnerAdapters({
     readServiceTargets: () => pluginRuntimeController.getState().activeRegistry?.projectManagedServices.readResourceTargets() ?? [],
-    readBrowsers: () => guardBrowserResourceOwner?.readResourceTargets?.() ?? [],
+    readBrowsers: () => devicesBrowserResources()?.readResourceTargets?.() ?? [],
     startService: localServicesRuntime.launcherRoutes.startTarget,
-    getBrowserAdapter: () => guardBrowserResourceOwner?.adapter ?? null,
+    getBrowserAdapter: () => devicesBrowserResources()?.adapter ?? null,
     refreshInventory: localServicesRuntime.refreshInventoryNow,
     terminateDetectedService: localServicesRuntime.terminateDetectedService,
   });
@@ -15721,7 +15561,7 @@ export async function startDaemonSessionControlRuntime(
       if (retiredPids.length) logger.infoFile('[DAEMON RUN] Retired retained managed services of ended owners', { retiredPids });
     },
     guardSources: {
-      readBrowsers: () => guardBrowserResourceOwner?.readResourceTargets?.() ?? [],
+      readBrowsers: () => devicesBrowserResources()?.readResourceTargets?.() ?? [],
       readServices: (signal?: AbortSignal) => localServicesRuntime.refreshInventoryNow({ stage: 'native', signal }),
       readServiceTargets: () => pluginRuntimeController.getState().activeRegistry?.projectManagedServices.readResourceTargets() ?? [],
     },
@@ -15729,7 +15569,7 @@ export async function startDaemonSessionControlRuntime(
     processLeftBehindPass,
     ownerRemainder,
     processActionLifecycle: createSessionProcessActionLifecycle({
-      pidToTrackedSession: params.pidToTrackedSession,
+      trackedSessionsByKey: params.trackedSessionsByKey,
       markStopRequested: sessionRunnerRespawnManager.markStopRequested,
       registerPhysicalStopEffect: disconnectedTerminalHostResumeLifecycle.registerPhysicalStopEffect,
       prepareStopIntent: async (sessionId, execution, stopIntent) => {
@@ -15798,7 +15638,7 @@ export async function startDaemonSessionControlRuntime(
     spawnSessionForInternalResume,
     stopSession,
     stopRequesterSessionForHandoff: async (sessionId, expectedSpawnNonce) => {
-      const candidates = [...params.pidToTrackedSession.values()].filter(tracked => tracked.happySessionId === sessionId);
+      const candidates = [...params.trackedSessionsByKey.values()].filter(tracked => tracked.happySessionId === sessionId);
       if (candidates.length === 0) return await isSessionAlreadyRunning(sessionId) ? 'failed' : 'already_inactive';
       if (candidates.length !== 1) return 'failed';
       const tracked = candidates[0]!;
@@ -15815,7 +15655,7 @@ export async function startDaemonSessionControlRuntime(
     },
     isSessionAlreadyRunning,
     hasPendingRunnerRestarts: () => versionRuntimeRefreshAttemptHandoff.hasPending()
-      || params.connectedServicesRestartRequestedPids.size > 0
+      || params.connectedServicesRestartRequestedSessions.size > 0
       || sessionRunnerRespawnManager.hasPendingTerminalSettlements()
       || sessionRunnerRespawnManager.hasPendingIntendedRestarts(),
     restartStaleSessionRunnersAfterDaemonStart: () => restartStaleRunnersAfterDaemonStart({
@@ -15824,7 +15664,7 @@ export async function startDaemonSessionControlRuntime(
       restart: () => ({
         currentIdentity: resolveCurrentSessionRunnerLaunchIdentity(),
         resolveCurrentIdentity: resolveCurrentSessionRunnerLaunchIdentity,
-        trackedSessions: Array.from(params.pidToTrackedSession.values()),
+        trackedSessions: Array.from(params.trackedSessionsByKey.values()),
         requestRestart: requestSessionRunnerVersionRuntimeRefresh,
         readNativeRuntimeActivity: readSessionRunnerNativeRuntimeActivity,
         resolveActivityDisabledReason: resolveSessionRunnerActivity,
@@ -15844,7 +15684,7 @@ export async function startDaemonSessionControlRuntime(
         tracked,
         happyHomeDir: configuration.happyHomeDir,
         isCurrent: () =>
-          params.pidToTrackedSession.get(tracked.pid) === tracked &&
+          isCurrentTrackedSession(params.trackedSessionsByKey, tracked) &&
           !isRuntimePublicationQuiescing() &&
           typeof tracked.stopRequestedAtMs !== 'number' &&
           tracked.reportMarkerCustody?.retiring !== true,
@@ -15853,7 +15693,7 @@ export async function startDaemonSessionControlRuntime(
         probeSessionServiceability: async (sessionId) =>
           await probeSessionRunnerServiceability({
             sessionId,
-            trackedSessions: params.pidToTrackedSession.values(),
+            trackedSessions: params.trackedSessionsByKey.values(),
             probeCapability: async () =>
               await probeAlreadyRunningExistingSessionServiceability({
                 sessionId,
@@ -15920,7 +15760,7 @@ export async function startDaemonSessionControlRuntime(
     awaitAgentSessionOpen: async (input) =>
       await awaitTrackedRunnerAgentSessionOpen({
         getTrackedSessions: () =>
-          Array.from(params.pidToTrackedSession.values()),
+          Array.from(params.trackedSessionsByKey.values()),
         ...input,
         readStartupFailure: trackedSession => readStartupFailure({ sessionId: input.sessionId, trackedSession }),
       }),
@@ -15952,7 +15792,7 @@ export async function startDaemonSessionControlRuntime(
         },
       }),
     readMaterializedStateObservationBinding: (sessionId) =>
-      readTrackedSessionMaterializedStateObservationBinding(params.pidToTrackedSession.values(), sessionId),
+      readTrackedSessionMaterializedStateObservationBinding(params.trackedSessionsByKey.values(), sessionId),
     providerAccountUsageStore,
     resolveProviderAccountUsageStore: providerAccountUsageStores.forAccount,
     // Provider account-usage persistence pauses a key after repeated write
@@ -15962,8 +15802,8 @@ export async function startDaemonSessionControlRuntime(
     flushProviderAccountUsagePersistence: async (timeoutMs: number) =>
       await flushProviderAccountUsagePersistenceForTrackedSessions({
         ownedScheduler: providerAccountUsagePersistence,
-        trackedSessions: [...params.pidToTrackedSession.keys()].map((pid) => ({
-          happySessionId: resolveCanonicalTrackedSessionId(pid) || null,
+        trackedSessions: [...params.trackedSessionsByKey.keys()].map((trackingKey) => ({
+          happySessionId: resolveCanonicalTrackedSessionId(trackingKey) || null,
         })),
         withSessionAccountContext,
         timeoutMs,
@@ -16004,11 +15844,12 @@ export async function startDaemonSessionControlRuntime(
         createRedactionLease: () =>
           createProviderRedactionLease({ values: [] }),
       }),
-    refreshBrowserRouteOwners,
+    // The devices role owns the browser; while it is off there is nothing to refresh or purge.
+    refreshBrowserRouteOwners: async () => { await devicesRole()?.browser.refreshRouteOwners(); },
     // BRW-6: daemon-side on-disk browser storage purge entrypoints. The daemon's
     // session-deleted signal and logout transition drive these to remove session/ephemeral
     // profile + partition bytes (fail-closed; failed purge marks the profile unusable).
-    purgeBrowserStorageForSessionDeleted,
-    purgeBrowserStorageForLogout,
+    purgeBrowserStorageForSessionDeleted: async sessionId => { await devicesRole()?.browser.purgeForSessionDeleted(sessionId); },
+    purgeBrowserStorageForLogout: async () => { await devicesRole()?.browser.purgeForLogout(); },
   };
 }

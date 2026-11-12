@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
@@ -19,6 +20,32 @@ vi.mock('@/daemon/controlServer', () => ({
   },
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); boundary.control = null; });
+
+it('preserves the real snapshot service failure and its diagnostic cause', async () => {
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control);
+  const services = boundary.control?.agentRuntimeDaemonServices;
+  if (!services) throw new Error('Missing production daemon service dispatch');
+  const privateText = 'PRIVATE_EXCEPTION_TEXT';
+  const failures = [
+    { error: new TypeError(privateText), code: 'runner_plugin_services_unavailable',
+      cause: { code: 'TypeError', stage: 'dispatch' } },
+    { error: new PluginError({ code: 'provider_model_not_found', message: privateText,
+        details: { cause: { code: 'ENOENT', stage: 'registry_acquisition' } } }),
+      code: 'provider_model_not_found', cause: { code: 'ENOENT', stage: 'registry_acquisition' } },
+  ];
+  for (const failure of failures) {
+    // Cancellation is an OS boundary; all snapshot and failure projection logic remains real.
+    const result = AgentRuntimeDaemonServiceResponseV1Schema.parse(await services.dispatch(
+      AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
+        context: { token: 'a'.repeat(43), sessionId: h.sessionId },
+        operation: { kind: 'execution_run.snapshot.acquire_v1' } }),
+      { sessionId: h.sessionId, runner: h.runner, retainedAgent: h.retainedAgent,
+        trackedSession: h.tracked, invocationContext: h.tracked.runnerAgentInvocationContext!,
+        isCurrent: async () => true, signal: AbortSignal.abort(failure.error) }));
+    expect(result).toMatchObject({ ok: false, error: { code: failure.code, cause: failure.cause } });
+    expect(JSON.stringify(result)).not.toContain(privateText);
+  }
+});
 
 it('keeps exact Run service custody through rejected replacements and permits only close after snapshot release', async () => {
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control);
