@@ -7,6 +7,11 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('explains an unenforceable role policy and offers another Agent', () => {
+        const expected = "This Agent cannot enforce this role's access restrictions. Choose another Agent for this role.";
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'role_policy_unenforceable', error: 'role_policy_unenforceable' }, 'fallback')).toBe(expected);
+        expect(resolveActionExecutionErrorMessage(Object.assign(new Error('role_policy_unenforceable'), { code: 'role_policy_unenforceable' }), 'fallback')).toBe(expected);
+    });
     it('names the Account Voice feature repair', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'feature_policy_disabled', details: { recovery: 'enable_voice_agent' } }, 'fallback')).toBe(t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') }));
     });
