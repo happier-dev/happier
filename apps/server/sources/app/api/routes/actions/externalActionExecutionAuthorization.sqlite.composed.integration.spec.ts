@@ -4683,7 +4683,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it.each(['account', 'terminal'] as const)('binds supplied Session publisher provenance on client and Account reads with %s credentials', async kind => {
+    it.each(['account', 'terminal'] as const)('binds supplied Session publisher provenance on client proposals and Account reads with %s credentials', async kind => {
         const fixture = await createFixture({ qualifiedPat: false });
         const session = await db.session.create({ data: { accountId: fixture.account.id,
             tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
@@ -4710,7 +4710,7 @@ describe("external Action execution authorization", () => {
         try {
             for (const actionId of ['search.conversations', 'ui.find', 'workspace.tabs.list',
                 'workflow.definition.list', 'workflow.definition.get', 'boards.list',
-                'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list']) {
+                'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list', 'artifact.public_link.create']) {
                 const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
                     caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
                     sourceTurnId: 'client-read-turn', callerPermissionMode: null, requestId: crypto.randomUUID() });
@@ -4719,7 +4719,8 @@ describe("external Action execution authorization", () => {
                         machineIds: [fixture.machine.id], mode: 'indexed' }
                     : actionId === 'ui.find' ? { op: 'read' }
                     : actionId === 'workflow.definition.get' ? { definitionId: crypto.randomUUID() }
-                    : actionId === 'deployments.environments.list' ? { serverId: homeId } : {};
+                    : actionId === 'deployments.environments.list' ? { serverId: homeId }
+                    : actionId === 'artifact.public_link.create' ? { artifactId: namedEnvironment.artifact.id, audience: 'anonymous' } : {};
                 const envelope = { v: 1, requestId: origin.requestId,
                     target: { kind: 'machine', machineId: fixture.machine.id }, input } satisfies ExternalActionRequestEnvelopeV1;
                 const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
@@ -4732,7 +4733,7 @@ describe("external Action execution authorization", () => {
                     url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                     headers: { authorization: `Bearer ${token}` }, payload });
                 const minted = await mint();
-                expect(minted.statusCode, minted.body).toBe(200);
+                expect(minted.statusCode, `${actionId}: ${minted.body}`).toBe(200);
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
                 expect(authorization.binding).toMatchObject({ actionId,
                     sessionActionOrigin: origin, sessionActionSource: source });
@@ -10029,6 +10030,35 @@ describe("external Action execution authorization", () => {
             const substituted = { ...relayBody, envelope: { ...envelope, input: { ...envelope.input, artifactId: 'another-approval' } } };
             expect((await app.inject({ method: 'POST', url: relayPath, payload: substituted, headers: signed(relayPath, substituted) })).statusCode).toBe(401);
             expect((await issue(fixture.pat.token)).statusCode).toBe(403);
+            if (access === 'owned') {
+                const terminal = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+                expect((await issue(terminal)).statusCode).toBe(403);
+                for (const decision of ['reject', 'cancel'] as const) {
+                    const withdrawalEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: { ...envelope.input, decision } };
+                    const withdrawal = await issue(terminal, { ...body, envelope: withdrawalEnvelope });
+                    expect(withdrawal.statusCode, withdrawal.body).toBe(200);
+                    const withdrawalRoot = ExternalActionExecutionAuthorizationV1Schema.parse(withdrawal.json());
+                    expect(withdrawalRoot.binding.approvalDecisionAdmission).toEqual({ artifactId: envelope.input.artifactId, decision });
+                    expect(await verifyCurrentExternalActionPrincipal(withdrawalRoot.binding)).toMatchObject({
+                        accountId: fixture.account.id, authority: 'account_automation', authentication: { kind: 'terminal' },
+                    });
+                    const withdrawalBody = { ...body, envelope: withdrawalEnvelope, executionAuthorization: withdrawalRoot };
+                    const withdrawalHeaders = createExternalActionAuthorizedRequestHeaders({ authorization: withdrawalRoot, effectActionId: actionId,
+                        target: withdrawalRoot.binding.target, installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey,
+                        method: 'POST', path: relayPath, body: withdrawalBody });
+                    expect((await app.inject({ method: 'POST', url: relayPath, payload: withdrawalBody, headers: withdrawalHeaders })).statusCode).toBe(200);
+                    expect(dispatchedPrincipals.at(-1)).toMatchObject({ accountId: fixture.account.id, authority: 'account_automation' });
+                    const substitute = { ...body, envelope: { ...withdrawalEnvelope, input: envelope.input }, executionAuthorization: withdrawalRoot };
+                    const headers = createExternalActionAuthorizedRequestHeaders({ authorization: withdrawalRoot, effectActionId: actionId,
+                        target: withdrawalRoot.binding.target, installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey,
+                        method: 'POST', path: relayPath, body: substitute });
+                    expect((await app.inject({ method: 'POST', url: relayPath, payload: substitute, headers })).statusCode).toBe(401);
+                }
+                const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+                const otherTerminal = await auth.createToken(other.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+                const crossAccount = await issue(otherTerminal, { ...body, envelope: { ...envelope, input: { ...envelope.input, decision: 'cancel' } } });
+                expect(crossAccount.statusCode).not.toBe(200);
+            }
             const approvalPat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'explicit-reviewer',
                 grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true, actions: { families: [], ids: [actionId] } } });
             const approvalPatIssued = await issue(approvalPat.token);

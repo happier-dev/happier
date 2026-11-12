@@ -93,10 +93,6 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     }, executionPlacements: ['client', 'machine'] as const,
       executionPlacementForInput: (input: unknown) => isAnsweringClientArtifactExport(input) ? 'client' as const : 'machine' as const } : {}),
     ...(id === 'artifact.public_link.audit' ? { approvalPolicy: { agentDefault: 'egress' as const } } : {}),
-    // Issuance delivers capability material privately to the answering App.
-    // Management stays Account-placed; creation reuses ordinary client approval/replay.
-    ...(id === 'artifact.public_link.create' ? { executionPlacements: ['client'] as const,
-      executionPlacementForInput: () => 'client' as const } : {}),
     // Opening the share sheet reads the document's links; a present-user read is not confirmed.
     ...(id === 'artifact.public_link.list' || id === 'artifact.public_link.join' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     // Both create a new private Account document (artifactActionDeps#createDocument).
@@ -110,7 +106,9 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     title: ARTIFACT_ACTION_COPY[id][0], description: id === 'artifact.export' ? ARTIFACT_ACTION_COPY[id][1]
       : 'Read, publish and manage ordinary Account Artifacts through their mode-aware store.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read || id === 'artifact.public_link.list' ? 'read' : 'write',
-    requiredAuthority: 'account_automation', executionPlacement: id === 'artifact.publish_from_file' || id === 'artifact.export' ? 'machine' : 'account',
+    // Issuance uses the answering App; Home admission reads this same declaration.
+    requiredAuthority: 'account_automation', executionPlacement: id === 'artifact.public_link.create' ? 'client'
+      : id === 'artifact.publish_from_file' || id === 'artifact.export' ? 'machine' : 'account',
     placements: [], bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'),
       ...(voice ? { voiceClientToolName: id.replaceAll('.', '_') } : {}) },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true,
@@ -118,6 +116,7 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     inputSchema: ArtifactActionInputSchemasV1[id], outputSchema: ArtifactActionOutputSchemasV1[id],
     ...(['artifact.public_link.create', 'artifact.create', 'artifact.update', 'artifact.publish_from_file', 'artifact.get', 'artifact.revisions.restore'].includes(id)
       ? { projectObservationOutput: projectPublicLinkCreationObservation } : {}),
+    approvalPresentation: { summary: () => ARTIFACT_ACTION_COPY[id][1] },
     inputHints: { title: ARTIFACT_ACTION_COPY[id][0], description: ARTIFACT_ACTION_COPY[id][1], fields: id === 'artifact.publish_from_file' ? [
       { path: 'path', title: 'File path', widget: 'text', required: true,
         description: 'File within the source workspace. Without workspace, the admitted caller Session supplies the source.' },
