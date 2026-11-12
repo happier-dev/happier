@@ -16,7 +16,8 @@ import {
     type PluginUiSelectActionInputResultV1,
     type PluginUiTargetedContributionOperationV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { isPluginError, type PluginErrorData } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1, type PluginErrorData } from '@happier-dev/plugin-sdk';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { createPluginConnectionSettlement } from './connectionSettlement';
@@ -149,11 +150,16 @@ export function createPluginSurfaceHostApiError(
     code: string,
     diagnostics: readonly string[] = [],
     message?: string,
-    options?: Readonly<{ connectionPendingEligible?: boolean }> & Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
+    options?: Readonly<{ connectionPendingEligible?: boolean }> & Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable' | 'details' | 'failureCause' | 'remediation' | 'requestId' | 'effectAttempted'>,
 ): PluginUiJsonValueV1 {
     const writtenMessage = message ?? (options?.layer ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body : undefined);
     const payload = PluginUiHostApiErrorPayloadV1Schema.parse({
         code,
+        ...(options?.details === undefined ? {} : { details: options.details }),
+        ...(options?.failureCause === undefined ? {} : { failureCause: options.failureCause }),
+        ...(options?.remediation === undefined ? {} : { remediation: options.remediation }),
+        ...(options?.requestId === undefined ? {} : { requestId: options.requestId }),
+        ...(options?.effectAttempted === undefined ? {} : { effectAttempted: options.effectAttempted }),
         ...(options?.layer === undefined ? {} : { layer: options.layer }),
         ...(options?.phase === undefined ? {} : { phase: options.phase }),
         ...(options?.retryable === undefined ? {} : { retryable: options.retryable }),
@@ -179,15 +185,19 @@ export function createPluginSurfaceHostApiPluginErrorData(
     code: string,
     diagnostics: readonly string[] = [],
     message?: string,
-    metadata?: Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'> & Readonly<{ requestId?: string }>,
+    metadata?: Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable' | 'details' | 'failureCause' | 'remediation' | 'requestId' | 'effectAttempted'> & Readonly<{ requestId?: string }>,
 ): PluginErrorData {
     return {
         name: 'PluginError',
+        ...(metadata?.failureCause === undefined ? {} : { failureCause: metadata.failureCause }),
+        ...(metadata?.remediation === undefined ? {} : { remediation: metadata.remediation }),
         code,
         ...(message === undefined ? {} : { message }),
         // A coarse wrapper code says nothing about whether an effect entered.
         retryable: metadata?.retryable ?? false,
-        ...(metadata && (metadata.layer !== undefined || metadata.phase !== undefined || metadata.requestId !== undefined) ? { details: {
+        ...(metadata && (metadata.details !== undefined || metadata.effectAttempted !== undefined || metadata.layer !== undefined || metadata.phase !== undefined || metadata.requestId !== undefined) ? { details: {
+            ...(metadata.details && typeof metadata.details === 'object' && !Array.isArray(metadata.details) ? metadata.details : {}),
+            ...(metadata.effectAttempted === undefined ? {} : { effectAttempted: metadata.effectAttempted }),
             ...(metadata.requestId === undefined ? {} : { requestId: metadata.requestId }),
             ...(metadata.layer === undefined ? {} : { layer: metadata.layer }),
             ...(metadata.phase === undefined ? {} : { phase: metadata.phase }),
@@ -247,7 +257,11 @@ export async function settlePluginSurfaceHostApiRequest(
     } catch (error) {
         if (isPluginError(error)) {
             return PluginUiHostApiResponseEnvelopeV1Schema.parse({ ...base, kind: 'error', payload: {
+                ...readPluginActionFailureAuthorPayload(error.data),
                 code: error.code, message: error.message, retryable: error.retryable,
+                requestId: readPluginErrorRequestIdV1(error) ?? request.requestId,
+                ...(error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+                    && typeof error.details.effectAttempted === 'boolean' ? { effectAttempted: error.details.effectAttempted } : {}),
                 ...readPluginSurfaceHostApiFailureMetadata(error.details),
                 diagnostics: error.diagnostics?.map(diagnostic => diagnostic.code) ?? [],
             } });

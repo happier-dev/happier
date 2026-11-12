@@ -1,3 +1,5 @@
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { RegistryActionFailure } from '@/registries/registryActionFailure';
 import * as React from 'react';
 import { registryMarketplaceSourceV1, registryPluginSummaryV1, type RegistryItemV1, type RegistryItemPointerV1 } from '@happier-dev/protocol/registries';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -130,8 +132,14 @@ export function usePluginCatalogWithSources(params: PluginCatalogParams, sources
     const loadMoreDiscover = React.useCallback(() => {
         if (listing || !browse.hasNextPage || browse.loading || loadingMore) return;
         setLoadingMore(true);
-        void browse.nextPage().catch(() => {
-            if (execution.isCurrent()) setPagingError(t('settingsPlugins.discover.diagnostic.recovery'));
+        void browse.nextPage().catch((error: unknown) => {
+            if (!execution.isCurrent()) return;
+            setPagingError(error instanceof RegistryActionFailure ? error.message : t('settingsPlugins.discover.diagnostic.recovery'));
+            if (error instanceof RegistryActionFailure) alertActionFailure({ reason: error.presentation.reason,
+                code: error.result.errorCode, requestId: error.result.requestId,
+                context: Object.fromEntries(error.presentation.technicalDetails.filter(line => line.key !== 'code' && line.key !== 'requestId')
+                    .map(line => [line.key, line.value])),
+            });
         }).finally(() => { if (execution.isCurrent()) setLoadingMore(false); });
     }, [listing, browse.hasNextPage, browse.loading, browse.nextPage, loadingMore, execution.isCurrent]);
     React.useEffect(() => {

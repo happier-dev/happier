@@ -140,7 +140,9 @@ describe('openPluginContributedAction', () => {
             open: vi.fn().mockResolvedValue({
                 kind: 'direct',
                 action: descriptor,
-                outcome: { ok: false, code: 'unavailable', reason: 'plugin_message_action_unavailable',
+                outcome: { ok: false, code: 'credential_scope_denied', reason: 'credential_scope_denied',
+                    message: 'Choose another credential', remediation: { kind: 'retry' }, requestId, effectAttempted: false,
+                    failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
                     details: { requestId } },
             }),
             isReferenceAvailable: () => false,
@@ -153,13 +155,14 @@ describe('openPluginContributedAction', () => {
 
         await openPluginContributedAction({ controller, action: descriptor });
 
+        expect(vi.mocked(Modal.alert).mock.calls[0]?.[1]).toContain('Choose another credential');
         const buttons = vi.mocked(Modal.alert).mock.calls[0]?.[2];
         const technical = buttons?.find(button => button.text === t('approvals.technicalDetails'));
         expect(technical).toBeDefined();
         technical?.onPress?.();
-        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toBe(JSON.stringify({
-            code: 'unavailable', requestId,
-        }, null, 2));
+        expect(JSON.parse(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1] ?? '{}')).toEqual({
+            code: 'credential_scope_denied', requestId, effectAttempted: 'false', causePhase: 'execution_authorization', errorClass: 'Error',
+        });
     });
 
     it.each([

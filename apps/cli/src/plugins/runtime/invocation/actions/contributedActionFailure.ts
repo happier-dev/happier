@@ -3,7 +3,7 @@ import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happi
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 
 /** Preserve the public failure envelope across ordinary Action normalization. */
@@ -33,7 +33,10 @@ export function projectStructuredMessageActionFailure(result: Readonly<{
   actionHandlerInvocation?: 'notStarted';
   data?: JsonValue;
 }>) {
-  const authorPayload = readPluginActionFailureAuthorPayload(result.data);
+  const { diagnostics: _diagnostics, ...authorPayload } = readPluginActionFailureAuthorPayload(result.data);
+  const requestId = readPluginErrorRequestIdV1({ details: authorPayload.details });
+  const effectAttempted = authorPayload.details && typeof authorPayload.details === 'object' && !Array.isArray(authorPayload.details)
+    ? authorPayload.details.effectAttempted : undefined;
   // Target invocation already redacts its failures; observer failures use the same projection.
   const message = result.error.trim();
   return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
@@ -42,7 +45,9 @@ export function projectStructuredMessageActionFailure(result: Readonly<{
     ...(message && message !== result.errorCode ? { message: projectPluginFailureText(new Error(message)) } : {}),
     ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
     ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
-    ...(authorPayload.remediation === undefined ? {} : { remediation: authorPayload.remediation }),
+    ...authorPayload,
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
   });
 }
 
@@ -59,7 +64,9 @@ export const contributedActionFailureResult = Object.freeze({
       error: failure.message ?? failure.code,
       ...(failure.retryable === undefined ? {} : { retryable: failure.retryable }),
       ...(failure.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: failure.actionHandlerInvocation }),
-      ...(failure.remediation === undefined ? {} : { data: { remediation: failure.remediation } }),
+      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+      ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+      data: readPluginActionFailureAuthorPayload(failure),
     };
   },
 });

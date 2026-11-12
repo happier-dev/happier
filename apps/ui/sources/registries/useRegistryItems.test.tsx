@@ -1196,3 +1196,28 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
     });
 });
+
+
+it('retains a refused next-page Action as typed presenter input after its view retires', async () => {
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-next-page-refusal.test', {
+        key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+    }, 'updated', { handleExternalRequest: async url => new URL(url).pathname === '/v0.1/servers'
+        ? Response.json({ servers: [{ server: { name: 'page/first', description: 'Remote server', version: '1.0.0' } }],
+            metadata: { count: 1, nextCursor: 'second' } }) : null });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const hook = await renderHook(() => useRegistryItems({ kind: 'mcpServer', sourceIds: ['builtin:mcp-registry'] }));
+    await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+    expect(hook.getCurrent().hasNextPage).toBe(true);
+    const nextPage = hook.getCurrent().nextPage;
+    await hook.unmount();
+    const { RegistryActionFailure } = await import('./registryActionFailure');
+    const { presentActionExecutionFailure } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+    const failure = await nextPage().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RegistryActionFailure);
+    if (!(failure instanceof RegistryActionFailure)) throw new Error('Expected typed registry refusal');
+    expect(failure.result).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed', requestId: expect.any(String),
+        details: { reason: 'client_account_scope_changed' } });
+    expect(presentActionExecutionFailure(failure.result).technicalDetails).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: 'requestId', value: failure.result.requestId }),
+    ]));
+});

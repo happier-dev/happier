@@ -264,6 +264,34 @@ beforeEach(async () => {
 });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
+it('offers only executable current services when setting up a scheduled Environment job', () => withPopoverWebGlobals(async () => {
+    const environmentId = 'production';
+    const executable = service('Worker', { environmentId });
+    const unsupported = service('Database', { environmentId,
+        capabilities: { exec: false, start: true, stop: true, restart: true, logs: true, accounting: true } });
+    const unresolved = service('Replacing worker', { environmentId, generation: null });
+    const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot',
+        services: [executable, unsupported, unresolved] }), 'machines.services.list', (value, reference) => {
+        expect(reference.input).toMatchObject({ serverId, machineId, environmentId });
+        return value;
+    });
+    const { ScheduledServiceJobSetup } = await import('@/components/workflows/triggers/ScheduledServiceJobSetup');
+    const anchorRef = { current: null };
+    const screen = await renderScreen(<ScheduledServiceJobSetup anchorRef={anchorRef} onRequestClose={() => {}}
+        serverId={serverId} machineId={machineId} environmentId={environmentId}
+        project={{ machineId, directory: '~' }} />);
+    try {
+        await act(async () => reportPopoverContentLayout(screen.tree, { width: 500, height: 600 }));
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findHostByTestId(`scheduled-service-job-service-${executable.serviceId}`)).not.toBeNull();
+        });
+        expect(screen.findHostByTestId(`scheduled-service-job-service-${unsupported.serviceId}`)).toBeNull();
+        expect(screen.findHostByTestId(`scheduled-service-job-service-${unresolved.serviceId}`)).toBeNull();
+        expect(resource.reads).toBe(1);
+    } finally { await screen.unmount(); }
+}));
+
 describe('MachineServicesTab rendered production wiring', () => {
     it.each(['deployment', 'adopted'] as const)('investigates an unhealthy %s service using its admitted identity through Triage', async kind => {
         const identity = kind === 'deployment'
@@ -354,16 +382,18 @@ describe('MachineServicesTab rendered production wiring', () => {
         const row = service('Web', { generation: 'b1c428a4-7926-46de-b6cd-71a59d6ebc3c', state: 'healthy' });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const controls: unknown[] = [];
+        let issuedRequestId: string | undefined;
         answerActionExecution('machines.services.control', envelope => {
             controls.push(envelope.input);
-            return { ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable' };
+            issuedRequestId = envelope.requestId;
+            return { ok: false, errorCode: 'service_operation_unavailable', error: 'Select a reachable service host', requestId: envelope.requestId, effectAttempted: false, details: { reason: 'service_operation_unavailable' } };
         });
         machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
             throw new Error(`Unexpected Machine method: ${method}`);
         });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
-        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-facts')).not.toBeNull());
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-more');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-stop')).not.toBeNull());
@@ -371,10 +401,12 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(controls).toEqual([{ serverId, machineId,
             serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'stop' }]));
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-control-outcome-details-toggle'), screen.getTextContent()).not.toBeNull());
-        expect(screen.getTextContent()).toContain(t('machineServices.control.unavailableRemedy'));
+        expect(screen.getTextContent()).toContain('Select a reachable service host');
         expect(screen.getTextContent()).not.toContain(t('machineServices.control.failed', { service: row.name }));
         await screen.pressByTestIdAsync('machine-service-control-outcome-details-toggle');
         expect(screen.getTextContent()).toContain('service_operation_unavailable');
+        expect(issuedRequestId).toBeTruthy();
+        expect(screen.getTextContent()).toContain(issuedRequestId!);
         expect(controls).toHaveLength(1);
     });
 
@@ -405,7 +437,7 @@ describe('MachineServicesTab rendered production wiring', () => {
             .toMatchObject({ page: true }));
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-more');
-        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-facts')).not.toBeNull());
         await vi.waitFor(() => {
             for (const id of ['machine-service-command', 'machine-service-shell', 'machine-service-unwatch']) {
                 // Command and Shell follow the row's admitted exec capability, watched or deployed alike.
@@ -511,7 +543,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await screen.pressByTestIdAsync('machine-service-more');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-unwatch')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-unwatch');
-        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId: serverIdentityId, machineId,
+        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId, machineId,
             watchId: row.watchId, expectedRevision: row.watchRevision }]));
     });
 
@@ -603,7 +635,7 @@ describe('MachineServicesTab rendered production wiring', () => {
             throw new Error(`Unexpected Machine method: ${String(method)}`);
         });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
-        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-facts')).not.toBeNull());
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
         await vi.dynamicImportSettled();
         await screen.pressByTestIdAsync('machine-service-more');
@@ -644,11 +676,8 @@ describe('MachineServicesTab rendered production wiring', () => {
             adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'postgresql.service',
         }, native: { phase: 'running', readiness: 'ready', displayName: 'PostgreSQL service' } });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
-        machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) => {
-            if (method !== RPC_METHODS.MACHINES_SERVICE_DETAIL) throw new Error(`Unexpected Machine method: ${method}`);
-            return { kind: 'service', service: row,
-                accounting: { kind: 'sample', samples: [{ nativeResourceId: 'postgresql.service', cpuPercent: 3, memoryBytes: 64 * 1024 * 1024 }] } };
-        });
+        answerAction('machines.services.detail', () => ({ kind: 'service', service: row,
+            accounting: { kind: 'sample', samples: [{ nativeResourceId: 'postgresql.service', cpuPercent: 3, memoryBytes: 64 * 1024 * 1024 }] } }));
         answerResource(ManagedServiceNativeLogResultV1Schema.parse({ kind: 'page', page: {
             sourceRevision: 'native-source', text: 'database ready [REDACTED]\n', nextCursor: null, truncated: false,
         } }), 'machines.services.logs.read');
@@ -940,16 +969,17 @@ describe('MachineServicesTab rendered production wiring', () => {
         const candidate = (name: string, unit: string) => ({ candidateId: `candidate-${name}`, revision: `revision-${name}`, name,
             adapter, nativeResourceId: unit, observation: { phase: 'running', readiness: 'not_reported', endpoint: null } });
         const watches: unknown[] = [];
-        machineTransport.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: unknown }) => {
-            if (method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY) return { kind: 'snapshot', failures: [],
-                candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('postgres', 'postgresql.service')] };
-            if (method === RPC_METHODS.MACHINES_SERVICE_WATCH) { watches.push(payload); return { kind: 'applied', revision: 'next' }; }
-            throw new Error(`Unexpected Machine method: ${method}`);
+        answerAction('machines.services.discovery', () => ({ kind: 'snapshot', failures: [],
+            candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('postgres', 'postgresql.service')] }));
+        answerAction('machines.services.watch', envelope => {
+            watches.push(envelope.input);
+            return { kind: 'applied', revision: 'next' };
         });
+        const discoveryReads = () => homes.requests.filter(request => request.path === '/v1/actions/machines.services.discovery');
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.findHostByTestId(initiallyEmpty ? 'machine-services-empty' : 'machine-service-postgres')).not.toBeNull());
         // Nothing is discovered until the person asks.
-        expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY)).toBe(false);
+        expect(discoveryReads()).toHaveLength(0);
         await screen.pressByTestIdAsync('machine-services-watch');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-watch-candidate:candidate-fail2ban')).not.toBeNull());
         // What is already watched stays visible but can't be picked again.
@@ -961,7 +991,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.watch.confirm', { count: 1 })));
         await screen.pressByTestIdAsync('machine-services-watch-confirm');
         await vi.waitFor(() => expect(watches).toHaveLength(1));
-        expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY)).toHaveLength(1);
+        expect(discoveryReads()).toHaveLength(1);
         expect(watches[0]).toMatchObject({ machineId, candidateId: 'candidate-fail2ban', expectedRevision: 'revision-fail2ban',
             lifecyclePurpose: 'development' });
     });
@@ -1053,8 +1083,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         const row = service('Web', { state: 'healthy' });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const reads: Array<(value: unknown) => void> = [];
-        machineTransport.rpc.mockImplementation(({ method }: { method: string }) => method === RPC_METHODS.MACHINES_SERVICE_DETAIL
-            ? new Promise(resolve => { reads.push(resolve); }) : Promise.resolve({ kind: 'unavailable', reason: 'unavailable' }));
+        answerAction('machines.services.detail', () => new Promise(resolve => { reads.push(resolve); }));
         const sample = (cpuPercent: number, memoryMb: number) => ({ kind: 'service', service: row, accounting: { kind: 'sample', samples: [
             { nativeResourceId: 'shop-web-1', cpuPercent, memoryBytes: memoryMb * 1024 * 1024,
                 networkReceivedBytes: 2 * 1024 * 1024, networkSentBytes: 0, restartCount: 3 },
@@ -1078,4 +1107,37 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(usage()).toContain('64 MB'));
         expect(usage()).toContain('30%');
     });
+});
+
+it('withdrawn secret notice stops the admitted generation and offers Start only after the service push confirms stopped', async () => {
+    const { DeploymentSecretBindingsNotice } = await import('@/components/projects/deployments/DeploymentSecretBindingsNotice');
+    const { formatSharedSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
+    const { seedSavedSecretCatalogForTest } = await import('@/dev/testkit/harness/savedSecretEditorHttpHarness');
+    const scope = { serverId, accountId };
+    await seedSavedSecretCatalogForTest(scope, []);
+    const environmentId = 'production';
+    const row = service('Web', { authority: 'project', environmentId,
+        deployment: { deploymentId: 'serving', installationId: 'installation', service: {
+            kind: 'deployment', machineId, environmentId, environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } } });
+    const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+    const operations: unknown[] = [];
+    answerAction('machines.services.control', envelope => { operations.push(envelope.input); return { kind: 'accepted', operation: { operationId: 'control' } }; });
+    const target = { serverId, environmentId, machineIds: [machineId], active: true };
+    const screen = await renderScreen(<DeploymentSecretBindingsNotice scope={scope} bindings={[{
+        purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret',
+            ref: formatSharedSavedSecretRefV1('withdrawn'), resourceRevision: 1 },
+    }]} {...{ controlTarget: target }} />);
+    const id = 'project-deployments.environment.secret-control.machine.web';
+    await vi.waitFor(() => expect(screen.findHostByTestId(id + '.stop')).not.toBeNull());
+    await screen.pressByTestIdAsync(id + '.stop');
+    await vi.waitFor(() => expect(operations).toHaveLength(1));
+    expect(operations[0]).toMatchObject({ serverId, machineId, serviceId: row.serviceId,
+        expectedGeneration: row.generation, operation: 'stop' });
+    expect(screen.findHostByTestId(id + '.start')).toBeNull();
+    await resource.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [{ ...row, state: 'stopped' }] }));
+    await vi.waitFor(() => expect(screen.findHostByTestId(id + '.start')).not.toBeNull());
+    await screen.pressByTestIdAsync(id + '.start');
+    await vi.waitFor(() => expect(operations).toHaveLength(2));
+    expect(operations[1]).toMatchObject({ serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'start' });
+    await screen.unmount();
 });

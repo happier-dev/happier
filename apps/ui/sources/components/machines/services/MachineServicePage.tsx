@@ -1,3 +1,4 @@
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -329,9 +330,13 @@ function MachineServicePresent(props: Readonly<{
             testID="machine-service-control-outcome"
             kind={control.outcome.kind === 'unavailable' ? 'unavailable' : 'error'}
             size="line"
-            title={controlOutcomeCopy(control.outcome, serviceName, machineName)}
+            title={control.outcome.failure && control.outcome.failure.error !== control.outcome.errorCode
+              ? presentActionExecutionFailure({ ...control.outcome.failure, message: control.outcome.failure.error }).reason
+              : controlOutcomeCopy(control.outcome, serviceName, machineName)}
             reason={control.outcome.kind === 'unavailable' ? t('machineServices.control.unavailableRemedy') : undefined}
             diagnosticCode={control.outcome.errorCode}
+            diagnosticDetail={control.outcome.failure ? presentActionExecutionFailure(control.outcome.failure).technicalDetails
+              .filter(line => line.key !== 'code').map(line => `${line.label}: ${line.value}`).join('\n') : undefined}
           />
         ) : control.outcome ? (
           <Text variant="meta" testID="machine-service-control-outcome"

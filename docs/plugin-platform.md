@@ -285,8 +285,10 @@ selection waits for this address instead of borrowing the editor's observer.
 An optional `testContext`
 contains only a real saved source revision and its current service owner or
 Environment controller, addressed through the invoking Home profile; changed
-alert choices do not borrow that saved selector. Full Save retains the existing
-validation and capability enrollment. Manifest admission retains the exact
+alert choices do not borrow that saved selector. Reopening setup adopts the saved
+checks and investigation choice from that preview. Save changes updates alert or
+investigation choices through the same Save branch without adding a check. Full
+Save retains the existing validation and capability enrollment. Manifest admission retains the exact
 canonical Save result branch and accepts a disjoint strict `mode: preview` branch
 only with the corresponding readonly Action predicate. Event enrollment still
 parses only the canonical Save result. A contributed
@@ -1208,14 +1210,15 @@ retry eligibility and explicit deadlines with buffered requests; the native
 adapter uses the same platform fetch/dispatcher. Stream reading remains
 consumer-driven, without the buffered-body ceiling or a whole-body accumulator.
 EOF, iteration return, caller cancellation, network retirement and explicit
-disposal release the body and its listeners. The Account-purpose HTTP credential
-bridge is not yet implemented: its public request/materialization contract must
-identify the exact purpose and header names, rather than infer credentials from
-an Action declaration. Its stream integration must retain credential custody,
-withdrawal and redaction through disposal. No body-secret substitution or Voice binding is exposed
-on this read-only method. Containing log operations own window/lifetime and
-normalized row publication; an iterable never crosses Action JSON, and a reopened
-vendor stream establishes no historical cursor or gap-free replay guarantee.
+disposal release the body and its listeners. Account-purpose requests use the
+existing `connectedAccountPurpose` credential binding, including the admitted
+purpose, origin, method and header names. The shared HTTP owner retains credential
+custody, withdrawal and redaction through disposal; adapters do not acquire tokens.
+No body-secret substitution or Voice binding is exposed on this read-only method.
+Plugin UI subscriptions remain invalidation signals. Log content is read through
+`readResource`; the existing native log watch owns pushed changes. Provider HTTP
+iterables never cross Action JSON, and reopening a runtime log establishes no
+historical cursor or gap-free replay guarantee.
 
 Trusted in-process filesystem callers may supply their own read/page budgets;
 the service does not impose an additional byte or page-size ceiling. MCP
@@ -1607,6 +1610,35 @@ build-admitted input, with zero repeated manifest admissions. Generic inline
 Managed-runtime publication may remove an unavailable provider facet from that
 admitted declaration; locator identity, entrypoint agreement and contribution-graph
 reference resolution remain enforced by their existing owners.
+
+Every process admits all bundled file declarations as a summary. The bundled-plugin
+publisher derives three assets from each serialized manifest
+(`assets/bundled-plugin-manifests/declarations/<id>.summary.json`,
+`.input-schemas.json`, `.result-schemas.json`; owner
+`apps/cli/src/plugins/projection/registry/builtIn/declarationAssets.ts`, emitted and
+drift-checked by the same writer as the manifest). The summary holds the declaration
+with every Action `inputSchema`/`resultSchema` (about 79% of the bytes) as `null` in
+its key position, plus the Action input hints those schemas derive. The bundled
+manifest reader (`builtIn/manifestFile.ts`) reads only the summary: each deferred
+value becomes a host-deferred declaration field (Protocol
+`plugins/contributions/deferredDeclarationFields.ts`) that reads its plugin's schema
+file once per process on first use, and the precomputed hints ride on a
+non-enumerable sidecar, so Action forms and the daemon's UI registry projection never
+read a schema. Every asset carries the SHA-256 of the manifest text it was cut from;
+a schema file from another publication fails the first deferred read with a restart
+instruction. Inputs without a derived summary (inline manifests, fixture or older
+retained runtime roots) keep the plain full read.
+
+Projections that copy Action declarations (`projectTargetedContributionActionDefinition`,
+the registry's Action normalization and localized presentation) forward deferred
+fields unread. A read, spread, clone or serialization returns the exact declared
+value. The strict JSON owner (`strictJsonValue.ts`) and the external Action JSON
+projection read host-deferred fields as data, while every other accessor stays
+refused, so strict checks, clones and re-admission of an admitted declaration need no
+caller-side materialization. Contribution-graph admission passes build-admitted
+plugin ids to `resolvePluginManifestSetReferencesV2` as `declarationAdmittedPluginIds`:
+their single-manifest checks were already admitted by the publisher, so only
+set-level references are resolved at runtime.
 
 
 Generators, projections, catalogs and registries built from independent contributions isolate per contribution. An invalid or unprojectable contribution fails alone, with a diagnostic naming the plugin and the field, while host faults still propagate. Policy for one caller's intent stays at that caller; the shared reader returns facts.
@@ -9338,6 +9370,9 @@ the same parameters object. The runtime captures that event's `tool_call_id` and
 requires that provenance before emitting a canonical tool call. The shared host
 barrier owns effect admission, duplicate replay and Action approval; missing or
 conflicting custody fails closed.
+When a failure carries typed details, ElevenLabs receives the canonical failure
+envelope as JSON inside its SDK's required error string. Failures without details
+retain the existing error-code string.
 
 ### Batch speech output (0.3 development)
 
@@ -12406,5 +12441,13 @@ and the typed cause; opaque producer data is not disclosed.
 This is an optional method in semantic Host API 1.1, wire epoch 1. Authors check
 `version().methods`, or use the SDK's `presentActionFailure(hostApi, failure)`
 helper, which retains the producer message, code and request ID on older hosts.
-Existing closed envelopes and older-host methods are unchanged. Caller-authored
+Plugin Action refusals retain the deciding code, typed cause, request correlation,
+effect-attempt evidence and authored recovery through host, daemon and client
+adapters. The mounted Host API error and contributed Action response carry these
+optional fields using the existing Action failure field schemas. SDK execution
+states additionally retain details, cause and remediation for the same presenter;
+authors of older plugins can ignore the added fields. Untyped availability
+failures retain their existing fallback. Matching development hosts and SDK
+readers consume the extended closed error envelope together; no wire epoch or
+new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.

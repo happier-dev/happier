@@ -1,3 +1,4 @@
+import { RegistryActionFailure } from './registryActionFailure';
 import * as React from 'react';
 import { t } from '@/text';
 import type { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, RegistryKindV1, RegistryListPageV1 } from '@happier-dev/protocol/registries';
@@ -94,8 +95,9 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
         const first = read.value;
         try {
             const following = await Promise.all(pages.filter(page => page.nextCursor !== null).map(async page => {
-                const result = await read.execution.execute('registries.items.list', { ...input, sourceIds: [page.sourceId], cursor: page.nextCursor });
-                if (!result.ok) throw new Error(result.error);
+                const result = await read.execution.execute('registries.items.list', { ...input, sourceIds: [page.sourceId], cursor: page.nextCursor },
+                    { externalActionTarget: read.externalActionTarget });
+                if (!result.ok) throw new RegistryActionFailure(result);
                 return project(result.result as ListResult, pages).pages;
             }));
             if (!read.execution.isCurrent()) return;
@@ -108,7 +110,7 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
                 return { ...next, items: [...items.values()] };
             }) });
         } finally { paging.current = false; }
-    }, [input.kind, JSON.stringify(input.sourceIds), input.query, input.contributionFamily, pages, read.execution.execute, read.execution.isCurrent, read.value]);
+    }, [input.kind, JSON.stringify(input.sourceIds), input.query, input.contributionFamily, pages, read.execution.execute, read.execution.isCurrent, read.value, read.externalActionTarget]);
     const curation = read.value?.curation ?? EMPTY_CURATION;
     return React.useMemo(() => ({ items, pages, curation, hasValue: read.value !== null, loading: read.loading, stale: read.stale,
         sourceRevision: revision,

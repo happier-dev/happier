@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { RegistryActionIdV1, RegistrySourceStatusV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { REGISTRY_ITEMS_LIST_ACTION_ID_V1, REGISTRY_ITEMS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/registries/registryActionIdsV1';
-import { readRegistryFailureStatus, type RegistryFailureStatus } from './describeRegistrySourceStatus';
+import { type RegistryFailureStatus } from './describeRegistrySourceStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -9,9 +9,7 @@ import { invalidateUiRegistryItemMemoV1, invalidateUiRegistryUpdateMemoV1, inval
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useStoreActionTarget } from '@/components/settings/plugins/model/useStoreMachineScope';
 
-class RegistryReadFailure extends Error {
-    constructor(message: string, readonly status: RegistryFailureStatus | null) { super(message); }
-}
+import { RegistryActionFailure } from './registryActionFailure';
 
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
 export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId: K, input: unknown,
@@ -85,7 +83,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
                 ? { ...args, refresh: true } : args;
             const result = await execution.execute(actionId, value, { signal: controller.signal, externalActionTarget });
             if (request !== generation.current || !execution.isCurrent()) return;
-            if (!result.ok) throw new RegistryReadFailure(result.error, readRegistryFailureStatus(result.details));
+            if (!result.ok) throw new RegistryActionFailure(result);
             // The registry protocol host already validated this same-process Action result.
             const parsed = parser.current(result.result as ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous.scopeKey === scopeKey && previous.inputKey === inputKey
                 && Object.is(previous.revision, revision) ? previous.value : null);
@@ -100,7 +98,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
                 return { scopeKey, revision: sameAuthority ? previous.revision : revision, inputKey: sameAuthority ? previous.inputKey : inputKey,
                     value: sameAuthority ? previous.value : null, loading: false,
                     error: error instanceof Error ? error.message : 'registry_unavailable',
-                    status: error instanceof RegistryReadFailure ? error.status : null };
+                    status: error instanceof RegistryActionFailure ? error.status : null };
             });
         } finally { if (pending.current === controller) pending.current = null; }
     }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision, externalActionTarget]);

@@ -4,7 +4,9 @@ import type { PopoverAnchor } from '@/components/ui/popover';
 
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
-import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import type { PluginSurfaceActionDispatchOutcome } from '../surfaces/actionFailure';
 
 import { presentActionInputForm } from './presentActionInputForm';
 import type {
@@ -14,7 +16,7 @@ import type {
 } from './pluginContributedActionController';
 
 function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | 'thrown', reasonCode?: string,
-    failure?: Readonly<{ code: string; details?: unknown }>): void {
+    failure?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>): void {
     const message = reasonCode ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode }).body
         : kind === 'failed' ? t('pluginRuntime.actionFailed')
         : kind === 'stale' ? t('pluginRuntime.actionStale')
@@ -23,11 +25,13 @@ function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | '
     if (failure) {
         const details = typeof failure.details === 'object' && failure.details !== null
             ? failure.details as Readonly<Record<string, unknown>> : null;
+        const presentation = presentActionExecutionFailure({ ...failure, errorCode: failure.code, message: failure.message ?? message });
         alertActionFailure({
-            reason: message,
+            reason: presentation.reason,
             code: failure.code,
-            requestId: typeof details?.requestId === 'string' ? details.requestId : undefined,
-            context: readSafeFailureDetails(failure.details),
+            requestId: failure.requestId ?? (typeof details?.requestId === 'string' ? details.requestId : undefined),
+            context: Object.fromEntries(presentation.technicalDetails.filter(line => line.key !== 'code' && line.key !== 'requestId')
+                .map(line => [line.key, line.value])),
         });
         return;
     }
@@ -134,7 +138,7 @@ export async function openPluginContributedActionReference(params: Readonly<{
         const outcome = await params.controller.invokeReference(params.action, params.input);
         if (params.signal?.aborted) return;
         if (outcome.kind === 'settled' && !outcome.outcome.ok) {
-            presentPluginActionFailure('failed');
+            presentPluginActionFailure('failed', outcome.outcome.layer ? outcome.outcome.code : undefined, outcome.outcome);
         }
     } catch {
         if (!params.signal?.aborted) {

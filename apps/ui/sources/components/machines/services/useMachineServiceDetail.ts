@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { MachineServiceControlResultV1Schema, MachineServicesDetailResultV1Schema, type MachineServiceAccountingV1, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { type MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
@@ -60,8 +60,8 @@ export type MachineServiceControlOutcome =
   | Readonly<{ kind: 'approval' }>
   | Readonly<{ kind: 'unknown' }>
   | Readonly<{ kind: 'unsupported' }>
-  | Readonly<{ kind: 'unavailable'; errorCode: string }>
-  | Readonly<{ kind: 'failed'; errorCode: string }>;
+  | Readonly<{ kind: 'unavailable'; errorCode: string; failure?: ActionExecuteFailure }>
+  | Readonly<{ kind: 'failed'; errorCode: string; failure?: ActionExecuteFailure }>;
 
 /**
  * Start, Stop and Restart through the one `machines.services.control` Action for the generation the page shows. One
@@ -90,7 +90,7 @@ export function useMachineServiceControl(input: Readonly<{
         let outcome: MachineServiceControlOutcome | null = result.ok
           ? { kind: 'failed', errorCode: 'action_failed' }
           : { kind: result.errorCode === 'service_operation_unavailable' ? 'unavailable' : 'failed',
-            errorCode: result.errorCode ?? 'action_failed' };
+            errorCode: result.errorCode, failure: result };
         if (result.ok) {
           const parsed = MachineServiceControlResultV1Schema.safeParse(result.result);
           if (parsed.success) {

@@ -12,6 +12,7 @@ import {
 } from './hostApiDefinition.js';
 import {
   PluginUiHostApiDiagnosticRemediationV1Schema,
+  PluginUiHostApiErrorPayloadV1Schema,
   PluginUiHostApiDiagnosticV1Schema,
 } from './hostApiRequests.js';
 import { PluginUiSelectActionInputTargetedSubmittedV1Schema } from './hostApiRequests.js';
@@ -131,6 +132,7 @@ export const PluginUiHostApiWireEnvelopeV1Schema = z.discriminatedUnion('kind', 
       message: z.optional(z.string()),
       retryable: z.optional(z.boolean()),
       details: z.optional(PluginUiJsonValueV1Schema),
+      failureCause: PluginUiHostApiErrorPayloadV1Schema.shape.failureCause,
       remediation: z.optional(PluginUiHostApiDiagnosticRemediationV1Schema),
       diagnostics: z.optional(z.array(PluginUiHostApiDiagnosticV1Schema)),
       actionHandlerInvocation: z.optional(z.literal('notStarted')),

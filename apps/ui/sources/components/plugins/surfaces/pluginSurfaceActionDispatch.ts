@@ -144,6 +144,7 @@ import {
     actionDeclinedFailure,
     actionOutcomeUnknownFailure,
     clientActionFailure,
+    projectPluginActionFailure,
     clientActionPreparationFailure,
     projectClientActionInvocationFailure,
     type PluginSurfaceActionDispatchOutcome,
@@ -2190,7 +2191,8 @@ async function executeHostAction(
         execute: (operand, childContext, childActionId) => binding.execute(childActionId, operand, childContext),
     }) : await binding.execute(actionId, input.input, context);
     if (result.ok) return { ok: true, result: result.result as PluginUiJsonValueV1 };
-    return failure('unavailable', result.errorCode, result.failureCause ? { details: result.failureCause } : undefined);
+    return projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error,
+        details: result.details as PluginUiJsonValueV1 | undefined, requestId: result.requestId ?? input.actionRequestId });
 }
 
 /** Execution and Resource admission stamp exactly the same mounted caller. */
@@ -2270,8 +2272,11 @@ export async function preparePluginSurfaceHostRead(input: DispatchPluginSurfaceA
     const prepared = await prepare(actionId, input.input, context);
     const late = preflightFailure(input);
     if (late) return late;
-    if (prepared.kind === 'settled') return failure('unavailable', prepared.result.ok
-        ? 'plugin_resource_admission_unavailable' : prepared.result.errorCode);
+    if (prepared.kind === 'settled') return prepared.result.ok
+        ? failure('unavailable', 'plugin_resource_admission_unavailable')
+        : projectPluginActionFailure({ ...prepared.result, code: prepared.result.errorCode, message: prepared.result.error,
+            details: prepared.result.details as PluginUiJsonValueV1 | undefined,
+            requestId: prepared.result.requestId ?? input.actionRequestId });
     return { ok: true, result: null };
 }
 
@@ -2531,21 +2536,10 @@ async function executeContributedAction(
         // outward result already known — that would invite a blind mutation retry.
         return { ok: true, result: result.result.result as PluginUiJsonValueV1 };
     }
-    const outcomeUnknown = actionOutcomeUnknownFailure(result.result.code, projectedAction, actionInput);
-    if (outcomeUnknown) return outcomeUnknown;
-    const refused = staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime)
-        ?? actionDeclinedFailure(result.result.code)
-        ?? failure('unavailable', result.result.code, {
-            ...(result.result.message === undefined ? {} : { message: result.result.message }),
-            ...(result.result.retryable === undefined
-                ? {}
-                : { retryable: result.result.retryable }),
-            ...(result.result.remediation === undefined
-                ? {}
-                : { remediation: result.result.remediation }),
-        });
-    return result.result.actionHandlerInvocation === 'notStarted'
-        ? { ...refused, actionHandlerInvocation: result.result.actionHandlerInvocation } : refused;
+    const metadata = projectPluginActionFailure({ ...result.result, requestId: result.result.requestId ?? input.actionRequestId });
+    return metadata.failureCause ? metadata : actionOutcomeUnknownFailure(result.result.code, projectedAction, actionInput, metadata)
+        ?? staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime)
+        ?? metadata;
     };
     if (input.spokenActionRequest && (input.invocationSurface ?? 'ui') === 'voice') {
         return executePreparedPluginSurfaceAction({ input, identity, action: projectedAction,

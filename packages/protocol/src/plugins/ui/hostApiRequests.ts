@@ -1,3 +1,5 @@
+import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
+import { PluginDiagnosticRemediationV1Schema } from '../../daemon/pluginContributionIntrospection.js';
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
@@ -172,6 +174,11 @@ export const PluginUiHostApiErrorPayloadV1Schema = lazyZodSchema(() => z.strictO
   retryable: z.optional(z.boolean()),
   message: z.optional(z.string().check(z.trim(), z.minLength(1))),
   diagnostics: z._default(z.array(z.string().check(z.trim(), z.minLength(1))), []),
+  details: z.optional(PluginUiJsonValueV1Schema),
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
+  remediation: z.optional(PluginDiagnosticRemediationV1Schema),
+  requestId: ActionExecuteFailureSchema.shape.requestId,
+  effectAttempted: ActionExecuteFailureSchema.shape.effectAttempted,
 }));
 export type PluginUiHostApiErrorPayloadV1 =
   z.infer<typeof PluginUiHostApiErrorPayloadV1Schema>;

@@ -1,4 +1,4 @@
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
@@ -34,6 +34,8 @@ export type PluginSurfaceActionDispatchOutcome =
         layer?: PluginUiHostApiErrorPayloadV1['layer'];
         phase?: PluginUiHostApiErrorPayloadV1['phase'];
         details?: PluginUiJsonValueV1;
+        requestId?: string;
+        effectAttempted?: boolean;
         failureCause?: ActionFailureCauseV1;
         actionHandlerInvocation?: 'notStarted';
     }>;
@@ -45,6 +47,8 @@ type ActionEffectDeclaration = Pick<PluginUiActionProjection, 'readOnly' | 'acco
 export function createPluginSurfaceActionFailure(code: string, reason: string, author?: FailureMetadata): Failure {
     return {
         ok: false, code, reason,
+        ...(author?.requestId === undefined ? {} : { requestId: author.requestId }),
+        ...(author?.effectAttempted === undefined ? {} : { effectAttempted: author.effectAttempted }),
         ...(author?.message === undefined ? {} : { message: author.message }),
         ...(author?.retryable === undefined ? {} : { retryable: author.retryable }),
         ...(author?.remediation === undefined ? {} : { remediation: author.remediation }),
@@ -68,13 +72,46 @@ export function createPluginSurfaceActionFailureError(outcome: Failure, requestI
     const data = {
         ...createPluginSurfaceHostApiPluginErrorData(outcome.reason === 'plugin_ui_action_outcome_unknown'
             ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason,
-            outcome.diagnostics ?? [outcome.reason], outcome.message, { ...outcome, requestId }),
+            outcome.diagnostics ?? [outcome.reason], outcome.message, { ...outcome, requestId: outcome.requestId ?? requestId }),
         ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
-        ...(outcome.details === undefined ? {} : { details: outcome.details }),
+
         ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
     };
     return outcome.actionHandlerInvocation === 'notStarted'
         ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
+}
+
+/** One projection for typed host, daemon and client Action refusals. */
+export function projectPluginActionFailure(result: Readonly<{
+    code: string; message?: string; retryable?: boolean; data?: PluginUiJsonValueV1;
+    details?: PluginUiJsonValueV1; failureCause?: ActionFailureCauseV1;
+    remediation?: PluginDiagnosticRemediationV1; requestId?: string; effectAttempted?: boolean;
+    actionHandlerInvocation?: 'notStarted';
+}>): Failure {
+    const author = readPluginActionFailureAuthorPayload(result.data ?? {
+        ...(result.details && typeof result.details === 'object' && !Array.isArray(result.details) ? result.details : {}),
+        ...(result.details === undefined ? {} : { details: result.details }),
+        ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
+        ...(result.remediation === undefined ? {} : { remediation: result.remediation }),
+    });
+    const correlation = result.data && typeof result.data === 'object' && !Array.isArray(result.data) ? result.data : {};
+    const requestId = result.requestId ?? readPluginErrorRequestIdV1({ details: author.details })
+        ?? (typeof correlation.requestId === 'string' ? correlation.requestId : undefined);
+    const detailsEffect = author.details && typeof author.details === 'object' && !Array.isArray(author.details) ? author.details.effectAttempted : undefined;
+    const effectAttempted = result.effectAttempted ?? (typeof correlation.effectAttempted === 'boolean' ? correlation.effectAttempted
+        : typeof detailsEffect === 'boolean' ? detailsEffect : undefined);
+    const actionHandlerInvocation = result.actionHandlerInvocation ?? readPluginActionFailureHandlerInvocation({ ...result, message: result.message ?? result.code });
+    const { diagnostics, ...payload } = author;
+    return createPluginSurfaceActionFailure(result.code, result.code, {
+        ...payload,
+        ...readPluginSurfaceHostApiFailureMetadata(author.details),
+        ...(diagnostics === undefined ? {} : { diagnostics: diagnostics.map(diagnostic => diagnostic.code) }),
+        ...(result.message === undefined ? {} : { message: result.message }),
+        ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+        ...(requestId === undefined ? {} : { requestId }),
+        ...(effectAttempted === undefined ? {} : { effectAttempted }),
+        ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
+    });
 }
 
 /** A deliberate decline remains a decision, not an unavailable operation. */
@@ -98,7 +135,7 @@ export function actionOutcomeUnknownFailure(
 
 export function clientActionFailure(code: string, author?: FailureMetadata): Failure {
     return actionDeclinedFailure(code, author) ?? createPluginSurfaceActionFailure(
-        author?.layer ? code : code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable', code, author);
+        author?.layer || author?.failureCause ? code : code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable', code, author);
 }
 
 /** Lazy preparation can refuse before invocation; retain the same authored recovery. */
@@ -111,6 +148,8 @@ export function clientActionPreparationFailure(error: unknown): Failure {
     const actionHandlerInvocation = authored ? readPluginActionFailureHandlerInvocation({
         code: authored.code, message: authored.message, data: authored.data,
     }) : undefined;
+    if (authored && author.failureCause) return projectPluginActionFailure({ code, data: authored.data,
+        message: authored.data.message, retryable: authored.retryable, actionHandlerInvocation });
     return clientActionFailure(code, {
         ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
         ...metadata,
@@ -138,23 +177,13 @@ export function projectClientActionInvocationFailure(
     if (result.status === 'unavailable') {
         const code = projectPluginActionUnavailableOutcomeCode(result.code, result.actionHandlerInvocation);
         const author = readPluginActionFailureAuthorPayload(result.data);
+        if (author.failureCause) return projectPluginActionFailure({ ...result, code });
         const metadata: FailureMetadata = {
             ...(author.details === undefined ? {} : { details: author.details }),
             ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
         };
         return actionOutcomeUnknownFailure(code, declaration, input, metadata) ?? clientActionFailure(code, metadata);
     }
-    const author = readPluginActionFailureAuthorPayload(result.data);
-    const actionHandlerInvocation = result.actionHandlerInvocation ?? readPluginActionFailureHandlerInvocation(result);
-    const metadata: FailureMetadata = {
-        message: result.message,
-        ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
-        ...readPluginSurfaceHostApiFailureMetadata(author.details),
-        ...(author.details === undefined ? {} : { details: author.details }),
-        ...(author.failureCause === undefined ? {} : { failureCause: author.failureCause }),
-        ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
-        ...(author.remediation === undefined ? {} : { remediation: author.remediation }),
-        ...(author.diagnostics?.length ? { diagnostics: author.diagnostics.map(diagnostic => diagnostic.code) } : {}),
-    };
-    return actionOutcomeUnknownFailure(result.code, declaration, input, metadata) ?? clientActionFailure(result.code, metadata);
+    const metadata = projectPluginActionFailure(result);
+    return metadata.failureCause ? metadata : actionOutcomeUnknownFailure(result.code, declaration, input, metadata) ?? metadata;
 }

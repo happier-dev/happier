@@ -10,7 +10,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { Action, ActionPanel } from './Action.js';
-import { projectPluginActionRejectionV1, useExecutePluginAction } from '../hostApi/executeAction.js';
+import { projectPluginActionRejectionV1, projectPluginActionControlExecutionV1, useExecutePluginAction } from '../hostApi/executeAction.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { createPluginUiHostApiClientFromTransport } from '../../../plugin-sdk/src/ui/clientTransport.js';
 import { createPluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
@@ -89,6 +89,36 @@ async function press(element: HTMLElement): Promise<void> {
 }
 
 describe('plugin-ui Action family dispatches through the canonical host API', () => {
+  it('preserves a short Action.Control title while its accessible identity updates', async () => {
+    type HostInput = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
+    const requests: HostInput['request'][] = [];
+    const controller = { prepare: () => null, onSettled() {} };
+    const context = createSurfaceContext();
+    function AuthorControl() {
+      const { locale } = useSurfaceContext();
+      if (locale === context.locale) return null;
+      return <Action.Control action="projects.compute.exec" title="Resolve"
+        accessibilityLabel={locale === 'de-CH' ? 'Resolve comment #123' : 'Resolve comment #456'} controller={controller} />;
+    }
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'action-control-label', mountNonce: 'action-control-label-mount' },
+      authorPlugin: { id: 'com.acme.action-control', version: '1.0.0' },
+      surface: defineUiSurface(AuthorControl), surfaceContext: context,
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { actionControl(input) { requests.push(input.request); } },
+    });
+    try {
+      await act(async () => { await fixture.updateSurface({ ...context, locale: 'de-CH' }); });
+      await vi.waitFor(() => expect(requests.find(request => request.kind === 'bind')).toMatchObject({
+        presentation: { title: 'Resolve', accessibilityLabel: 'Resolve comment #123' },
+      }));
+      await act(async () => { await fixture.updateSurface({ ...context, locale: 'fr-CH' }); });
+      await vi.waitFor(() => expect(requests.at(-1)).toMatchObject({ kind: 'update',
+        presentation: { title: 'Resolve', accessibilityLabel: 'Resolve comment #456' },
+      }));
+    } finally { await fixture.dispose(); }
+  });
+
   it.each([true, false])('registers and updates Action.Control through the public testkit when optional presentation props are omitted (%s)', async omitted => {
     type HostInput = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
     const requests: HostInput['request'][] = [];
@@ -383,7 +413,7 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     await press(pressableByLabel(mount.container, 'Refresh review'));
 
     expect(executeAction).toHaveBeenCalledOnce();
-    expect(executeAction).toHaveBeenCalledWith('review.refresh');
+    expect(executeAction).toHaveBeenCalledWith('review.refresh', undefined, expect.any(Object));
 
     mount.unmount();
   });
@@ -407,7 +437,7 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
       await Promise.resolve();
     });
 
-    expect(executeAction).toHaveBeenCalledWith('review.refresh', null);
+    expect(executeAction).toHaveBeenCalledWith('review.refresh', null, expect.any(Object));
     mount.unmount();
   });
 
@@ -535,7 +565,8 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     expect(onSettled.mock.calls[0]?.[0]).toMatchObject({ status: 'error', code: 'denied', retryable: false,
       requestId: 'review-request-1',
       diagnostics: [{ code: 'plugin_action_scope_denied', severity: 'error' }] });
-    expect(onSettled.mock.calls[0]?.[0]).not.toHaveProperty('details');
+    // PLUGIN-REFUSAL-ADAPTERS-1112: preserve author data; the host presenter owns safe disclosure.
+    expect(onSettled.mock.calls[0]?.[0]).toHaveProperty('details', { privatePayload: 'must not be projected', requestId: 'review-request-1' });
 
     mount.unmount();
   });
@@ -701,6 +732,34 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     mount.unmount();
   });
 
+  it('retains the real transport request identity with a successful typed unavailable read', async () => {
+    const context = createSurfaceContext();
+    const identity = { instanceId: 'source-read', mountNonce: 'source-read-nonce' };
+    let receive: ((value: unknown) => void) | undefined;
+    let issuedId: string | undefined;
+    const result = { kind: 'unavailable', failure: { class: 'rateLimited', code: 'provider-rate-limited' } };
+    const hostApi = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+      subscribe(listener) { receive = listener; return { dispose() { receive = undefined; } }; },
+      send(message) {
+        if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+          apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context', 'watchContext', 'executeAction'] });
+        if (message.kind === 'subscribe') receive?.({ wireVersion: 1, kind: 'result', identity,
+          requestId: message.requestId, method: message.method, result: {} });
+        if (message.kind !== 'request') return;
+        if (message.method === 'executeAction') issuedId = message.requestId;
+        receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
+          method: message.method, result: message.method === 'executeAction' ? result : { surface: context, activity: { active: true } } });
+      },
+    } });
+    const onSettled = vi.fn();
+    const mount = mountSurface(<Action.Execute action="review.refresh" title="Read source" onSettled={onSettled} />, hostApi, context);
+    try {
+      await press(pressableByLabel(mount.container, 'Read source'));
+      expect(issuedId).toBeTruthy();
+      expect(onSettled.mock.calls[0]?.[0]).toEqual({ status: 'success', result, requestId: issuedId });
+    } finally { mount.unmount(); }
+  });
+
   it('keeps a lost post-issue receipt outcome-unknown from the real SDK transport without replay', async () => {
     const context = createSurfaceContext();
     const identity = { instanceId: 'lost-receipt', mountNonce: 'lost-receipt-nonce' };
@@ -825,4 +884,24 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
 
     mount.unmount();
   });
+});
+
+it('keeps typed refusal metadata available to the existing host presenter', () => {
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null } as const;
+  const error = new PluginError({ code: 'credential_scope_denied', message: 'Choose another credential',
+    details: { requestId: 'issued-refusal', effectAttempted: false }, failureCause, remediation: { kind: 'retry' } });
+  expect(projectPluginActionRejectionV1(error, (_key, fallback) => fallback ?? '')).toMatchObject({
+    status: 'error', code: error.code, requestId: 'issued-refusal', effectAttempted: false,
+    details: error.details, failureCause, remediation: { kind: 'retry' },
+  });
+});
+
+it('preserves the same typed Action failure in control settlements', () => {
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null } as const;
+  expect(projectPluginActionControlExecutionV1({ ok: false, errorCode: 'credential_scope_denied',
+    error: 'Choose another credential', requestId: 'control-refusal', effectAttempted: false,
+    failureCause, details: { reason: 'credential_scope_denied' } }, (_key, fallback) => fallback ?? '')).toMatchObject({
+      status: 'error', code: 'credential_scope_denied', requestId: 'control-refusal', effectAttempted: false,
+      failureCause, details: { reason: 'credential_scope_denied' },
+    });
 });

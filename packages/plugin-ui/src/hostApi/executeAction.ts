@@ -1,3 +1,5 @@
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { readPluginActionFailureAuthorPayload, type PluginActionFailureAuthorPayloadV1 } from '@happier-dev/protocol/plugins/actions/invocation';
 import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
@@ -36,8 +38,8 @@ export type PluginActionExecution<Result = unknown> =
   | Readonly<{ status: 'idle' }>
   | Readonly<{ status: 'pending' }>
   | Readonly<{ status: 'success'; result: Result; requestId?: string }>
-  | Readonly<{ status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
-  | Readonly<{ status: 'outcomeUnknown'; code: string; message: string; requestId?: string }>;
+  | Readonly<PluginActionFailureAuthorPayloadV1 & { effectAttempted?: boolean; status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
+  | Readonly<PluginActionFailureAuthorPayloadV1 & { effectAttempted?: boolean; status: 'outcomeUnknown'; code: string; message: string; requestId?: string }>;
 
 /**
  * The rejection codes that mean "the request reached the host and we stopped
@@ -125,14 +127,20 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   const message = readErrorMessage(error, code, translate);
   const details = (error as { details?: unknown } | null)?.details;
   const requestId = readPluginErrorRequestIdV1(error);
+  const authored = isPluginError(error) ? { success: true as const, data: error.data } : StrictJsonValueSchema.safeParse(error);
+  const author = readPluginActionFailureAuthorPayload(authored.success ? authored.data : undefined);
+  const effectAttempted = (error as { effectAttempted?: unknown } | null)?.effectAttempted
+    ?? (details && typeof details === 'object' ? Reflect.get(details, 'effectAttempted') : undefined);
+  const metadata = { ...author, ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}) };
   const receiptLost = details !== null && typeof details === 'object' && !Array.isArray(details)
     && Reflect.get(details, 'layer') === 'transport'
     && Reflect.get(details, 'phase') === 'settlement';
   if (OUTCOME_UNKNOWN_ERROR_CODES.has(code) || isActionOutcomeUnknownErrorCodeV1(code)
     || (error as { effectAttempted?: unknown } | null)?.effectAttempted === true || receiptLost) {
-    return { status: 'outcomeUnknown', code, message, ...(requestId === undefined ? {} : { requestId }) };
+    return { ...metadata, status: 'outcomeUnknown', code, message, ...(requestId === undefined ? {} : { requestId }) };
   }
   return {
+    ...metadata,
     status: 'error',
     code: confirmationDeclined ? CONFIRMATION_DECLINED_CODE : code,
     message,
