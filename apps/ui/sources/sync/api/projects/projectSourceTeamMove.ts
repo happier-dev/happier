@@ -1,9 +1,9 @@
-import type { ActionExecutorContext, ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { ProjectSourcesMoveToTeamInputV1Schema, ProjectSourcesUpdateOutputV1Schema,
+import { ProjectSourcesUpdateOutputV1Schema,
     type ProjectSourcesMoveToTeamOutputV1, type ProjectSourceV1, type ProjectSourceMoveResourceEffectsV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachineAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -16,8 +16,7 @@ import { copyUsedSavedSecretResourcesToTeam } from '@/sync/ops/settings/savedSec
 import type { SavedSecretAdmittedMutationExecute } from '@/sync/ops/settings/savedSecretResourceOperations';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { createProjectSourceActionDeps } from './projectSourceActions';
-import { moveFailure, ProjectSourceTeamMoveReadFailure, projectSourceTeamMoveInputKey,
-    readProjectSourceTeamMoveInventory, type ProjectSourceTeamMoveReadPorts, type ProjectSourceTeamMoveInventory } from './projectSourceTeamMoveInventory';
+import { moveFailure, ProjectSourceTeamMoveReadFailure, createProjectSourceTeamMovePreparation, type ProjectSourceTeamMoveReadPorts } from './projectSourceTeamMovePreparation';
 
 class MoveStopped extends Error {
     readonly code: string;
@@ -32,86 +31,10 @@ type MoveDeps = Pick<ActionExecutorDeps, 'prepareHostReviewedChildren' | 'projec
 
 /** The existing Action invocation owns this preparation and releases it with its captured Account. */
 export function createProjectSourceTeamMoveDeps(account: LazyActionAccountContext, ports: ProjectSourceTeamMoveReadPorts): MoveDeps {
-    let preparation: Readonly<{ key: string; value: Promise<ProjectSourceTeamMoveInventory> }> | undefined;
-    const prepare = (raw: unknown, context: ActionExecutorContext) => {
-        const input = ProjectSourcesMoveToTeamInputV1Schema.parse(raw);
-        const key = projectSourceTeamMoveInputKey(input);
-        if (preparation && preparation.key !== key) throw new ProjectSourceTeamMoveReadFailure(moveFailure('plan_changed'));
-        preparation ??= { key, value: readProjectSourceTeamMoveInventory(account, input, context, ports) };
-        return preparation.value;
-    };
-    const prepareFailure = (error: unknown): ActionExecuteFailure => {
-        if (error instanceof ProjectSourceTeamMoveReadFailure) return 'errorCode' in error.result ? error.result : moveFailure(error.result.error);
-        if (account.invocationSignal?.aborted) return moveFailure('cancelled');
-        if (error instanceof Error && 'code' in error && typeof error.code === 'string') return moveFailure(error.code);
-        return moveFailure('home_unreachable');
-    };
+    const { prepare, prepareFailure, prepareHostReviewedChildren, buildApprovalPreview } = createProjectSourceTeamMovePreparation(account, ports);
     const role = (kind: string, id: string) => `${kind}:${id}`;
     const teamPrincipal = (teamId: string) => ({ kind: 'team' as const, teamId });
-    const childPlan = (inventory: ProjectSourceTeamMoveInventory): HostReviewedChildrenPlanV1 => {
-        const { input } = inventory;
-        const children: HostReviewedChildrenPlanV1['children'][number][] = [];
-        for (const machine of inventory.machines) {
-            children.push({ action: 'machines.access.grant.set', role: role('machine', machine.machineId),
-                input: { serverId: input.serverId, machineId: machine.machineId, principal: teamPrincipal(input.teamId), level: 'admin' } });
-            if (machine.withdrawDirectGrant) children.push({ action: 'machines.access.grant.remove', role: role('withdraw-machine', machine.machineId),
-                input: { serverId: input.serverId, machineId: machine.machineId, principal: { kind: 'account', accountId: account.accountId } } });
-        }
-        inventory.usedSecrets.forEach((_secret, index) => children.push({ action: 'secrets.shared.create', role: role('secret', String(index)) }));
-        for (const artifactId of inventory.artifacts) children.push({ action: 'artifact.access.grants.set', role: role('artifact', artifactId),
-            input: { artifactId, principal: teamPrincipal(input.teamId), accessLevel: 'admin' } });
-        for (const detail of inventory.environments) if (detail.environment.deletedAtMs === undefined
-            && detail.content.bindings.some(binding => binding.source.kind === 'secret')) {
-            children.push({ action: 'deployments.bindings.set', role: role('bindings', detail.environment.id),
-                scopeInput: { serverId: input.serverId, environmentId: detail.environment.id } },
-                { action: 'artifact.access.grants.set', role: role('binding-artifact', detail.environment.id) });
-        }
-        children.push({ action: 'projects.sources.update', role: 'source-owner', input: {
-            serverId: input.serverId, sourceId: input.sourceId, expectedRevision: input.expectedRevision, patch: { owner: teamPrincipal(input.teamId) },
-        } });
-        for (const token of inventory.ciTokens) children.push({ action: 'account.apiTokens.update', role: role('token', token.tokenId),
-            input: { tokenId: token.tokenId, authorizeUnattendedTeamAccess: true } });
-        for (const trigger of inventory.triggers) children.push({ action: 'workflow.trigger.update', role: role('trigger', `${trigger.automationId}/${trigger.triggerId}`) });
-        // A new grant response identifies only this actor's removable explicit grant.
-        // Intrinsic Artifact/Machine custody and unrelated audiences are never withdrawn.
-        for (const artifactId of inventory.artifacts) children.push({ action: 'artifact.access.grants.remove', role: role('withdraw-artifact', artifactId),
-            input: { artifactId, principal: { kind: 'account', accountId: account.accountId } } });
-        if (inventory.source.audience.some(grant => grant.principal.kind === 'account' && grant.principal.accountId === account.accountId)) {
-            children.push({ action: 'projects.sources.update', role: 'withdraw-source-audience' });
-        }
-        return { children };
-    };
-    return {
-        prepareHostReviewedChildren: async request => {
-            if (request.actionId !== 'projects.sources.moveToTeam') return null;
-            try { return childPlan(await prepare(request.input, request.context)); }
-            catch (error) { return prepareFailure(error); }
-        },
-        buildApprovalPreview: async (raw, context, defaultPreview) => {
-            try {
-                const inventory = await prepare(raw, context);
-                return { ...(defaultPreview && typeof defaultPreview === 'object' ? defaultPreview : {}), moveToTeam: {
-                    teamId: inventory.input.teamId, source: inventory.source,
-                    environments: inventory.environments.map(({ environment, targetLinks, receipts }) => ({
-                        environmentId: environment.id, revision: environment.revision, purpose: environment.purpose,
-                        ...(environment.deletedAtMs === undefined ? {} : { deletedAtMs: environment.deletedAtMs }),
-                        ...(environment.previewTemplateEnvironmentId ? { previewTemplateEnvironmentId: environment.previewTemplateEnvironmentId } : {}),
-                        targetLinkIds: targetLinks.map(link => link.id), receiptIds: receipts.map(receipt => receipt.id),
-                    })), machines: inventory.machines.map(({ machineId, roles }) => ({ machineId, roles })),
-                    withdrawal: { accountId: account.accountId, artifactIds: inventory.artifacts,
-                        removableMachineIds: inventory.machines.filter(machine => machine.withdrawDirectGrant).map(machine => machine.machineId) },
-                    usedSecrets: inventory.usedSecrets, artifactIds: inventory.artifacts,
-                    ciTokens: inventory.ciTokens.map(({ tokenId, label, hasUnattendedTeamAccess, activeChildCount, parentTokenId }) =>
-                        ({ tokenId, label, hasUnattendedTeamAccess, activeChildCount, parentTokenId })),
-                    triggers: inventory.triggers.map(({ automationId, triggerId, revision, approvedByAccountId }) =>
-                        ({ automationId, triggerId, revision, approvedByAccountId })),
-                    previews: inventory.environments.filter(detail => detail.environment.purpose === 'preview').map(({ environment }) => ({
-                        environmentId: environment.id, previewTemplateEnvironmentId: environment.previewTemplateEnvironmentId,
-                        previewTargetLinkId: environment.previewTargetLinkId,
-                    })),
-                } };
-            } catch (error) { return prepareFailure(error); }
-        },
+    return { prepareHostReviewedChildren, buildApprovalPreview,
         projectSourcesMoveToTeam: async (input, context): Promise<ProjectSourcesMoveToTeamOutputV1 | ActionExecuteFailure> => {
             let source: ProjectSourceV1 | undefined;
             let changed = false;

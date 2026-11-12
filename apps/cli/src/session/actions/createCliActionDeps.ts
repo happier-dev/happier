@@ -1,3 +1,6 @@
+import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { requireExternalActionHeaders, createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { prepareCliDeploymentAlertDefaults } from './cliActionDeps/deploymentDefaults';
@@ -159,7 +162,7 @@ import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountAr
   type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { createCliInboxReadAction } from './inboxActions';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
-import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readAccountIdFromToken, decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import type { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { readSettings } from '@/persistence';
@@ -1040,6 +1043,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(params.prepareDeploymentTeardown ? { prepareDeploymentTeardown: params.prepareDeploymentTeardown } : {}),
     ...(params.prepareDeploymentEnvironmentCreate ? { prepareDeploymentEnvironmentCreate: params.prepareDeploymentEnvironmentCreate } : {}),
     prepareHostReviewedChildren: async request => {
+      const sourceMove = request.actionId === PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 ? await prepareCliProjectSourceTeamMove(request, {
+        accountId: homeAccountId,
+        credentialAuthorityKind: readAuthTokenProvenance(decodeJwtPayload(params.token), { allowLegacyHome: true })?.provenance.kind ?? 'none',
+        homeId: actionHomeId, serverHttpBaseUrl: todoHomeBaseUrl,
+        readDeps: () => readEffectiveDeps?.() ?? actionDeps,
+        isSameHomeId: isSameActionHomeId, assertCurrent: assertDeploymentReadCurrent,
+        openArtifact: openDeploymentArtifact, headers: resolveAccountStorageHeaders,
+      }) : null;
+      if (sourceMove) return sourceMove;
       const refusal = await prepareCliManagedProvisionerAdmission(request, {
         credentials: params.credentials, serverUrl: todoHomeBaseUrl,
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,

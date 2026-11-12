@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import axios from 'axios';
+import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { afterEach, beforeEach, describe, expect, it, vi, onTestFinished } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactReadBatchHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -895,3 +897,75 @@ it.each(['same-home', 'other-home', 'other-account'] as const)(
         }
     },
 );
+
+
+it.each(['unchanged', 'changed-child'] as const)('reviews actual CLI Source move children before browser approval (%s)', async scenarioKind => {
+    const scenario = await openMoveScenario();
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(scenario.serverId);
+    const terminalPayload = btoa(JSON.stringify({ sub: account.accountId, tokenEpoch: 0,
+        provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    const credentials = { token: `e30.${terminalPayload}.signature`, encryption: null, credentialProvenance: 'stored_session' as const };
+    const serverIdentityId = account.serverIdentityId!;
+    const serverUrl = account.endpointUrl;
+    account.dispose();
+    const adapter = axios.defaults.adapter;
+    const nativeFetch = globalThis.fetch;
+    // HTTP is the cross-package boundary; both real Account/Artifact owners share the same Home rows.
+    globalThis.fetch = (input, init) => homes.request(input, init);
+    axios.defaults.adapter = async config => {
+        const url = new URL(config.url!, config.baseURL);
+        for (const [key, value] of Object.entries(config.params ?? {})) if (value !== undefined) url.searchParams.set(key, String(value));
+        const response = await homes.request(url.href, { method: config.method?.toUpperCase(),
+            headers: Object.fromEntries(Object.entries(config.headers.toJSON()).map(([key, value]) => [key, String(value)])),
+            ...(config.data === undefined ? {} : { body: typeof config.data === 'string' ? config.data : JSON.stringify(config.data) }),
+            ...(config.signal ? { signal: config.signal as AbortSignal } : {}) });
+        return { status: response.status, statusText: response.statusText, headers: {}, data: await response.json(), config };
+    };
+    onTestFinished(() => { axios.defaults.adapter = adapter; globalThis.fetch = nativeFetch; });
+    // Load the real CLI host without rooting the CLI TypeScript program in the UI compilation.
+    const cliHostPath = '../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
+    const { createCliActionExecutorFromCredentials } = await vi.importActual<{
+        createCliActionExecutorFromCredentials(options: Readonly<{
+            credentials: typeof credentials; readCredentials(): Promise<typeof credentials>;
+            serverId: string; serverIdentityId: string; serverApiUrl: string;
+        }>): Pick<ReturnType<typeof createActionExecutor>, 'execute'>;
+    }>(cliHostPath);
+    await homes.requireActionApproval(scenario.serverId, 'projects.sources.moveToTeam', 'cli');
+    const creator = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+        serverId: scenario.serverId, serverIdentityId, serverApiUrl: serverUrl });
+    const produced = await creator.execute('projects.sources.moveToTeam', scenario.input, {
+        surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+        serverId: scenario.serverId, serverIdentityId, runtimeAccountId: 'account-owner',
+        actionRequestId: 'cli-source-move-review',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            'projects.sources.moveToTeam': { approvalRequiredSurfaces: ['cli'] },
+        } }),
+    });
+    expect(produced, JSON.stringify(produced)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    if (!produced.ok || !produced.result || typeof produced.result !== 'object' || !('artifactId' in produced.result)
+        || typeof produced.result.artifactId !== 'string') throw new Error('Expected CLI approval');
+    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const pending = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(scenario.serverId)
+        .readPlainBody(produced.result.artifactId) ?? 'null'));
+    expect(pending).toMatchObject({ status: 'open', preview: { hostReviewedChildren: { children: expect.arrayContaining([
+        expect.objectContaining({ action: 'machines.access.grant.set', role: expect.any(String) }),
+        expect.objectContaining({ action: 'artifact.access.grants.set', role: expect.any(String) }),
+    ]) } } });
+    expect(scenario.effects).toEqual([]);
+    if (scenarioKind === 'changed-child') {
+        scenario.detail.environment.buildMachineId = 'machine-new';
+        answerMoveMachine(scenario.serverId, 'machine-new');
+    }
+    const decided = await decideApprovalAsInbox(scenario.serverId, produced.result.artifactId, 'approve');
+    if (scenarioKind === 'changed-child') {
+        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'failed',
+            execution: { ok: false, errorCode: 'approval_stale' } } });
+        expect(scenario.effects).toEqual([]);
+    } else {
+        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true,
+            result: { kind: 'completed', source: { owner: { kind: 'team', teamId: 'team' } } } } } });
+        expect(scenario.effects).toContain('machine-team');
+        expect(scenario.source().owner).toEqual({ kind: 'team', teamId: 'team' });
+    }
+});

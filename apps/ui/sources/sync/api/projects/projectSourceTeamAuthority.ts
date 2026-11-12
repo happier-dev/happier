@@ -1,8 +1,8 @@
+import { selectProjectSourceTeamMoveApiTokensV1 } from '@happier-dev/deployment-protocol/v1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema,
     AccountApiTokensServerErrorV1Schema, type AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
-import { evaluateApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
@@ -33,8 +33,7 @@ export async function readProjectSourceTeamApiTokens(input: Readonly<{
         context.signal?.throwIfAborted();
         account.assertCurrent();
         if (!response.ok) return fail(homeDomainFailureCode(response.failure));
-        return { kind: 'ready', tokens: response.value.tokens.filter(token => input.environmentIds.some(environmentId =>
-            evaluateApiTokenGrantV1({ grant: token.grant, actionId: 'deployments.deploy', environmentId }).ok)) };
+        return { kind: 'ready', tokens: selectProjectSourceTeamMoveApiTokensV1(response.value.tokens, input.environmentIds) };
     } catch (error) {
         if (context.signal?.aborted) return fail('cancelled');
         if (error instanceof Error && 'code' in error && error.code === 'action_account_scope_changed') {

@@ -15,3 +15,4 @@ export * from './targetLinkComparison.js';
 export * from './template.js';
 export * from './health.js';
 export * from './review.js';
+export * from './projectSourceTeamMove.js';

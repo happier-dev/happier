@@ -8,6 +8,7 @@ import { AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServic
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createDaemonSessionAccountActionExecutor } from './createDaemonSessionAccountActionExecutor';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import nacl from 'tweetnacl';
 import { mintExternalActionExecutionAuthorization, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionApprovalInputV1,
@@ -768,6 +769,12 @@ describe('daemon Session Account authority', () => {
     const runnerCarrier = kind === 'find' || kind === 'settings' || kind === 'link';
     const serverHttpBaseUrl = 'https://client-source.test';
     const homeId = 'srv_client-source';
+    if (sourceMoveRemote) await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
+      [configuration.activeServerId]: { id: configuration.activeServerId, name: configuration.activeServerId,
+        serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId,
+          canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] } },
+    } }));
     const source = { machineId: 'source-machine', installationId: 'source-installation' };
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
     const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'source-account', tokenEpoch: 0,
@@ -851,6 +858,16 @@ describe('daemon Session Account authority', () => {
     });
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       expect(new URL(String(config.url)).origin).toBe(serverHttpBaseUrl);
+      if (sourceMoveRemote && config.method === 'GET') {
+        const path = new URL(String(config.url)).pathname;
+        if (path === '/v1/projects/sources/personal-source') return { status: 200, data: { ok: true, canManage: true,
+          source: { id: 'personal-source', revision: 1, name: 'Personal source',
+            owner: { kind: 'account', accountId: 'source-account' }, audience: [], createdByAccountId: 'source-account' } } };
+        if (path === '/v1/projects/personal-source/deployment-defaults') return { status: 200,
+          data: { ok: true, projectSourceId: 'personal-source', sourceRevision: 1, revision: 0, content: null } };
+        if (path === '/v1/deployments/environments') return { status: 200,
+          data: { ok: true, items: [], nextCursor: null } };
+      }
       if (config.method === 'POST' && new URL(String(config.url)).pathname === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1)
         return accountCurrent ? { status: 200, data: { tokens: [] } }
           : { status: 403, data: { error: 'forbidden' } };
@@ -985,12 +1002,21 @@ describe('daemon Session Account authority', () => {
       token: credentials.token, machineId: source.machineId,
       prepareExternalActionAuthorization: async admission => {
         invocationRequestId = admission.operation.requestId;
-        const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId: invocationRequestId,
+        let authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId: invocationRequestId,
           target, machineId: source.machineId, sourceMachineId: source.machineId, accountId: 'source-account',
           accountEncryptionMode: 'plain', tokenEpochHint: 0, token: credentials.token,
           serverId: configuration.activeServerId, serverIdentityId: homeId, serverHttpBaseUrl,
           installationId: source.installationId, privateKey: keys.secretKey, sessionActionOrigin: admission.sessionActionOrigin,
           isCurrent: admission.isCallerCurrent, signal: admission.authority.signal });
+        if (authorization && sourceMoveRemote) {
+          // The installed Session preparer attaches these exact-Session Account
+          // ports after minting; Source review consumes the same real projection.
+          authorization = await projectRequesterAccountActionAuthorization({ authorization,
+            serverIdentityId: homeId, bootstrap: { credentials, serverHttpBaseUrl,
+              attribution: { serverId: configuration.activeServerId, accountId: 'source-account', ...source },
+              getBoundSessionId: () => 'bob-session', isCurrent: admission.isCallerCurrent },
+            signal: admission.authority.signal });
+        }
         return authorization ? { authorization, target } : null;
       },
       createExecutor,

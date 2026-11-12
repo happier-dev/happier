@@ -1966,8 +1966,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // the approval Artifact cannot recreate the issuer's operand proof.
       executionContext = { ...executionContext, externalActionExecutionAuthorization: originalAuthorization };
     }
-    if ((executionContext.approvedActionReplay?.hostReviewedChildren || executionContext.callerSurface)
-      && origin?.success && originIsCurrent && (appOwnedReplay || !origin.data.externalActionExecutionAuthorization)
+    if (origin?.success && originIsCurrent && (appOwnedReplay || !origin.data.externalActionExecutionAuthorization)
       && origin.data.accountId && origin.data.accountId === args.ctx.runtimeAccountId
       && origin.data.serverIdentityId && origin.data.serverIdentityId === args.ctx.serverIdentityId
       && args.ctx.actionsSettings) {

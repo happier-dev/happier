@@ -96,6 +96,7 @@ import { ROLE_ACTION_IDS_V1 } from '../prompts/roles/roleActionIdsV1.js';
 import { WORK_BOARD_ACTION_IDS_V1 } from '../boards/actionIdsV1.js';
 import { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 import { PROJECT_SOURCE_ACTION_IDS_V1 } from './specs/projectSourcesActionIdsV1.js';
+export { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 
 import { HOME_GOVERNANCE_ACTION_IDS_V1 } from '../home/governance/actionIdsV1.js';
 import { HOME_IDENTITY_ACTION_IDS_V1 } from '../teams/identity/actionIds.js';
