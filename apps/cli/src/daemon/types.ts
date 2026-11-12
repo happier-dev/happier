@@ -2,6 +2,7 @@
  * Daemon-specific types (not related to API/server communication)
  */
 
+import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { ChildProcess } from 'child_process';
@@ -32,6 +33,7 @@ import type { RequesterSessionRuntimeContext } from './sessionEncryption/request
 import type { OwnerRemainderCapture, OwnerRemainderResult } from './processes/endOwnerRemainder';
 import type { ConnectedServiceMaterializedStateObservationBinding } from './connectedServices/materialization/materializer';
 import type { ChildExit } from './sessions/onChildExited';
+import type { SessionTrackingKey } from './sessions/sessionTrackingKey';
 
 export type DaemonSpawnStartupReadinessFailure = Extract<
   SpawnSessionResult,
@@ -66,6 +68,8 @@ export type RunnerAgentBootstrapIdentity = Readonly<
  * Session tracking for daemon
  */
 export interface TrackedSession {
+  /** Daemon-issued Session identity; the tracked map and the Session marker are keyed by it. */
+  readonly trackingKey: SessionTrackingKey;
   /** Original startup operation while the native Agent has not opened; never marker-persisted. */
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   /** Generation-bound pre-exit chain observations; ephemeral evidence, never marker-persisted. */
@@ -125,11 +129,6 @@ export interface TrackedSession {
   ) => Promise<DaemonSpawnStartupReadinessFailure | null>;
   /** Canonical identity locked by the first qualified fresh-session webhook. */
   spawnStartupCanonicalSessionId?: string;
-  /**
-   * Original PID key owning the in-flight webhook waiter after a verified
-   * wrapper-to-runner promotion.
-   */
-  spawnStartupAwaiterPid?: number;
   /** Current verified wrapper-to-runner marker/custody promotion, if any. */
   sessionMarkerPidPromotion?: Promise<boolean>;
   /** Joins duplicate canonical webhook reports to one startup reconciliation. */
@@ -177,6 +176,10 @@ export interface TrackedSession {
     AgentRuntimeDaemonServiceSessionOpenAttestationV1;
   /** Vendor resume id (e.g. Claude/Codex session id) supplied/derived at spawn time. */
   vendorResumeId?: string;
+  /** Agents this runner's holders keep (role-tagged; the marker persists them). */
+  heldAgentsV1?: readonly SessionHeldAgentV1[];
+  /** Set when this runner crashed and its held primary Agent was spared for the respawned runner to adopt. */
+  sparedHeldAgentV1?: SessionHeldAgentV1 & Readonly<{ turnId?: string }>;
   /**
    * Expected terminal host metadata for visible daemon launches.
    * Windows Terminal uses its daemon-issued unique tab title to correlate the
@@ -227,6 +230,16 @@ export interface TrackedSession {
   /** Best-effort observed process command line used for startup runtime refresh checks. */
   processCommand?: string;
   childProcess?: ChildProcess;
+  /**
+   * Set when this Session runs in the daemon's session host (`pid` is the host's): the host ends
+   * it, never a signal to `pid`, which would end every Session of the host.
+   */
+  hostedSession?: Readonly<{
+    /** Ask the host to end this Session; false when the host does not run it (any more). */
+    end(): Promise<boolean>;
+    /** Settles once this Session's end has been observed (exit custody settled). */
+    observed: Promise<void>;
+  }>;
   error?: string;
   directoryCreated?: boolean;
   message?: string;

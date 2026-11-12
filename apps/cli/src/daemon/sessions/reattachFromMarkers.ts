@@ -51,6 +51,7 @@ import type { LocalServiceProcessFact } from '../local/services/inventory/proven
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
+import { mintSessionTrackingKey, trackSession, trackedSessionsForProcess, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 function extractExistingSessionIdFromCommand(command: string): string | null {
   const match = /(?:^|\s)--existing-session(?:=|\s+)(\S+)/.exec(command);
@@ -251,6 +252,7 @@ async function includePidSpecificHappyProcessesForAliveMarkers(params: Readonly<
 async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
   happyProcesses: ReadonlyArray<HappyProcessInfo>;
   incompleteMarkerByPid: ReadonlyMap<number, Readonly<{
+    trackingKey: SessionTrackingKey;
     happySessionId: string;
     startedBy?: string;
     cwd?: string;
@@ -274,7 +276,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
   }>>;
   markedPids: ReadonlySet<number>;
   claimedSessionIds: Set<string>;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   credentials?: StoredCredentials | null;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   processIdentityByPid?: ReadonlyMap<
@@ -287,7 +289,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     incompleteMarkerByPid,
     markedPids,
     claimedSessionIds,
-    pidToTrackedSession,
+    trackedSessionsByKey,
     credentials,
     deviceLocalSecretStorage,
     processIdentityByPid,
@@ -295,7 +297,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
   let recovered = 0;
 
   for (const processInfo of happyProcesses) {
-    if (markedPids.has(processInfo.pid) || pidToTrackedSession.has(processInfo.pid)) {
+    if (markedPids.has(processInfo.pid) || trackedSessionsForProcess(trackedSessionsByKey, processInfo.pid).length > 0) {
       continue;
     }
     const incompleteMarker = incompleteMarkerByPid.get(processInfo.pid);
@@ -436,7 +438,9 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
         runnerManagedDependencyRetentionV1:
           incompleteMarker?.runnerManagedDependencyRetentionV1,
       });
-    pidToTrackedSession.set(processInfo.pid, {
+    const trackingKey = incompleteMarker?.trackingKey ?? mintSessionTrackingKey();
+    trackSession(trackedSessionsByKey, {
+      trackingKey,
       startedBy: 'daemon',
       happySessionId,
       pid: processInfo.pid,
@@ -513,6 +517,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     });
 
     await writeSessionMarker({
+      trackingKey,
       pid: processInfo.pid,
       happySessionId,
       startedBy: 'daemon',
@@ -574,6 +579,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
 
 export type OrphanedDeadDaemonSession = Readonly<{
   sessionId: string;
+  trackingKey: SessionTrackingKey;
   pid: number;
   activeTurnId?: string;
   processCommandHash?: string;
@@ -583,7 +589,7 @@ export type OrphanedDeadDaemonSession = Readonly<{
 }>;
 
 function projectOrphanedDeadDaemonSession(marker: DaemonSessionMarker): OrphanedDeadDaemonSession {
-  return { sessionId: normalizeSessionId(marker.happySessionId), pid: marker.pid,
+  return { sessionId: normalizeSessionId(marker.happySessionId), trackingKey: marker.trackingKey, pid: marker.pid,
     ...(marker.activeTurnId ? { activeTurnId: marker.activeTurnId } : {}),
     ...(marker.processCommandHash ? { processCommandHash: marker.processCommandHash } : {}),
     ...(marker.processStartTimeMs !== undefined ? { processStartTimeMs: marker.processStartTimeMs } : {}),
@@ -647,7 +653,7 @@ function buildReattachResult(params: Readonly<{
 }
 
 export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   credentials?: StoredCredentials | null;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   // Compatibility-only inputs: cold startup intentionally never probes or
@@ -656,7 +662,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   loadTerminalHostAdapters?: unknown;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
 }>): Promise<ReattachTrackedSessionsFromMarkersResult> {
-  const { pidToTrackedSession, credentials, deviceLocalSecretStorage } = params;
+  const { trackedSessionsByKey, credentials, deviceLocalSecretStorage } = params;
   const orphanedDeadDaemonSessions: OrphanedDeadDaemonSession[] = [];
   const disconnectedTerminalHostCandidates: DisconnectedTerminalHostCandidate[] = [];
   const unresolvedTerminalHostSessionIds: string[] = [];
@@ -693,6 +699,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           }
           disconnectedTerminalHostCandidates.push({
             sessionId,
+            trackingKey: marker.trackingKey,
             pid: marker.pid,
             happyHomeDir: marker.happyHomeDir,
             attachmentId: attachmentState.info.attachmentId,
@@ -710,7 +717,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           orphanedDeadDaemonSessions.push(projectOrphanedDeadDaemonSession(marker));
           continue;
         }
-        await removeSessionMarker(marker.pid);
+        await removeSessionMarker(marker.trackingKey);
         continue;
       }
     }
@@ -737,7 +744,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     const { adopted } = adoptSessionsFromMarkers({
       markers: aliveMarkers,
       happyProcesses: happyProcessesForReattach,
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials,
       deviceLocalSecretStorage,
       processIdentityByPid,
@@ -745,7 +752,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     if (adopted > 0) logger.debug(`[DAEMON RUN] Reattached ${adopted} sessions from disk markers`);
     const directories = createManagedSessionDirectories();
     for (const marker of aliveMarkers) {
-      const tracked = pidToTrackedSession.get(marker.pid);
+      const tracked = trackedSessionsByKey.get(marker.trackingKey);
       const sessionId = normalizeSessionId(marker.happySessionId);
       if (!tracked || !sessionId || readSessionDirectoryKind(marker.metadata) !== 'managed') continue;
       if (tracked.spawnOptions) {
@@ -755,9 +762,9 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       const resolved = await directories.resolveForSession({ sessionId, path, sessionCreationTag: tracked.spawnOptions?.sessionCreationTag });
       if (!resolved.ok) directoryMissingSessions.push({ sessionId, errorCode: resolved.errorCode });
     }
-    const adoptedPidSet = new Set(pidToTrackedSession.keys());
+    const adoptedPidSet = new Set([...trackedSessionsByKey.values()].map((tracked) => tracked.pid));
     const claimedSessionIds = new Set(
-      [...pidToTrackedSession.values()]
+      [...trackedSessionsByKey.values()]
         .map((tracked) => normalizeSessionId(tracked.happySessionId))
         .filter(Boolean),
     );
@@ -790,6 +797,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         .map((marker) => [
           marker.pid,
           {
+            trackingKey: marker.trackingKey,
             happySessionId: marker.happySessionId,
             startedBy: marker.startedBy,
             cwd: marker.cwd,
@@ -823,7 +831,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           incompleteMarkerByPid,
           markedPids: markerlessRecoveryBlockedPidSet,
           claimedSessionIds,
-          pidToTrackedSession,
+          trackedSessionsByKey,
           credentials,
           deviceLocalSecretStorage,
           processIdentityByPid,
@@ -841,14 +849,14 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           // A rejected marker must not be bypassed by the path for processes
           // with no marker. That path cannot restore its session authority.
           markedPids: new Set([...markerlessRecoveryBlockedPidSet, ...aliveMarkers.map((marker) => marker.pid)]),
-          pidToTrackedSession,
+          trackedSessionsByKey,
         })
       : 0;
     if (liveRecoveredWithoutMarkers > 0) {
       logger.debug(`[DAEMON RUN] Recovered ${liveRecoveredWithoutMarkers} live daemon session(s) without disk markers`);
     }
     const recoveredLiveSessionIds = new Set(
-      Array.from(pidToTrackedSession.values())
+      Array.from(trackedSessionsByKey.values())
         .map((trackedSession) => trackedSession.happySessionId)
         .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0)
         .map((sessionId) => sessionId.trim()),
@@ -856,7 +864,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     for (const marker of aliveMarkers) {
       const restartIntent = readConnectedServiceRestartIntent(marker);
       if (!restartIntent) continue;
-      await clearSessionMarkerConnectedServiceRestartIntent(marker.pid).catch((error: unknown) => {
+      await clearSessionMarkerConnectedServiceRestartIntent(marker.trackingKey).catch((error: unknown) => {
         logger.debug('[DAEMON RUN] Failed to clear stale connected-service restart intent during startup reattach reconciliation', error);
       });
     }
@@ -873,7 +881,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   }
 
   const recoveredLiveSessionIds = new Set(
-    Array.from(pidToTrackedSession.values())
+    Array.from(trackedSessionsByKey.values())
       .map((trackedSession) => trackedSession.happySessionId)
       .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0)
       .map((sessionId) => sessionId.trim()),

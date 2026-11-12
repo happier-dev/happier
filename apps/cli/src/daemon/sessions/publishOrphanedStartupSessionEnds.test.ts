@@ -2,8 +2,30 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { publishOrphanedStartupSessionEnds } from './publishOrphanedStartupSessionEnds';
 import { isSessionRunnerActive } from './isSessionRunnerActive';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('publishOrphanedStartupSessionEnds', () => {
+  it.each([false, true])('retains another Home marker before a permanent terminal refusal (same Session id sibling=%s)', async sameHomeSibling => {
+    const foreign = { sessionId: 'shared-id', trackingKey: legacyPidSessionTrackingKey(101), pid: 101, requesterWorkAttributionV1: {
+      serverId: 'other-home', accountId: 'requester', machineId: 'machine', installationId: 'installation',
+    } };
+    const local = { ...foreign, trackingKey: legacyPidSessionTrackingKey(102), pid: 102, requesterWorkAttributionV1: { ...foreign.requesterWorkAttributionV1, serverId: 'current-home' } };
+    let captures = 0;
+    const removals: string[] = [];
+    const retained = await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home', orphanedDeadDaemonSessions: sameHomeSibling ? [foreign, local] : [foreign],
+      apiMachine: {
+        captureMachineSessionTerminal: async () => { captures++; return { v: 1, status: 'rejected', sessionId: 'shared-id', reason: 'not_found' }; },
+        enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('A permanent refusal has no turn to stage'); },
+        finalizeMachineSessionTerminal: async () => { throw new Error('A refused capture cannot finalize'); },
+      },
+      removeSessionMarkerFn: async trackingKey => { removals.push(trackingKey); },
+    });
+    expect(retained).toEqual([foreign]);
+    expect(captures).toBe(sameHomeSibling ? 1 : 0);
+    expect(removals).toEqual(sameHomeSibling ? [legacyPidSessionTrackingKey(102)] : []);
+  });
+
   it('awaits exact terminal staging before releasing the orphan marker', async () => {
     const calls: string[] = [];
     const apiMachine = {
@@ -25,9 +47,11 @@ describe('publishOrphanedStartupSessionEnds', () => {
     const removeSessionMarkerFn = vi.fn(async () => { calls.push('removed'); });
 
     await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-orphaned-6480',
+        trackingKey: legacyPidSessionTrackingKey(6480),
         pid: 6480,
         activeTurnId: 'turn-exact-1',
       }],
@@ -44,7 +68,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       observedAt: 123456789,
     });
     expect(calls).toEqual(['captured', 'persisted', 'finalized', 'removed']);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(6480);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6480));
   });
 
   it('finalizes the pre-staging authority when a successor advances presence during durable turn staging', async () => {
@@ -57,6 +81,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     });
     const removeSessionMarkerFn = vi.fn(async () => { calls.push('removed'); });
     const observation = publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         captureMachineSessionTerminal: vi.fn(async () => {
           calls.push('captured');
@@ -76,6 +101,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       },
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-fence-race',
+        trackingKey: legacyPidSessionTrackingKey(6486),
         pid: 6486,
         activeTurnId: 'turn-fence-race',
       }],
@@ -114,6 +140,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     }));
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const publication = publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         enqueueDaemonTerminalExactTurnEnd,
         captureMachineSessionTerminal,
@@ -121,6 +148,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       },
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-quiesced-capture',
+        trackingKey: legacyPidSessionTrackingKey(6493),
         pid: 6493,
         activeTurnId: 'turn-quiesced-capture',
       }],
@@ -152,6 +180,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     }));
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const publication = publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         enqueueDaemonTerminalExactTurnEnd,
         captureMachineSessionTerminal: vi.fn(async () => ({
@@ -164,6 +193,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       },
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-quiesced-staging',
+        trackingKey: legacyPidSessionTrackingKey(6494),
         pid: 6494,
         activeTurnId: 'turn-quiesced-staging',
       }],
@@ -194,6 +224,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     });
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const publication = publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
         captureMachineSessionTerminal: vi.fn(async () => ({
@@ -206,6 +237,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       },
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-quiesced-finalize',
+        trackingKey: legacyPidSessionTrackingKey(6495),
         pid: 6495,
         activeTurnId: 'turn-quiesced-finalize',
       }],
@@ -239,8 +271,9 @@ describe('publishOrphanedStartupSessionEnds', () => {
     const removeSessionMarkerFn = vi.fn(async () => undefined);
 
     await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
-      orphanedDeadDaemonSessions: [{ sessionId: 'sess-orphaned-no-turn', pid: 6481 }],
+      orphanedDeadDaemonSessions: [{ sessionId: 'sess-orphaned-no-turn', trackingKey: legacyPidSessionTrackingKey(6481), pid: 6481 }],
       removeSessionMarkerFn,
     });
 
@@ -250,7 +283,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       sessionId: 'sess-orphaned-no-turn',
       authority: { kind: 'generation', publisherGeneration: '8' },
     });
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(6481);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6481));
   });
 
   it('retains the orphan marker and continues when exact terminal staging fails', async () => {
@@ -262,6 +295,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       authority: { kind: 'generation' as const, publisherGeneration: '11' },
     }));
     await expect(publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('disk unavailable'); },
         captureMachineSessionTerminal,
@@ -269,12 +303,14 @@ describe('publishOrphanedStartupSessionEnds', () => {
       },
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-orphaned-failed',
+        trackingKey: legacyPidSessionTrackingKey(6482),
         pid: 6482,
         activeTurnId: 'turn-exact-failed',
       }],
       removeSessionMarkerFn,
     })).resolves.toEqual([{
       sessionId: 'sess-orphaned-failed',
+      trackingKey: legacyPidSessionTrackingKey(6482),
       pid: 6482,
       activeTurnId: 'turn-exact-failed',
     }]);
@@ -285,6 +321,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
   it('releases stale-fence orphan evidence after a successor supersedes finalize', async () => {
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         enqueueDaemonTerminalExactTurnEnd: vi.fn(),
         captureMachineSessionTerminal: vi.fn(async () => ({
@@ -299,10 +336,10 @@ describe('publishOrphanedStartupSessionEnds', () => {
           sessionId: 'sess-successor',
         })),
       },
-      orphanedDeadDaemonSessions: [{ sessionId: 'sess-successor', pid: 6483 }],
+      orphanedDeadDaemonSessions: [{ sessionId: 'sess-successor', trackingKey: legacyPidSessionTrackingKey(6483), pid: 6483 }],
       removeSessionMarkerFn,
     });
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(6483);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6483));
   });
 
   it('retains failed terminal evidence but continues with later startup orphans', async () => {
@@ -315,19 +352,20 @@ describe('publishOrphanedStartupSessionEnds', () => {
         sessionId: 'sess-later',
       });
     await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine: {
         enqueueDaemonTerminalExactTurnEnd: vi.fn(),
         captureMachineSessionTerminal,
         finalizeMachineSessionTerminal: vi.fn(),
       },
       orphanedDeadDaemonSessions: [
-        { sessionId: 'sess-failed', pid: 6484 },
-        { sessionId: 'sess-later', pid: 6485 },
+        { sessionId: 'sess-failed', trackingKey: legacyPidSessionTrackingKey(6484), pid: 6484 },
+        { sessionId: 'sess-later', trackingKey: legacyPidSessionTrackingKey(6485), pid: 6485 },
       ],
       removeSessionMarkerFn,
     });
     expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(6484);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(6485);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6485));
   });
 
   it.each(['not_found', 'archived', 'unsupported'] as const)(
@@ -343,6 +381,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       const removeSessionMarkerFn = vi.fn(async () => undefined);
 
       await expect(publishOrphanedStartupSessionEnds({
+        serverId: 'current-home',
         apiMachine: {
           enqueueDaemonTerminalExactTurnEnd,
           captureMachineSessionTerminal: vi.fn(async () => ({
@@ -355,6 +394,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
         },
         orphanedDeadDaemonSessions: [{
           sessionId: 'sess-definitively-gone',
+          trackingKey: legacyPidSessionTrackingKey(6489),
           pid: 6489,
           activeTurnId: 'turn-no-longer-addressable',
         }],
@@ -365,7 +405,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       expect(enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
       expect(finalizeMachineSessionTerminal).not.toHaveBeenCalled();
       expect(retireTerminalControlServiceability).not.toHaveBeenCalled();
-      expect(removeSessionMarkerFn).toHaveBeenCalledWith(6489);
+      expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6489));
     },
   );
 
@@ -373,9 +413,10 @@ describe('publishOrphanedStartupSessionEnds', () => {
     'retains orphan evidence when terminal capture is inconclusive: %s',
     async reason => {
       const removeSessionMarkerFn = vi.fn(async () => undefined);
-      const orphan = { sessionId: 'sess-unsettled', pid: 6489 };
+      const orphan = { sessionId: 'sess-unsettled', trackingKey: legacyPidSessionTrackingKey(6489), pid: 6489 };
 
       await expect(publishOrphanedStartupSessionEnds({
+        serverId: 'current-home',
         apiMachine: {
           enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
           captureMachineSessionTerminal: vi.fn(async () => ({
@@ -410,15 +451,16 @@ describe('publishOrphanedStartupSessionEnds', () => {
       finalizeMachineSessionTerminal: vi.fn(),
     };
     const recovery = publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
       orphanedDeadDaemonSessions: [
-        { sessionId: 'sess-hung', pid: 6487 },
-        { sessionId: 'sess-ready', pid: 6488 },
+        { sessionId: 'sess-hung', trackingKey: legacyPidSessionTrackingKey(6487), pid: 6487 },
+        { sessionId: 'sess-ready', trackingKey: legacyPidSessionTrackingKey(6488), pid: 6488 },
       ],
       removeSessionMarkerFn,
     });
 
-    await vi.waitFor(() => expect(removeSessionMarkerFn).toHaveBeenCalledWith(6488));
+    await vi.waitFor(() => expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6488)));
     expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(6487);
     rejectFirst(new Error('old server ACK timeout'));
     await recovery;
@@ -441,18 +483,19 @@ describe('publishOrphanedStartupSessionEnds', () => {
       })),
     };
     await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
       orphanedDeadDaemonSessions: [
-        { sessionId: 'sess-retry-chain', pid: 6490, activeTurnId: 'turn-a' },
-        { sessionId: 'sess-retry-chain', pid: 6491, activeTurnId: 'turn-b' },
+        { sessionId: 'sess-retry-chain', trackingKey: legacyPidSessionTrackingKey(6490), pid: 6490, activeTurnId: 'turn-a' },
+        { sessionId: 'sess-retry-chain', trackingKey: legacyPidSessionTrackingKey(6491), pid: 6491, activeTurnId: 'turn-b' },
       ],
       removeSessionMarkerFn,
     });
     expect(apiMachine.captureMachineSessionTerminal).toHaveBeenCalledTimes(1);
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).toHaveBeenCalledTimes(2);
     expect(apiMachine.finalizeMachineSessionTerminal).toHaveBeenCalledTimes(1);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(6490);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(6491);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6490));
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(6491));
   });
 
   it('releases dead exact-owned markers without closing a recovered live same-Session owner', async () => {
@@ -468,9 +511,11 @@ describe('publishOrphanedStartupSessionEnds', () => {
       })),
     };
     await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
       orphanedDeadDaemonSessions: [{
         sessionId: 'sess-live-recovered',
+        trackingKey: legacyPidSessionTrackingKey(6492),
         pid: 6492,
         activeTurnId: 'turn-obsolete',
         processCommandHash: 'a'.repeat(64),
@@ -483,7 +528,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     expect(apiMachine.finalizeMachineSessionTerminal).not.toHaveBeenCalled();
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).toHaveBeenCalledTimes(1);
     expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith({
-      pid: 6492,
+      trackingKey: legacyPidSessionTrackingKey(6492),
       happySessionId: 'sess-live-recovered',
       processCommandHash: 'a'.repeat(64),
       processStartTimeMs: 123,
@@ -492,10 +537,11 @@ describe('publishOrphanedStartupSessionEnds', () => {
     removeSessionMarkerIfOwnedFn.mockClear();
     // This Session acquired a live runner after the original startup scan.
     // Exercise the real live-runner owner, including its OS liveness reader.
-    const liveTrackedSessions = [{ startedBy: 'daemon', happySessionId: 'sess-live-recovered', pid: process.pid }];
+    const liveTrackedSessions = [{ trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon', happySessionId: 'sess-live-recovered', pid: process.pid }];
     const remaining = await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
-      orphanedDeadDaemonSessions: [{ sessionId: 'sess-live-recovered', pid: 6493, activeTurnId: 'turn-old-retry' }],
+      orphanedDeadDaemonSessions: [{ sessionId: 'sess-live-recovered', trackingKey: legacyPidSessionTrackingKey(6493), pid: 6493, activeTurnId: 'turn-old-retry' }],
       isSessionAlreadyRunning: async (sessionId: string) =>
         await isSessionRunnerActive({ sessionId, trackedSessions: liveTrackedSessions }),
       removeSessionMarkerIfOwnedFn,
@@ -503,11 +549,11 @@ describe('publishOrphanedStartupSessionEnds', () => {
     expect(remaining).toEqual([]);
     expect(apiMachine.captureMachineSessionTerminal).not.toHaveBeenCalled();
     expect(apiMachine.finalizeMachineSessionTerminal).not.toHaveBeenCalled();
-    expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith(expect.objectContaining({ pid: 6493 }));
+    expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith(expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(6493) }));
 
     liveTrackedSessions.length = 0;
     apiMachine.captureMachineSessionTerminal.mockImplementation(async () => {
-      liveTrackedSessions.push({ startedBy: 'daemon', happySessionId: 'sess-live-recovered', pid: process.pid });
+      liveTrackedSessions.push({ trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon', happySessionId: 'sess-live-recovered', pid: process.pid });
       return {
         v: 1 as const, status: 'captured' as const, sessionId: 'sess-live-recovered',
         authority: { kind: 'generation' as const, publisherGeneration: '52' },
@@ -515,14 +561,15 @@ describe('publishOrphanedStartupSessionEnds', () => {
     });
     // A successor can appear while capture is in flight, not only before retry.
     expect(await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
       apiMachine,
-      orphanedDeadDaemonSessions: [{ sessionId: 'sess-live-recovered', pid: 6494, activeTurnId: 'turn-capture-retry' }],
+      orphanedDeadDaemonSessions: [{ sessionId: 'sess-live-recovered', trackingKey: legacyPidSessionTrackingKey(6494), pid: 6494, activeTurnId: 'turn-capture-retry' }],
       isSessionAlreadyRunning: async (sessionId: string) =>
         await isSessionRunnerActive({ sessionId, trackedSessions: liveTrackedSessions }),
       removeSessionMarkerIfOwnedFn,
     })).toEqual([]);
     expect(apiMachine.captureMachineSessionTerminal).toHaveBeenCalledTimes(1);
     expect(apiMachine.finalizeMachineSessionTerminal).not.toHaveBeenCalled();
-    expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith(expect.objectContaining({ pid: 6494 }));
+    expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith(expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(6494) }));
   });
 });

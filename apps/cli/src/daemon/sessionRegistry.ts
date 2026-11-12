@@ -1,5 +1,7 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { retireGoneLocalSessionRpcHost } from '@/session/transport/rpc/localSessionRpcChannel';
 import { configuration } from '@/configuration';
+import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { logger } from '@/ui/logger';
 import { randomUUID } from 'node:crypto';
 import { hashProcessCommand, processIdentityMatches } from '@happier-dev/cli-common/processInstance';
@@ -36,6 +38,7 @@ import {
 import { RequesterWorkAttributionStoredReadV1Schema, RequesterWorkAttributionV1Schema,
   type RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
 import type { ConnectedServiceMaterializedStateObservationBinding } from './connectedServices/materialization/materializer';
+import { parseSessionTrackingKey, type SessionTrackingKey } from './sessions/sessionTrackingKey';
 
 const ConnectedServiceMaterializedStateObservationBindingSchema = lazyZodSchema(() => z.strictObject({
   agentId: z.string().check(z.minLength(1)),
@@ -82,6 +85,14 @@ const DaemonSessionMarkerSchema = lazyZodSchema(() => z.object({
   agentRuntimeDaemonServiceAuthorityFilePath:
     z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(32_768))),
   activeTurnId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+  // Agents the runner's per-Session holders keep, by role. A crashed runner's
+  // live primary Agent is spared and handed to its respawned runner.
+  heldAgentsV1: z.optional(z.array(z.strictObject({
+    role: z.literal('primary'),
+    socketPath: z.string().check(z.minLength(1), z.maxLength(4096)),
+    holderPid: z.number().check(z.int(), z.positive()),
+    agentPid: z.number().check(z.int(), z.positive()),
+  })).check(z.maxLength(1))),
   agentRuntimeDaemonServiceActiveAdmission: z.optional(z.strictObject({
     turnId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
     inputId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
@@ -117,9 +128,19 @@ const DaemonSessionMarkerSchema = lazyZodSchema(() => z.object({
   }
 })));
 
-export type DaemonSessionMarker = Omit<z.infer<typeof DaemonSessionMarkerSchema>, 'materializedStateObservationBinding'> & {
+type StoredDaemonSessionMarker = Omit<z.infer<typeof DaemonSessionMarkerSchema>, 'materializedStateObservationBinding'> & {
   materializedStateObservationBinding?: ConnectedServiceMaterializedStateObservationBinding;
 };
+/** A Session marker as read: the file name is the Session's tracking key and is never stored in the body. */
+export type DaemonSessionMarker = StoredDaemonSessionMarker & Readonly<{ trackingKey: SessionTrackingKey }>;
+
+function sessionMarkerFileName(trackingKey: SessionTrackingKey): string {
+  return `${trackingKey}.json`;
+}
+
+function withTrackingKey(stored: StoredDaemonSessionMarker, trackingKey: SessionTrackingKey): DaemonSessionMarker {
+  return { ...stored, trackingKey };
+}
 const DaemonSessionMarkerStoredReadSchema = createStoredReadSchema(DaemonSessionMarkerSchema);
 type AgentRuntimeDaemonServiceActiveAdmission = Readonly<{
   turnId: string;
@@ -170,22 +191,22 @@ function daemonSessionMarkerDirs(scope: SessionMarkerReadScope = configuration):
   return primaryDir === legacyPreviewDir ? [primaryDir] : [primaryDir, legacyPreviewDir];
 }
 
-const sessionMarkerMutationLocks = new Map<number, Promise<void>>();
+const sessionMarkerMutationLocks = new Map<SessionTrackingKey, Promise<void>>();
 const SESSION_MARKER_LOCK_TIMEOUT_MS = 5_000;
 const SESSION_MARKER_LOCK_STALE_MS = 30_000;
 
-async function runWithSessionMarkerMutationLock<T>(pid: number, task: () => Promise<T>): Promise<T> {
-  const previous = sessionMarkerMutationLocks.get(pid) ?? Promise.resolve();
+async function runWithSessionMarkerMutationLock<T>(trackingKey: SessionTrackingKey, task: () => Promise<T>): Promise<T> {
+  const previous = sessionMarkerMutationLocks.get(trackingKey) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
   const next = previous.catch(() => undefined).then(() => current);
-  sessionMarkerMutationLocks.set(pid, next);
+  sessionMarkerMutationLocks.set(trackingKey, next);
   await previous.catch(() => undefined);
   try {
     return await withJsonOwnerFileLock({
-      lockPath: join(daemonSessionsDir(), `pid-${pid}.json.lock`),
+      lockPath: join(daemonSessionsDir(), `${sessionMarkerFileName(trackingKey)}.lock`),
       timeoutMs: SESSION_MARKER_LOCK_TIMEOUT_MS,
       staleAfterMs: SESSION_MARKER_LOCK_STALE_MS,
       errorCode: 'SESSION_MARKER_MUTATION_LOCK_TIMEOUT',
@@ -194,26 +215,12 @@ async function runWithSessionMarkerMutationLock<T>(pid: number, task: () => Prom
     }, task);
   } finally {
     release();
-    if (sessionMarkerMutationLocks.get(pid) === next) {
-      sessionMarkerMutationLocks.delete(pid);
+    if (sessionMarkerMutationLocks.get(trackingKey) === next) {
+      sessionMarkerMutationLocks.delete(trackingKey);
     }
   }
 }
 
-async function runWithSessionMarkerMutationLocks<T>(
-  pids: readonly number[],
-  task: () => Promise<T>,
-): Promise<T> {
-  const orderedPids = Array.from(new Set(pids)).sort((left, right) => left - right);
-  const acquire = async (index: number): Promise<T> => {
-    const pid = orderedPids[index];
-    if (pid === undefined) {
-      return await task();
-    }
-    return await runWithSessionMarkerMutationLock(pid, () => acquire(index + 1));
-  };
-  return await acquire(0);
-}
 
 async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -300,7 +307,7 @@ async function writeSessionMarkerUnlocked(
 ): Promise<void> {
   await ensureDir(daemonSessionsDir());
   const now = Date.now();
-  const filePath = join(daemonSessionsDir(), `pid-${marker.pid}.json`);
+  const filePath = join(daemonSessionsDir(), sessionMarkerFileName(marker.trackingKey));
 
   let createdAtFromDisk: number | undefined;
   let existingMarkerFromDisk: DaemonSessionMarker | null = null;
@@ -308,14 +315,14 @@ async function writeSessionMarkerUnlocked(
     const raw = await readFile(filePath, 'utf-8');
     const existing = DaemonSessionMarkerStoredReadSchema.safeParse(JSON.parse(raw));
     if (existing.success) {
-      existingMarkerFromDisk = existing.data;
+      existingMarkerFromDisk = withTrackingKey(existing.data, marker.trackingKey);
       createdAtFromDisk = existing.data.createdAt;
     }
   } catch (e) {
     // ignore ENOENT (new marker); log other errors for diagnostics
     const err = e as NodeJS.ErrnoException;
     if (err?.code !== 'ENOENT') {
-      logger.debug(`[sessionRegistry] Could not read existing session marker pid-${marker.pid}.json to preserve createdAt`, e);
+      logger.debug(`[sessionRegistry] Could not read existing session marker ${sessionMarkerFileName(marker.trackingKey)} to preserve createdAt`, e);
     }
   }
 
@@ -509,8 +516,9 @@ async function writeSessionMarkerUnlocked(
     && (canonicalAdoptionRequested || sessionMarkerProcessOwnershipMatches(existingMarkerFromDisk, {
       happySessionId: marker.happySessionId, processStartTimeMs: marker.processStartTimeMs,
     })) ? existingMarkerFromDisk.linuxLaunchUnit : undefined;
-  const payload: DaemonSessionMarker = DaemonSessionMarkerSchema.parse({
-    ...marker,
+  const { trackingKey: _trackingKey, ...markerBody } = marker;
+  const payload: StoredDaemonSessionMarker = DaemonSessionMarkerSchema.parse({
+    ...markerBody,
     ...(marker.linuxLaunchUnit ?? retainedLinuxLaunchUnit ? { linuxLaunchUnit: marker.linuxLaunchUnit ?? retainedLinuxLaunchUnit } : {}),
     ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
     ...(preservedConnectedServiceRestartIntent
@@ -563,23 +571,23 @@ export async function writeSessionMarker(
   marker: SessionMarkerWriteInput,
   options: WriteSessionMarkerOptions = {},
 ): Promise<void> {
-  await runWithSessionMarkerMutationLock(marker.pid, () => writeSessionMarkerUnlocked(marker, options));
+  await runWithSessionMarkerMutationLock(marker.trackingKey, () => writeSessionMarkerUnlocked(marker, options));
 }
 
 export async function updateSessionMarkerAgentSessionStartupInstructionsMarker(
   params: Readonly<{
-    pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     marker: AgentSessionStartupInstructionsMarkerV1;
     expectedSpawnNonce?: string;
   }>,
 ): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     const sessionId = params.sessionId.trim();
     const expectedSpawnNonce = params.expectedSpawnNonce?.trim() ?? '';
     const canAdoptCanonicalSessionId =
-      existing?.happySessionId === `PID-${params.pid}`
+      existing?.happySessionId === `PID-${existing?.pid}`
       && sessionId.length > 0
       && !isPidPlaceholderSessionId(sessionId)
       && expectedSpawnNonce.length > 0
@@ -619,14 +627,15 @@ export async function updateSessionMarkerAgentSessionStartupInstructionsMarker(
 export async function updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath(
   params: Readonly<{
     pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     processCommandHash: string;
     processStartTimeMs: number;
     authorityFilePath: string;
   }>,
 ): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (
       !existing
       || !sessionMarkerRunnerMutationMatches(existing, params)
@@ -654,6 +663,7 @@ export async function updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath(
 export async function clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned(
   params: Readonly<{
     pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     processCommandHash: string;
     processStartTimeMs: number;
@@ -671,8 +681,8 @@ export async function clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwne
   const expectedRetention = params.retention
     ? RunnerManagedDependencyRetentionV1Schema.parse(params.retention)
     : undefined;
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (
       !existing
       || !sessionMarkerRunnerMutationMatches(existing, params)
@@ -729,14 +739,15 @@ export async function clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwne
 export async function updateSessionMarkerRunnerManagedDependencyRetention(
   params: Readonly<{
     pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     processCommandHash: string;
     processStartTimeMs: number;
     retention: RunnerManagedDependencyRetentionV1;
   }>,
 ): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (
       !existing
       || !sessionMarkerRunnerMutationMatches(existing, params)
@@ -767,6 +778,7 @@ export async function updateSessionMarkerRunnerManagedDependencyRetention(
 export async function updateSessionMarkerRunnerManagedProviderAuthority(
   params: Readonly<{
     pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     processCommandHash: string;
     processStartTimeMs: number;
@@ -780,8 +792,8 @@ export async function updateSessionMarkerRunnerManagedProviderAuthority(
     }>
   )>,
 ): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (
       !existing
       || !sessionMarkerRunnerMutationMatches(existing, params)
@@ -843,6 +855,7 @@ export async function updateSessionMarkerRunnerManagedProviderAuthority(
 export async function updateSessionMarkerRunnerAgentSourceCustody(
   params: Readonly<{
     pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     processCommandHash: string;
     processStartTimeMs: number;
@@ -851,8 +864,8 @@ export async function updateSessionMarkerRunnerAgentSourceCustody(
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   }>,
 ): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (
       !existing
       || !sessionMarkerRunnerMutationMatches(existing, params)
@@ -900,7 +913,7 @@ export type SessionMarkerPromotionResult = Readonly<{
 
 export async function readExactSessionMarkerOwnership(
   params: Readonly<{
-    pid: number;
+    trackingKey: SessionTrackingKey;
     ownership: Readonly<{
       happySessionId: string;
       processCommandHash: string;
@@ -913,10 +926,10 @@ export async function readExactSessionMarkerOwnership(
   processCommand?: string;
 }> | null> {
   return await runWithSessionMarkerMutationLock(
-    params.pid,
+    params.trackingKey,
     async () => {
       const marker =
-        await readSessionMarkerForPid(params.pid);
+        await readSessionMarker(params.trackingKey);
       if (
         !marker
         || marker.happySessionId
@@ -948,14 +961,14 @@ export async function readExactSessionMarkerOwnership(
 }
 
 async function removeSessionMarkerUnlocked(
-  pid: number,
+  trackingKey: SessionTrackingKey,
   ownership?: SessionMarkerOwnership & Readonly<{ isStillOwned?: () => boolean; startedBy?: 'terminal' }>,
 ): Promise<boolean> {
   let removed = false;
   for (const dir of daemonSessionMarkerDirs()) {
-    const filePath = join(dir, `pid-${pid}.json`);
+    const filePath = join(dir, sessionMarkerFileName(trackingKey));
     try {
-      let marker: DaemonSessionMarker | null = null;
+      let marker: StoredDaemonSessionMarker | null = null;
       try {
         const raw = await readFile(filePath, 'utf-8');
         const parsed = DaemonSessionMarkerStoredReadSchema.safeParse(JSON.parse(raw));
@@ -986,29 +999,32 @@ async function removeSessionMarkerUnlocked(
       }
       await unlink(filePath);
       removed = true;
+      // The runner is gone: retire its same-machine Session RPC endpoint (only if still its own)
+      // and end this process's in-flight local calls to it.
+      if (marker?.happySessionId) await retireGoneLocalSessionRpcHost({ sessionId: marker.happySessionId, pid: marker.pid });
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err?.code !== 'ENOENT') {
-        logger.debug(`[sessionRegistry] Failed to remove session marker pid-${pid}.json`, e);
+        logger.debug(`[sessionRegistry] Failed to remove session marker ${sessionMarkerFileName(trackingKey)}`, e);
       }
     }
   }
   return removed;
 }
 
-export async function removeSessionMarker(pid: number): Promise<void> {
-  await runWithSessionMarkerMutationLock(pid, () => removeSessionMarkerUnlocked(pid));
+export async function removeSessionMarker(trackingKey: SessionTrackingKey): Promise<void> {
+  await runWithSessionMarkerMutationLock(trackingKey, () => removeSessionMarkerUnlocked(trackingKey));
 }
 
 export async function removeSessionMarkerIfOwned(params: Readonly<{
-  pid: number;
+  trackingKey: SessionTrackingKey;
   happySessionId: string;
   processCommandHash?: string;
   processStartTimeMs?: number;
   isStillOwned?: () => boolean;
   startedBy?: 'terminal';
 }>): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, () => removeSessionMarkerUnlocked(params.pid, {
+  return await runWithSessionMarkerMutationLock(params.trackingKey, () => removeSessionMarkerUnlocked(params.trackingKey, {
     happySessionId: params.happySessionId,
     processCommandHash: params.processCommandHash,
     processStartTimeMs: params.processStartTimeMs,
@@ -1017,13 +1033,22 @@ export async function removeSessionMarkerIfOwned(params: Readonly<{
   }));
 }
 
+/**
+ * Moves a Session marker from its launcher (wrapper) process to the runner it
+ * started. The marker stays the Session's own file (named by its tracking
+ * key); only the hosting process fields change.
+ */
 export async function promoteSessionMarkerPid(
-  fromPid: number,
-  toPid: number,
+  params: Readonly<{
+    trackingKey: SessionTrackingKey;
+    fromPid: number;
+    toPid: number;
+  }>,
   dependencies: Readonly<{
     readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
   }> = {},
 ): Promise<SessionMarkerPromotionResult | null> {
+  const { trackingKey, fromPid, toPid } = params;
   if (fromPid === toPid) {
     return {
       sourceMarkerOwnership: null,
@@ -1031,104 +1056,35 @@ export async function promoteSessionMarkerPid(
     };
   }
 
-  return await runWithSessionMarkerMutationLocks([fromPid, toPid], async () => {
-    const sourceMarker = await readSessionMarkerForPid(fromPid);
-    if (!sourceMarker) {
-      return (await readSessionMarkerForPid(toPid)) === null
-        ? {
-            sourceMarkerOwnership: null,
-            targetMarkerOwnership: null,
-          }
-        : null;
-    }
-    const sourceMarkerOwnership: SessionMarkerOwnership = {
-      happySessionId: sourceMarker.happySessionId,
-      ...(sourceMarker.processCommandHash
-        ? { processCommandHash: sourceMarker.processCommandHash }
-        : {}),
-      ...(sourceMarker.processStartTimeMs !== undefined
-        ? { processStartTimeMs: sourceMarker.processStartTimeMs }
-        : {}),
-    };
-    const targetMarker = await readSessionMarkerForPid(toPid);
-    if (targetMarker) {
-      const sourceSpawnNonce = sourceMarker.respawn?.spawnNonce?.trim() ?? '';
-      const targetSpawnNonce = targetMarker.respawn?.spawnNonce?.trim() ?? '';
-      const sourceSessionId = sourceMarker.happySessionId.trim();
-      const targetSessionId = targetMarker.happySessionId.trim();
-      const sourceMatchesExpectedPlaceholder = sourceMarker.happySessionId === `PID-${fromPid}`;
-      const sourceMatchesCanonicalTarget =
-        sourceSessionId.length > 0
-        && !/^PID-\d+$/.test(sourceSessionId)
-        && sourceSessionId === targetSessionId;
-      const sourceAndTargetMatchExpectedPlaceholders =
-        sourceMatchesExpectedPlaceholder
-        && targetSessionId === `PID-${toPid}`;
-      const sourcePlaceholderMatchesCanonicalTarget =
-        sourceMatchesExpectedPlaceholder
-        && !/^PID-\d+$/.test(targetSessionId);
-      if (
-        (
-          !sourceAndTargetMatchExpectedPlaceholders
-          && !sourcePlaceholderMatchesCanonicalTarget
-          && !sourceMatchesCanonicalTarget
-        )
-        || !targetSessionId
-        || !sourceSpawnNonce
-        || sourceSpawnNonce !== targetSpawnNonce
-      ) {
-        return null;
-      }
-      const sourceStartupInstructionsMarker =
-        sourceMarker.agentSessionStartupInstructionsMarkerV1;
-      const targetStartupInstructionsMarker =
-        targetMarker.agentSessionStartupInstructionsMarkerV1;
-      if (
-        sourceStartupInstructionsMarker
-        && targetStartupInstructionsMarker
-        && !agentSessionStartupInstructionsMarkersEqual(
-          sourceStartupInstructionsMarker,
-          targetStartupInstructionsMarker,
-        )
-      ) {
-        return null;
-      }
-      const {
-        happyHomeDir: _happyHomeDir,
-        updatedAt: _updatedAt,
-        ...targetInput
-      } = targetMarker;
-      await writeSessionMarkerUnlocked({
-        ...targetInput,
-        ...(targetMarker.activeTurnId === undefined && sourceMarker.activeTurnId !== undefined
-          ? { activeTurnId: sourceMarker.activeTurnId }
-          : {}),
-        ...(targetStartupInstructionsMarker === undefined
-          && sourceStartupInstructionsMarker !== undefined
-          ? {
-              agentSessionStartupInstructionsMarkerV1:
-                sourceStartupInstructionsMarker,
-            }
-          : {}),
-        pid: toPid,
-        createdAt: targetMarker.createdAt,
-      });
+  return await runWithSessionMarkerMutationLock(trackingKey, async () => {
+    const marker = await readSessionMarker(trackingKey);
+    if (!marker) {
       return {
-        sourceMarkerOwnership,
-        targetMarkerOwnership: {
-          happySessionId: targetMarker.happySessionId,
-          ...(targetMarker.processCommandHash
-            ? { processCommandHash: targetMarker.processCommandHash }
-            : {}),
-          ...(targetMarker.processStartTimeMs !== undefined
-            ? { processStartTimeMs: targetMarker.processStartTimeMs }
-            : {}),
-        },
-        ...(targetMarker.processCommand
-          ? { targetProcessCommand: targetMarker.processCommand }
+        sourceMarkerOwnership: null,
+        targetMarkerOwnership: null,
+      };
+    }
+    const ownershipOf = (value: DaemonSessionMarker): SessionMarkerOwnership => ({
+      happySessionId: value.happySessionId,
+      ...(value.processCommandHash
+        ? { processCommandHash: value.processCommandHash }
+        : {}),
+      ...(value.processStartTimeMs !== undefined
+        ? { processStartTimeMs: value.processStartTimeMs }
+        : {}),
+    });
+    if (marker.pid === toPid) {
+      // Already promoted (a joined duplicate report).
+      return {
+        sourceMarkerOwnership: null,
+        targetMarkerOwnership: ownershipOf(marker),
+        ...(marker.processCommand
+          ? { targetProcessCommand: marker.processCommand }
           : {}),
       };
     }
+    if (marker.pid !== fromPid) return null;
+    const sourceMarkerOwnership = ownershipOf(marker);
 
     const {
       happyHomeDir: _happyHomeDir,
@@ -1139,7 +1095,7 @@ export async function promoteSessionMarkerPid(
       processStartTimeMs: _sourceProcessStartTimeMs,
       processCommand: _sourceProcessCommand,
       ...markerInput
-    } = sourceMarker;
+    } = marker;
     const targetProcessIdentity = await (
       dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid
     )(toPid);
@@ -1154,18 +1110,16 @@ export async function promoteSessionMarkerPid(
             } : {}),
           }
         : null;
-    const promotedHappySessionId = markerInput.happySessionId;
     await writeSessionMarkerUnlocked({
       ...markerInput,
-      happySessionId: promotedHappySessionId,
       pid: toPid,
-      createdAt: sourceMarker.createdAt,
+      createdAt: marker.createdAt,
       ...(promotedProcessIdentity ?? {}),
     });
     return {
       sourceMarkerOwnership,
       targetMarkerOwnership: {
-        happySessionId: promotedHappySessionId,
+        happySessionId: marker.happySessionId,
         ...(promotedProcessIdentity
           ? {
               processCommandHash:
@@ -1182,21 +1136,21 @@ export async function promoteSessionMarkerPid(
   });
 }
 
-export async function readSessionMarkerForPid(pid: number,
+export async function readSessionMarker(trackingKey: SessionTrackingKey,
   scope: SessionMarkerReadScope = configuration,
 ): Promise<DaemonSessionMarker | null> {
   for (const dir of daemonSessionMarkerDirs(scope)) {
-    const filePath = join(dir, `pid-${pid}.json`);
+    const filePath = join(dir, sessionMarkerFileName(trackingKey));
     try {
       const raw = await readFile(filePath, 'utf-8');
       const parsed = DaemonSessionMarkerStoredReadSchema.safeParse(JSON.parse(raw));
       if (parsed.success && parsed.data.happyHomeDir === scope.happyHomeDir) {
-        return parsed.data;
+        return withTrackingKey(parsed.data, trackingKey);
       }
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err?.code !== 'ENOENT') {
-        logger.debug(`[sessionRegistry] Could not read session marker pid-${pid}.json`, e);
+        logger.debug(`[sessionRegistry] Could not read session marker ${sessionMarkerFileName(trackingKey)}`, e);
       }
     }
   }
@@ -1204,11 +1158,11 @@ export async function readSessionMarkerForPid(pid: number,
 }
 
 export async function markSessionMarkerConnectedServiceRestartIntent(params: Readonly<{
-  pid: number;
+  trackingKey: SessionTrackingKey;
   requestedAtMs?: number;
 }>): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (!existing) return false;
 
     const requestedAtMs = typeof params.requestedAtMs === 'number' && Number.isFinite(params.requestedAtMs)
@@ -1226,9 +1180,9 @@ export async function markSessionMarkerConnectedServiceRestartIntent(params: Rea
   });
 }
 
-export async function clearSessionMarkerConnectedServiceRestartIntent(pid: number): Promise<void> {
-  await runWithSessionMarkerMutationLock(pid, async () => {
-    const existing = await readSessionMarkerForPid(pid);
+export async function clearSessionMarkerConnectedServiceRestartIntent(trackingKey: SessionTrackingKey): Promise<void> {
+  await runWithSessionMarkerMutationLock(trackingKey, async () => {
+    const existing = await readSessionMarker(trackingKey);
     if (!existing?.connectedServiceRestartIntent) return;
 
     const {
@@ -1241,8 +1195,23 @@ export async function clearSessionMarkerConnectedServiceRestartIntent(pid: numbe
   });
 }
 
+/** Records the runner's held Agents (replacing the previous list); false when the marker is not this Session's. */
+export async function updateSessionMarkerHeldAgents(params: Readonly<{
+  trackingKey: SessionTrackingKey;
+  sessionId: string;
+  heldAgentsV1: readonly SessionHeldAgentV1[];
+}>): Promise<boolean> {
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
+    if (!existing || existing.happySessionId !== params.sessionId) return false;
+    const { happyHomeDir: _happyHomeDir, updatedAt: _updatedAt, heldAgentsV1: _previous, ...rest } = existing;
+    await writeSessionMarkerUnlocked({ ...rest, ...(params.heldAgentsV1.length ? { heldAgentsV1: [...params.heldAgentsV1] } : {}) });
+    return true;
+  });
+}
+
 export async function updateSessionMarkerActiveTurn(params: Readonly<{
-  pid: number;
+  trackingKey: SessionTrackingKey;
   sessionId: string;
   activeTurnId: string | null;
   expectedActiveTurnId?: string;
@@ -1258,8 +1227,8 @@ export async function updateSessionMarkerActiveTurn(params: Readonly<{
   ) {
     return false;
   }
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (!existing || existing.happySessionId !== params.sessionId) return false;
     if (params.expectedActiveTurnId !== undefined && existing.activeTurnId !== params.expectedActiveTurnId) {
       return false;
@@ -1305,15 +1274,15 @@ export async function updateSessionMarkerActiveTurn(params: Readonly<{
 
 export async function updateSessionMarkerAgentRuntimeSessionOpenAttestation(
   params: Readonly<{
-    pid: number;
+    trackingKey: SessionTrackingKey;
     sessionId: string;
     authorityFilePath: string;
     attestation:
       AgentRuntimeDaemonServiceSessionOpenAttestationV1;
   }>,
 ): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
+  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
+    const existing = await readSessionMarker(params.trackingKey);
     if (
       !existing
       || existing.happySessionId !== params.sessionId
@@ -1339,15 +1308,37 @@ export async function updateSessionMarkerAgentRuntimeSessionOpenAttestation(
   });
 }
 
+/**
+ * The tracking key of the marker a runner process holds for one of its
+ * Sessions. A runner addresses its own marker by (process, Session); the
+ * daemon addresses it by key.
+ */
+export async function findSessionMarkerTrackingKey(
+  params: Readonly<{ pid: number; sessionId: string }>,
+  scope: SessionMarkerReadScope = configuration,
+): Promise<SessionTrackingKey | null> {
+  for (const dir of daemonSessionMarkerDirs(scope)) {
+    const names = await readdir(dir).catch(() => [] as string[]);
+    for (const name of names) {
+      const trackingKey = name.endsWith('.json') ? parseSessionTrackingKey(name.slice(0, -'.json'.length)) : null;
+      if (!trackingKey) continue;
+      const marker = await readSessionMarker(trackingKey, scope);
+      if (marker?.pid === params.pid && marker.happySessionId === params.sessionId) return trackingKey;
+    }
+  }
+  return null;
+}
+
 export async function listSessionMarkers(options: Readonly<{
   requireComplete?: boolean;
 }> = {}): Promise<DaemonSessionMarker[]> {
-  const markerByPid = new Map<number, DaemonSessionMarker>();
+  const markerByKey = new Map<SessionTrackingKey, DaemonSessionMarker>();
   for (const dir of daemonSessionMarkerDirs()) {
     await ensureDir(dir);
     const entries = await readdir(dir);
     for (const name of entries) {
-      if (!name.startsWith('pid-') || !name.endsWith('.json')) continue;
+      const trackingKey = name.endsWith('.json') ? parseSessionTrackingKey(name.slice(0, -'.json'.length)) : null;
+      if (!trackingKey) continue;
       const full = join(dir, name);
       try {
         const raw = await readFile(full, 'utf-8');
@@ -1359,9 +1350,9 @@ export async function listSessionMarkers(options: Readonly<{
         }
         // Extra safety: only accept markers for our home dir.
         if (parsed.data.happyHomeDir !== configuration.happyHomeDir) continue;
-        const existing = markerByPid.get(parsed.data.pid);
+        const existing = markerByKey.get(trackingKey);
         if (!existing || parsed.data.updatedAt > existing.updatedAt) {
-          markerByPid.set(parsed.data.pid, parsed.data);
+          markerByKey.set(trackingKey, withTrackingKey(parsed.data, trackingKey));
         }
       } catch (e) {
         if (options.requireComplete) {
@@ -1372,5 +1363,5 @@ export async function listSessionMarkers(options: Readonly<{
       }
     }
   }
-  return Array.from(markerByPid.values());
+  return Array.from(markerByKey.values());
 }

@@ -1,3 +1,4 @@
+import { configuration } from '@/configuration';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import axios, { AxiosHeaders } from 'axios';
@@ -6,7 +7,7 @@ import { StopSessionResultSchema, SessionMetadataTuplePatchV1Schema } from '@hap
 import { MachineSessionTerminalCaptureResponseV1Schema } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { readProcessIdentityByPid } from '../processIdentity';
-import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { readSessionMarker, writeSessionMarker } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -18,6 +19,7 @@ import { retireExactTerminalControlServiceability, retireStoppedPlainRunnerContr
 import { reattachTrackedSessionsFromMarkers, readOrphanedDeadPlainRunnerMarkers } from './reattachFromMarkers';
 import { publishOrphanedStartupSessionEnds } from './publishOrphanedStartupSessionEnds';
 import { recoverStrandedTerminalControlServiceability } from './recoverStrandedTerminalControlServiceability';
+import { legacyPidSessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 
 describe.skipIf(process.platform !== 'linux')('offline Stop through physical exit, marker custody and Home recovery', () => {
   it.each(['bound', 'missing-owned-host', 'mode-only', 'mode-only-offline', 'terminal-started-offline', 'missing-marker', 'live-child',
@@ -41,12 +43,12 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
       if (nativeChild && !nativeIdentity) throw new Error('Owned native runner identity unavailable');
       const sessionId = `offline-stop-${wiring}`;
       const startedBy = wiring === 'terminal-started-offline' ? 'terminal' as const : 'daemon' as const;
-      const tracked: TrackedSession = { pid, childProcess: child, startedBy, happySessionId: sessionId,
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy, happySessionId: sessionId,
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: identity.processCommandHash,
         stopRequestedAtMs: Date.now(), spawnOptions: { directory: homeDir },
         ...(wiring === 'missing-owned-host' ? { hostedTerminal: { mode: 'tmux' as const },
           publishedTerminalControlServiceabilityAttachmentId: 'retired-owned-host' } : {}) };
-      if (wiring !== 'missing-marker') await writeSessionMarker({ pid, happySessionId: sessionId, startedBy,
+      if (wiring !== 'missing-marker') await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy,
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: identity.processCommandHash });
       const modeOnly = wiring === 'mode-only' || wiring === 'mode-only-offline';
       let online = wiring === 'mode-only' || unreported;
@@ -101,9 +103,9 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
         finalizeMachineSessionTerminal: async () => { throw new Error('Already inactive must not be finalized again'); },
         enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('No turn identity must not invent a turn mutation'); },
       } satisfies Pick<ApiMachineClient, 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal' | 'enqueueDaemonTerminalExactTurnEnd'>;
-      const sessions = new Map([[pid, tracked]]);
-      const onExit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-        sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => machine as ApiMachineClient,
+      const sessions = new Map([[tracked.trackingKey, tracked]]);
+      const onExit = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+        sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => machine as ApiMachineClient,
         shouldPreserveSessionMarkerOnExit: () => shouldRetainTrackedTerminalHostExitMarker({ tracked, happyHomeDir: homeDir }),
         onFinalTrackedSessionExitStaged: async () => {
           await resolveTrackedSessionTerminalHostExitCandidate({ tracked, pid, happyHomeDir: homeDir, attachmentInfo: null });
@@ -122,9 +124,9 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
       try {
         if (wiring !== 'live-child') { child.kill('SIGTERM'); await exited; }
         if (wiring === 'unreported-dead-runner') { nativeChild!.kill('SIGTERM'); await nativeExited; }
-        const stop = createStopSession({ pidToTrackedSession: sessions, areTrackedRunnersExited: observeExit,
+        const stop = createStopSession({ trackedSessionsByKey: sessions, areTrackedRunnersExited: observeExit,
           waitForTrackedRunnersExit: async input => await observeExit(input, onExit)
-            && input.trackedPids.every(pid => !sessions.has(pid)),
+            && input.trackedPids.every(pid => trackedSessionsForProcess(sessions, pid).length === 0),
           retireAbsentTerminalControlServiceability: ({ stoppedAt }) =>
             retireStoppedPlainRunnerControlServiceability({ sessionId, trackedSession: tracked,
               publishRetirement: expectedRunner => retire(stoppedAt, expectedRunner) }),
@@ -151,12 +153,12 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
           expect(sessions.size).toBe(0);
           // The exit owner retains exact marker evidence until Home finality
           // and control retirement converge through the existing recovery owner.
-          expect(await readSessionMarkerForPid(pid)).toMatchObject({ happySessionId: sessionId });
-          const recovery = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: sessions });
-          expect(await publishOrphanedStartupSessionEnds({ apiMachine: machine,
+          expect(await readSessionMarker(tracked.trackingKey)).toMatchObject({ happySessionId: sessionId });
+          const recovery = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: sessions });
+          expect(await publishOrphanedStartupSessionEnds({ serverId: configuration.activeServerId, apiMachine: machine,
             orphanedDeadDaemonSessions: recovery.orphanedDeadDaemonSessions,
             retireTerminalControlServiceability: async () => { await retire(); } })).toEqual([]);
-          expect(await readSessionMarkerForPid(pid)).toBeNull();
+          expect(await readSessionMarker(tracked.trackingKey)).toBeNull();
           expect(retired).toBe(true);
         } else if (wiring === 'bound' || wiring === 'missing-owned-host' || wiring === 'mode-only-offline'
             || wiring === 'terminal-started-offline') {
@@ -164,26 +166,26 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
           // This fixture's zero-budget probe may finish before exit staging.
           // Join that existing lifecycle before driving connected-edge recovery.
           await onExit(pid, { reason: 'process-missing', code: null, signal: null });
-          expect(sessions.has(pid)).toBe(false);
-          expect(await readSessionMarkerForPid(pid)).toMatchObject({ happySessionId: sessionId, processStartTimeMs: identity.processStartTimeMs });
+          expect(sessions.has(tracked.trackingKey)).toBe(false);
+          expect(await readSessionMarker(tracked.trackingKey)).toMatchObject({ happySessionId: sessionId, processStartTimeMs: identity.processStartTimeMs });
           online = true;
           // Reconnect scans disk independently of retained in-memory custody;
           // startup reattachment's already-adopted flag is not physical liveness.
           const orphanedDeadDaemonSessions = await readOrphanedDeadPlainRunnerMarkers();
-          expect(orphanedDeadDaemonSessions).toEqual([{ pid, sessionId, processStartTimeMs: identity.processStartTimeMs }]);
-          const input = { apiMachine: machine, orphanedDeadDaemonSessions,
+          expect(orphanedDeadDaemonSessions).toEqual([{ trackingKey: tracked.trackingKey, pid, sessionId, processStartTimeMs: identity.processStartTimeMs }]);
+          const input = { serverId: configuration.activeServerId, apiMachine: machine, orphanedDeadDaemonSessions,
             retireTerminalControlServiceability: async () => { await retire(); } };
           // Machine finality is reachable before the metadata HTTP path. Its
           // success alone must not erase the remaining retirement obligation.
           get.mockRejectedValueOnce(refusal());
           expect(await publishOrphanedStartupSessionEnds(input)).toEqual(orphanedDeadDaemonSessions);
-          expect(await readSessionMarkerForPid(pid)).not.toBeNull();
+          expect(await readSessionMarker(tracked.trackingKey)).not.toBeNull();
           expect(await publishOrphanedStartupSessionEnds(input)).toEqual([]);
           expect(retired).toBe(!modeOnly);
-          expect(await readSessionMarkerForPid(pid)).toBeNull();
+          expect(await readSessionMarker(tracked.trackingKey)).toBeNull();
         } else {
           expect(result.status).toBe('incomplete');
-          expect(sessions.get(pid)).toBe(tracked);
+          expect(sessions.get(tracked.trackingKey)).toBe(tracked);
           expect(retired).toBe(false);
           if (wiring === 'live-child') expect(child.exitCode === null && child.signalCode === null).toBe(true);
         }

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ConnectedServiceBindingsV2Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { serializeConnectedServiceChildSelectionValues } from '../connectedServiceChildEnvironment';
 
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
@@ -123,13 +125,15 @@ describe('applyConnectedServiceProjectionCredentialUpdate', () => {
       const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
       const revision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
       const staleRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
+      const canonicalServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+      if (!canonicalServiceId) throw new Error('Missing canonical fixture service');
       for (let pid = 1; pid <= 53; pid++) {
         runtimeRegistry.registerTarget({
           pid, agentId: 'codex', sessionId: `session-${pid}`, materializationKey: `materialization-${pid}`,
-          connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
-            [serviceId]: { source: 'connected', selection: 'profile', profileId: 'work' },
-          } },
-          connectedServiceSelectionsEnvRaw: JSON.stringify([{ kind: 'profile', serviceId,
+          connectedServicesBindingsRaw: ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
+            [canonicalServiceId]: { source: 'connected', selection: 'profile', profileId: 'work' },
+          } }),
+          connectedServiceSelectionsEnvRaw: serializeConnectedServiceChildSelectionValues([{ kind: 'profile', serviceId: canonicalServiceId,
             profileId: 'work', credentialRevision: revision }]),
         });
       }
@@ -166,6 +170,45 @@ describe('applyConnectedServiceProjectionCredentialUpdate', () => {
         expect(applications.flatMap(event => event.affectedTargets.map(target => target.sessionId)))
           .toEqual(['session-53']);
       }
+    },
+  );
+
+  it.each(['late-first-credential', 'withdrawn-binding'] as const)(
+    'applies a revision after %s through the retained target selection', async state => {
+      const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+      const serviceId = 'acme.plugin/novel-service';
+      const revision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+      runtimeRegistry.registerTarget({
+        pid: 42, agentId: 'codex', sessionId: 'session-42', materializationKey: 'materialization-42',
+        connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+          [serviceId]: { source: 'connected', selection: 'profile', profileId: 'work' },
+        } },
+        ...(state === 'withdrawn-binding' ? { connectedServiceSelectionsEnvRaw: JSON.stringify([
+          { kind: 'profile', serviceId, profileId: 'work', credentialRevision: revision },
+        ]) } : {}),
+      });
+      if (state === 'withdrawn-binding') {
+        const registered = runtimeRegistry.getBySessionId('session-42')!;
+        // The real switch owner withdraws applied bindings before attempting mutation.
+        expect(runtimeRegistry.withdrawSessionGroupApplicationBindings(registered)).not.toBeNull();
+        expect(runtimeRegistry.listRefreshTargets()[0]?.activeBindings).toEqual([]);
+      }
+      expect(runtimeRegistry.listRefreshTargets()[0]?.bindings).toEqual([{ serviceId, profileId: 'work' }]);
+      const appliedSessions: Array<string | null> = [];
+      const coordinator = new ConnectedServiceRefreshCoordinator({
+        api: {} as ApiClient, credentials: { token: 'token', encryption: null },
+        machineIdProvider: () => 'machine', activeServerDir: '/tmp/late-projection', baseDir: '/tmp/late-projection',
+        refreshWindowMs: 60_000, refreshLeaseMs: 30_000, now: () => 1_000, runtimeRegistry,
+        onAuthUpdated: event => { appliedSessions.push(...event.affectedTargets.map(target => target.sessionId)); },
+      });
+      await applyConnectedServiceProjectionCredentialUpdate({
+        input: { serviceId, profileId: 'work', credentialPresence: { status: 'present', credentialRevision: revision },
+          executionAuthority: 'passive_projection' },
+        listRuntimeTargets: () => runtimeRegistry.listRefreshTargets(),
+        stopSession: async () => { throw new Error('Present credential must not stop the lifecycle'); },
+        getRefreshCoordinator: () => coordinator,
+      });
+      expect(appliedSessions).toEqual(['session-42']);
     },
   );
 

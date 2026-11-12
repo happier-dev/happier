@@ -15,6 +15,7 @@ import type { OrphanedDeadDaemonSession } from './reattachFromMarkers';
 import { isSessionTerminalPermanentlyUnavailable } from './sessionTerminalSettlement';
 
 export async function publishOrphanedStartupSessionEnds(params: Readonly<{
+  serverId: string;
   apiMachine: {
     enqueueDaemonTerminalExactTurnEnd: (mutation: ExactSessionTurnEndMutationV1) => Promise<void>;
     captureMachineSessionTerminal: (sessionId: string) => Promise<MachineSessionTerminalCaptureResponseV1>;
@@ -34,6 +35,10 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
   const isShuttingDown = (): boolean => params.isShuttingDown?.() === true;
   const groups = new Map<string, OrphanedDeadDaemonSession[]>();
   for (const orphan of params.orphanedDeadDaemonSessions) {
+    if (orphan.requesterWorkAttributionV1 && orphan.requesterWorkAttributionV1.serverId !== params.serverId) {
+      logger.debug('[DAEMON] Retaining orphan marker for another Home', { sessionId: orphan.sessionId });
+      continue;
+    }
     const group = groups.get(orphan.sessionId) ?? [];
     group.push(orphan);
     groups.set(orphan.sessionId, group);
@@ -42,11 +47,11 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
     for (const marker of evidence) {
       if (isShuttingDown()) return false;
       if (params.removeSessionMarkerFn) {
-        await params.removeSessionMarkerFn(marker.pid);
+        await params.removeSessionMarkerFn(marker.trackingKey);
         continue;
       }
       await (params.removeSessionMarkerIfOwnedFn ?? removeSessionMarkerIfOwned)({
-        pid: marker.pid,
+        trackingKey: marker.trackingKey,
         happySessionId: marker.sessionId,
         ...(marker.processCommandHash ? { processCommandHash: marker.processCommandHash } : {}),
         ...(marker.processStartTimeMs !== undefined
@@ -81,7 +86,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
     return true;
   };
 
-  const settledSessionIds = new Set<string>();
+  const settledMarkers = new Set<OrphanedDeadDaemonSession>();
   await Promise.all(Array.from(groups, async ([sessionId, evidence]) => {
     try {
       if (isShuttingDown()) return;
@@ -90,7 +95,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       if (evidence.some((marker) => marker.recoveredLiveSession === true)
         || await params.isSessionAlreadyRunning?.(sessionId)) {
         if (!await stageEvidence(evidence)) return;
-        if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+        if (await removeEvidence(evidence)) evidence.forEach(marker => settledMarkers.add(marker));
         return;
       }
       if (isShuttingDown()) return;
@@ -99,7 +104,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
         if (isSessionTerminalPermanentlyUnavailable(captured.reason)) {
           // The Session or peer cannot accept terminal retirement; repeating it
           // cannot acquire authority. Only the dead runner's marker is released.
-          if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+          if (await removeEvidence(evidence)) evidence.forEach(marker => settledMarkers.add(marker));
           return;
         }
         logger.debug('[DAEMON] Startup orphan terminal capture was not accepted; retaining marker evidence', {
@@ -113,12 +118,12 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       if (!await stageEvidence(evidence)) return;
       if (captured.status === 'already_inactive') {
         if (!await retireEvidence(evidence)) return;
-        if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+        if (await removeEvidence(evidence)) evidence.forEach(marker => settledMarkers.add(marker));
         return;
       }
       if (isShuttingDown()) return;
       if (await params.isSessionAlreadyRunning?.(sessionId)) {
-        if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+        if (await removeEvidence(evidence)) evidence.forEach(marker => settledMarkers.add(marker));
         return;
       }
       if (isShuttingDown()) return;
@@ -128,7 +133,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       });
       if (finalized.status === 'rejected') {
         if (isSessionTerminalPermanentlyUnavailable(finalized.reason)) {
-          if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+          if (await removeEvidence(evidence)) evidence.forEach(marker => settledMarkers.add(marker));
           return;
         }
         logger.debug('[DAEMON] Startup orphan terminal finalize was not accepted; retaining marker evidence', {
@@ -141,7 +146,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       }
       if (isShuttingDown()) return;
       if (!await retireEvidence(evidence)) return;
-      if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+      if (await removeEvidence(evidence)) evidence.forEach(marker => settledMarkers.add(marker));
     } catch (error) {
       logger.debug('[DAEMON] Startup orphan settlement failed; retaining marker evidence', {
         sessionId,
@@ -150,5 +155,5 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       });
     }
   }));
-  return params.orphanedDeadDaemonSessions.filter((marker) => !settledSessionIds.has(marker.sessionId));
+  return params.orphanedDeadDaemonSessions.filter((marker) => !settledMarkers.has(marker));
 }

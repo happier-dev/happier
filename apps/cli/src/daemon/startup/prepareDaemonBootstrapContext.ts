@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { ApiClient } from '@/api/api';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { MachineMetadata } from '@/api/types';
@@ -125,7 +127,10 @@ export async function prepareDaemonBootstrapContext(
     }
 
     // One-time approval owner passes; never blocks startup and reports on default log paths.
-    void runApprovalStartupPasses(approvalsStore);
+    const approvalAccountId = readAccountIdFromToken(credentials.token);
+    void runApprovalStartupPasses(approvalsStore, approvalAccountId ? {
+        settlementPath: join(configuration.activeServerDir, 'approval-startup-passes', `${encodeURIComponent(approvalAccountId)}.json`),
+    } : undefined);
 
     return {
         daemonLockHandle,
