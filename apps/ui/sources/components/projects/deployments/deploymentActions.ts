@@ -2,7 +2,7 @@ import { WorkflowDefinitionCreateResultV1Schema } from '@happier-dev/protocol/wo
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { z } from 'zod/mini';
 import type { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDomainMutationResultV1Schema, DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
@@ -26,7 +26,7 @@ import { EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol/deployme
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
-import { type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
@@ -61,6 +61,9 @@ export type DeploymentUiDomainAddInput = Readonly<{
     content: DeploymentDomainContentV1; domainId?: string; requestKey?: string;
 }>;
 export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>;
+
+export type DeploymentUiDomainDnsPreviewInput = Omit<DeploymentDomainPreviewInputV1, 'serverId' | 'mode' | 'requestKey'>
+    & Readonly<{ requestKey?: string }>;
 
 type DeploymentStepConfirmation = NonNullable<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>['presentUserActionConfirmation']>;
 
@@ -295,10 +298,20 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             return DeploymentActionOutputSchemasV1['deployments.domains.remove'].parse(await invoke('deployments.domains.remove', {
                 ...input, requestKey: input.requestKey ?? randomUUID(), serverId: lifetime.scope.serverId }, operation));
         },
+        /** Explicit open/manual demand inspects this draft without saving Domain content. */
+        async previewDomainDns(input: DeploymentUiDomainDnsPreviewInput, operation?: UiActionOperation) {
+            assertCurrent();
+            const result = DeploymentActionOutputSchemasV1['deployments.domains.verify'].parse(await invoke(
+                'deployments.domains.verify', { ...input, mode: 'preview', requestKey: input.requestKey ?? randomUUID(),
+                    serverId: lifetime.scope.serverId }, operation));
+            assertCurrent();
+            if (!result.ok) throw new HappyError(result.error, false, { code: result.error, details: result });
+            return DeploymentDomainDnsPreviewResultV1Schema.parse(result);
+        },
         /** Check again: the controller re-observes the address; no content changes. */
         async verifyDomain(input: DeploymentUiDomainInput, operation?: UiActionOperation) {
             assertCurrent();
-            return DeploymentActionOutputSchemasV1['deployments.domains.verify'].parse(await invoke('deployments.domains.verify', {
+            return DeploymentDomainMutationResultV1Schema.parse(await invoke('deployments.domains.verify', {
                 ...input, requestKey: input.requestKey ?? randomUUID(), serverId: lifetime.scope.serverId }, operation));
         },
         async unlink(input: Omit<DeploymentTargetUnlinkInputV1, 'serverId'>, operation?: UiActionOperation) {
@@ -319,7 +332,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             return result;
         },
-        async saveMoveWorkflow(definitionId: string, definition: WorkflowDefinitionV1, title: string) {
+        async saveWorkflow(definitionId: string, definition: WorkflowDefinitionV1, title: string) {
             assertCurrent();
             return WorkflowDefinitionCreateResultV1Schema.parse(await execute('workflow.definition.create', {
                 definitionId, definition, metadata: { title },

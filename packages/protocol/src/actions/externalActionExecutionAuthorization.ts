@@ -33,7 +33,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
   projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
-  isDeploymentDomainNativeAdmissionV1,
+  isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1,
   projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
   projectExternalActionDiscussionEnvelopeIdV1,
   ExternalActionExecutionAuthorizationV1Schema,
@@ -133,7 +133,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && (binding.deploymentLinkAdmission === undefined
         || binding.deploymentLinkAdmission.environmentId === projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input))
       && (binding.actionId === 'deployments.environments.update' && nativeAdmission !== undefined
-        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup' || nativeAdmission.kind === 'backupConfigure')
+        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup' || nativeAdmission.kind === 'backupConfigure')
         ? binding.environmentId === nativeAdmission.environmentId && sameStrictJsonValue(binding.deploymentNativeAdmission, nativeAdmission)
         : (binding.actionId === 'action.operations.get' || binding.actionId === 'deployments.teardown'
           ? binding.environmentId : binding.deploymentCandidatePublication?.environmentId) === nativeAdmission?.environmentId)

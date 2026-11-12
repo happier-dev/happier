@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
+import { createReactNativeNativeMock } from '@/dev/testkit/mocks/reactNative';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit';
 import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -12,7 +14,14 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentDeployInputV1Schema, DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createApprovalArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
+import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { parse } from 'yaml';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
@@ -21,10 +30,23 @@ import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/work
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
-    .createModalModuleMock({ confirmResult: true }).module);
+const nativeReview = vi.hoisted(() => ({ answer: true,
+    shown: [] as Array<Readonly<{ preview: unknown; actionArgs: unknown; title: unknown; summary: unknown }>> }));
+vi.mock('@/modal', async () => {
+    const boundary = (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true });
+    boundary.spies.show.mockImplementation(config => {
+        // The modal host is the platform boundary; admission and receiving executors stay real.
+        nativeReview.shown.push({ preview: config.props?.preview, actionArgs: config.props?.actionArgs,
+            title: config.chrome?.title, summary: config.chrome?.subtitle });
+        queueMicrotask(() => { if (typeof config.props?.onAnswer === 'function') config.props.onAnswer(nativeReview.answer); });
+        return 'deployment-review';
+    });
+    return boundary.module;
+});
 
 const homes = createHomeGovernanceHarness();
+// Expo is the native transport boundary; retain the same Home HTTP fixture beneath it.
+vi.mock('expo/fetch', () => ({ fetch: (input: RequestInfo | URL, init?: RequestInit) => homes.request(input, init) }));
 /**
  * A receiving executor without a presenter: it refuses a person's own press with the exact review its approval
  * builder produced, and admits only a confirmation bound to that review's digest (the digest itself is Protocol's).
@@ -44,7 +66,11 @@ const { createDeploymentActions } = await import('./deploymentActions');
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('deployment UI Action callbacks', () => {
-    beforeEach(() => homes.reset());
+    beforeEach(async () => {
+        nativeReview.answer = true;
+        nativeReview.shown.length = 0;
+        await homes.reset();
+    });
     afterEach(() => standardCleanup());
 
     it.each([false, true])('prepares first-configuration defaults without publishing content (retired response: %s)', async retireOnResult => {
@@ -143,8 +169,9 @@ describe('deployment UI Action callbacks', () => {
     });
 
     it('hands Prepare and Import to the selected workspace Machine with direct person consent', async () => {
+        const homeId = `srv_${'6'.repeat(32)}`;
         const serverId = await homes.addHome({ name: 'Prepare', serverUrl: 'https://prepare.test',
-            serverIdentityId: `srv_${'6'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         const { DeploymentPrepareInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentPreparationV1');
@@ -158,7 +185,8 @@ describe('deployment UI Action callbacks', () => {
             importFrom: { tool: 'Coolify', configurationPaths: ['compose.yaml'] } });
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.prepare', machineId: 'workspace',
             tokenEpoch: 0, execute: (raw, context) => {
-                expect(DeploymentPrepareInputV1Schema.parse(raw)).toEqual(input);
+                expect(DeploymentPrepareInputV1Schema.parse(raw)).toEqual({ ...input,
+                    workspace: { kind: 'workspace-ref', serverId: homeId, id: 'checkout' } });
                 expect(context.target).toEqual({ kind: 'machine', machineId: 'workspace' });
                 const routing = resolveActionApprovalRouting({ actionId: 'deployments.prepare', spec: getActionSpec('deployments.prepare'),
                     input: raw, context: { surface: 'ui', actionCaller: { kind: 'host' }, authority: 'present_user' } });
@@ -264,35 +292,15 @@ describe('deployment UI Action callbacks', () => {
         expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 
-    it.each(['image', 'rebuild'] as const)('requests the destination controller’s promotion review for %s', async artifact => {
-        const serverId = await homes.addHome({ name: 'Promotion', serverUrl: 'https://promotion.test',
-            serverIdentityId: `srv_${'9'.repeat(32)}`, accountId: 'owner', currentAccount: true });
-        const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ id: 'production', serverId }) });
-        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
-            onRetire: () => ({ dispose() {} }) };
-        homes.answer(serverId, 'GET /v1/deployments/environments/production', { body: { ok: true,
-            environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
-        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
-            actionId: 'deployments.promote', tokenEpoch: 0,
-            deploymentSource: { id: detail.environment.projectSourceId, revision: 1 }, execute: (input, context) => {
-            expect(context.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
-            expect(input).toEqual({ serverId, environmentId: 'production', sourceEnvironmentId: 'staging',
-                sourceDeploymentId: 'tested-release', artifact });
-            const routing = resolveActionApprovalRouting({ actionId: 'deployments.promote', spec: getActionSpec('deployments.promote'),
-                input, context: { surface: 'ui', actionCaller: { kind: 'host' },
-                    authority: context.requestHeaders.get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation'
-                        ? 'account_automation' : 'present_user' } });
-            return routing.required
-                    ? { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' }
-                    : { ok: true, environmentId: 'production', revision: 2,
-                        deploymentId: 'unreviewed-promotion', deploymentRevision: 1, state: 'succeeded' };
-        } });
-        await expect(createDeploymentActions(lifetime, detail.environment.projectSourceId).promote({
-            environmentId: 'production', sourceEnvironmentId: 'staging', sourceDeploymentId: 'tested-release', artifact,
-        })).rejects.toMatchObject({ code: 'approval_request_created', details: { artifactId: 'promotion-review' } });
-        expect(homes.requestsFor('/v1/actions/deployments.promote')).toHaveLength(1);
-        expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
-    });
+    describe('portable Account plugin on the native host', () => {
+        let restorePlatform: (() => void) | undefined;
+        beforeEach(async () => {
+            const original = Object.getOwnPropertyDescriptors(Platform);
+            const native = await createReactNativeNativeMock({ platformOS: 'ios' });
+            restorePlatform = () => Object.defineProperties(Platform, original);
+            Object.defineProperties(Platform, Object.getOwnPropertyDescriptors(native.Platform));
+        });
+        afterEach(() => { restorePlatform?.(); restorePlatform = undefined; });
 
     it('inspects a qualified Account plugin through Action admission and preserves typed refusals', async () => {
         const { definePlugin, PluginError } = await import('@happier-dev/plugin-sdk');
@@ -334,7 +342,9 @@ describe('deployment UI Action callbacks', () => {
                     failureCause: { phase: 'execution_authorization', errorClass: 'Error',
                         errorCode: 'credential_unavailable', httpStatus: null } });
             expect(await actions.inspectPlatformTarget(actionId, {}))
-                .toEqual({ ok: false, code: 'plugin_action_input_schema_invalid' });
+                .toEqual({ ok: false, code: 'plugin_action_input_schema_invalid',
+                    failureCause: { phase: 'dispatch', errorClass: 'Error',
+                        errorCode: 'plugin_action_input_schema_invalid', httpStatus: null } });
             expect(await actions.inspectPlatformTarget('not-a-qualified-action', {}))
                 .toEqual({ ok: false, code: 'invalid_parameters' });
         } finally { await installed.dispose(); account.dispose(); }
@@ -386,6 +396,8 @@ describe('deployment UI Action callbacks', () => {
             expect(await actions.inspectPlatformTarget(actionId, {}))
                 .toEqual({ ok: true, value: { kind: 'ready', zones: [], options: [] } });
         } finally { await installed.dispose(); await disposeLazy?.(); account.dispose(); }
+    });
+
     });
 
     it.each([false, true])('uses the disposition confirmation and preserves a running-deploy refusal (busy=%s)', async busy => {
@@ -521,14 +533,15 @@ describe('deployment UI Action callbacks', () => {
         // One confirmation, then exactly the reviewed input again with it; no self-approval Artifact.
         expect(commits).toEqual([{ input: preview.input, confirmed: false }, { input: preview.input, confirmed: true }]);
         if (host === 'dialog') {
-            expect(Modal.confirm).toHaveBeenCalledTimes(1);
+            expect(nativeReview.shown).toHaveLength(1);
             // The person sees the receiving executor's own review, not a bare restatement of the input.
-            expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('Create Staging from the reviewed definition');
+            expect(nativeReview.shown[0]?.summary).toContain('Create Staging from the reviewed definition');
         } else {
             // No dialog follows the step: the step is the confirmation.
-            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(nativeReview.shown).toHaveLength(0);
             expect(shownInStep).toEqual([{ summary: 'Create Staging from the reviewed definition' }]);
         }
+        expect(Modal.confirm).not.toHaveBeenCalled();
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
@@ -566,6 +579,37 @@ describe('deployment UI Action callbacks', () => {
         const issued = homes.requests.length;
         await expect(edit.save()).rejects.toMatchObject({ code: 'action_account_scope_changed' });
         expect(homes.requests.length).toBe(issued);
+    });
+
+    it.each([false, true])('previews Domain DNS without publishing a Domain (retired response: %s)', async retireOnResult => {
+        const serverId = await homes.addHome({ name: 'Domain DNS', serverUrl: 'https://domain-dns.test',
+            serverIdentityId: `srv_${'b'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+        let current = true;
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => current, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        const dnsHealth = { status: 'down', evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'DNS' },
+            author: { kind: 'process' }, text: JSON.stringify({ kind: 'dns', reason: 'dns_not_this_machine' }) }] } };
+        const content = { hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 } };
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.domains.verify', tokenEpoch: 0, execute: raw => {
+                expect(raw).toMatchObject({ mode: 'preview', environmentId: environment.id, targetLinkId: 'target-link',
+                    expectedRevision: environment.revision, expectedTargetLinkRevision: 1, content });
+                expect(raw).not.toHaveProperty('domainId');
+                if (retireOnResult) current = false;
+                return { ok: true, environmentId: environment.id, dnsHealth };
+            } });
+        const actions = createDeploymentActions(lifetime, environment.projectSourceId);
+        expect(homes.requestsFor('/v1/actions/deployments.domains.verify')).toHaveLength(0);
+        const result = actions.previewDomainDns({ environmentId: environment.id, expectedRevision: environment.revision,
+            targetLinkId: 'target-link', expectedTargetLinkRevision: 1, content });
+        if (retireOnResult) await expect(result).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        else await expect(result).resolves.toEqual({ ok: true, environmentId: environment.id, dnsHealth });
+        expect(homes.requestsFor('/v1/actions/deployments.domains.verify')).toHaveLength(1);
+        expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 
     it.each([
@@ -629,7 +673,7 @@ describe('deployment UI Action callbacks', () => {
             } });
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
-        if (choice === 'cancels') vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        nativeReview.answer = choice === 'confirms';
         const saved = createDeploymentActions(lifetime, header.projectSourceId).updateEnvironment(header, { previewTemplate });
         if (choice === 'confirms') {
             await expect(saved).resolves.toMatchObject({ ok: true, environmentId: header.id, revision: 8 });
@@ -640,43 +684,333 @@ describe('deployment UI Action callbacks', () => {
             await expect(saved).rejects.toMatchObject({ code: 'approval_canceled' });
             expect(dispatched.map(row => row.confirmed)).toEqual([false]);
         }
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('Turn on previews for this environment');
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(nativeReview.shown).toHaveLength(1);
+        expect(nativeReview.shown[0]?.summary).toContain('Turn on previews for this environment');
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
-    it('requests the controller-owned Deploy review without executing the deploy', async () => {
-        const homeId = `srv_${'d'.repeat(32)}`;
-        const serverId = await homes.addHome({ name: 'Deploy intent', serverUrl: 'https://deploy-intent.test',
+    it.each(['saved Ask', 'controller enrollment'] as const)('saves Preview settings through the Home-signed receiving executor with one native review (%s)', async reviewOrigin => {
+        const homeId = `srv_${'7'.repeat(32)}`;
+        const serverId = await homes.addHome({ name: 'Preview Save replay', serverUrl: 'https://preview-save-replay.test',
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        if (reviewOrigin === 'saved Ask') await homes.requireUiApproval(serverId, 'deployments.environments.update');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const header = createDeploymentEnvironmentHeaderV1({ serverId: homeId, revision: 7 });
+        homes.answer(serverId, `GET /v1/deployments/environments/${header.id}`, {
+            body: { ok: true, environment: header, targetLinks: [] } });
+        const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } as const;
+        const admissions: Array<Readonly<{ input: unknown; reviewDigest?: string; requestId?: string;
+            target: unknown; confirmation: unknown; inputDigest: string }>> = [];
+        let effects = 0;
+        let boundaryFailure: unknown;
+        const { createPreviewEnrollmentForHost } = await import('../../../../../cli/src/deployments/previewEnrollment');
+        const enrollment = createPreviewEnrollmentForHost({ serverId: homeId,
+            machineId: header.controllerMachineId,
+            readEnvironment: async () => createDeploymentEnvironmentDetailV1({ environment: header }) });
+        const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: header.id } }),
+            ...(reviewOrigin === 'controller enrollment' ? {
+                prepareHostReviewedChildren: async ({ actionId, input, context }) => actionId === 'deployments.environments.update'
+                    ? enrollment.prepare(DeploymentActionInputSchemasV1[actionId].parse(input), context) : null,
+            } satisfies Pick<Parameters<typeof createActionExecutor>[0], 'prepareHostReviewedChildren'> : {}),
+            deploymentAction: async (_actionId, input) => {
+                effects += 1;
+                expect(input).toEqual(admissions[0]?.input);
+                return { ok: true, environmentId: header.id, revision: 8 };
+            },
+            approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
+                read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
+                create: async (artifactId, artifactHeader, body, idScope) =>
+                    (await account.createArtifactDocument({ artifactId, header: artifactHeader, body, idScope })).artifact }),
+        }));
+        const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+            machineId: header.controllerMachineId, actionId: 'deployments.environments.update', tokenEpoch: 0,
+            deploymentSource: { id: header.projectSourceId, revision: 1 },
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
+            execute: async (input, transport) => {
+                try {
+                    if (!('authentication' in transport.authorization.binding)) throw new Error('Expected signed Home Account admission');
+                    const authority = resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+                        surface: transport.invocation.surface, actionId: 'deployments.environments.update' });
+                    admissions.push({ input, requestId: transport.requestId, target: transport.target,
+                        confirmation: transport.invocation.presentUserConfirmation,
+                        inputDigest: computeActionInputApprovalDigestV1('deployments.environments.update', input),
+                        reviewDigest: transport.invocation.presentUserConfirmation?.reviewDigest });
+                    const result = await receiver.execute('deployments.environments.update', input, {
+                        surface: transport.invocation.surface, authority, actionCaller: transport.invocation.caller,
+                        actionsSettings: resolveActionsSettingsV1FromState({ settings: await account.readSettings() }),
+                        presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                        serverId, serverIdentityId: homeId, runtimeAccountId: account.accountId,
+                        externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+                        originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId,
+                        signExternalActionApprovalInput: ({ actionId, input: reviewedInput, target, requesterConfirmation, sessionTargetsV1 }) =>
+                            boundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input: reviewedInput, target,
+                                ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+                    });
+                    return result.ok ? result.result : result;
+                } catch (error) { boundaryFailure = error; throw error; }
+            },
+        });
+        try {
+            await expect(createDeploymentActions(account.accountLifetime, header.projectSourceId)
+                .updateEnvironment(header, { previewTemplate })).resolves.toMatchObject({ ok: true, revision: 8 });
+            // The controller carries both saved Ask and its enrollment review
+            // before the exact confirmed receiving admission.
+            expect(admissions).toHaveLength(2);
+            expect(admissions[0]?.requestId).toEqual(expect.any(String));
+            expect(admissions[1]?.confirmation).toMatchObject({ target: admissions[1]?.target,
+                requestId: admissions[1]?.requestId, inputDigest: admissions[1]?.inputDigest,
+                accountId: account.accountId, serverId: homeId });
+            expect(nativeReview.shown).toHaveLength(1);
+            expect(nativeReview.shown[0]).toMatchObject({ actionArgs: admissions[0]?.input,
+                title: expect.any(String),
+                preview: { actionId: 'deployments.environments.update', summary: expect.any(String) } });
+            if (reviewOrigin === 'controller enrollment') {
+                expect(JSON.stringify(nativeReview.shown[0]?.preview)).toContain('workflow.trigger.add');
+                expect(admissions[1]?.reviewDigest).toEqual(expect.any(String));
+            }
+            expect(admissions[1]?.requestId).not.toBe(admissions[0]?.requestId);
+            expect(effects).toBe(1);
+            expect(homes.artifacts(serverId).list()).toEqual([]);
+            expect(homes.requestsFor('/v1/actions/approval.request.create')).toHaveLength(0);
+        } catch (error) {
+            throw new Error(`Preview Save relay: ${JSON.stringify({ admissions, effects, reviews: nativeReview.shown.length })}`,
+                { cause: boundaryFailure ?? error });
+        }
+        finally { account.dispose(); }
+    });
+
+    it('creates a Duplicate from its retained UI review through the Home-signed receiving executor once', async () => {
+        const homeId = `srv_${'6'.repeat(32)}`;
+        const serverId = await homes.addHome({ name: 'Duplicate replay', serverUrl: 'https://duplicate-replay.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const authored = { name: 'PostgreSQL copy', requestKey: 'duplicate-postgres', protection: 'nonProduction' as const,
+            purpose: 'standard' as const, deployerMode: 'managers' as const, controllerMachineId: 'controller',
+            copyFrom: { environmentId: 'postgres-serving', expectedRevision: 7,
+                choices: { secrets: [], values: [], data: [] } } };
+        const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+            serverId: homeId, projectSourceId: 'source-app', requestKey: authored.requestKey, protection: authored.protection,
+            purpose: authored.purpose, deployerMode: authored.deployerMode, controllerMachineId: 'controller',
+            contentArtifactId: 'duplicate-content', contentHeaderVersion: 2, contentBodyVersion: 3,
+            copyFrom: authored.copyFrom, copyPlan: { bindings: [] }, copyIntentCommitment: 'A'.repeat(43),
+        }, review: { creationDefaults: { values: { controllerMachineId: 'controller', retainPreviousDeployments: 0 },
+            sources: { controllerMachineId: 'project', retainPreviousDeployments: 'project' } },
+            creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null } } });
+        const admissions: Array<Readonly<{ input: unknown; authority: string; reviewDigest?: string }>> = [];
+        let boundaryFailure: unknown;
+        let preparations = 0;
+        let effects = 0;
+        // These are installed controller preparation/storage ports; Protocol policy and consent binding remain real.
+        const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            resolveEnvironmentApprovalScope: async () => ({ scope: null }),
+            deploymentAction: async (_actionId, input) => {
+                if ('mode' in input && input.mode === 'preview') {
+                    preparations += 1;
+                    expect(input).toEqual({ ...authored, serverId: homeId, projectSourceId: 'source-app', mode: 'preview' });
+                    return preview;
+                }
+                effects += 1;
+                expect(input).toEqual(preview.input);
+                return { ok: true, environmentId: 'postgres-copy', revision: 1 };
+            },
+            approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
+                read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
+                create: async (artifactId, header, body, idScope) =>
+                    (await account.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
+        }));
+        const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+            machineId: 'controller', actionId: 'deployments.environments.create', tokenEpoch: 0,
+            deploymentSource: { id: 'source-app', revision: 7 },
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
+            execute: async (input, transport) => {
+                try {
+                if (!('authentication' in transport.authorization.binding)) throw new Error('Expected signed Home Account admission');
+                const authority = transport.invocation.authority === 'present_user'
+                    ? resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+                        surface: transport.invocation.surface, actionId: 'deployments.environments.create' }) : transport.invocation.authority;
+                if (!(typeof input === 'object' && input !== null && 'mode' in input)) admissions.push({ input, authority,
+                    reviewDigest: transport.invocation.presentUserConfirmation?.reviewDigest });
+                const result = await receiver.execute('deployments.environments.create', input, {
+                    surface: transport.invocation.surface, authority, actionCaller: transport.invocation.caller,
+                    presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                    serverId, serverIdentityId: homeId, runtimeAccountId: account.accountId,
+                    externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+                    originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId,
+                    signExternalActionApprovalInput: ({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
+                        boundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input, target,
+                            ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+                });
+                return result.ok ? result.result : result;
+                } catch (error) { boundaryFailure = error; throw error; }
+            },
+        });
+        try {
+            const prepared = await createDeploymentActions(account.accountLifetime, 'source-app').prepareCreate(authored);
+            expect(prepared.review).toEqual(preview.review);
+            expect(prepared.input).toEqual(preview.input);
+            expect(effects).toBe(0);
+            await expect(prepared.run()).resolves.toEqual({ ok: true, environmentId: 'postgres-copy', revision: 1 });
+            expect(preparations).toBe(1);
+            // The retained review's Create press admits these exact prepared operands once (f092).
+            expect(admissions).toEqual([{ input: preview.input, authority: 'present_user', reviewDigest: undefined }]);
+            expect(nativeReview.shown).toEqual([]);
+            expect(effects).toBe(1);
+            expect(homes.artifacts(serverId).list()).toEqual([]);
+            expect(homes.requestsFor('/v1/actions/approval.request.create')).toHaveLength(0);
+        } catch (error) { throw boundaryFailure ?? error; }
+        finally { account.dispose(); }
+    });
+
+    it.each([
+        { action: 'deploy', mode: 'plain', choice: 'confirms' },
+        { action: 'deploy', mode: 'e2ee', choice: 'confirms' },
+        { action: 'deploy', mode: 'plain', choice: 'cancels' },
+        { action: 'redeploy PostgreSQL', mode: 'plain', choice: 'confirms' },
+        { action: 'image', mode: 'plain', choice: 'confirms' },
+        { action: 'rebuild', mode: 'plain', choice: 'confirms' },
+    ] as const)('$choice the controller-owned $action review from a $mode Account without a self-approval Artifact', async ({ action, mode, choice }) => {
+        const homeId = `srv_${'d'.repeat(32)}`;
+        const secret = new Uint8Array(32).fill(29);
+        const serverId = await homes.addHome({ name: 'Deploy intent', serverUrl: 'https://deploy-intent.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true, accountEncryptionMode: mode,
+            ...(mode === 'e2ee' ? { credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }),
+                secret: encodeBase64(secret, 'base64url') } } : {}) });
+        if (mode === 'e2ee') homes.answer(serverId, 'GET /v1/account/encryption/currentness', {
+            body: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+        });
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId }) });
+        const environment = detail.environment;
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
-        homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
-            environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
-        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
-            actionId: 'deployments.deploy', tokenEpoch: 0,
-            deploymentSource: { id: detail.environment.projectSourceId, revision: 1 }, execute: (input, context) => {
-            expect(context.target).toEqual({ kind: 'machine', machineId: 'machine-a' });
-            expect(input).toEqual({ serverId, environmentId: detail.environment.id, targetLinkId: 'target-link' });
-            // Model the native process boundary using its real approval policy, not a second rule.
-            const routing = resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
-                input, context: { surface: 'ui', actionCaller: { kind: 'host' },
-                    authority: context.requestHeaders.get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation'
-                        ? 'account_automation' : 'present_user' } });
-            return routing.required
-                    ? { kind: 'approval_request_created', actionId: 'deployments.deploy', artifactId: 'deploy-review' }
-                    : { ok: true, environmentId: detail.environment.id, revision: 2,
-                        deploymentId: 'new-deployment', deploymentRevision: 1, state: 'succeeded' };
-        } });
-        await expect(createDeploymentActions(lifetime, detail.environment.projectSourceId).deploy({
-            environmentId: detail.environment.id, targetLinkId: 'target-link',
-        })).rejects.toMatchObject({ code: 'approval_request_created', details: {
-            kind: 'approval_request_created', actionId: 'deployments.deploy', artifactId: 'deploy-review',
-        } });
-        expect(homes.requestsFor('/v1/actions/deployments.deploy')).toHaveLength(1);
-        expect(homes.requestsFor('/v1/actions/approval.request.create')).toHaveLength(0);
-        expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: { ok: true,
+            environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const deploy = action === 'deploy' || action === 'redeploy PostgreSQL';
+        const actionId = deploy ? 'deployments.deploy' : 'deployments.promote';
+        const pins = { serverId: homeId, environmentId: environment.id, expectedRevision: environment.revision,
+            targetLinkId: 'target-link', expectedTargetLinkRevision: 1, requestKey: 'controller-prepared-request',
+            contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+            contentBodyVersion: environment.contentBodyVersion };
+        const prepared = deploy ? DeploymentDeployInputV1Schema.parse(pins)
+            : DeploymentPromoteInputV1Schema.parse({ ...pins, sourceEnvironmentId: 'staging',
+                sourceDeploymentId: 'tested-release', artifact: action, destinationContent: {
+                    contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+                    contentBodyVersion: environment.contentBodyVersion } });
+        const admissions: { authority: string; reviewDigest?: string }[] = [];
+        const receivedInputs: unknown[] = [];
+        const receivedRequestIds: Array<string | undefined> = [];
+        const outcomes: { ok: boolean; errorCode?: string }[] = [];
+        let effects = 0;
+        let preparations = 0;
+        const controllerReview = { summary: action === 'redeploy PostgreSQL'
+            ? 'Redeploy PostgreSQL from its live revision, keeping the data volume'
+            : 'Deploy the reviewed Compose services', sourceMethod: 'storedCompose',
+            source: { label: 'Compose file, revision 1' },
+            services: action === 'redeploy PostgreSQL' ? [{ name: 'postgres' }] : [{ name: 'web' }, { name: 'worker' }] };
+        // A deterministic native-port fixture distinguishes raw-intent regeneration from retained reviewed refs.
+        // Account capture, Home transport, Protocol policy and digest-bound receiving admission stay real;
+        // the CLI deployment-role composition separately exercises the actual daemon preparation factory.
+        const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: environment.id } }),
+            prepareDeploymentAction: async ({ input }) => {
+                // The installed controller authors a new candidate for raw intent. Reviewed refs retain that candidate.
+                if ('contentArtifactId' in input) return { input, preview: controllerReview };
+                preparations += 1;
+                return { input: preparations === 1 ? prepared : { ...prepared,
+                    requestKey: `controller-prepared-request-${preparations}`,
+                    contentArtifactId: `artifact-candidate-${preparations}` }, preview: controllerReview };
+            },
+            deploymentAction: async (_actionId, effectInput) => {
+                expect(effectInput).toEqual(prepared);
+                effects += 1;
+                return { ok: true, environmentId: environment.id, revision: 2,
+                    deploymentId: 'reviewed-deployment', deploymentRevision: 1, state: 'succeeded' };
+            },
+            approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
+                read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
+                create: async (artifactId, header, body, idScope) =>
+                    (await account.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
+        }));
+        const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+            machineId: environment.controllerMachineId, actionId, tokenEpoch: 0,
+            deploymentSource: { id: environment.projectSourceId, revision: 1 },
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
+            execute: async (input, transport) => {
+                receivedInputs.push(input);
+                receivedRequestIds.push(transport.requestId);
+                expect(transport.target).toEqual({ kind: 'machine', machineId: environment.controllerMachineId });
+                if (!('authentication' in transport.authorization.binding)) throw new Error('Expected Home Account admission');
+                const authority = transport.invocation.authority === 'present_user'
+                    ? resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+                        surface: transport.invocation.surface, actionId }) : transport.invocation.authority;
+                admissions.push({ authority, reviewDigest: transport.invocation.presentUserConfirmation?.reviewDigest });
+                const result = await receiver.execute(actionId, input, {
+                    surface: transport.invocation.surface, authority, actionCaller: transport.invocation.caller,
+                    presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                    serverId, serverIdentityId: homeId, runtimeAccountId: account.accountId,
+                    externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+                    originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId,
+                    signExternalActionApprovalInput: ({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
+                        boundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input, target,
+                            ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+                });
+                outcomes.push({ ok: result.ok, ...(!result.ok ? { errorCode: result.errorCode } : {}) });
+                return result.ok ? result.result : result;
+            },
+        });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear();
+        nativeReview.answer = choice === 'confirms';
+        try {
+            const actions = createDeploymentActions(lifetime, environment.projectSourceId);
+            const run = deploy ? actions.deploy({ environmentId: environment.id, targetLinkId: 'target-link',
+                ...(action === 'redeploy PostgreSQL' ? { sha: 'b'.repeat(40), requestKey: 'redeploy-live-postgres' } : {}) })
+                : actions.promote({ environmentId: environment.id, sourceEnvironmentId: 'staging',
+                    sourceDeploymentId: 'tested-release', artifact: action });
+            if (choice === 'confirms') {
+                await expect(run).resolves.toMatchObject({ ok: true, deploymentId: 'reviewed-deployment' });
+                expect(admissions).toEqual([{ authority: 'present_user', reviewDigest: undefined },
+                    { authority: 'present_user', reviewDigest: expect.any(String) }]);
+                expect(outcomes).toEqual([{ ok: false, errorCode: 'action_interactive_review_required' }, { ok: true }]);
+                expect(effects).toBe(1);
+                expect(receivedInputs[1]).toEqual(prepared);
+                expect(preparations).toBe(1);
+                expect(receivedRequestIds[0]).toEqual(expect.any(String));
+                expect(receivedRequestIds[1]).not.toBe(receivedRequestIds[0]);
+            } else {
+                await expect(run).rejects.toMatchObject({ code: 'approval_canceled' });
+                expect(outcomes).toEqual([{ ok: false, errorCode: 'action_interactive_review_required' }]);
+                expect(effects).toBe(0);
+            }
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(nativeReview.shown).toHaveLength(1);
+            expect(nativeReview.shown[0]?.preview).toMatchObject({ deploymentReview: controllerReview });
+            expect(nativeReview.shown[0]?.summary).toContain(controllerReview.summary);
+            expect(nativeReview.shown[0]?.actionArgs).toEqual(prepared);
+            if (action === 'redeploy PostgreSQL') expect(receivedInputs[0]).toMatchObject({ sha: 'b'.repeat(40),
+                requestKey: 'redeploy-live-postgres', environmentId: environment.id });
+            expect(homes.artifacts(serverId).list()).toEqual([]);
+            expect(homes.requestsFor('/v1/actions/approval.request.create')).toHaveLength(0);
+        } catch (error) {
+            throw new Error(`Controller review relay: ${JSON.stringify({ receivedInputs, outcomes, preparations, effects })}`,
+                { cause: error });
+        } finally { account.dispose(); }
     });
 
     it.each(['plain', 'e2ee'] as const)('requests controller-owned teardown preparation from a %s Account without a UI candidate', async accountEncryptionMode => {
@@ -705,7 +1039,7 @@ describe('deployment UI Action callbacks', () => {
         const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
         expect(await actions.teardown({ environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' }))
             .toMatchObject({ ok: true, deploymentId: 'teardown-a', state: 'succeeded' });
-        expect(observed).toEqual({ serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' });
+        expect(observed).toEqual({ serverId: homeId, environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' });
         expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
         expect(homes.requests.filter(request => request.path.startsWith('/v1/artifacts'))).toHaveLength(0);
     });
@@ -758,7 +1092,7 @@ describe('deployment UI Action callbacks', () => {
                     .toMatchObject(recovery.restoreBackupId === undefined
                         ? { ok: true, deploymentId: 'rollback-a', state: 'succeeded' }
                         : { ok: false, error: 'unsupported_action' });
-                expect(observed).toEqual({ serverId, environmentId: detail.environment.id, deploymentId: retained.deployment.id,
+                expect(observed).toEqual({ serverId: homeId, environmentId: detail.environment.id, deploymentId: retained.deployment.id,
                     ...(recovery.restoreBackupId === undefined ? {} : { restoreBackupId: recovery.restoreBackupId }) });
                 expect(homes.requestsFor('/v1/actions/deployments.rollback')).toHaveLength(1);
                 // Candidate custody belongs to the controller, even with a readable retained receipt in this UI.

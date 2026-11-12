@@ -48,6 +48,24 @@ function finiteEvidence(evidence: NonNullable<DeploymentDomainHeaderV1['dnsHealt
     return {};
 }
 
+export type DeploymentDomainDnsReadinessV1 = Readonly<{
+    state: 'missing' | 'not_this_machine' | 'ready' | 'unavailable' | 'not_checked';
+    reason: string | null;
+}>;
+
+/** Consume the native check's verdict; DNS existence alone never proves this Machine serves the hostname. */
+export function projectDeploymentDomainDnsReadinessV1(
+    health: DeploymentDomainHeaderV1['dnsHealth'],
+): DeploymentDomainDnsReadinessV1 {
+    if (!health) return { state: 'not_checked', reason: null };
+    const facts = finiteEvidence(health.evidence);
+    const reason = typeof facts.reason === 'string' ? facts.reason : null;
+    if (reason === 'dns_missing') return { state: 'missing', reason };
+    if (reason === 'dns_not_this_machine') return { state: 'not_this_machine', reason };
+    if (reason === 'dns_ready') return { state: 'ready', reason };
+    return { state: health.status === 'unknown' && reason !== 'not_checked' ? 'unavailable' : 'not_checked', reason };
+}
+
 /** One semantic projection serves both Action readers and the Domain row. No clock or probe is started here. */
 export function projectDeploymentDomainHealthFactsV1(domain: DeploymentDomainHeaderV1,
     content: Pick<DeploymentDomainContentV1, 'tls'>,

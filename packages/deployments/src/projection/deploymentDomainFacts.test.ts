@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { deploymentDomainProbeVantageV1, projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1 } from './deploymentDomainFacts';
+import { deploymentDomainProbeVantageV1, projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1, projectDeploymentDomainDnsReadinessV1 } from './deploymentDomainFacts';
 import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const domain: DeploymentDomainHeaderV1 = { v: 1, id: 'domain', environmentId: 'environment', targetLinkId: 'link',
@@ -120,5 +120,29 @@ describe('Domain saved health facts', () => {
             observedAt: 2000, evidence: evidence('http', { reason: 'dns' }) } };
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [http, certificate], null, 2000))
             .toMatchObject({ certificate: { state: 'expiresSoon' }, needsYou: { cause: 'dns', vantage: 'outside' } });
+    });
+});
+
+
+describe('Domain DNS readiness', () => {
+    const health = (status: 'up' | 'down' | 'unknown', reason: string) => ({ status, evidence: { v: 1 as const,
+        items: [{ source: { kind: 'alert' as const, label: 'DNS' }, author: { kind: 'process' as const },
+            text: JSON.stringify({ kind: 'dns', reason }) }] } });
+    it.each([
+        ['down', 'dns_missing', 'missing'],
+        ['down', 'dns_not_this_machine', 'not_this_machine'],
+        ['up', 'dns_ready', 'ready'],
+        ['unknown', 'resolver_unavailable', 'unavailable'],
+        ['unknown', 'dns_transport_unavailable', 'unavailable'],
+        ['unknown', 'dns_private_listener_unavailable', 'unavailable'],
+    ] as const)('projects %s/%s as %s without replacing the producer reason', (status, reason, state) => {
+        expect(projectDeploymentDomainDnsReadinessV1(health(status, reason))).toEqual({ state, reason });
+    });
+    it('never treats legacy DNS existence alone or absent checks as proof of this Machine', () => {
+        expect(projectDeploymentDomainDnsReadinessV1(undefined)).toEqual({ state: 'not_checked', reason: null });
+        expect(projectDeploymentDomainDnsReadinessV1(health('up', 'dns_present')))
+            .toEqual({ state: 'not_checked', reason: 'dns_present' });
+        expect(projectDeploymentDomainDnsReadinessV1(health('unknown', 'not_checked')))
+            .toEqual({ state: 'not_checked', reason: 'not_checked' });
     });
 });

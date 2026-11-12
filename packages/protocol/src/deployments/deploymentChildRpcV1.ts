@@ -15,7 +15,7 @@ import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionI
     isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
     DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
-import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
+import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainAttachedVerifyInputV1Schema, DeploymentDomainPreviewInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
@@ -51,6 +51,11 @@ export const DeploymentTeardownReviewChildRpcV1Schema = lazyZodSchema(() => z.st
     input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id, reason: DeploymentTeardownInputV1Schema.shape.reason }),
     expectedRevision: revision, expectedTargetLinkRevision: revision,
 }));
+export const DeploymentDomainDnsChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
+    ...placement, kind: z.literal('domainDns'), actionId: z.literal('deployments.domains.verify'),
+    input: DeploymentDomainPreviewInputV1Schema,
+}));
+export type DeploymentDomainDnsChildRpcV1 = z.infer<typeof DeploymentDomainDnsChildRpcV1Schema>;
 export const DeploymentDomainChildRoutingV1Schema = lazyZodSchema(() => z.strictObject({
     ...placement, kind: z.literal('domain'), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify']),
     input: z.strictObject({ serverId: id, environmentId: id, domainId: id }), expectedDomainRevision: revision,
@@ -97,7 +102,7 @@ export const DeploymentChildRpcV1Schema = lazyZodSchema(() => z.union([
     DeploymentSnapshotChildRpcV1Schema,
     DeploymentDataRoleChildRpcV1Schema,
     DeploymentTeardownReviewChildRpcV1Schema,
-    DeploymentDomainChildRpcV1Schema, DeploymentDomainDiscoverChildRpcV1Schema,
+    DeploymentDomainChildRpcV1Schema, DeploymentDomainDiscoverChildRpcV1Schema, DeploymentDomainDnsChildRpcV1Schema,
     z.strictObject({ ...placement, kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
         input: DeploymentTeardownInputV1Schema, deploymentId: id, actionOperationId: id,
         step: DeploymentTeardownStepV1Schema, mode: z.enum(['observe', 'execute']) }),
@@ -116,6 +121,10 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): boolean {
     const child = input.child;
+    if (child.kind === 'domainDns') {
+        const original = DeploymentDomainPreviewInputV1Schema.safeParse(input.rootInput);
+        return input.rootActionId === child.actionId && original.success && sameStrictJsonValue(original.data, child.input);
+    }
     if (child.kind === 'snapshot') {
         const original = DeploymentBackupRestoreConfirmInputV1Schema.safeParse(input.rootInput);
         return input.rootActionId === child.actionId && original.success
@@ -227,7 +236,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     }
     if (child.kind === 'domain') {
         const schema = child.actionId === 'deployments.domains.add' ? DeploymentDomainAddInputV1Schema
-            : child.actionId === 'deployments.domains.remove' ? DeploymentDomainRemoveInputV1Schema : DeploymentDomainVerifyInputV1Schema;
+            : child.actionId === 'deployments.domains.remove' ? DeploymentDomainRemoveInputV1Schema : DeploymentDomainAttachedVerifyInputV1Schema;
         const original = schema.safeParse(input.rootInput);
         return input.rootActionId === child.actionId && original.success && original.data.serverId === child.input.serverId
             && original.data.environmentId === child.input.environmentId && original.data.domainId === child.input.domainId

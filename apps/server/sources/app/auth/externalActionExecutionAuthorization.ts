@@ -577,7 +577,7 @@ type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | Issued
 
 function readDeploymentChildReceiptContinuation(binding: ExternalActionExecutionAuthorizationBindingV1,
     routing: DeploymentChildRoutingV1): DeploymentReceiptContinuation | undefined {
-    return routing.kind === 'dataRole' || routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover' ? undefined : {
+    return routing.kind === 'dataRole' || routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns' ? undefined : {
         deploymentId: routing.deploymentId, actionOperationId: routing.actionOperationId,
         environmentId: routing.input.environmentId, installationId: binding.installationId,
     };
@@ -1422,28 +1422,28 @@ async function verifyCommon(
         const packet = proof.deploymentChildExecution;
         if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const routing = packet.externalActionExecution.deploymentChildRouting;
-        const dataRoleReceiver = routing?.kind === 'dataRole' ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
+        const admittedReadReceiver = (routing?.kind === 'dataRole' || routing?.kind === 'domainDns') ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
             accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } }) : null;
         // The installed receiver spends the source-signed admitted packet. Its
         // root binding and source signature are verified by the recursive owner.
-        const admittedDataRoleContinuation = routing?.kind === 'dataRole'
-            && dataRoleReceiver?.installationPublicKey && dataRoleReceiver.installationId === routing.installationId
-            && classifyMachineAvailabilityState(dataRoleReceiver) === 'available'
+        const admittedReadContinuation = (routing?.kind === 'dataRole' || routing?.kind === 'domainDns')
+            && admittedReadReceiver?.installationPublicKey && admittedReadReceiver.installationId === routing.installationId
+            && classifyMachineAvailabilityState(admittedReadReceiver) === 'available'
             && verifyExternalActionMachineRequestV1({ authorizationToken: proof.authorizationToken,
                 effectActionId: effectActionId.data, target, installationId: routing.installationId,
                 requestId: packet.externalActionExecution.authorization.binding.requestId,
                 method: proof.method, path: proof.path, body: proof.body, deploymentChildExecution: packet,
                 ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
-                publicKey: dataRoleReceiver.installationPublicKey, signature: proof.machineSignature });
+                publicKey: admittedReadReceiver.installationPublicKey, signature: proof.machineSignature });
         const verified = await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
             method: packet.method, requestId: packet.requestId, paramsPresent: packet.paramsPresent, paramsDigest: packet.paramsDigest,
-            ...(admittedDataRoleContinuation ? { admittedDataRoleContinuation: true } : {}),
+            ...(admittedReadContinuation ? { admittedReadContinuation: true } : {}),
             onRefusal: proof.onRefusal,
             resolveCurrentSessionMachine: proof.resolveCurrentSessionMachine });
         if (!verified || !routing || !(verified.binding.deploymentChildRoot === true)
             || effectActionId.data !== routing.actionId && !isDeploymentReadPreparation(verified.binding, effectActionId.data)
             || !sameStrictJsonValue(target, verified.target)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
-        const receiver = dataRoleReceiver ?? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
+        const receiver = admittedReadReceiver ?? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
             accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
         if (!receiver?.installationPublicKey || receiver.installationId !== routing.installationId
             || classifyMachineAvailabilityState(receiver) !== 'available') return refuseExternalActionExecutionRequest('deployment_child_http', proof);
@@ -1453,7 +1453,7 @@ async function verifyCommon(
                 deploymentChildExecution: packet, ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
                 publicKey, signature: proof.machineSignature });
         let signer = { machineId: routing.machineId, installationId: routing.installationId, custodianAccountId: receiver.accountId };
-        if (!admittedDataRoleContinuation && !verifySignature(routing.installationId, receiver.installationPublicKey)) {
+        if (!admittedReadContinuation && !verifySignature(routing.installationId, receiver.installationPublicKey)) {
             const domainAdmission = verified.deploymentChildAdmission?.domainAdmission;
             if (!packet.archiveOrigin && effectActionId.data === routing.actionId && domainAdmission
                 && proof.method.toUpperCase() === 'POST'
@@ -2303,7 +2303,7 @@ function isAccountActionHttpOperation(actionId: string,
     if (!action.success) return false;
     const spec = getActionSpec(action.data);
     const transport = spec.serverTransport;
-    if (spec.executionPlacement !== 'account' || !transport
+    if (spec.executionPlacement !== 'account' && !spec.deploymentPreparationScope || !transport
         || proof.method.toUpperCase() !== transport.method.toUpperCase()) return false;
     if (actionId.startsWith('session.delivery.mute.')) {
         if (!isSessionFollowActionIdV1(actionId)) return false;
@@ -3359,6 +3359,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         });
     let subtreeObservationHttpPurpose: boolean | null;
     let accountHttpPurpose: boolean | null;
+    let accountHttpRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
     if (domainPreparation === false) return refuse('deployment_domain_preparation');
     if (isExternalActionApprovalArtifactPurpose({ binding: verified.binding, effectActionId: verified.effectActionId,
         method: proof.method, path: proof.path, body: proof.body })) {
@@ -3787,9 +3788,10 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) {
         // ActionSpec transport and the one admitted deployment scope own this
         // read; no per-purpose table entry is needed.
-    } else if ((accountHttpPurpose = await isAccountActionHttpPurpose(verified, proof, snapshotBatch)) !== null) {
+    } else if ((accountHttpPurpose = await isAccountActionHttpPurpose(verified, { ...proof,
+        onRefusal: phase => { accountHttpRefusal = phase; } }, snapshotBatch)) !== null) {
         // A specialized refusal is terminal before generic Session reads.
-        if (!accountHttpPurpose) return null;
+        if (!accountHttpPurpose) return refuse(accountHttpRefusal ?? 'verification_purpose');
     } else if (!snapshotBatch && proof.sessionRouteTarget
         && (proof.method.toUpperCase() === 'GET' && proof.body === undefined
             || proof.sessionRouteTarget.actionId !== undefined
@@ -4232,7 +4234,7 @@ export async function verifyExternalActionMachineRpcExecution(
         /** Host-only issuer purpose: a spawn proof never directly dispatches a credential effect. */
         nativeCredentialSpawnChildIssuance?: true;
         /** Host-only: verifyCommon has authenticated the installed data-role receiver's continuation signature. */
-        admittedDataRoleContinuation?: true;
+        admittedReadContinuation?: true;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
@@ -4361,7 +4363,7 @@ export async function verifyExternalActionMachineRpcExecution(
                 deploymentChildRouting: routing.data, publicKey: machine.installationPublicKey, signature: execution.machineSignature })) return refuseExternalActionExecutionRequest('deployment_child_signature', { rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD });
         let deploymentChildAdmission = await readDeploymentChildAdmissionInTx(db, binding, routing.data, {
             authenticationAuthority: principal.authority, authenticationEvidence: principal.authenticationEvidence },
-        request.admittedDataRoleContinuation);
+        request.admittedReadContinuation);
         if (!deploymentChildAdmission || 'ok' in deploymentChildAdmission) {
             return refuseExternalActionExecutionRequest('deployment_child_admission', {
                 rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, onRefusal: request.onRefusal,

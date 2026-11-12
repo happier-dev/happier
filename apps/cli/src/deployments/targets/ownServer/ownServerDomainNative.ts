@@ -476,7 +476,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             if (result.kind !== 'active') return failure(job, 'reason' in result ? result.reason : 'native_route_unavailable',
                 'details' in result ? result.details : undefined, 'failureCause' in result ? result.failureCause : undefined);
             const observation: DeploymentDomainObservationBodyV1 = { capture: job.capture,
-                state: routeState, dnsHealth: await readDnsHealth(),
+                state: routeState,
                 ...(result.networkExposure ? { networkExposure: result.networkExposure } : {}),
                 // Materialization owns localOrigin: redirects and edge-to-origin
                 // proxies do not configure local replicas, even if discovered.

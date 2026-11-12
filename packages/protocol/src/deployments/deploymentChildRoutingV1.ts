@@ -25,6 +25,9 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminate
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id, expectedRevision: revision }),
         targetLinkId: id, deploymentId: id, service: id, candidateContent: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
     DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRpcV1Schema,
+    z.strictObject({ v: z.literal(1), kind: z.literal('domainDns'), actionId: z.literal('deployments.domains.verify'),
+        machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id,
+            targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision, requestKey: id }) }),
     z.strictObject({ v: z.literal(1), kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
         machineId: id, installationId: id, input: common.input, deploymentId: id, actionOperationId: id,
         step: DeploymentTeardownStepV1Schema, mode: z.enum(['observe', 'execute']) }),
@@ -38,12 +41,16 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminate
     z.strictObject({ ...common, kind: z.literal('member'), deploymentId: id, actionOperationId: id,
         phase: z.enum(['activate', 'restore', 'observe', 'cleanup']), selectedDeploymentId: id }),
 ]).check(z.refine(value => value.kind !== 'member' || value.phase !== 'cleanup' || value.selectedDeploymentId === value.deploymentId),
-    z.refine(value => value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
-    z.refine(value => value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined))));
+    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
+    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined))));
 export type DeploymentChildRoutingV1 = z.infer<typeof DeploymentChildRoutingV1Schema>;
 
 /** The sender and receiver derive one tuple from admitted work; callers cannot author another routing basis. */
 export function projectDeploymentChildRoutingV1(job: DeploymentChildRpcV1): DeploymentChildRoutingV1 {
+    if (job.kind === 'domainDns') {
+        const { mode: _mode, content: _content, ...input } = job.input;
+        return { v: job.v, kind: job.kind, actionId: job.actionId, machineId: job.machineId, installationId: job.installationId, input };
+    }
     if (job.kind === 'snapshot') return { v: job.v, kind: job.kind, actionId: job.actionId,
         machineId: job.machineId, installationId: job.installationId, managedId: job.offer.managedId,
         intentRevision: job.offer.intentRevision, actionOperationId: job.actionOperationId,

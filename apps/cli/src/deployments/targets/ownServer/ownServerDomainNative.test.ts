@@ -81,8 +81,10 @@ vi.mock('node:fs/promises', async importOriginal => {
 afterEach(() => { connectorFs.directory = ''; vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it.each([
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, desktop: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', diagnostic: 'removalMalformedOutput' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, diagnostic: 'verifyExposureUnavailable' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'missing' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'ipv6' },
@@ -96,9 +98,12 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', artifactRefusal: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'foreign' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'retain' },
-] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic)', async scenario => withSocketTempDir(async directory => {
+] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
+    const preview = 'preview' in scenario && scenario.preview;
+    let artifactReads = 0;
+    const desktop = 'desktop' in scenario && scenario.desktop;
     const dns = 'dns' in scenario ? scenario.dns : 'ready';
     const resolveDns = vi.spyOn(Resolver.prototype, 'resolve').mockImplementation(async (_hostname, recordType) => {
         if (dns === 'unavailable') throw Object.assign(new Error('resolver unavailable'), { code: 'ESERVFAIL' });
@@ -192,7 +197,7 @@ it.each([
     const channel = await createRequesterCurrentnessSocketHarness();
     try {
         const bin = join(directory, 'bin');
-        const docker = await createOwnServerDockerBoundary(bin, { ...(mismatchedEngine ? { engineId: 'replacement-engine' } : {}), nativeCaddy: {
+        const docker = await createOwnServerDockerBoundary(bin, { ...(desktop ? { operatingSystem: 'Docker Desktop' } : {}), ...(mismatchedEngine ? { engineId: 'replacement-engine' } : {}), nativeCaddy: {
             Id: 'c'.repeat(64), Name: '/observed-caddy', State: { Running: true },
             Config: { Image: nativeCaddyImage, Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' },
                 Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'] },
@@ -209,7 +214,12 @@ it.each([
         const placement = { serverId: environment.environment.serverId, accountId: 'bob', environmentId: environment.environment.id, targetLinkId: link.id,
             domainId: 'domain', machineId: 'receiver', installationId: 'receiver-installation', nativeServer: 'observed-private',
             actionOperationId: 'removal-operation', requestId: 'private-deployment-request' };
-        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain',
+        const previewInput = { mode: 'preview', serverId: placement.serverId, environmentId: placement.environmentId,
+            expectedRevision: environment.environment.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+            requestKey: 'preview', content: domain };
+        const job = DeploymentChildRpcV1Schema.parse(preview ? { v: 1, kind: 'domainDns',
+            actionId: 'deployments.domains.verify', machineId: placement.machineId, installationId: placement.installationId,
+            input: previewInput } : { v: 1, kind: 'domain',
             actionId: verifying ? 'deployments.domains.verify' : 'deployments.domains.remove',
             input: { serverId: placement.serverId, environmentId: placement.environmentId, domainId: 'domain' },
             machineId: placement.machineId, installationId: placement.installationId, actionOperationId: placement.actionOperationId,
@@ -220,7 +230,7 @@ it.each([
                 targetLinkContent: { contentArtifactId: link.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
                 content: { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 } } });
         const fixture = await createDeploymentChildRequesterHarness({ encryptionMode, job, profileId: placement.serverId,
-            rootInput: { ...job.input, expectedRevision: environment.environment.revision, expectedDomainRevision: 3, requestKey: 'remove' } });
+            rootInput: preview ? previewInput : { ...job.input, expectedRevision: environment.environment.revision, expectedDomainRevision: 3, requestKey: 'remove' } });
         const resourceKey = await createResourceDataKey({ credentials: fixture.bob, mode: encryptionMode });
         const encode = (value: unknown) => resourceKey.mode === 'plain' ? encodePlainArtifactStoredContent(value)
             : encodeBase64(encryptWithDataKey(value, resourceKey.dataKey));
@@ -241,6 +251,7 @@ it.each([
             const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
             if (artifactRefusal && id === 'domain-content') return { status: 401,
                 data: ExternalActionHttpErrorSchema.parse({ error: 'invalid_token', authorizationRefusal: 'deployment_preparation' }) };
+            artifactReads++;
             const document = content.get(id);
             if (!document) throw new Error('Unexpected private resource read');
             return { status: 200, data: { id, ownerAccountId: 'bob', access: 'owner', publicAudience: 'none', encryptionMode,
@@ -388,6 +399,23 @@ it.each([
             machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'ann', machineId: placement.machineId,
                 installationId: placement.installationId, role: 'manage', encryptionMode },
             verifyMachineAdmissionCurrent: async () => { admissionReads++; return true; } });
+        if (desktop) {
+            expect(rawResult).toMatchObject({ ok: false, errorCode: 'unsupported_platform' });
+            expect(mutations).toEqual([]);
+            expect(rootEvents).toEqual([]);
+            expect(rootLaunches).toEqual([]);
+            expect(grantReads).toBe(0);
+            expect(resolveDns).not.toHaveBeenCalled();
+            return;
+        }
+        if (preview) {
+            expect(rawResult).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable',
+                details: { requiredFact: 'publicCaddyListener' } });
+            expect(artifactReads).toBe(0);
+            expect(mutations).toEqual([]);
+            expect(rootLaunches).toEqual([]);
+            return;
+        }
         if (artifactRefusal) {
             expect(rawResult).toMatchObject({ ok: false, errorCode: 'action_forbidden',
                 error: 'action_forbidden (home_signed_authorization_rejected:deployment_preparation)',
@@ -406,12 +434,12 @@ it.each([
             return;
         }
         if (verifying) {
-            expect(rawResult).toMatchObject({ dnsHealth: { status: dns === 'missing' ? 'down' : dns === 'unavailable' ? 'unknown' : 'up' } });
-            expect(resolveDns).toHaveBeenCalledTimes(dns === 'ready' ? 1 : 2);
+            expect(rawResult).toMatchObject({ dnsHealth: { status: dns === 'missing' ? 'down' : 'unknown' } });
+            expect(resolveDns).toHaveBeenCalledTimes(2);
             const observation = DeploymentDomainObservationV1Schema.parse(rawResult);
             const dnsEvidence = JSON.parse(observation.dnsHealth!.evidence.items[0]!.text);
             expect(dnsEvidence).toMatchObject({ reason: dns === 'missing' ? 'dns_missing'
-                : dns === 'unavailable' ? 'resolver_unavailable' : 'dns_matched' });
+                : dns === 'unavailable' ? 'resolver_unavailable' : 'dns_private_listener_unavailable' });
             if (dns === 'missing' || dns === 'unavailable') expect(dnsEvidence.remedy).toEqual(expect.any(String));
             expect(JSON.stringify(observation.dnsHealth)).not.toMatch(/app\.example\.test|192\.0\.2\.1|2001:db8::1/);
             expect(observation).toMatchObject({ state: 'active', networkExposure: { kind: 'ready',

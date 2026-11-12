@@ -38,18 +38,18 @@ export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDe
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 import { DeploymentChildRoutingV1Schema } from '../deployments/deploymentChildRoutingV1.js';
 import { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdmissionV1Schema, DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema, DeploymentBackupNativeAdmissionV1Schema, DeploymentCandidatePublicationV1Schema,
-  projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1,
+  projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1, DeploymentBackupConfigureNativeAdmissionV1Schema,
   isDeploymentBackupConfigureNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
-export { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdmissionV1Schema, DeploymentDomainNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema, DeploymentBackupNativeAdmissionV1Schema, DeploymentCandidatePublicationV1Schema,
+export { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdmissionV1Schema, DeploymentDomainNativeAdmissionV1Schema, DeploymentDomainDnsNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema, DeploymentBackupNativeAdmissionV1Schema, DeploymentCandidatePublicationV1Schema,
   projectDeploymentNativeAdmissionV1, createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
   createDeploymentDomainContentArtifactIdV1, computeDeploymentDomainAuthoredMetadataDigestV1, matchesDeploymentDomainPreparedInputV1,
   createDeploymentEnvironmentContentArtifactIdV1, computeDeploymentEnvironmentUpdateInputDigestV1,
   computeDeploymentEnvironmentUpdateMetadataDigestV1, isDeploymentEnvironmentUpdateNativeAdmissionV1,
-  isDeploymentDomainNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1,
+  isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1,
   DeploymentBackupConfigureNativeAdmissionV1Schema, isDeploymentBackupConfigureNativeAdmissionV1,
   type DeploymentBackupConfigureNativeAdmissionV1,
-  type DeploymentNativeAdmissionV1, type DeploymentDomainNativeAdmissionV1, type DeploymentRestoreNativeAdmissionV1, type DeploymentBackupNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+  type DeploymentNativeAdmissionV1, type DeploymentDomainNativeAdmissionV1, type DeploymentDomainDnsNativeAdmissionV1, type DeploymentRestoreNativeAdmissionV1, type DeploymentBackupNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
@@ -1043,9 +1043,11 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
   const admission = input.envelope.v === 1 ? projectDeploymentNativeAdmissionV1(input.actionId, input.envelope.input)
     : (operationRead || input.actionId === 'deployments.environments.update') && input.envelope.deploymentNativeAdmission === undefined ? undefined
       : DeploymentNativeAdmissionV1Schema.parse(input.envelope.deploymentNativeAdmission);
-  if (isDeploymentDomainChildActionIdV1(input.actionId)
-    ? !isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== input.actionId
-    : isDeploymentDomainNativeAdmissionV1(admission)) throw new TypeError('Native deployment admission mismatch');
+  if (isDeploymentDomainDnsNativeAdmissionV1(admission)
+    ? input.actionId !== admission.actionId
+    : isDeploymentDomainChildActionIdV1(input.actionId)
+      ? !isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== input.actionId
+      : isDeploymentDomainNativeAdmissionV1(admission)) throw new TypeError('Native deployment admission mismatch');
   if ((input.actionId === 'deployments.restart') !== (admission !== undefined && 'kind' in admission && admission.kind === 'restart')) {
     throw new TypeError('Native deployment restart admission mismatch');
   }

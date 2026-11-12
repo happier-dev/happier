@@ -11,7 +11,7 @@ import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureIntent
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
-  DeploymentDomainVerifyInputV1Schema } from './deploymentDomainV1.js';
+  DeploymentDomainAttachedVerifyInputV1Schema, DeploymentDomainPreviewInputV1Schema } from './deploymentDomainV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestorePrepareInputV1Schema,
@@ -26,6 +26,11 @@ export const DeploymentDomainNativeAdmissionV1Schema = lazyZodSchema(() => z.str
   authoredMetadataDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
 }));
 export type DeploymentDomainNativeAdmissionV1 = z.infer<typeof DeploymentDomainNativeAdmissionV1Schema>;
+export const DeploymentDomainDnsNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('domainDns'), actionId: z.literal('deployments.domains.verify'),
+  ...z.omit(DeploymentDomainPreviewInputV1Schema, { serverId: true, mode: true, content: true }).shape,
+}));
+export type DeploymentDomainDnsNativeAdmissionV1 = z.infer<typeof DeploymentDomainDnsNativeAdmissionV1Schema>;
 export const DeploymentRestartNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('restart'), actionId: z.literal('deployments.restart'), environmentId: id,
   deploymentId: id, targetLinkId: id, machineId: id, installationId: id,
@@ -72,7 +77,7 @@ export const DeploymentEnvironmentUpdateNativeAdmissionV1Schema = lazyZodSchema(
 export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ environmentId: id }),
   DeploymentEnvironmentUpdateNativeAdmissionV1Schema,
-  DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
+  DeploymentDomainNativeAdmissionV1Schema, DeploymentDomainDnsNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
   DeploymentBackupNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema,
 ]));
 // Signed authority stays closed in stored approvals. A tolerant Environment-only
@@ -86,6 +91,9 @@ export function isDeploymentEnvironmentUpdateNativeAdmissionV1(value: Deployment
 }
 export function isDeploymentDomainNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentDomainNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'domain';
+}
+export function isDeploymentDomainDnsNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentDomainDnsNativeAdmissionV1 {
+  return value !== undefined && 'kind' in value && value.kind === 'domainDns';
 }
 export function isDeploymentBackupNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentBackupNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'backup';
@@ -139,9 +147,13 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
       environmentId: value.environmentId, deploymentId: value.deploymentId, targetLinkId: value.targetLinkId,
       machineId: value.machineId, installationId: value.installationId });
   }
+  if (actionId === 'deployments.domains.verify' && readRecord(input).mode === 'preview') {
+    const { serverId: _serverId, mode: _mode, content: _content, ...references } = DeploymentDomainPreviewInputV1Schema.parse(input);
+    return DeploymentDomainDnsNativeAdmissionV1Schema.parse({ kind: 'domainDns', actionId, ...references });
+  }
   if (isDeploymentDomainChildActionIdV1(actionId)) {
     const schema = actionId === 'deployments.domains.add' ? DeploymentDomainAddInputV1Schema
-      : actionId === 'deployments.domains.remove' ? DeploymentDomainRemoveInputV1Schema : DeploymentDomainVerifyInputV1Schema;
+      : actionId === 'deployments.domains.remove' ? DeploymentDomainRemoveInputV1Schema : DeploymentDomainAttachedVerifyInputV1Schema;
     const value = schema.parse(input);
     return DeploymentDomainNativeAdmissionV1Schema.parse({ kind: 'domain', actionId, environmentId: value.environmentId,
       domainId: value.domainId, ...('content' in value ? { authoredMetadataDigest: computeDeploymentDomainAuthoredMetadataDigestV1(value) } : {}),

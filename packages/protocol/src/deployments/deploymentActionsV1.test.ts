@@ -1251,3 +1251,30 @@ it('binds backup re-key admission to the replacement without permitting configur
     || !other || !('kind' in other) || other.kind !== 'backupConfigure') throw new Error('Expected backup Configure admissions');
   expect(native.inputDigest).not.toEqual(other.inputDigest);
 });
+
+// Draft inspection must not mint Domain identity or publish private route input.
+it('binds a draft DNS child to its exact preview and projects only admission references', () => {
+  const input = { mode: 'preview', serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+    expectedRevision: 1, expectedTargetLinkRevision: 2, requestKey: 'dns-attempt',
+    content: { hostname: 'private.example.test', target: { service: 'api', containerPort: 8080 } } };
+  const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDns', actionId: 'deployments.domains.verify',
+    machineId: 'edge', installationId: 'edge-installation', input });
+  expect(DeploymentActionInputSchemasV1['deployments.domains.verify'].parse(input)).toEqual(input);
+  expect(projectDeploymentNativeAdmissionV1(child.actionId, input)).toEqual({ kind: 'domainDns', actionId: child.actionId,
+    environmentId: input.environmentId, targetLinkId: input.targetLinkId, expectedRevision: input.expectedRevision,
+    expectedTargetLinkRevision: input.expectedTargetLinkRevision, requestKey: input.requestKey });
+  expect(projectDeploymentNativeAdmissionV1(child.actionId, { serverId: input.serverId, environmentId: input.environmentId,
+    domainId: 'attached-domain', expectedRevision: 1, expectedDomainRevision: 2, requestKey: 'attached-attempt' }))
+    .toMatchObject({ kind: 'domain', environmentId: input.environmentId, domainId: 'attached-domain' });
+  expect(doesDeploymentChildInputMatchRootV1({ rootActionId: child.actionId, rootInput: input, child })).toBe(true);
+  expect(doesDeploymentChildInputMatchRootV1({ rootActionId: child.actionId, rootInput: { ...input,
+    content: { ...input.content, hostname: 'other.example.test' } }, child })).toBe(false);
+  expect(doesDeploymentChildInputMatchRootV1({ rootActionId: child.actionId, rootInput: { ...input, targetLinkId: 'other' }, child })).toBe(false);
+  const routing = DeploymentChildRoutingV1Schema.parse(projectDeploymentChildRoutingV1(child));
+  expect(routing).toMatchObject({ kind: 'domainDns', machineId: 'edge', installationId: 'edge-installation',
+    input: { environmentId: 'environment', targetLinkId: 'target', expectedRevision: 1, expectedTargetLinkRevision: 2 } });
+  expect(JSON.stringify(routing)).not.toContain('private.example.test');
+  expect(routing.input).not.toHaveProperty('content');
+  expect(DeploymentChildRoutingV1Schema.safeParse({ ...routing, input: { ...routing.input, content: input.content } }).success).toBe(false);
+  expect(DeploymentActionInputSchemasV1['deployments.domains.verify'].safeParse({ ...input, domainId: 'invented' }).success).toBe(false);
+});

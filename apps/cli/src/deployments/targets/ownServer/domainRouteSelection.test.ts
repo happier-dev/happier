@@ -1,3 +1,4 @@
+import { Resolver } from 'node:dns/promises';
 import { mkdtemp, writeFile, readFile, mkdir, chmod, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { Server as TcpServer } from 'node:net';
@@ -41,7 +42,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { DeploymentArtifactDocumentV1, DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import { createNativeCaddyRoutes, createNativeCaddyAdminExchange } from '@/machines/reachability/nativeCaddyRoutes';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
-import { selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork, selectDomainCaddyPlacements,
+import { selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork, selectDomainCaddyPlacements, selectDomainPublicCaddyServer,
     readDomainCaddyStartFirstLegs, readExpectedDownDomainReferencesForHost, selectDomainIngressMembers } from './domainRouteSelection';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -489,6 +490,25 @@ it.skipIf(process.platform === 'win32')('reads the complete Domain inventory int
     expect(await readDomainCaddyStartFirstLegs({ ...input, list: single([]) })).toEqual({ kind: 'ready', legs: [] });
 });
 
+it('selects a public-only Caddy placement for a draft without workload membership or a private listener', () => {
+    const server = { serverId: 'public_app', listen: [':443'], tls: true, automaticHttpsDisabled: false,
+        endpoints: [{ hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443 }] };
+    const caddy = { status: 'ready' as const, containerId: 'caddy-edge', containerName: 'happier-caddy',
+        adminSocketPath: '/run/caddy/admin.sock', networkNames: [], servers: [server] } satisfies NativeCaddyObservationResult;
+    const host = { machineId: 'edge', installationId: 'edge-installation', dockerEngineId: 'edge-engine', caddy };
+    expect(selectDomainPublicCaddyServer(host)).toEqual({ status: 'ready', nativeServer: server.serverId });
+    expect(selectDomainPublicCaddyServer({ ...host, caddy: { status: 'needs_setup' } })).toEqual({
+        status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [host.machineId],
+        details: { requiredFact: 'publicCaddyObservation' },
+    });
+    for (const servers of [[], [{ ...server, endpoints: [] }], [server, { ...server, serverId: 'second_public' }]]) {
+        expect(selectDomainPublicCaddyServer({ ...host, caddy: { ...caddy, servers } })).toEqual({
+            status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [host.machineId],
+            details: { requiredFact: 'publicCaddyListener' },
+        });
+    }
+});
+
 it('provides the deployment remedy when no active Domain members can supply a route', () => {
     const unavailable = { status: 'unavailable', reason: 'required_fact_unavailable',
         details: { requiredFact: 'activeDomainMembers', remedy: expect.any(String) } };
@@ -578,6 +598,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     const environment = createDeploymentEnvironmentDetailV1();
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
     const recordedReplicaCase = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy redirect';
+    // Activation is not an open/manual DNS demand; observe only the DNS boundary.
+    const activationDns = recordedReplicaCase ? vi.spyOn(Resolver.prototype, 'resolve').mockResolvedValue([]) : undefined;
     const networkConnectFailure = scenario === 'Tunnel running private network failure';
     // File logging is the diagnostic boundary; keep the real controller/native path.
     const nativeWarnings = networkConnectFailure ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
@@ -1404,6 +1426,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 expect(JSON.stringify(transitions)).not.toContain('deployed-db-1');
             }
             expect(nativeResults).toMatchObject([{ caddy: { status: 'ready' } }, { state: 'active' }, { state: 'active' }]);
+            if (activationDns) expect(activationDns).not.toHaveBeenCalled();
             expect(admissions[0]?.placements).toEqual(expect.arrayContaining([
                 expect.objectContaining({ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }),
                 expect.objectContaining({ machineId: 'a', listener: 'public', nativeServer: 'happier_public' }),

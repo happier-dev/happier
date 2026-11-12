@@ -189,7 +189,20 @@ export const DeploymentDomainGetInputV1Schema = lazyZodSchema(() => z.strictObje
 export const DeploymentDomainListInputV1Schema = lazyZodSchema(() => z.strictObject({ ...environment,
     cursor: z.optional(id), limit: z.optional(z.number().check(z.int(), z.positive())),
 }));
-export const DeploymentDomainVerifyInputV1Schema = DeploymentDomainRemoveInputV1Schema;
+export const DeploymentDomainAttachedVerifyInputV1Schema = DeploymentDomainRemoveInputV1Schema;
+/** Private finite draft inspection; no Domain or Artifact is allocated. */
+export const DeploymentDomainPreviewInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...environment, mode: z.literal('preview'), targetLinkId: id, expectedRevision: revision,
+    expectedTargetLinkRevision: revision, requestKey: id, content: DeploymentDomainContentV1Schema,
+}));
+export type DeploymentDomainPreviewInputV1 = z.infer<typeof DeploymentDomainPreviewInputV1Schema>;
+export const DeploymentDomainVerifyInputV1Schema = lazyZodSchema(() => z.union([
+    DeploymentDomainAttachedVerifyInputV1Schema, DeploymentDomainPreviewInputV1Schema,
+]));
+export const DeploymentDomainDnsPreviewResultV1Schema = lazyZodSchema(() => z.strictObject({
+    ok: z.literal(true), environmentId: id, dnsHealth: domainDnsHealth(),
+}));
+export type DeploymentDomainDnsPreviewResultV1 = z.infer<typeof DeploymentDomainDnsPreviewResultV1Schema>;
 export const DeploymentDomainObservationBodyV1Schema = lazyZodSchema(() => z.strictObject({
     capture: DeploymentDomainPlacementV1Schema, state: z.enum(['active', 'warning', 'failed', 'removed']),
     networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),

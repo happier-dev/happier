@@ -71,6 +71,16 @@ export type DomainRouteSelectionUnavailable = Readonly<{
     status: 'unavailable'; machineIds: readonly string[];
 }> & (Readonly<{ reason: 'required_fact_unavailable'; details: Readonly<{ requiredFact: string; remedy?: string }> }>
     | Readonly<{ reason: 'private_scope_unenforceable'; details?: never }>);
+/** Public ingress is independent of workload membership and private listeners. */
+export function selectDomainPublicCaddyServer(input: Pick<DomainCaddyMemberObservation, 'machineId' | 'caddy'>):
+    Readonly<{ status: 'ready'; nativeServer: string }> | DomainRouteSelectionUnavailable {
+    if (input.caddy.status !== 'ready') return { status: 'unavailable', reason: 'required_fact_unavailable',
+        machineIds: [input.machineId], details: { requiredFact: 'publicCaddyObservation' } };
+    const servers = input.caddy.servers.filter(server => server.tls && server.endpoints.length > 0);
+    if (servers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable',
+        machineIds: [input.machineId], details: { requiredFact: 'publicCaddyListener' } };
+    return { status: 'ready', nativeServer: servers[0]!.serverId };
+}
 type InstalledCaddyMember = DomainCaddyMemberObservation & Readonly<{ installationId: string; dockerEngineId: string }>;
 type Placement = NonNullable<DeploymentDomainAddInputV1['placements']>[number];
 export type DomainCaddyPlacementsSelection = Readonly<{ status: 'ready'; placements: readonly Placement[];
@@ -132,13 +142,10 @@ export function selectDomainCaddyPlacements(input: Readonly<{
     if (input.ingress?.kind === 'edgeCaddy' && !publicHost) return { status: 'unavailable', reason: 'required_fact_unavailable',
         machineIds: [input.ingress.edgeMachineId], details: { requiredFact: 'edgeCaddyMachine' } };
     if (publicHost) {
-        if (publicHost.caddy.status !== 'ready') return { status: 'unavailable', reason: 'required_fact_unavailable',
-            machineIds: [publicHost.machineId], details: { requiredFact: 'publicCaddyObservation' } };
-        const servers = publicHost.caddy.servers.filter(server => server.tls && server.endpoints.length > 0);
-        if (servers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable',
-            machineIds: [publicHost.machineId], details: { requiredFact: 'publicCaddyListener' } };
+        const selected = selectDomainPublicCaddyServer(publicHost);
+        if (selected.status !== 'ready') return selected;
         placements.push({ machineId: publicHost.machineId, installationId: publicHost.installationId, dockerEngineId: publicHost.dockerEngineId,
-            nativeServer: servers[0]!.serverId, listener: 'public' });
+            nativeServer: selected.nativeServer, listener: 'public' });
     }
     return { status: 'ready', placements, ...(tunnelOrigin ? { tunnelOrigin } : {}) };
 }
@@ -317,13 +324,12 @@ export function selectEdgeCaddyDomainRoute(input: Readonly<{
         return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [input.ingress.edgeMachineId],
             details: { requiredFact: input.edge.machineId === input.ingress.edgeMachineId ? 'publicCaddyObservation' : 'edgeCaddyMachine' } };
     }
-    const publicServers = input.edge.caddy.servers.filter(server => server.tls && server.endpoints.length > 0);
-    if (publicServers.length !== 1) return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: [input.edge.machineId],
-        details: { requiredFact: 'publicCaddyListener' } };
+    const publicServer = selectDomainPublicCaddyServer(input.edge);
+    if (publicServer.status !== 'ready') return publicServer;
     const selected = selectPrivateCaddyOriginNetwork({ observerNetworks: input.edge.privateNetworks, members: input.members });
     if (selected.status !== 'ready') return selected;
     const [first, ...others] = selected.origins;
-    return { status: 'ready', machineId: input.edge.machineId, nativeServer: publicServers[0]!.serverId,
+    return { status: 'ready', machineId: input.edge.machineId, nativeServer: publicServer.nativeServer,
         route: { domainId: input.domainId, domain: input.domain, listener: 'public', privateSourceRanges: [],
             upstreams: { kind: 'privateOrigins', endpoints: [first.endpoints[0], ...first.endpoints.slice(1), ...others.flatMap(origin => origin.endpoints)] },
             ...(input.basicAuth ? { basicAuth: input.basicAuth } : {}),
