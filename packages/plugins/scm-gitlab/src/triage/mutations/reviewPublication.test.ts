@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -125,7 +126,7 @@ function actionInput(overrides: Readonly<Record<string, unknown>> = {}) {
 
 function createTransport(
   respond: (request: RecordedGitlabRequest) => StubGitlabResponse | undefined,
-  options: Readonly<{ settlementError?: Error }> = {},
+  options: Readonly<{ claimError?: Error; settlementError?: Error }> = {},
 ) {
   let claimCount = 0;
   const transport = createStubGitlabTransport({ respond });
@@ -140,6 +141,7 @@ function createTransport(
         && actionInput.settlement !== undefined) {
         throw options.settlementError;
       }
+      if (options.claimError !== undefined) throw options.claimError;
       const hasVerdict = typeof actionInput === 'object'
         && actionInput !== null
         && 'verdict' in actionInput
@@ -171,6 +173,24 @@ function discussion(id: number, body: string, individualNote = false) {
 }
 
 describe('gitlab/merge-request/submit-review', () => {
+  it.each(['claim', 'settlement'] as const)('retains typed %s failure identity beside publication truth', async (phase) => {
+    const error = new PluginError({ code: 'review_claim_denied', retryable: false, details: { requestId: 'request-gitlab-publication' } });
+    const transport = phase === 'settlement' ? settlementFailureTransport(error) : createTransport((request) => {
+      if (request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
+      if (request.url === DRAFTS_LIST_URL) return { status: 200, body: [] };
+      return undefined;
+    }, { claimError: error });
+    const publication = publishGitlabMergeRequestReview(actionInput({ publicationPlan: plan({ verdict: null }) }), transport.context);
+    if (phase === 'claim') {
+      await expect(publication).rejects.toMatchObject({ code: error.code, details: { requestId: 'request-gitlab-publication' } });
+      return;
+    }
+    const result = await publication;
+    expect(result).toMatchObject({ kind: 'settled', failure: { code: error.code, requestId: 'request-gitlab-publication' } });
+    if (phase === 'settlement') expect(result).toMatchObject({ publication: { entries: [{ outcome: { kind: 'published', externalRef: '91' } }] } });
+    expect(transport.requests.at(-1)).toMatchObject({ method: 'GET', url: ITEM_URL });
+  });
+
   it.each([false, true])('confirms inline DiscussionNotes and submits the verdict last (lost publish answer: %s)', async (losePublishAnswer) => {
     let draftCreates = 0;
     const pending = new Map<number, Record<string, unknown>>();

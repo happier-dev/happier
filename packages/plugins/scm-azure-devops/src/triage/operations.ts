@@ -36,6 +36,7 @@ import {
 
 import {
   readTriageSourceAccountListingV1,
+  projectTriageSourceInvocationFailureV1,
   type TriageSourceAccountListingOutcomeV1,
 } from '@happier-dev/triage-sources/runtime';
 
@@ -909,6 +910,7 @@ export async function runAzureTriagePrepareReviewWorkspace(input: Readonly<{
   });
   if (materialized === null) return { kind: 'unavailable', reason: 'scmResolver' };
   if (!materialized.success) {
+    const failure = projectTriageSourceInvocationFailureV1(materialized, 'COMMAND_FAILED');
     // These codes mean the selected root was not a usable repository or lacks the matched remote.
     // Other generic SCM failures have no source-specific interpretation and remain an SCM resolver
     // unavailability rather than a provider-level retry or a local fallback.
@@ -917,9 +919,9 @@ export async function runAzureTriagePrepareReviewWorkspace(input: Readonly<{
       || materialized.errorCode === 'INVALID_PATH'
       || materialized.errorCode === 'REMOTE_NOT_FOUND'
     ) {
-      return { kind: 'workspaceMismatch' };
+      return { kind: 'workspaceMismatch', failure };
     }
-    return { kind: 'unavailable', reason: 'scmResolver' };
+    return { kind: 'unavailable', reason: 'scmResolver', failure };
   }
   if ('verification' in materialized) {
     return { kind: 'unavailable', reason: 'scmResolver' };
@@ -987,7 +989,7 @@ async function readCurrentAzureReviewWorkspaceProviderProof(input: Readonly<{
     origin,
     signal: input.signal,
   });
-  if (!authorized.ok) return { kind: 'unavailable', reason: 'account' };
+  if (!authorized.ok) return { kind: 'unavailable', reason: 'account', failure: authorized.failure };
 
   const reread = await rereadAzurePullRequest({
     client: authorized.client,
@@ -996,7 +998,7 @@ async function readCurrentAzureReviewWorkspaceProviderProof(input: Readonly<{
     route,
     signal: input.signal,
   });
-  if (reread.kind === 'unavailable') return { kind: 'unavailable', reason: 'account' };
+  if (reread.kind === 'unavailable') return { kind: 'unavailable', reason: 'account', failure: projectAzureSourceFailure(reread.failure) };
   if (reread.kind === 'malformed') return { kind: 'refused', reason: 'pullRequestMoved' };
 
   const { row } = reread;
@@ -1052,14 +1054,15 @@ export async function runAzureTriageVerifyReviewWorkspace(input: Readonly<{
   });
   if (verified === null) return { kind: 'unavailable', reason: 'scmResolver' };
   if (!verified.success) {
+    const failure = projectTriageSourceInvocationFailureV1(verified, 'COMMAND_FAILED');
     if (
       verified.errorCode === 'NOT_REPOSITORY'
       || verified.errorCode === 'INVALID_PATH'
       || verified.errorCode === 'REMOTE_NOT_FOUND'
     ) {
-      return { kind: 'workspaceMismatch' };
+      return { kind: 'workspaceMismatch', failure };
     }
-    return { kind: 'unavailable', reason: 'scmResolver' };
+    return { kind: 'unavailable', reason: 'scmResolver', failure };
   }
   if (!('verification' in verified)) {
     return { kind: 'unavailable', reason: 'scmResolver' };

@@ -7,6 +7,7 @@
 
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type {
   TriagePrepareReviewWorkspaceInputV1,
@@ -20,6 +21,7 @@ import type { BitbucketPullRequestEntry } from '../entries.js';
 import { BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1 } from '../identity.js';
 import { getBitbucketPullRequest } from '../pullRequests.js';
 import type { BitbucketSourceRuntime } from './authorization.js';
+import { toTriageSourceFailure } from './failures.js';
 import { admitBitbucketEntryInvocation } from './invocationAdmission.js';
 
 export type BitbucketReviewWorkspaceRuntime = BitbucketSourceRuntime & Readonly<{
@@ -49,21 +51,21 @@ function projectAdmissionFailure(
 ): TriagePrepareReviewWorkspaceResultV1 {
   if (failure.code === 'kind-not-declared') return { kind: 'unsupported' };
   if (failure.class === 'unsupportedContract') {
-    return { kind: 'refused', reason: 'instanceMoved' };
+    return { kind: 'refused', reason: 'instanceMoved', failure };
   }
-  return { kind: 'unavailable', reason: 'account' };
+  return { kind: 'unavailable', reason: 'account', failure };
 }
 
 function projectVerificationAdmissionFailure(
   failure: TriageSourceFailureV1,
 ): TriageVerifyReviewWorkspaceResultV1 {
   if (failure.code === 'kind-not-declared') {
-    return { kind: 'refused', reason: 'pullRequestMoved' };
+    return { kind: 'refused', reason: 'pullRequestMoved', failure };
   }
   if (failure.class === 'unsupportedContract') {
-    return { kind: 'refused', reason: 'instanceMoved' };
+    return { kind: 'refused', reason: 'instanceMoved', failure };
   }
-  return { kind: 'unavailable', reason: 'account' };
+  return { kind: 'unavailable', reason: 'account', failure };
 }
 
 function pullRequestRouteMoved(failure: Readonly<{ code: string }>): boolean {
@@ -173,9 +175,10 @@ export async function prepareBitbucketReviewWorkspace(
     ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
   });
   if (reread.kind === 'unresolved') {
+    const failure = toTriageSourceFailure(reread.failure);
     return pullRequestRouteMoved(reread.failure)
-      ? { kind: 'refused', reason: 'pullRequestMoved' }
-      : { kind: 'unavailable', reason: 'account' };
+      ? { kind: 'refused', reason: 'pullRequestMoved', failure }
+      : { kind: 'unavailable', reason: 'account', failure };
   }
 
   const prepared = readBitbucketPreparedReview(reread.entry);
@@ -197,16 +200,18 @@ export async function prepareBitbucketReviewWorkspace(
     return { kind: 'unavailable', reason: 'scmResolver' };
   }
   const materialized = execution.result;
-  if (!('success' in materialized) || !materialized.success) {
+  if (!('success' in materialized)) return { kind: 'unavailable', reason: 'scmResolver' };
+  if (!materialized.success) {
+    const failure = projectTriageSourceInvocationFailureV1(materialized, 'COMMAND_FAILED');
     if (
       'errorCode' in materialized
       && (materialized.errorCode === 'NOT_REPOSITORY'
         || materialized.errorCode === 'INVALID_PATH'
         || materialized.errorCode === 'REMOTE_NOT_FOUND')
     ) {
-      return { kind: 'workspaceMismatch' };
+      return { kind: 'workspaceMismatch', failure };
     }
-    return { kind: 'unavailable', reason: 'scmResolver' };
+    return { kind: 'unavailable', reason: 'scmResolver', failure };
   }
   if (!('targetPath' in materialized)) {
     return { kind: 'unavailable', reason: 'scmResolver' };
@@ -256,9 +261,10 @@ export async function verifyBitbucketReviewWorkspace(
   });
   throwIfRuntimeAborted(runtime);
   if (reread.kind === 'unresolved') {
+    const failure = toTriageSourceFailure(reread.failure);
     return pullRequestRouteMoved(reread.failure)
-      ? { kind: 'refused', reason: 'pullRequestMoved' }
-      : { kind: 'unavailable', reason: 'account' };
+      ? { kind: 'refused', reason: 'pullRequestMoved', failure }
+      : { kind: 'unavailable', reason: 'account', failure };
   }
   const current = readBitbucketPreparedReview(reread.entry);
   if (current === null) return { kind: 'refused', reason: 'pullRequestMoved' };
@@ -283,16 +289,18 @@ export async function verifyBitbucketReviewWorkspace(
     return { kind: 'unavailable', reason: 'scmResolver' };
   }
   const verified = execution.result;
-  if (!('success' in verified) || !verified.success) {
+  if (!('success' in verified)) return { kind: 'unavailable', reason: 'scmResolver' };
+  if (!verified.success) {
+    const failure = projectTriageSourceInvocationFailureV1(verified, 'COMMAND_FAILED');
     if (
       'errorCode' in verified
       && (verified.errorCode === 'NOT_REPOSITORY'
         || verified.errorCode === 'INVALID_PATH'
         || verified.errorCode === 'REMOTE_NOT_FOUND')
     ) {
-      return { kind: 'workspaceMismatch' };
+      return { kind: 'workspaceMismatch', failure };
     }
-    return { kind: 'unavailable', reason: 'scmResolver' };
+    return { kind: 'unavailable', reason: 'scmResolver', failure };
   }
   if (!('verification' in verified)) {
     return { kind: 'unavailable', reason: 'scmResolver' };

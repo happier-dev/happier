@@ -1,4 +1,6 @@
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import {
   createReviewCommentPublicationSettlementRequestV1,
   formatReviewCommentPublicationMarkerV1,
@@ -547,7 +549,8 @@ async function executePublication(input: Readonly<{
   let claim: ReviewCommentClaimPublicationDispatchResponseV1;
   try {
     claim = await claimPlan(input.context, input.mutation, input.plan);
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return Object.freeze({ kind: 'rejected', reason: 'dispatch-claim-failed', observation: preclaim.observation });
   }
 
@@ -572,8 +575,10 @@ async function executePublication(input: Readonly<{
         createReviewCommentPublicationSettlementRequestV1(input.plan, claim, publication),
         { signal: input.mutation.signal },
       );
-    } catch {
-      settlementFailure = SETTLEMENT_UNCONFIRMED_FAILURE;
+    } catch (error) {
+      settlementFailure = isPluginError(error)
+        ? projectTriageSourceInvocationFailureV1(error, SETTLEMENT_UNCONFIRMED_FAILURE.code)
+        : SETTLEMENT_UNCONFIRMED_FAILURE;
     }
     const exact = await finalObservation(input.mutation);
     // The settlement failure outranks a provider failure the entry outcomes already state: it is

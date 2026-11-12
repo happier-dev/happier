@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
@@ -188,6 +189,7 @@ function harness(input: Readonly<{
   threadReads?: readonly unknown[];
   claimDisposition?: 'dispatch' | 'reconcile';
   settlementError?: Error;
+  claimError?: Error;
   respond?: (request: Captured) => Reply | undefined;
 }>) {
   const requests: Captured[] = [];
@@ -233,6 +235,7 @@ function harness(input: Readonly<{
           && actionInput.settlement !== undefined) {
           throw input.settlementError;
         }
+        if (input.claimError !== undefined) throw input.claimError;
         const candidate = actionInput as ReviewCommentPublicationPlanV1;
         const disposition = input.claimDisposition ?? 'dispatch';
         return {
@@ -316,6 +319,21 @@ const threadWrites = (requests: readonly Captured[]) =>
     && new URL(candidate.url).pathname.toLowerCase().includes('/threads'));
 
 describe('Azure DevOps Reviews publication', () => {
+  it.each(['claim', 'settlement'] as const)('retains typed %s failure identity beside publication truth', async (phase) => {
+    const error = new PluginError({ code: 'review_claim_denied', retryable: false, details: { requestId: 'request-azure-publication' } });
+    const landed = { value: [thread(70, [{ id: 71, content: marker('A'.repeat(43)) }])] };
+    const { context, requests } = harness({ threadReads: [landed], ...(phase === 'claim' ? { claimError: error } : { settlementError: error }) });
+    const publication = submitAzureDevOpsPullRequestReview(request(plan()), context);
+    if (phase === 'claim') {
+      await expect(publication).rejects.toMatchObject({ code: error.code, details: { requestId: 'request-azure-publication' } });
+      return;
+    }
+    const result = AzureReviewPublicationResultV1Schema.parse(await publication);
+    expect(result).toMatchObject({ kind: 'settled', failure: { code: error.code, requestId: 'request-azure-publication' } });
+    if (phase === 'settlement') expect(result).toMatchObject({ publication: { entries: [{ outcome: { kind: 'published', externalRef: '70:71' } }] } });
+    expect(threadWrites(requests)).toHaveLength(0);
+  });
+
   it.each([
     ['provider', { providerId: 'github' }],
     ['account', { configuredAccountId: 'account-2' }],

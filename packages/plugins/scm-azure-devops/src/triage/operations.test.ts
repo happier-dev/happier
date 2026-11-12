@@ -1592,6 +1592,15 @@ describe('Azure DevOps Triage get', () => {
 });
 
 describe('Azure DevOps review-workspace preparation', () => {
+  it('retains typed HTTP refusal at the source result', async () => {
+    const failure = new PluginError({ code: 'plugin_http_origin_denied', details: { requestId: 'request-azure-http' } });
+    const recorder = createRecorder(() => { throw failure; });
+    const result = TriagePrepareReviewWorkspaceResultV1Schema.parse(await runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, vi.fn()), request: input(), signal: new AbortController().signal,
+    }));
+    expect(result).toMatchObject({ kind: 'unavailable', reason: 'account', failure: { code: failure.code, requestId: 'request-azure-http' } });
+  });
+
   function scopeFor(base = BASE_URL): string {
     const origin = configuredOrigin(base);
     return `azure-devops:${Buffer.from(origin.baseUrl, 'utf8').toString('base64url')}:${REPOSITORY_ID}`;
@@ -1633,6 +1642,59 @@ describe('Azure DevOps review-workspace preparation', () => {
       actions: { execute } as unknown as ActionsService,
     };
   }
+
+  it.each(['prepare', 'verify'] as const)('retains structured SCM refusal through %s result', async (operation) => {
+    const recorder = createRecorder(() => ({ body: pullRequest(17, {
+      sourceRefName: 'refs/heads/feature',
+      sourceRepository: { id: REPOSITORY_ID, remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout' },
+      lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+      lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+    }) }));
+    const execute = vi.fn(async () => ({
+      success: false as const,
+      errorCode: 'REMOTE_AUTH_REQUIRED' as const,
+      error: 'private provider context',
+      failureCause: { phase: 'scm.hosting_provider', errorClass: 'Error' as const, errorCode: 'credential_scope_denied', httpStatus: null },
+    }));
+    const services = workspaceServices(recorder, execute);
+    const signal = new AbortController().signal;
+    const result = operation === 'prepare'
+      ? TriagePrepareReviewWorkspaceResultV1Schema.parse(await runAzureTriagePrepareReviewWorkspace({ services, request: input(), signal }))
+      : TriageVerifyReviewWorkspaceResultV1Schema.parse(await runAzureTriageVerifyReviewWorkspace({
+        services, request: { ...input(), prepared: { repositoryPath: '/selected/workspace/review', pullRequest: { number: 17 } } }, signal,
+      }));
+    expect(result).toEqual({ kind: 'unavailable', reason: 'scmResolver', failure: { class: 'unknown', code: 'credential_scope_denied' } });
+  });
+
+  it.each(['prepare', 'verify'] as const)('retains configured-account refusal through %s result', async (operation) => {
+    const failure = new PluginError({
+      code: 'plugin_account_refused',
+      message: 'private credential context',
+      retryable: false,
+      details: { requestId: 'request-azure-workspace' },
+    });
+    const recorder = createRecorder(() => { throw new Error('authorization must fail before HTTP'); }, {
+      onMaterialize: () => { throw failure; },
+    });
+    const execute = vi.fn();
+    const services = workspaceServices(recorder, execute);
+    const signal = new AbortController().signal;
+    const result = operation === 'prepare'
+      ? TriagePrepareReviewWorkspaceResultV1Schema.parse(await runAzureTriagePrepareReviewWorkspace({ services, request: input(), signal }))
+      : TriageVerifyReviewWorkspaceResultV1Schema.parse(await runAzureTriageVerifyReviewWorkspace({
+        services,
+        request: { ...input(), prepared: { repositoryPath: '/selected/workspace/review', pullRequest: { number: 17 } } },
+        signal,
+      }));
+
+    expect(result).toMatchObject({
+      kind: 'unavailable',
+      reason: 'account',
+      failure: { code: 'plugin_account_refused', requestId: 'request-azure-workspace' },
+    });
+    expect(recorder.urls).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
 
   it('reauthorizes and rereads the exact PR before materializing its fork source tip', async () => {
     const recorder = createRecorder((request) => {
@@ -1906,7 +1968,7 @@ describe('Azure DevOps review-workspace preparation', () => {
       services: workspaceServices(recorder, execute),
       request: input(),
       signal: new AbortController().signal,
-    })).resolves.toEqual({ kind: 'workspaceMismatch' });
+    })).resolves.toEqual({ kind: 'workspaceMismatch', failure: { class: 'unknown', code: 'REMOTE_NOT_FOUND' } });
   });
 
   it('requires an explicit selected workspace without provider or local work', async () => {
@@ -2104,7 +2166,7 @@ describe('Azure DevOps final review-workspace verification', () => {
       services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
       request: input(),
       signal: new AbortController().signal,
-    })).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+    })).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver', failure: { class: 'unknown', code: 'FEATURE_UNSUPPORTED' } });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(recorder.urls.filter((url) => url.includes('/pullrequests/17?'))).toHaveLength(1);
   });

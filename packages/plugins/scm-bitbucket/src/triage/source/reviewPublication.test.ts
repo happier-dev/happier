@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
@@ -194,6 +195,30 @@ function withClaim(
 }
 
 describe('Bitbucket canonical review publication', () => {
+  it.each(['claim', 'settlement'] as const)('retains typed %s failure identity beside publication truth', async (phase) => {
+    const publicationPlan = plan({ entries: [entry('comment-1', 12)], verdict: null });
+    const error = new PluginError({ code: 'review_claim_denied', retryable: false, details: { requestId: 'request-bitbucket-publication' } });
+    const { http, requests } = createHttpStub((url) => {
+      if (url.endsWith('/2.0/user')) return { body: { uuid: VIEWER_UUID } };
+      if (url === PULL_REQUEST_URL) return { body: pullRequest() };
+      if (url.startsWith(PULL_REQUEST_URL + '/comments')) return { body: { values: [{ id: 881, content: { raw: '<!-- happier-review-comment:v1:' + 'A'.repeat(43) + ' -->' } }] } };
+      return undefined;
+    });
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const base = createInvocationContext(connectedAccounts, http);
+    const context = phase === 'settlement' ? withClaim(base, publicationPlan, 'dispatch', error)
+      : { ...base, services: { ...base.services, actions: { execute: async () => { throw error; } } } } as PluginInvocationContext;
+    const publication = publishBitbucketPullRequestReviewAction(request(publicationPlan), context);
+    if (phase === 'claim') {
+      await expect(publication).rejects.toMatchObject({ code: error.code, details: { requestId: 'request-bitbucket-publication' } });
+      return;
+    }
+    const result = await publication;
+    expect(result).toMatchObject({ kind: 'settled', failure: { code: error.code, requestId: 'request-bitbucket-publication' } });
+    if (phase === 'settlement') expect(result).toMatchObject({ settlement: 'unrecorded', publication: { entries: [{ outcome: { kind: 'published', externalRef: '881' } }] } });
+    expect(requests.filter((candidate) => candidate.method !== 'GET')).toHaveLength(0);
+  });
+
   it('settles an unresolvable provider anchor exactly without a provider write', async () => {
     const invalid = entry('comment-1', 12);
     const publicationPlan = plan({

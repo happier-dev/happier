@@ -197,6 +197,9 @@ export type AzureDevOpsFailureClass =
 
 export type AzureDevOpsFailure = Readonly<{
   class: AzureDevOpsFailureClass;
+  /** Host refusal identity, preserved independently of provider transport classification. */
+  code?: string;
+  requestId?: string;
   status: number | null;
   /** Bounded, non-secret provider detail. Never carries a credential or a full body. */
   detail: string;

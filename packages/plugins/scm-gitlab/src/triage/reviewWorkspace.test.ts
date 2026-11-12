@@ -2,6 +2,8 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   TriagePrepareReviewWorkspaceInputV1Schema,
+  TriagePrepareReviewWorkspaceResultV1Schema,
+  TriageVerifyReviewWorkspaceResultV1Schema,
   TriageVerifyReviewWorkspaceInputV1Schema,
   type TriagePrepareReviewWorkspaceInputV1,
   type TriageVerifyReviewWorkspaceInputV1,
@@ -159,6 +161,53 @@ function withMaterializer(
 }
 
 describe('GitLab prepared review workspace', () => {
+  it('retains typed HTTP refusal at the source result', async () => {
+    const failure = new PluginError({ code: 'plugin_http_origin_denied', details: { requestId: 'request-gitlab-http' } });
+    const transport = createStubGitlabTransport({ respond: () => { throw failure; } });
+    const result = TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareGitlabReviewWorkspaceAction(
+      prepareInput(), withMaterializer(transport.context, preparedMaterialization()),
+    ));
+    expect(result).toMatchObject({ kind: 'unavailable', reason: 'account', failure: { code: failure.code, requestId: 'request-gitlab-http' } });
+  });
+
+  it.each(['prepare', 'verify'] as const)('retains structured SCM refusal through %s result', async (operation) => {
+    const transport = createStubGitlabTransport({ respond: respondWith({ mergeRequest: mergeRequestBody() }) });
+    const execute = vi.fn(async () => ({
+      success: false as const,
+      errorCode: 'REMOTE_AUTH_REQUIRED' as const,
+      error: 'private provider context',
+      failureCause: { phase: 'scm.hosting_provider', errorClass: 'Error' as const, errorCode: 'credential_scope_denied', httpStatus: null },
+    }));
+    const context = withMaterializer(transport.context, execute);
+    const result = operation === 'prepare'
+      ? TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareGitlabReviewWorkspaceAction(prepareInput(), context))
+      : TriageVerifyReviewWorkspaceResultV1Schema.parse(await verifyGitlabReviewWorkspaceAction(verifyInput(), context));
+    expect(result).toEqual({ kind: 'unavailable', reason: 'scmResolver', failure: { class: 'unknown', code: 'credential_scope_denied' } });
+  });
+
+  it('retains structured SCM code when no original cause was supplied', async () => {
+    const transport = createStubGitlabTransport({ respond: respondWith({ mergeRequest: mergeRequestBody() }) });
+    const context = withMaterializer(transport.context, vi.fn(async () => ({
+      success: false as const, errorCode: 'REMOTE_AUTH_REQUIRED' as const, error: 'private provider context',
+    })));
+    const result = TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareGitlabReviewWorkspaceAction(prepareInput(), context));
+    expect(result).toEqual({ kind: 'unavailable', reason: 'scmResolver', failure: { class: 'unknown', code: 'REMOTE_AUTH_REQUIRED' } });
+  });
+
+  it.each(['prepare', 'verify'] as const)('retains configured-account refusal through %s result', async (operation) => {
+    const error = new PluginError({ code: 'plugin_account_refused', retryable: false, details: { requestId: 'request-gitlab-workspace' } });
+    const transport = createStubGitlabTransport({ respond: () => undefined });
+    const execute = preparedMaterialization();
+    const context = withMaterializer({ ...transport.context, services: { ...transport.context.services,
+      connectedAccounts: { ...transport.context.services.connectedAccounts, async materializeListedAccount() { throw error; } },
+    } }, execute);
+    const result = operation === 'prepare'
+      ? TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareGitlabReviewWorkspaceAction(prepareInput(), context))
+      : TriageVerifyReviewWorkspaceResultV1Schema.parse(await verifyGitlabReviewWorkspaceAction(verifyInput(), context));
+    expect(result).toMatchObject({ kind: 'unavailable', reason: 'account', failure: { code: error.code, requestId: 'request-gitlab-workspace' } });
+    expect(transport.requests).toHaveLength(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
   it.each([
     ['another deployment path', 'https://git.example.test/B/contributor/repository.git'],
     ['a sibling path prefix', 'https://git.example.test/A2/contributor/repository.git'],
@@ -425,7 +474,7 @@ describe('GitLab prepared review workspace', () => {
     await expect(prepareGitlabReviewWorkspaceAction(
       prepareInput(),
       withMaterializer(transport.context, execute),
-    )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    )).resolves.toMatchObject({ kind: 'refused', reason: 'pullRequestMoved' });
 
     expect(transport.requests.map((request) => request.url))
       .toEqual([REVIEW_ITEM_URL, SOURCE_PROJECT_URL]);
@@ -444,7 +493,7 @@ describe('GitLab prepared review workspace', () => {
     await expect(prepareGitlabReviewWorkspaceAction(
       prepareInput(),
       withMaterializer(transport.context, execute),
-    )).resolves.toEqual({ kind: 'unavailable', reason: 'account' });
+    )).resolves.toMatchObject({ kind: 'unavailable', reason: 'account' });
 
     expect(execute).not.toHaveBeenCalled();
   });
@@ -502,7 +551,7 @@ describe('GitLab prepared review workspace', () => {
     await expect(prepareGitlabReviewWorkspaceAction(
       prepareInput(),
       withMaterializer(transport.context, execute),
-    )).resolves.toEqual(expected);
+    )).resolves.toEqual({ ...expected, failure: { class: 'unknown', code: errorCode } });
   });
 
   it('rejects a verification-shaped SCM success during initial preparation', async () => {

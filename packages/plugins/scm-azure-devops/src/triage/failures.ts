@@ -1,3 +1,5 @@
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 import { isBoundedInvocationDeadline } from '@happier-dev/triage-sources/runtime';
 
@@ -122,14 +124,19 @@ export function classifyAzureDevOpsTransportFailure(input: Readonly<{
       rateLimit: null,
     });
   }
-  return failure({
+  const diagnostic = isPluginError(input.error)
+    ? projectTriageSourceInvocationFailureV1(input.error, 'azure-devops/transport-error') : null;
+  return { ...failure({
     failureClass: 'transport',
     status: null,
-    detail: readErrorMessage(input.error),
+    detail: diagnostic === null ? readErrorMessage(input.error) : 'The Azure DevOps request could not complete.',
     typeKey: null,
     retryNotBeforeMs: null,
     rateLimit: null,
-  });
+  }), ...(diagnostic === null ? {} : {
+    code: diagnostic.code,
+    ...(diagnostic.requestId === undefined ? {} : { requestId: diagnostic.requestId }),
+  }) };
 }
 
 /**

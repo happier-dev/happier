@@ -171,6 +171,40 @@ function workspaceRuntime(input: Readonly<{
 }
 
 describe('Bitbucket selected-PR review workspace preparation', () => {
+  it('retains typed HTTP refusal at the source result', async () => {
+    const failure = new PluginError({ code: 'plugin_http_origin_denied', details: { requestId: 'request-bitbucket-http' } });
+    const seam = workspaceRuntime({ execute: vi.fn(), onProviderRead: () => { throw failure; } });
+    const result = TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime));
+    expect(result).toMatchObject({ kind: 'unavailable', reason: 'account', failure: { code: failure.code, requestId: 'request-bitbucket-http' } });
+  });
+
+  it.each(['prepare', 'verify'] as const)('retains structured SCM refusal through %s result', async (operation) => {
+    const execute = vi.fn(async () => ({
+      success: false as const,
+      errorCode: 'REMOTE_AUTH_REQUIRED' as const,
+      error: 'private provider context',
+      failureCause: { phase: 'scm.hosting_provider', errorClass: 'Error' as const, errorCode: 'credential_scope_denied', httpStatus: null },
+    }));
+    const seam = workspaceRuntime({ execute });
+    const result = operation === 'prepare'
+      ? TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime))
+      : TriageVerifyReviewWorkspaceResultV1Schema.parse(await verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime));
+    expect(result).toEqual({ kind: 'unavailable', reason: 'scmResolver', failure: { class: 'unknown', code: 'credential_scope_denied' } });
+  });
+
+  it.each(['prepare', 'verify'] as const)('retains configured-account refusal through %s result', async (operation) => {
+    const error = new PluginError({ code: 'plugin_account_refused', retryable: false, details: { requestId: 'request-bitbucket-workspace' } });
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1', materializationError: error }] });
+    const { http, requests } = createHttpStub(() => undefined);
+    const execute = vi.fn();
+    const runtime = { ...createRuntime(connectedAccounts, http), actions: { execute } as unknown as ActionsService };
+    const result = operation === 'prepare'
+      ? TriagePrepareReviewWorkspaceResultV1Schema.parse(await prepareBitbucketReviewWorkspace(preparationInput(), runtime))
+      : TriageVerifyReviewWorkspaceResultV1Schema.parse(await verifyBitbucketReviewWorkspace(verificationInput(), runtime));
+    expect(result).toMatchObject({ kind: 'unavailable', reason: 'account', failure: { code: error.code, requestId: 'request-bitbucket-workspace' } });
+    expect(requests).toHaveLength(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
   it.each(['prepare', 'verify'] as const)('can %s the same PR after its workspace display name changes', async (operation) => {
     const execute = vi.fn(async () => operation === 'prepare' ? {
       success: true as const,
@@ -304,7 +338,7 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
     await expect(prepareBitbucketReviewWorkspace(
       preparationInput({ lastKnownLocator: { v: 1, routingToken: 'other/repository' } }),
       seam.runtime,
-    )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    )).resolves.toMatchObject({ kind: 'refused', reason: 'pullRequestMoved' });
 
     expect(execute).not.toHaveBeenCalled();
   });
@@ -317,7 +351,7 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
     });
 
     await expect(prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime))
-      .resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+      .resolves.toMatchObject({ kind: 'refused', reason: 'pullRequestMoved' });
 
     expect(execute).not.toHaveBeenCalled();
   });
@@ -351,7 +385,7 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
     const seam = workspaceRuntime({ execute });
 
     await expect(prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime))
-      .resolves.toEqual(expected);
+      .resolves.toEqual({ ...expected, failure: { class: 'unknown', code: errorCode } });
   });
 
   it.each([
@@ -420,7 +454,10 @@ describe('Bitbucket final review workspace verification', () => {
     await expect(verifyBitbucketReviewWorkspace({
       ...input,
       entryRef: { ...input.entryRef, kindId: 'issue' },
-    }, seam.runtime)).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    }, seam.runtime)).resolves.toEqual({
+      kind: 'refused', reason: 'pullRequestMoved',
+      failure: { class: 'unsupportedContract', code: 'kind-not-declared' },
+    });
 
     expect(seam.requests).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
@@ -519,7 +556,7 @@ describe('Bitbucket final review workspace verification', () => {
 
     await expect(verifyBitbucketReviewWorkspace(verificationInput({
       lastKnownLocator: { v: 1, routingToken: 'other/repository' },
-    }), seam.runtime)).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    }), seam.runtime)).resolves.toMatchObject({ kind: 'refused', reason: 'pullRequestMoved' });
 
     expect(execute).not.toHaveBeenCalled();
   });

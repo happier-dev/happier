@@ -1,4 +1,5 @@
 import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
+import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import {
     defineProtocolLiteral,
     defineProtocolJsonValue,
@@ -191,12 +192,14 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceMismatch'),
+        failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unsupported'),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),
+        failure: TriageSourceFailureV1Schema.optional(),
         reason: defineProtocolUnion([
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[0]),
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[1]),
@@ -205,6 +208,7 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('refused'),
+        failure: TriageSourceFailureV1Schema.optional(),
         reason: defineProtocolUnion([
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[0]),
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[1]),
@@ -270,9 +274,11 @@ export const TriageVerifyReviewWorkspaceResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceMismatch'),
+        failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),
+        failure: TriageSourceFailureV1Schema.optional(),
         reason: defineProtocolUnion([
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[0]),
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[1]),
@@ -281,6 +287,7 @@ export const TriageVerifyReviewWorkspaceResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('refused'),
+        failure: TriageSourceFailureV1Schema.optional(),
         reason: defineProtocolUnion([
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[0]),
             defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[1]),

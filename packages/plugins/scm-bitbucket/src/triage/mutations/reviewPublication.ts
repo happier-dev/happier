@@ -1,3 +1,5 @@
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import type {
   ReviewCommentClaimPublicationDispatchResponseV1,
   ReviewCommentPublicationEntryV1,
@@ -202,8 +204,10 @@ async function recordSettlement(
   try {
     await settle(claim, publication);
     return null;
-  } catch {
-    return SETTLEMENT_UNRECORDED;
+  } catch (error) {
+    return isPluginError(error)
+      ? projectTriageSourceInvocationFailureV1(error, SETTLEMENT_UNRECORDED.code)
+      : SETTLEMENT_UNRECORDED;
   }
 }
 
@@ -337,7 +341,8 @@ export async function publishBitbucketReviewComment(
   let claim: ReviewCommentClaimPublicationDispatchResponseV1;
   try {
     claim = await input.claim();
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return { kind: 'rejected', reason: 'dispatch_claim_failed', observation: initial.observation };
   }
   const correlation = claim.entries[0];
@@ -452,7 +457,8 @@ export async function publishBitbucketReview(
   let claim: ReviewCommentClaimPublicationDispatchResponseV1;
   try {
     claim = await input.claim();
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return { kind: 'rejected', reason: 'dispatch_claim_failed', observation: initial.observation };
   }
 

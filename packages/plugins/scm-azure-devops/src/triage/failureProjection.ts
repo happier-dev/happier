@@ -65,7 +65,7 @@ const FAILURE_PROJECTION: Readonly<Record<AzureDevOpsFailureClass, Readonly<{
  * status line, headers, rate-limit diagnostics, or body — crosses here.
  */
 export function projectAzureSourceFailure(failure: AzureDevOpsFailure | TriageSourceFailureV1): TriageSourceFailureV1 {
-  if ('code' in failure) return failure;
+  if (!('status' in failure)) return failure;
   const projection = FAILURE_PROJECTION[failure.class];
   // `detail` is a single-line V1 string, and a transport `Error.message` or provider body
   // routinely spans lines: normalizing here is what keeps a control-bearing detail from
@@ -76,7 +76,8 @@ export function projectAzureSourceFailure(failure: AzureDevOpsFailure | TriageSo
   ).value;
   return {
     class: projection.class,
-    code: projection.code,
+    code: failure.code ?? projection.code,
+    ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
     ...(detail.length === 0 ? {} : { detail }),
     ...(failure.retryNotBeforeMs === null || failure.retryNotBeforeMs < 0
       ? {}

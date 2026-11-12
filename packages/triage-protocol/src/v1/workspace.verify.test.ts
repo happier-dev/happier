@@ -55,6 +55,18 @@ const input = {
 } as const;
 
 describe('Triage final review workspace verification', () => {
+    it.each([
+        { kind: 'unavailable', reason: 'account' },
+        { kind: 'refused', reason: 'instanceMoved' },
+        { kind: 'workspaceMismatch' },
+    ] as const)('retains source failure identity on $kind in prepare and verification results', (outcome) => {
+        const failure = { class: 'authentication', code: 'plugin_account_refused', requestId: 'request-workspace' } as const;
+        const result = { ...outcome, failure };
+        expect(TriagePrepareReviewWorkspaceResultV1Schema.parse(result)).toEqual(result);
+        expect(TriageVerifyReviewWorkspaceResultV1Schema.parse(result)).toEqual(result);
+        expect(TriagePrepareReviewWorkspaceResultV1Schema.parse(outcome)).toEqual(outcome);
+        expect(TriageVerifyReviewWorkspaceResultV1Schema.parse(outcome)).toEqual(outcome);
+    });
     it('carries a long opaque canonical SCM reference through preparation and verification unchanged', () => {
         const pullRequest = { url: `https://forge.example/${'repository/'.repeat(64)}pull/17` };
         const prepared = {

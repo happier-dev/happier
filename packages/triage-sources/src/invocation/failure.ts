@@ -1,5 +1,6 @@
 import { readPluginErrorRequestIdV1, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { ScmRepositoryProvisioningFailureResponseSchema } from '@happier-dev/plugin-sdk/scm';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 import { TriageSourceFailureV1Schema, type TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -26,8 +27,17 @@ function invocationFailure(
 
 /** Preserve canonical host refusal classification without disclosing raw error context. */
 export function projectTriageSourceInvocationFailureV1(error: unknown, fallbackCode: string): TriageSourceFailureV1 {
-  return isPluginError(error) ? invocationFailure(error, fallbackCode, readPluginErrorRequestIdV1(error))
-    : { class: 'transient', code: fallbackCode };
+  if (isPluginError(error)) return invocationFailure(error, fallbackCode, readPluginErrorRequestIdV1(error));
+  // Structured SCM refusals have already retained the provider's code in the canonical cause.
+  const scmFailure = ScmRepositoryProvisioningFailureResponseSchema.safeParse(error);
+  if (scmFailure.success) {
+    const failure = TriageSourceFailureV1Schema.safeParse({
+      class: 'unknown',
+      code: scmFailure.data.failureCause?.errorCode ?? scmFailure.data.errorCode,
+    });
+    if (failure.success) return failure.data;
+  }
+  return { class: 'transient', code: fallbackCode };
 }
 
 /** Finite reads may retry a missing receipt; mutation settlement remains with its owner. */

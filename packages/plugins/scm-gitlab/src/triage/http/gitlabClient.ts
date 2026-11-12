@@ -18,11 +18,13 @@ import type {
   ConnectedAccountRef,
   ConnectedAccountsService,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { TriageSourceFailureV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
   isBoundedInvocationDeadline,
   materializeTriageSourceAuthorizationV1,
+  projectTriageSourceInvocationFailureV1,
   type TriageSourceAuthorizationFailureReasonV1,
 } from '@happier-dev/triage-sources/runtime';
 
@@ -36,6 +38,7 @@ export const GITLAB_REST_MAX_PAGE_SIZE = 100;
 
 export type GitlabHttpResponse = Readonly<{
   status: number;
+  requestId?: string;
   statusText: string;
   headers: GitlabResponseHeaders;
   text(): Promise<string>;
@@ -74,6 +77,7 @@ export type GitlabConnectedAccounts = Pick<
 >;
 
 export type GitlabAuthorizationInput = Readonly<{
+  requestId?: string;
   connectedAccounts: GitlabConnectedAccounts;
   /** The declared Connected Account purpose for this source. */
   purpose: string;
@@ -94,6 +98,7 @@ export type GitlabAuthorizationInput = Readonly<{
  * closure the host can no longer revoke.
  */
 export type GitlabAuthorizedInvocation = Readonly<{
+  requestId?: string;
   origin: GitlabConfiguredOrigin;
   headers: Readonly<Record<string, string>>;
 }>;
@@ -136,6 +141,7 @@ export async function authorizeGitlabInvocation(
   input: GitlabAuthorizationInput,
 ): Promise<GitlabAuthorizationResult> {
   const authorization = await materializeTriageSourceAuthorizationV1({
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     connectedAccounts: input.connectedAccounts,
     purpose: input.purpose,
     account: input.account,
@@ -151,6 +157,7 @@ export async function authorizeGitlabInvocation(
   return {
     kind: 'authorized',
     invocation: {
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
       origin: input.origin,
       headers: Object.freeze({ ...authorization.headers, Accept: 'application/json' }),
     },
@@ -187,6 +194,7 @@ export function buildGitlabGraphqlUrl(origin: GitlabConfiguredOrigin): string {
 
 export type GitlabJsonResponse = Readonly<{
   body: unknown;
+  requestId?: string;
   headers: GitlabResponseHeaders;
   /** Raw item count of the decoded array, before any tolerant row decoding. */
   rawItemCount: number | null;
@@ -206,7 +214,7 @@ export type GitlabRequestResult =
 export type GitlabTextRequestResult =
   | Readonly<{
     kind: 'ok';
-    response: Readonly<{ bodyText: string; headers: GitlabResponseHeaders }>;
+    response: Readonly<{ bodyText: string; headers: GitlabResponseHeaders; requestId?: string }>;
   }>
   | Readonly<{ kind: 'failed'; failure: GitlabFailure; status?: number }>;
 
@@ -287,6 +295,7 @@ export async function requestGitlabText(
       failure: {
         class: 'unsupportedContract',
         code: 'origin-mismatch',
+        ...(input.invocation.requestId === undefined ? {} : { requestId: input.invocation.requestId }),
         detail: 'A GitLab request may only address the configured binding origin.',
       },
     };
@@ -300,6 +309,7 @@ export async function requestGitlabText(
       failure: {
         class: 'unsupportedContract',
         code: 'unexpected-request-body',
+        ...(input.invocation.requestId === undefined ? {} : { requestId: input.invocation.requestId }),
         detail: 'A GitLab read may not carry a request document.',
       },
     };
@@ -325,22 +335,30 @@ export async function requestGitlabText(
       signal: input.signal,
     });
   } catch (error) {
+    const hostFailure = isPluginError(error) ? projectTriageSourceInvocationFailureV1(error, 'transport-failed') : null;
+    const requestId = hostFailure?.requestId ?? input.invocation.requestId;
     return {
       kind: 'failed',
       // Three different things, and the reader is owed the one that is true: this source's own
       // deadline elapsed, the caller went away, or the request never completed. Folding the first
       // into either of the others tells a person their panel was cancelled when in fact GitLab
       // stopped answering.
-      failure: isBoundedInvocationDeadline(error)
-        ? { class: 'transient', code: 'deadline-exceeded' }
+      failure: { ...(isBoundedInvocationDeadline(error)
+        ? { class: 'transient' as const, code: 'deadline-exceeded' }
         : isAbortError(error)
-          ? { class: 'transient', code: 'cancelled' }
-          : { class: 'transient', code: 'transport-failed' },
+          ? { class: 'transient' as const, code: 'cancelled' }
+          : hostFailure !== null
+            ? { ...hostFailure, class: 'transient' as const }
+            : { class: 'transient' as const, code: 'transport-failed' }),
+        ...(requestId === undefined ? {} : { requestId }) },
     };
   }
 
   if (response.status < 200 || response.status >= 300) {
-    const failure = classifyGitlabFailure(response.status, response.headers, input.nowMs);
+    const failure = {
+      ...classifyGitlabFailure(response.status, response.headers, input.nowMs),
+      ...(response.requestId === undefined ? {} : { requestId: response.requestId }),
+    };
     const requestId = TriageIdentifierV1ProtocolSchema.safeParse(response.headers.get('x-request-id'));
     const diagnostic = requestId.success
       ? { ...failure, detail: `GitLab HTTP ${response.status}. GitLab Request ID: ${requestId.data}` }
@@ -371,7 +389,9 @@ export async function requestGitlabText(
   } catch {
     return {
       kind: 'failed',
-      failure: { class: 'unsupportedContract', code: 'undecodable-body' },
+      failure: { class: 'unsupportedContract', code: 'undecodable-body',
+        ...(response.requestId === undefined && input.invocation.requestId === undefined ? {}
+          : { requestId: response.requestId ?? input.invocation.requestId }) },
     };
   }
 
@@ -379,6 +399,8 @@ export async function requestGitlabText(
     kind: 'ok',
     response: {
       bodyText,
+      ...(response.requestId === undefined && input.invocation.requestId === undefined ? {}
+        : { requestId: response.requestId ?? input.invocation.requestId }),
       headers: response.headers,
     },
   };
@@ -394,7 +416,8 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
   } catch {
     return {
       kind: 'failed',
-      failure: { class: 'unsupportedContract', code: 'undecodable-body' },
+      failure: { class: 'unsupportedContract', code: 'undecodable-body',
+        ...(result.response.requestId === undefined ? {} : { requestId: result.response.requestId }) },
     };
   }
 
@@ -402,6 +425,7 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
     kind: 'ok',
     response: {
       body,
+      ...(result.response.requestId === undefined ? {} : { requestId: result.response.requestId }),
       headers: result.response.headers,
       rawItemCount: Array.isArray(body) ? body.length : null,
     },

@@ -25,7 +25,7 @@ import type {
   TriageVerifyReviewWorkspaceInputV1,
   TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
-import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
+import { admitForgeRequestUrl, projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 
 import { admitGitlabItemInvocation } from './admission.js';
 import type { GitlabDetailReadDependenciesV1 } from './detail/reads.js';
@@ -83,9 +83,9 @@ function readGitlabSourceProjectId(row: Readonly<Record<string, unknown>>): numb
 type GitlabPreparedSourceTipRead =
   | Readonly<{ kind: 'ok'; sourceTip: GitlabPreparedSourceTip }>
   /** GitLab named no reachable source project for this merge request. */
-  | Readonly<{ kind: 'refused' }>
+  | Readonly<{ kind: 'refused'; failure?: TriageSourceFailureV1 }>
   /** The configured account could not read the project GitLab named. */
-  | Readonly<{ kind: 'unavailable' }>;
+  | Readonly<{ kind: 'unavailable'; failure?: TriageSourceFailureV1 }>;
 
 /**
  * Reads the editable source tip through the project the merge request names.
@@ -114,7 +114,9 @@ async function readGitlabPreparedSourceTip(
   if (read.kind === 'failed') {
     // A deleted or unreachable source repository is a refusal, not a fallback to
     // the target project: §3.10.3b forbids that substitution outright.
-    return read.failure.code === 'not-found' ? { kind: 'refused' } : { kind: 'unavailable' };
+    return read.failure.code === 'not-found'
+      ? { kind: 'refused', failure: read.failure }
+      : { kind: 'unavailable', failure: read.failure };
   }
 
   const sourceProject = readRecord(read.response.body);
@@ -172,10 +174,11 @@ type GitlabAuthorizedReviewWorkspace =
     pullRequest: Readonly<{ number: number }>;
   }>
   | Readonly<{ kind: 'unsupported' }>
-  | Readonly<{ kind: 'unavailable'; reason: 'account' }>
+  | Readonly<{ kind: 'unavailable'; reason: 'account'; failure?: TriageSourceFailureV1 }>
   | Readonly<{
     kind: 'refused';
     reason: 'instanceMoved' | 'pullRequestMoved' | 'observedHeadMoved';
+    failure?: TriageSourceFailureV1;
   }>;
 
 /**
@@ -213,9 +216,9 @@ function projectAdmissionFailure(
 ): Exclude<GitlabAuthorizedReviewWorkspace, Readonly<{ kind: 'authorized' }>> {
   if (failure.code === 'gitlab-kind-unsupported') return { kind: 'unsupported' };
   if (failure.class === 'unsupportedContract') {
-    return { kind: 'refused', reason: 'instanceMoved' };
+    return { kind: 'refused', reason: 'instanceMoved', failure };
   }
-  return { kind: 'unavailable', reason: 'account' };
+  return { kind: 'unavailable', reason: 'account', failure };
 }
 
 /** One provider authority path shared by initial preparation and final verification. */
@@ -243,8 +246,8 @@ async function authorizeGitlabReviewWorkspace(
   context.signal.throwIfAborted();
   if (reread.kind === 'failed') {
     return reread.failure.code === 'not-found'
-      ? { kind: 'refused', reason: 'pullRequestMoved' }
-      : { kind: 'unavailable', reason: 'account' };
+      ? { kind: 'refused', reason: 'pullRequestMoved', failure: reread.failure }
+      : { kind: 'unavailable', reason: 'account', failure: reread.failure };
   }
 
   const row = readRecord(reread.response.body);
@@ -285,8 +288,8 @@ async function authorizeGitlabReviewWorkspace(
     admitted.dependencies,
   );
   context.signal.throwIfAborted();
-  if (sourceTip.kind === 'unavailable') return { kind: 'unavailable', reason: 'account' };
-  if (sourceTip.kind !== 'ok') return { kind: 'refused', reason: 'pullRequestMoved' };
+  if (sourceTip.kind === 'unavailable') return { kind: 'unavailable', reason: 'account', ...(sourceTip.failure === undefined ? {} : { failure: sourceTip.failure }) };
+  if (sourceTip.kind !== 'ok') return { kind: 'refused', reason: 'pullRequestMoved', ...(sourceTip.failure === undefined ? {} : { failure: sourceTip.failure }) };
 
   return Object.freeze({
     kind: 'authorized' as const,
@@ -323,13 +326,14 @@ export async function prepareGitlabReviewWorkspace(
     return { kind: 'unavailable', reason: 'scmResolver' };
   }
   if (!materialized.success) {
+    const failure = projectTriageSourceInvocationFailureV1(materialized, 'COMMAND_FAILED');
     switch (materialized.errorCode) {
       case 'NOT_REPOSITORY':
       case 'INVALID_PATH':
       case 'REMOTE_NOT_FOUND':
-        return { kind: 'workspaceMismatch' };
+        return { kind: 'workspaceMismatch', failure };
       default:
-        return { kind: 'unavailable', reason: 'scmResolver' };
+        return { kind: 'unavailable', reason: 'scmResolver', failure };
     }
   }
   if ('verification' in materialized) {
@@ -382,13 +386,14 @@ export async function verifyGitlabReviewWorkspace(
     return { kind: 'unavailable', reason: 'scmResolver' };
   }
   if (!verified.success) {
+    const failure = projectTriageSourceInvocationFailureV1(verified, 'COMMAND_FAILED');
     switch (verified.errorCode) {
       case 'NOT_REPOSITORY':
       case 'INVALID_PATH':
       case 'REMOTE_NOT_FOUND':
-        return { kind: 'workspaceMismatch' };
+        return { kind: 'workspaceMismatch', failure };
       default:
-        return { kind: 'unavailable', reason: 'scmResolver' };
+        return { kind: 'unavailable', reason: 'scmResolver', failure };
     }
   }
   if (!('verification' in verified)) {

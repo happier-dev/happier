@@ -1,3 +1,5 @@
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import {
   MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
@@ -23,6 +25,7 @@ export type BitbucketTriageFailure = Readonly<{
   code: string;
   detail?: string;
   retryNotBeforeMs?: number;
+  requestId?: string;
 }>;
 
 /**
@@ -156,6 +159,7 @@ export function classifyBitbucketTransportFailure(error: unknown): BitbucketTria
   if (name === 'AbortError') {
     return createBitbucketFailure('cancelled', 'invocation-cancelled');
   }
+  if (isPluginError(error)) return { ...projectTriageSourceInvocationFailureV1(error, 'transport-failure'), class: 'transient' };
   return createBitbucketFailure('transient', 'transport-failure');
 }
 

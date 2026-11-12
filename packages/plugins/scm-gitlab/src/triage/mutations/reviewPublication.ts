@@ -1,4 +1,6 @@
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import {
   createReviewCommentPublicationSettlementRequestV1,
   parseReviewCommentPublicationPlanV1,
@@ -340,7 +342,9 @@ async function claimPublication(
       { signal },
     );
     return validateReviewCommentPublicationClaimAgainstPlanV1(plan, candidate);
-  } catch {
+  } catch (error) {
+    signal.throwIfAborted();
+    if (isPluginError(error) || error instanceof Error && error.name === 'AbortError') throw error;
     return null;
   }
 }
@@ -380,7 +384,9 @@ async function reportPublication(
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    return GITLAB_SETTLEMENT_UNAVAILABLE_FAILURE;
+    return isPluginError(error)
+      ? projectTriageSourceInvocationFailureV1(error, GITLAB_SETTLEMENT_UNAVAILABLE_FAILURE.code)
+      : GITLAB_SETTLEMENT_UNAVAILABLE_FAILURE;
   }
 }
 

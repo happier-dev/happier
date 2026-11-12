@@ -44,6 +44,7 @@ export function toTriageSourceFailure(
   return {
     class: TRIAGE_FAILURE_CLASS[failure.class] ?? 'unknown',
     code: failure.code,
+    ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
     ...(failure.detail === undefined ? {} : { detail: failure.detail }),
     ...(failure.retryNotBeforeMs === undefined
       ? {}
