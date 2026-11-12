@@ -204,8 +204,16 @@ export async function fetchSessionListQueryPageForHome(
         }
         for (const sessionId of result.sessionIds) {
             if (result.isSessionCurrent?.(sessionId) === false) continue;
-            const membership = selectSession(sessionId, serverId);
-            if (membership === null) selectionUnavailable = true;
+            let membership = selectSession(sessionId, serverId);
+            if (membership === 'metadata_required') {
+                // A compact display can omit a predicate's owner-private identity.
+                // Borrow the Session document loader; this demand never opens its transcript.
+                await sync.ensureSessionVisibleForMessageRoute(sessionId, { serverId, hydrateMessages: false, signal: page.signal });
+                throwIfAborted(page.signal);
+                if (result.isSessionCurrent?.(sessionId) === false) continue;
+                membership = selectSession(sessionId, serverId);
+            }
+            if (membership === null || membership === 'metadata_required') selectionUnavailable = true;
             if (membership === true) selected.set(sessionId, result);
         }
         const attention = Boolean(request.attentionCursor);

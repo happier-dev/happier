@@ -29,17 +29,31 @@ function message(id: string, text: string, createdAt: number): Message {
 }
 
 describe('History through the default Action composition', () => {
-  it('reopens a persisted transcript-history carrier after a cold refresh without a Voice attempt', async () => {
+  it('discovers and reopens the realtime transcript-history carrier after a cold refresh without a Voice attempt', async () => {
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
     onTestFinished(account.dispose);
     const { storage } = await import('@/sync/domains/state/storage');
+    const { sync } = await import('@/sync/sync');
+    const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+    await sync.refreshSessions();
     const serverId = account.scope.serverId;
     const session = createSessionFixture({ id: 'finished-eleven-history', serverId, active: false,
       metadata: { ...createSessionFixture().metadata!, ...buildVoiceTranscriptHistorySessionMetadata() } });
+    const row = await createVoiceHistoryListRowFixture(session, { credentials: account.credentials });
     const request = account.request.getMockImplementation()!;
+    let bodyReads = 0;
+    let metadataReads = 0;
     account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path === `/v2/sessions/${session.id}`) return Response.json(createPlainSessionByIdResponseFixture(session));
+      if (path === '/v2/sessions') return Response.json({ sessions: [row], nextCursor: null, hasNext: false });
+      if (path === '/v2/sessions/archived') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+      if (path.endsWith('/messages')) bodyReads += 1;
+      if (path === `/v2/sessions/${session.id}` && (init?.method ?? 'GET') === 'GET') {
+        metadataReads += 1;
+        const detail = createPlainSessionByIdResponseFixture(session);
+        return Response.json({ ...detail, session: { ...detail.session, displayProjectionV1: row.displayProjectionV1 } });
+      }
       return request(input, init);
     }));
     expect(storage.getState().sessions[session.id]).toBeUndefined();
@@ -47,12 +61,26 @@ describe('History through the default Action composition', () => {
     const executor = createDefaultActionExecutor({ openRoute: async href => { navigations.push(href); } });
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
       serverId, expectedAccountId: account.scope.accountId };
+    const listed = await executor.execute('ui.voice_global.conversations.list', {}, context);
+    expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true, result: { conversations: [{
+      address: { serverId, sessionId: session.id }, canContinue: false,
+    }] } });
+    expect(isVoiceTranscriptHistorySession(storage.getState().sessions[session.id])).toBe(true);
+    expect(metadataReads).toBe(1);
+    expect(bodyReads).toBe(0);
     const opened = await executor.execute('ui.voice_global.conversations.open', {
       conversationSessionAddress: { serverId, sessionId: session.id },
     }, context);
     expect(isVoiceTranscriptHistorySession(storage.getState().sessions[session.id])).toBe(true);
     expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { status: 'completed' } });
     expect(navigations).toEqual([`/session/${session.id}?serverId=${serverId}`]);
+    expect(await executor.execute('ui.voice_global.conversations.list', {
+      conversationSessionAddress: { serverId, sessionId: session.id },
+    }, context)).toMatchObject({ ok: true, result: { conversations: [{
+      address: { serverId, sessionId: session.id }, canContinue: false,
+    }] } });
+    expect(bodyReads).toBe(0);
+    expect(metadataReads).toBe(1);
     // Read-only history admission must not make the shared carrier a resumable call.
     const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
     expect(await executeVoiceConversationAction('ui.voice_global.continue_conversation', {

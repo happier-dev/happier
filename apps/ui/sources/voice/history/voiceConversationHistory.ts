@@ -2,7 +2,7 @@ import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/sessi
 import type { StorageState } from '@/sync/store/types';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { isVoiceConversationCustodySessionMetadata, isVoiceConversationSystemSessionMetadata,
+import { isVoiceConversationHistorySessionMetadata, isVoiceConversationSystemSessionMetadata,
     shouldRetireLegacyVoiceConversationSession } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readVoiceHistoryPendingRecovery } from './useVoiceHistoryPendingRecovery';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -12,6 +12,8 @@ import { deriveSessionListMeaningfulActivityAt } from '@/sync/domains/session/li
 import { isSessionListRenderableNewerThanSession } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { isVoiceTranscriptHistorySessionMetadata } from '@/voice/persistence/voiceTranscriptHistorySession';
 
 /** A demand-only projection of the existing Session list; never loads bodies or invents complete coverage. */
 export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions' | 'sessionListRowsByServerId'> & Partial<Pick<StorageState, 'sessionPending'>>,
@@ -30,15 +32,18 @@ export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions
         for (const row of Object.values(rows)) {
             if (!isSessionAccessOwner(row.access, row.accessLevel)) continue;
             if (row.metadata === null || row.metadataUnavailable === true) readableDisplays = false;
-            if (!isVoiceConversationCustodySessionMetadata(row.metadata)) continue;
             const address = normalizeSessionAddress(options?.serverId ?? serverId, row.id);
             if (!address) continue;
+            const metadata = isVoiceConversationHistorySessionMetadata(row.metadata) ? row.metadata
+                : readVoiceSessionOwnerMetadataFromState(state, address);
+            if (!isVoiceConversationHistorySessionMetadata(metadata)) continue;
             if (options?.isSessionVisible && !options.isSessionVisible(address)) continue;
             conversations.set(sessionAddressKey(address), { address, title: getSessionName(row, serverId, { snapshotOnly: true }),
                 lastActivityAt: deriveSessionListMeaningfulActivityAt({ sessionMeaningfulActivityAt: row.meaningfulActivityAt,
                     sessionCreatedAt: row.createdAt, latestCommittedMessageCreatedAt: null, latestPendingMessageCreatedAt: null }) ?? row.createdAt,
-                canContinue: readSystemSessionMetadataFromMetadata({ metadata: row.metadata })
-                    ? isVoiceConversationSystemSessionMetadata(row.metadata) : null,
+                canContinue: isVoiceTranscriptHistorySessionMetadata(metadata) ? false
+                    : readSystemSessionMetadataFromMetadata({ metadata: row.metadata })
+                        ? isVoiceConversationSystemSessionMetadata(row.metadata) : null,
                 hasBlockedInputs: (row.pendingBlockedCount ?? 0) > 0, pendingInputs: [] });
         }
     }
@@ -55,7 +60,7 @@ export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions
             continue;
         }
         const metadata = readSessionOwnerMetadataView(session);
-        if (!isVoiceConversationCustodySessionMetadata(metadata)) {
+        if (!isVoiceConversationHistorySessionMetadata(metadata)) {
             conversations.delete(sessionAddressKey(address));
             continue;
         }
@@ -66,7 +71,8 @@ export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions
             lastActivityAt: deriveSessionListMeaningfulActivityAt({ sessionMeaningfulActivityAt: session.meaningfulActivityAt,
                 sessionCreatedAt: session.createdAt, latestCommittedMessageCreatedAt: null, latestPendingMessageCreatedAt: null }) ?? session.createdAt,
             canContinue: isVoiceConversationSystemSessionMetadata(metadata) && !shouldRetireLegacyVoiceConversationSession({ metadata }),
-            hasBlockedInputs: pendingInputs.length > 0 || readVoiceHistoryPendingRecovery(address, session) !== null, pendingInputs });
+            hasBlockedInputs: conversations.get(sessionAddressKey(address))?.hasBlockedInputs === true
+                || pendingInputs.length > 0 || readVoiceHistoryPendingRecovery(address, session) !== null, pendingInputs });
     }
     return { coverage: 'loaded' as const, coverageComplete: options?.coverageComplete === true && readableDisplays,
         conversations: [...conversations.values()]

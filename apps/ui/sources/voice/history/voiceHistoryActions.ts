@@ -7,7 +7,7 @@ import { sync } from '@/sync/sync';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
-import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { isVoiceConversationHistorySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readVoiceConversationHistory } from './voiceConversationHistory';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { fetchSessionListQueryPageForHome } from '@/sync/domains/session/listing/sessionListQueryRuntime';
@@ -26,7 +26,7 @@ export async function executeVoiceConversationHistoryListAction(input: unknown, 
       || !areServerProfileIdentifiersEquivalent(serverId, getActiveServerSnapshot().serverId)) return unavailable('voice_conversation_home_not_mounted');
     await sync.ensureSessionVisibleForMessageRoute(address.sessionId, { serverId: address.serverId, hydrateMessages: false });
     if (!isCurrent()) return unavailable('voice_action_account_changed');
-    if (!isVoiceConversationCustodySessionMetadata(readVoiceSessionOwnerMetadataFromState(storage.getState(), address))
+    if (!isVoiceConversationHistorySessionMetadata(readVoiceSessionOwnerMetadataFromState(storage.getState(), address))
       || !readVoiceConversationHistory(storage.getState(), { serverId }).conversations.some(row => row.address.sessionId === address.sessionId)) {
       return unavailable('session_unavailable');
     }

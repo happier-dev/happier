@@ -32,10 +32,15 @@ export function useVoiceConversationHistory(query = '') {
     const active = useSessionListQueryHomeStates({ enabled: Boolean(scope), homes: activeHomes });
     const archived = useSessionListQueryHomeStates({ enabled: Boolean(scope), homes: archivedHomes });
     const rows = storage(React.useCallback(state => readSessionListRowsForServerId(state.sessionListRowsByServerId, serverId), [serverId]));
-    const projection = React.useMemo(() => readVoiceConversationHistory({ sessions: {},
+    const hiddenSessionIds = React.useMemo(() => Object.values(rows ?? {}).filter(row => row.metadata?.hiddenSystemSession === true)
+        .map(row => row.id), [rows]);
+    const hiddenSessions = storage(React.useCallback(state => hiddenSessionIds.map(id => state.sessions[id]), [hiddenSessionIds]),
+        { sessions: hiddenSessionIds }, shallow);
+    const sessions = React.useMemo(() => Object.fromEntries(hiddenSessions.flatMap(session => session ? [[session.id, session] as const] : [])), [hiddenSessions]);
+    const projection = React.useMemo(() => readVoiceConversationHistory({ sessions,
         sessionListRowsByServerId: rows ? { [serverId]: rows } : {} }, {
         serverId, coverageComplete: active.coverageComplete && archived.coverageComplete, isSessionVisible,
-    }), [active.coverageComplete, archived.coverageComplete, rows, serverId, isSessionVisible]);
+    }), [active.coverageComplete, archived.coverageComplete, rows, sessions, serverId, isSessionVisible]);
     const sessionIds = React.useMemo(() => projection.conversations.map(row => row.address.sessionId), [projection.conversations]);
     const transcripts = storage(React.useCallback(state => projection.conversations.map(row =>
         readStoredSessionTranscriptForAddress(state, row.address)), [projection.conversations]),

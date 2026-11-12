@@ -20,6 +20,9 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { buildVoiceTranscriptHistorySessionMetadata } from '@/voice/persistence/voiceTranscriptHistorySession';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -41,17 +44,28 @@ describe.each([true, false])('Voice conversation History discovery (filtered lis
         const serverId = account.scope.serverId;
         const requests: string[] = [];
         let bodyReads = 0;
-        const wire = async (id: string, voice: boolean, retired = false) => {
-            const session = createSessionFixture({ id, archivedAt: retired ? 10 : null,
+        const metadataReads: string[] = [];
+        const transcriptSessions = ['realtime-history', 'archived-realtime-history'].map((id, index) => createSessionFixture({
+            id, serverId, active: false, archivedAt: index ? 10 : null,
+            metadata: { ...createSessionFixture().metadata!, name: id, ...buildVoiceTranscriptHistorySessionMetadata() },
+        }));
+        const unrelatedSystemSession = createSessionFixture({ id: 'other-hidden', serverId, active: false,
+            metadata: { ...createSessionFixture().metadata!,
+                ...buildSystemSessionMetadataV1({ key: 'other-system', hidden: true }) } });
+        const wire = async (id: string, voice: boolean, retired = false, realtime = false) => {
+            const session = createSessionFixture({ id, active: false, archivedAt: retired ? 10 : null,
                 metadata: { ...createSessionFixture().metadata!, name: id,
-                    ...(voice ? buildSystemSessionMetadataV1({ key: retired ? 'voice_conversation_retired' : 'voice_conversation', hidden: true }) : {}) } });
+                    ...(realtime ? buildVoiceTranscriptHistorySessionMetadata()
+                        : voice ? buildSystemSessionMetadataV1({ key: retired ? 'voice_conversation_retired' : 'voice_conversation', hidden: true }) : {}) } });
             return createVoiceHistoryListRowFixture(session, { credentials: account.credentials });
         };
-        const [ordinary, older, retired] = await Promise.all([
+        const [ordinary, older, retired, realtime, archivedRealtime] = await Promise.all([
             wire('ordinary', false), wire('older-voice', true), wire('retired-voice', true, true),
+            wire('realtime-history', true, false, true), wire('archived-realtime-history', true, true, true),
         ]);
+        const unrelatedSystem = await createVoiceHistoryListRowFixture(unrelatedSystemSession, { credentials: account.credentials });
         const request = account.request.getMockImplementation()!;
-        account.request.mockImplementation(async (input, init) => {
+        account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
             const url = new URL(String(input));
             const path = url.pathname;
             if (path === '/v2/sessions/query' || path === '/v2/sessions' || path === '/v2/sessions/archived') {
@@ -59,13 +73,20 @@ describe.each([true, false])('Voice conversation History discovery (filtered lis
                     : { storage: path.endsWith('/archived') ? 'archived' : 'active', cursor: url.searchParams.get('cursor') };
                 requests.push(`${query.storage}:${query.cursor ?? 'first'}`);
                 const archived = query.storage === 'archived';
-                return Response.json({ sessions: [archived ? retired : query.cursor ? older : ordinary],
+                return Response.json({ sessions: archived ? [retired, archivedRealtime] : query.cursor ? [older, realtime] : [ordinary, unrelatedSystem],
                     nextCursor: archived || query.cursor ? null : encodeV2SessionListCursorV1('ordinary'),
                     hasNext: !archived && !query.cursor, attentionNextCursor: null, attentionHasNext: false });
             }
-            if (/\/sessions\/[^/]+(?:\/messages)?$/u.test(path) || path.endsWith('/sessions/read-batch')) bodyReads += 1;
+            const transcriptSession = [...transcriptSessions, unrelatedSystemSession].find(session => path === `/v2/sessions/${session.id}`);
+            if (transcriptSession && (init?.method ?? 'GET') === 'GET') {
+                metadataReads.push(transcriptSession.id);
+                const detail = createPlainSessionByIdResponseFixture(transcriptSession);
+                const row = [realtime, archivedRealtime, unrelatedSystem].find(row => row.id === transcriptSession.id)!;
+                return Response.json({ ...detail, session: { ...detail.session, displayProjectionV1: row.displayProjectionV1 } });
+            }
+            if (/\/sessions\/[^/]+\/messages$/u.test(path)) bodyReads += 1;
             return request(input, init);
-        });
+        }));
         const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
         const previousAct = environment.IS_REACT_ACT_ENVIRONMENT;
         environment.IS_REACT_ACT_ENVIRONMENT = true;
@@ -90,7 +111,12 @@ describe.each([true, false])('Voice conversation History discovery (filtered lis
                 expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('retired-voice');
                 // Unrelated summary windows advance within this Voice page, without a Load more gesture.
                 expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('older-voice');
+                expect(state.current?.conversations).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ address: { serverId, sessionId: 'realtime-history' }, canContinue: false }),
+                    expect.objectContaining({ address: { serverId, sessionId: 'archived-realtime-history' }, canContinue: false }),
+                ]));
             });
+            expect(metadataReads.sort(), 'metadata reads after initial discovery').toEqual(['archived-realtime-history', 'other-hidden', 'realtime-history']);
             await act(async () => { await state.current?.loadNext?.(); });
             await waitForHomeGovernance(async () => { await act(async () => {});
                 expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('older-voice'); });
@@ -123,6 +149,8 @@ describe.each([true, false])('Voice conversation History discovery (filtered lis
             expect(state.current?.conversations).toMatchObject([{ title: 'older-voice', lastLine: 'The release is ready', loadedMessageCount: 2 }]);
             expect(requests.length).toBe(beforeSearchRequests);
             expect(bodyReads).toBe(0);
+            expect(metadataReads.sort()).toEqual(['archived-realtime-history', 'other-hidden', 'realtime-history']);
+            expect(state.current?.conversations.map(row => row.address.sessionId)).not.toContain('other-hidden');
             query = '';
             await act(async () => root.render(<Host />));
             const settledRenders = renders;
@@ -133,6 +161,7 @@ describe.each([true, false])('Voice conversation History discovery (filtered lis
             expect(renders - settledRenders).toBe(0);
             expect(requests.length - settledRequests).toBe(0);
             expect(bodyReads).toBe(0);
+            expect(metadataReads).toHaveLength(3);
             await act(async () => storage.setState({ settings: { ...storage.getState().settings,
                 sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } },
                 sessionOrganizationTagAssignmentsBySessionKey: {
@@ -147,6 +176,9 @@ describe.each([true, false])('Voice conversation History discovery (filtered lis
             await act(async () => storage.getState().applyServerScopedSessionListRowPatches(serverId, [{ sessionId: 'older-voice',
                 patch: { pendingCount: 1, pendingBlockedCount: 1 } }]));
             expect(state.current?.conversations.find(row => row.address.sessionId === 'older-voice')?.hasBlockedInputs).toBe(true);
+            await act(async () => storage.getState().applyServerScopedSessionListRowPatches(serverId, [{ sessionId: 'older-voice',
+                patch: { pendingCount: 0, pendingBlockedCount: 0 } }]));
+            expect(state.current?.conversations.find(row => row.address.sessionId === 'older-voice')?.hasBlockedInputs).toBe(false);
         } finally {
             await act(async () => root.unmount());
             container.remove();

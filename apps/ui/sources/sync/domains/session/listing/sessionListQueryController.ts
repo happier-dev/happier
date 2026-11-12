@@ -89,7 +89,7 @@ export type SessionListQueryPageRequest = Readonly<{
     membership: SessionListPageMembership;
     /** Predicate consumers need settled summaries, not just structural membership. */
     hydration?: 'required';
-    /** Client-only selection over settled summaries; null means unreadable membership. */
+    /** Client-only selection: null is unreadable; metadata_required demands the existing full owner loader. */
     selectSession?: SessionListPageSelection;
     candidateStartedBy?: Parameters<typeof fetchAndApplySessions>[0]['candidateStartedBy'];
     limit?: number;
@@ -98,7 +98,7 @@ export type SessionListQueryPageRequest = Readonly<{
     signal: AbortSignal;
 }>;
 
-export type SessionListPageSelection = (sessionId: string, serverId: string) => boolean | null;
+export type SessionListPageSelection = (sessionId: string, serverId: string) => boolean | null | 'metadata_required';
 
 export type SessionListQueryHomeController = Readonly<{
     getSnapshot(): SessionListQueryHomeState;

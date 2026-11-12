@@ -5,6 +5,7 @@ import {
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { isVoiceTranscriptHistorySessionMetadata } from './voiceTranscriptHistorySession';
 
 export {
     isVoiceConversationSystemSessionMetadata,
@@ -24,6 +25,11 @@ export function isVoiceConversationCustodySessionMetadata(metadata: unknown): bo
     return typeof metadata === 'object' && metadata !== null
         && 'hiddenSystemSession' in metadata && metadata.hiddenSystemSession === true
         && 'systemSessionKind' in metadata && metadata.systemSessionKind === 'voice_custody';
+}
+
+/** Read-only History also contains targetless realtime transcripts, which cannot resume an Agent. */
+export function isVoiceConversationHistorySessionMetadata(metadata: unknown): boolean {
+    return isVoiceConversationCustodySessionMetadata(metadata) || isVoiceTranscriptHistorySessionMetadata(metadata);
 }
 
 export function resolveVoiceConversationSessionMetadataFromState(state: any, sessionId: string): unknown {

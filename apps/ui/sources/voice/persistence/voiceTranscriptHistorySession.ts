@@ -58,13 +58,15 @@ export function isVoiceTranscriptHistorySession(session: Readonly<{
     ownerMetadataView?: unknown;
 }> | null | undefined): boolean {
     if (!session || session.active !== false) return false;
-    const marker = readSystemSessionMetadataFromMetadata({
-        metadata: readSessionOwnerMetadataView({
-            metadata: session.metadata,
-            metadataLayoutVersion: session.metadataLayoutVersion,
-            ownerMetadataView: session.ownerMetadataView,
-        }),
-    });
+    return isVoiceTranscriptHistorySessionMetadata(readSessionOwnerMetadataView({
+        metadata: session.metadata,
+        metadataLayoutVersion: session.metadataLayoutVersion,
+        ownerMetadataView: session.ownerMetadataView,
+    }));
+}
+
+export function isVoiceTranscriptHistorySessionMetadata(metadata: unknown): boolean {
+    const marker = readSystemSessionMetadataFromMetadata({ metadata });
     return marker?.v === 1
         && marker.key === VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY
         && marker.hidden === true;
