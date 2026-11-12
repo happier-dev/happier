@@ -1,8 +1,12 @@
+import { fileURLToPath } from 'node:url';
+
+import { readAndAssertBundledProviderVerificationsV1 } from '../../../../apps/cli/scripts/build-owned/bundledProviderVerification.ts';
 import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
 
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildQualifiedPluginContributionKey,
   ingestPluginManifestV2,
   PLUGIN_CONTRIBUTION_CATALOG_V2,
   PluginManifestV2Schema,
@@ -76,8 +80,22 @@ describe('CLIProxyAPI plugin manifest', () => {
     ]));
   });
 
+  it('supplies publication verification for every executable upstream family', () => {
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    expect(admitted.ok).toBe(true);
+    if (!admitted.ok) throw new Error('CLIProxyAPI manifest ingestion failed');
+    expect(() => readAndAssertBundledProviderVerificationsV1({
+      buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+      rootDir: fileURLToPath(new URL('../../../../', import.meta.url)),
+      pluginPackageId: 'cliproxyapi',
+      pluginId: PLUGIN_MANIFEST.id,
+      contributions: PLUGIN_MANIFEST.contributes.providers,
+      todayUtc: new Date().toISOString().slice(0, 10),
+    })).not.toThrow();
+  });
+
   it('declares the public managed Provider facet and requires its conditional runtime registration', () => {
-    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './.happier-plugin/daemon.js' });
+    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './.happier-plugin-build/daemon.js' });
     const providerFamily = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
     expect(providerFamily).toMatchObject({
       identityKind: 'delegatedDomain',

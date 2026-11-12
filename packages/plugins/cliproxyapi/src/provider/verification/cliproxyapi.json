@@ -1,7 +1,7 @@
 {
   "v": 1,
   "contributionKey": "happier.provider.cliproxyapi/cliproxyapi",
-  "reviewedAt": "2026-11-09",
+  "reviewedAt": "2026-11-12",
   "sources": [
     {"id": "upstream-overview", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/README.md", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251"},
     {"id": "upstream-config", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/config.example.yaml", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251"},
@@ -17,9 +17,10 @@
     {"id": "upstream-v8-release", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/681ce41b6e44c45b15b79378b003909d6ba29e68/.github/workflows/release.yaml", "accessedAt": "2026-11-09", "revision": "v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68"},
     {"id": "v8-carrier-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/cross_protocol_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-681ce41b6e44c45b15b79378b003909d6ba29e68-stream-tools-cancel-errors"},
     {"id": "managed-family-plan", "kind": "product-decision", "locator": ".project/plans/2026-11-09-muse-and-account-wiring/00-PROGRAM.md", "accessedAt": "2026-11-09", "revision": "2026-11-09-approved-family-owner-and-headers-materialization"},
-    {"id": "managed-family-contract", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/src/provider/managedContract.ts", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-four-family-owner"},
+    {"id": "managed-family-contract", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/src/provider/managedContract.ts", "accessedAt": "2026-11-12", "revision": "cb66bae2f95682af3340c5f2c5178ff8f51bf5bc-SDK-v8.0.61-seven-family-owner"},
     {"id": "meta-family-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/meta_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-real-Meta-executor-headers-stream-tools-continuation"},
-    {"id": "gemini-family-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/gemini_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-real-Gemini-key-executor-stream-tools-continuation"}
+    {"id": "gemini-family-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/gemini_conformance_test.go", "accessedAt": "2026-11-09", "revision": "SDK-v8.0.61-real-Gemini-key-executor-stream-tools-continuation"},
+    {"id": "header-only-family-conformance", "kind": "repository-history", "locator": "packages/plugins/cliproxyapi/managed-runtime/header_only_conformance_test.go", "accessedAt": "2026-11-12", "revision": "cb66bae2f95-SDK-v8.0.61-admitted-facts-and-late-credentials"}
   ],
   "facts": [
     {"path": "catalog.probes.cliproxyapi-openai-responses.openai-models", "sourceIds": ["upstream-v8-routes", "product-contract"], "status": "verified"},
@@ -74,6 +75,26 @@
     {"path": "managedRuntime.requestAuthUses.gemini-upstream.materialization.kind.httpHeaders", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.gemini-upstream.materialization.headerNames.x-goog-api-key", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
     {"path": "managedRuntime.requestAuthUses.gemini-upstream.materialization.origin.https%3A%2F%2Fgenerativelanguage.googleapis.com", "sourceIds": ["managed-family-plan", "managed-family-contract", "gemini-family-conformance"], "status": "verified"},
-    {"path": "websiteUrl", "sourceIds": ["upstream-v8-overview"], "status": "verified"}
+    {"path": "websiteUrl", "sourceIds": ["upstream-v8-overview"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.antigravity-upstream.materializationKinds.httpHeaders", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.antigravity-upstream.required", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.antigravity-upstream.service.happier.agent.antigravity/antigravity-account", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.kimi-upstream.materializationKinds.httpHeaders", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.kimi-upstream.required", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.kimi-upstream.service.happier.agent.kimi/kimi-code", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.xai-upstream.materializationKinds.httpHeaders", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.xai-upstream.required", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.connectedAccounts.xai-upstream.service.happier.agent.grok/xai", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.antigravity-upstream.materialization.headerNames.authorization", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.antigravity-upstream.materialization.kind.httpHeaders", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.antigravity-upstream.materialization.origin.https%3A%2F%2Fdaily-cloudcode-pa.googleapis.com", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.kimi-upstream.materialization.headerNames.authorization", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.kimi-upstream.materialization.headerNames.x-msh-device-id", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.kimi-upstream.materialization.kind.httpHeaders", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.kimi-upstream.materialization.origin.https%3A%2F%2Fapi.kimi.com", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.xai-upstream.materialization.headerNames.authorization", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.xai-upstream.materialization.headerNames.x-xai-token-auth", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.xai-upstream.materialization.kind.httpHeaders", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"},
+    {"path": "managedRuntime.requestAuthUses.xai-upstream.materialization.origin.https%3A%2F%2Fapi.x.ai", "sourceIds": ["managed-family-contract", "header-only-family-conformance"], "status": "verified"}
   ]
 }
