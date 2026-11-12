@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../api/testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, inTxPostgresControlStatementMock, installDbModuleMock } from "../api/testkit/dbMocks";
 
 const dbSessionFindMany = vi.hoisted(() => vi.fn());
 const dbAccountPushTokenFindMany = vi.hoisted(() => vi.fn());
@@ -16,7 +16,8 @@ const getPushNotificationReceiptsAsyncSpy = vi.hoisted(() => vi.fn(async (_ids: 
 // and `teamMembership` the collective-access snapshot the badge admission
 // resolves for each Account through the canonical access owner.
 const dbMocks = createDbMocks({
-    account: ["findMany"],
+    account: ["findMany", "findUnique"],
+    sessionShare: ["findMany"],
     session: ["findMany"],
     discussion: ["findMany", "groupBy"],
     discussionMessage: ["findMany"],
@@ -26,7 +27,7 @@ const dbMocks = createDbMocks({
     teamMembership: ["findMany"],
 } as const);
 
-const transactionMock = createDbTransactionMock(() => dbMocks.db);
+const transactionMock = createDbTransactionMock(() => ({ ...dbMocks.db, ...inTxPostgresControlStatementMock }));
 
 dbMocks.db.session.findMany.mockImplementation(async (...args: unknown[]) => {
     const rows = await dbSessionFindMany(...args) as Array<Record<string, unknown>>;
@@ -94,6 +95,8 @@ vi.mock("expo-server-sdk", () => {
 
 describe("refreshAccountActivityBadgePushes", () => {
     beforeEach(() => {
+        // This Prisma boundary fixture models the PostgreSQL transaction port.
+        vi.stubEnv("HAPPIER_DB_PROVIDER", "postgres");
         vi.useRealTimers();
         dbSessionFindMany.mockReset();
         dbAccountPushTokenFindMany.mockReset();
@@ -101,6 +104,10 @@ describe("refreshAccountActivityBadgePushes", () => {
         sendPushNotificationsAsyncSpy.mockClear();
         getPushNotificationReceiptsAsyncSpy.mockClear();
         dbMocks.db.account.findMany.mockReset();
+        dbMocks.db.account.findUnique.mockReset();
+        dbMocks.db.account.findUnique.mockResolvedValue({ status: "active" });
+        dbMocks.db.sessionShare.findMany.mockReset();
+        dbMocks.db.sessionShare.findMany.mockResolvedValue([]);
         dbMocks.db.discussion.findMany.mockReset();
         dbMocks.db.discussion.groupBy.mockReset();
         dbMocks.db.discussionMessage.findMany.mockReset();
@@ -119,6 +126,7 @@ describe("refreshAccountActivityBadgePushes", () => {
     });
 
     afterEach(() => {
+        vi.unstubAllEnvs();
         vi.useRealTimers();
     });
 
@@ -386,6 +394,41 @@ describe("refreshAccountActivityBadgePushes", () => {
             select: { accountId: true, token: true },
         });
         expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("publishes no badge traffic for ordinary messages while a real attention flip reaches Expo", async () => {
+        vi.useFakeTimers();
+        const { didSessionActivityBadgeSignalChange } = await import("./accountActivityBadge");
+        const { scheduleAccountActivityBadgeRefresh } = await import("./refreshAccountActivityBadgePushes");
+        const initial = {
+            currentStorageState: "hosted" as const, acceptedThroughServerSeq: null,
+            materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+            seq: 5, pendingBlockedCount: 0, archivedAt: null,
+        };
+        let before = initial;
+        for (let seq = 6; seq <= 1005; seq += 1) {
+            const after = { ...before, seq };
+            scheduleAccountActivityBadgeRefresh({
+                badgeAttentionChanged: didSessionActivityBadgeSignalChange(before, after), accountIds: ["a1"],
+            });
+            before = after;
+        }
+        await vi.runOnlyPendingTimersAsync();
+        expect(dbAccountPushTokenFindMany).not.toHaveBeenCalled();
+        expect(dbSessionFindMany).not.toHaveBeenCalled();
+        expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+
+        const blocked = { ...before, pendingBlockedCount: 1 };
+        dbSessionFindMany.mockResolvedValue([{ ...blocked, id: "s-a1", accountId: "a1", lastViewedSessionSeq: 1005 }]);
+        dbAccountPushTokenFindMany.mockResolvedValue([{ accountId: "a1", token: "ExponentPushToken[a1]" }]);
+        scheduleAccountActivityBadgeRefresh({
+            badgeAttentionChanged: didSessionActivityBadgeSignalChange(before, blocked), accountIds: ["a1"],
+        });
+        await vi.runOnlyPendingTimersAsync();
+        expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+        expect(sendPushNotificationsAsyncSpy.mock.calls[0]?.[0]).toEqual([
+            expect.objectContaining({ to: "ExponentPushToken[a1]", badge: 1 }),
+        ]);
     });
 
     it("returns before computing badge counts when no push tokens exist", async () => {

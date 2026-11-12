@@ -119,8 +119,9 @@ export function computeSessionContributesToActivityBadge(session: SessionViewerB
 
 /**
  * Whether a Session-level change is worth recomputing tracked Accounts' badges.
- * It compares the operational facts only; the read owner schedules its own
- * Account directly when a frontier moves.
+ * It compares operational attention presence, never ordinary transcript sequence
+ * advances or count changes that keep attention present (owner D6, 2026-11-04).
+ * The read owner schedules its own Account directly when a frontier moves.
  */
 export function didSessionActivityBadgeSignalChange(
     before: SessionActivityBadgeInputs,
@@ -134,12 +135,11 @@ export function didSessionActivityBadgeSignalChange(
         }, session);
         return [
             session.archivedAt ? 1 : 0,
-            Math.max(0, Math.trunc(projection.seq)),
             typeof projection.latestReadyEventSeq === "number" ? projection.latestReadyEventSeq : -1,
             hasLiveFacts && hasCanonicalPrimarySessionFailure(session) ? 1 : 0,
-            hasLiveFacts ? normalizeCount(session.pendingBlockedCount) : 0,
-            hasLiveFacts ? normalizeCount(session.pendingPermissionRequestCount) : 0,
-            hasLiveFacts ? normalizeCount(session.pendingUserActionRequestCount) : 0,
+            hasLiveFacts && normalizeCount(session.pendingBlockedCount) > 0 ? 1 : 0,
+            hasLiveFacts && normalizeCount(session.pendingPermissionRequestCount) > 0 ? 1 : 0,
+            hasLiveFacts && normalizeCount(session.pendingUserActionRequestCount) > 0 ? 1 : 0,
         ].join(":");
     };
     return signal(before) !== signal(after);

@@ -135,6 +135,25 @@ describe("computeSessionContributesToActivityBadge", () => {
 });
 
 describe("didSessionActivityBadgeSignalChange", () => {
+    // Owner decision 2026-11-04 D6 / audit 1112: ordinary messages never fan out badge pushes.
+    it("schedules zero badge refreshes for ordinary messages and one for each operational attention flip", () => {
+        let before = badgeInputs();
+        let refreshes = 0;
+        for (let seq = 6; seq <= 1005; seq += 1) {
+            const after = { ...before, seq };
+            refreshes += Number(didSessionActivityBadgeSignalChange(before, after));
+            before = after;
+        }
+        expect(refreshes).toBe(0);
+        const blocked = { ...before, pendingBlockedCount: 1 };
+        expect(didSessionActivityBadgeSignalChange(before, blocked)).toBe(true);
+        expect(didSessionActivityBadgeSignalChange(blocked, { ...blocked, pendingBlockedCount: 2 })).toBe(false);
+        expect(didSessionActivityBadgeSignalChange(blocked, before)).toBe(true);
+        expect(didSessionActivityBadgeSignalChange(before, { ...before, latestReadyEventSeq: 1006 })).toBe(true);
+        expect(didSessionActivityBadgeSignalChange(before, { ...before, pendingPermissionRequestCount: 1 })).toBe(true);
+        expect(didSessionActivityBadgeSignalChange(before, { ...before, pendingUserActionRequestCount: 1 })).toBe(true);
+        expect(didSessionActivityBadgeSignalChange(before, { ...before, archivedAt: new Date(0) })).toBe(true);
+    });
     it("does not invent unread before a missing private cursor is seeded", () => {
         expect(didViewerActivityBadgeContributionChange(badgeInputs(), null, 5)).toBe(false);
     });

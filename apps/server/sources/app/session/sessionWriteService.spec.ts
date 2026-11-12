@@ -2433,7 +2433,8 @@ describe("sessionWriteService", () => {
 
             expect(res.message.id).toBe("m1");
             expect(res.message.seq).toBe(10);
-            expect(res.badgeAttentionChanged).toBe(true);
+            // Owner D6 (2026-11-04): ordinary messages do not schedule badge-only pushes.
+            expect(res.badgeAttentionChanged).toBe(false);
             expect(res.recipientCursors).toEqual([
                 { accountId: "u1", cursor: 101 },
                 { accountId: "u2", cursor: 102 },

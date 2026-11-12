@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +30,65 @@ describe('gitCheckpointAdapter runtime services', () => {
             stderr: "Installable 'dep.sapling' does not authorize SCM command 'git'",
             exitCode: -1,
         });
+    });
+
+    it('keeps cached file stats for unchanged captures and captures dirty contents without changing the user index', async () => {
+        const spawnImplementation = vi.mocked(spawn).getMockImplementation()!;
+        const repoRoot = mkdtempSync(join(tmpdir(), 'happier-checkpoint-index-cost-'));
+        const emptyStatCounts: number[] = [];
+        try {
+            execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+            const oldTime = new Date(Date.now() - 60_000);
+            const paths = Array.from({ length: 1000 }, (_, index) => `file-${index}.txt`);
+            for (const path of paths) {
+                writeFileSync(join(repoRoot, path), 'unchanged\n');
+                utimesSync(join(repoRoot, path), oldTime, oldTime);
+            }
+            execFileSync('git', ['add', '-A'], { cwd: repoRoot });
+            execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'initial'], { cwd: repoRoot });
+            const expectedTree = execFileSync('git', ['write-tree'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+            const indexPath = join(repoRoot, '.git', 'index');
+            const initialIndex = readFileSync(indexPath);
+            const context = { cwd: repoRoot, projectKey: repoRoot,
+                detection: { isRepo: true, rootPath: repoRoot, mode: '.git' as const } };
+            const refs = buildRepositoryCheckpointRefs({ scopeId: `index-cost:${repoRoot}`, messageId: 'message', turnId: 'turn' });
+            if (!refs.messageStart || !refs.turnFinal) throw new Error('Missing refs');
+            // Observe Git's actual temporary index at the OS boundary before
+            // staging. A tree-only index has zero sizes and re-hashes every file.
+            vi.mocked(spawn).mockImplementation((...args) => {
+                const [, commandArgs, options] = args;
+                if (options?.cwd === repoRoot && Array.isArray(commandArgs) && commandArgs[0] === 'add') {
+                    const entries = execFileSync('git', ['ls-files', '--debug'], {
+                        cwd: repoRoot, env: options.env, encoding: 'utf8',
+                    });
+                    emptyStatCounts.push([...entries.matchAll(/size: 0\s+flags:/g)].length);
+                }
+                return spawnImplementation(...args);
+            });
+            const unchanged = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.messageStart });
+            expect(unchanged).toMatchObject({ success: true, treeSha: expectedTree });
+            expect(emptyStatCounts).toEqual([0]);
+            expect(readFileSync(indexPath)).toEqual(initialIndex);
+
+            writeFileSync(join(repoRoot, paths[0]!), 'unstaged\n');
+            unlinkSync(join(repoRoot, paths[1]!));
+            writeFileSync(join(repoRoot, paths[2]!), 'staged\n');
+            execFileSync('git', ['add', '--', paths[2]!], { cwd: repoRoot });
+            writeFileSync(join(repoRoot, paths[2]!), 'staged then edited\n');
+            writeFileSync(join(repoRoot, 'untracked.txt'), 'untracked\n');
+            const dirtyIndex = readFileSync(indexPath);
+            const changed = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal });
+            expect(changed.success).toBe(true);
+            if (!changed.success) throw new Error(changed.error);
+            expect(execFileSync('git', ['show', `${changed.commitSha}:${paths[0]}`], { cwd: repoRoot, encoding: 'utf8' })).toBe('unstaged\n');
+            expect(execFileSync('git', ['show', `${changed.commitSha}:${paths[2]}`], { cwd: repoRoot, encoding: 'utf8' })).toBe('staged then edited\n');
+            expect(execFileSync('git', ['show', `${changed.commitSha}:untracked.txt`], { cwd: repoRoot, encoding: 'utf8' })).toBe('untracked\n');
+            expect(execFileSync('git', ['ls-tree', '--name-only', changed.commitSha, '--', paths[1]!], { cwd: repoRoot, encoding: 'utf8' })).toBe('');
+            expect(readFileSync(indexPath)).toEqual(dirtyIndex);
+        } finally {
+            vi.mocked(spawn).mockImplementation(spawnImplementation).mockClear();
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('reads many-file checkpoint comparisons with two Git diffs and preserves literal paths, empty or unavailable evidence', async () => {
