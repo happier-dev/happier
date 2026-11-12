@@ -1548,7 +1548,11 @@ admission and detached launches all pass their requested model to that launch
 owner; an unborn Session is not resolved through the tracked-Session turn adapter.
 A completed pre-launch probe's hard `no_eligible_member` result is authoritative
 even when the probe began as an advisory soft-threshold check. Stale quota
-observations use the existing freshness/probe owner before admission; an incomplete
+observations use the existing freshness/probe owner before admission. In 0.3
+development, an exhausted observation captured before its allowance reset is
+probed at the next evaluation at or after reset, even while its age is fresh.
+An observation captured at or after reset remains authoritative, including zero
+remaining quota; no reconnect or repeating probe is required. An incomplete
 advisory probe does not manufacture confirmed exhaustion.
 Candidate credential preflight uses that candidate's own freshness and health.
 An authentication failure on the previous active member triggers rotation without
@@ -2352,6 +2356,19 @@ their authorized Provider catalog owner, rather than borrowing a native
 Account's list. There is no additional pre-launch discovery seam. These are
 development-source contracts, not loaded-runtime certification.
 
+In development source, a Connected Account authentication mode may explicitly
+declare access-only Direct delivery. The custodian source owner exports only the
+access token, its finite future expiry and declared non-secret metadata through
+the existing recipient envelope. Muse device login uses this route: its native
+files materializer omits the custodian's inference key and any refresh token,
+and native Muse obtains its own inference key on the member's Machine. There is
+no expiry timer; the next launch or existing post-failure acquisition obtains
+current material. A Session that outlives its token may need Resume. Existing
+credentials without the new declaration metadata require reconnect; an absent
+or expired token expiry is unavailable for this route. Manual API keys retain
+the existing manual Direct export contract. Brokered-only Muse selections still
+follow the existing early compatibility refusal.
+
 Brokered usage limits block brokered choices only. Current Direct model rows
 remain selectable under that limit; reconnect, withdrawal and missing or stale
 Direct material still refuse selection. UI and CLI consume the same Protocol
@@ -3003,10 +3020,13 @@ Resume and Session creation share the existing Connected Service diagnostic
 presenter, including `provider_session_state_unavailable_for_resume`; local
 paths and native Session ids remain outside the alert.
 
-In 0.3 development, an exhausted Connected Account pool keeps its existing
-`no_eligible_member` launch cause and per-member pool-selection exclusions in
-the same spawn result. The start-error presenter groups those reasons using the
-usage pool's reason-copy owner. “Sign in again” opens the existing Connect sheet
+In 0.3 development, a Connected Account pool keeps its existing
+`no_eligible_member` control refusal and per-member pool-selection exclusions.
+When every enabled member is excluded for exhausted quota, the same spawn result
+presents the existing `usage_limit` launch code and failure cause; finite execution
+runs retain that cause too. Mixed authentication and quota refusals retain the
+generic code and their member-specific reasons. The start-error presenter groups
+those reasons using the usage pool's reason-copy owner. “Sign in again” opens the existing Connect sheet
 for a member excluded for invalid authentication; “Use another account” opens
 its saved-account selection and updates the composer's existing binding. Neither
 action automatically retries Start. A Session committed before this refusal

@@ -340,8 +340,10 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 return { ok: false, result: {
                     type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
                     errorMessage: error.code,
-                    errorDetail: { kind: 'launch_error', code: error.code,
-                        message: 'No connected account in the selected pool is available.',
+                    errorDetail: { kind: 'launch_error', code: error.failureCause?.code ?? error.code,
+                        ...(error.failureCause ? { failureCause: error.failureCause } : {}),
+                        message: error.failureCause ? 'The selected pool has reached its usage limits.'
+                            : 'No connected account in the selected pool is available.',
                         connectedAccountPool: { serviceId: error.serviceId, excluded: [...error.excluded] } },
                 } };
             }

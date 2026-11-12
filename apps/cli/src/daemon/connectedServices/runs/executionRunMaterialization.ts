@@ -1115,7 +1115,9 @@ export function createExecutionRunConnectedServicesBridge(
                         error: safeResolutionFailure,
                     });
                     return error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError || error instanceof ConnectedServiceSpawnNoEligibleMemberError
-                        ? { ok: false, errorCode: error.code, errorMessage: safeResolutionFailure }
+                        ? { ok: false, errorCode: error.code, errorMessage: safeResolutionFailure,
+                            ...(error instanceof ConnectedServiceSpawnNoEligibleMemberError && error.failureCause
+                                ? { failureCause: error.failureCause } : {}) }
                         : { ...blocked(safeResolutionFailure), ...(uxDiagnostic ? { uxDiagnostic } : {}),
                             ...(failureCause ? { failureCause } : {}) };
                 }

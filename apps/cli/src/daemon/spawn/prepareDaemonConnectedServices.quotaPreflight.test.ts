@@ -174,7 +174,7 @@ describe('connected-service quota spawn preflight', () => {
                     errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
                 }));
                 expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
-                    launchError: { code: 'no_eligible_member', connectedAccountPool: {
+                    launchError: { code: 'usage_limit', failureCause: { code: 'usage_limit', phase: 'client_start', failureReason: 'usage_limit' }, connectedAccountPool: {
                         serviceId: 'happier.agent.codex/openai-codex',
                         excluded: [{ profileId: 'primary', reason: 'quota_exhausted' }],
                     } } });

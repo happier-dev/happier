@@ -4,6 +4,30 @@ import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './r
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from './selectConnectedServiceAuthGroupCandidate';
 
 describe('resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds', () => {
+  it.each([0, 1])('refreshes an exhausted sample at or after its reset without waiting for sample staleness (%s ms)', (elapsed) => {
+    const resetAtMs = 1_001_000;
+    const input = {
+      activeProfileId: 'active',
+      members: [{ profileId: 'active', priority: 1, createdAtMs: 1, enabled: true }],
+      memberStatesByProfileId: new Map([['active', { quotaSnapshot: {
+        capturedAtMs: resetAtMs - 1_000, staleAfterMs: 60_000,
+        effectiveRemainingPercent: 0,
+        meters: [{ meterId: 'weekly', limitCategory: 'usage_limit' as const,
+          remainingPct: 0, resetAtMs, providerLimitId: null }],
+      } }]]),
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, preTurnProbeMode: 'when_stale' as const },
+      allowCurrentProfileRetry: true,
+    };
+    expect(resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({ ...input, nowMs: resetAtMs - 1 })).toEqual([]);
+    expect(resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({ ...input, nowMs: resetAtMs + elapsed })).toEqual(['active']);
+    input.memberStatesByProfileId.set('active', { quotaSnapshot: {
+      capturedAtMs: resetAtMs + elapsed, staleAfterMs: 60_000, effectiveRemainingPercent: 0,
+      meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: 0, resetAtMs, providerLimitId: null }],
+    } });
+    // A read made after the reset is authoritative even when the provider still reports zero.
+    expect(resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({ ...input, nowMs: resetAtMs + elapsed })).toEqual([]);
+  });
+
   it('keeps source-valid quota without a probe and probes source-expired quota despite a later probe preference', () => {
     const nowMs = 1_000_000;
     const resolve = (staleAfterMs: number) => resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({

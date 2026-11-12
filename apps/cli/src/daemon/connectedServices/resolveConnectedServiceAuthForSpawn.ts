@@ -69,6 +69,7 @@ type ConnectedServiceAuthGroupMemberRuntimeState =
     ? T
     : never;
 import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './accountGroups/quotas/preTurnQuotaProbe';
+import { isConnectedServiceAuthGroupQuotaSnapshotExhausted } from './accountGroups/quotas/quotaUsability';
 import {
   persistConnectedServiceCredentialHealthForMaterializationFailure,
   type ConnectedServiceCredentialRefreshResult,
@@ -357,11 +358,16 @@ export class ConnectedServiceSpawnModelUnavailableError extends Error {
 
 export class ConnectedServiceSpawnNoEligibleMemberError extends Error {
   readonly code = CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.noEligibleMember;
+  readonly failureCause: Readonly<{ code: 'usage_limit'; phase: 'client_start'; failureReason: 'usage_limit' }> | undefined;
   constructor(readonly excluded: ConnectedServiceAuthGroupMemberExclusions, readonly serviceId: ConnectedAccountServiceKey) {
     super(`Connected-service account group has no eligible member${excluded.length > 0
       ? ` (${excluded.map(member => `${member.profileId}:${member.reason}`).join(', ')})`
       : ''}`);
     this.name = 'ConnectedServiceSpawnNoEligibleMemberError';
+    this.failureCause = excluded.some(member => member.reason === 'quota_exhausted')
+      && excluded.every(member => member.reason === 'quota_exhausted' || member.reason === 'disabled')
+      ? { code: 'usage_limit', phase: 'client_start', failureReason: 'usage_limit' }
+      : undefined;
   }
 }
 
@@ -434,13 +440,13 @@ function resolveActiveGroupProfileIssueReason(
     nowMs,
     maxAgeMs: activeSnapshot.staleAfterMs,
   }) ? activeSnapshot : null;
-  const activeRemaining = freshSnapshot?.effectiveRemainingPercent;
   const activeAuthInvalid =
     typeof activeState?.authInvalidUntilMs === 'number'
     && activeState.authInvalidUntilMs > nowMs;
+  // Quota evidence goes through the canonical usability owner, so an account still served by
+  // provider credits is not treated as a hard limit; recorded provider limit failures stay authoritative.
   const activeExhausted =
-    freshSnapshot?.exhausted === true
-    || (typeof activeRemaining === 'number' && Number.isFinite(activeRemaining) && activeRemaining <= 0)
+    (freshSnapshot ? isConnectedServiceAuthGroupQuotaSnapshotExhausted(freshSnapshot) : false)
     || (typeof activeState?.quotaExhaustedUntilMs === 'number' && activeState.quotaExhaustedUntilMs > nowMs)
     || (typeof activeState?.rateLimitedUntilMs === 'number' && activeState.rateLimitedUntilMs > nowMs);
   return activeAuthInvalid ? 'auth_expired' : activeExhausted ? 'usage_limit' : 'soft_threshold';

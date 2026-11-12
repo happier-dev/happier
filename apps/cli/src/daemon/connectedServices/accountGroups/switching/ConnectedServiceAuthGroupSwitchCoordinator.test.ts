@@ -55,6 +55,39 @@ class TestGenerationConflictError extends Error {
 }
 
 describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
+  it.each([0, 80])('POOL-ELIG re-evaluates an expired allowance once and retains the fresh %s%% result without reconnect', async (remainingPct) => {
+    let clock = 1_000_000;
+    const resetAtMs = clock + 1_000;
+    const quota = (observedAtMs: number, remaining: number): ConnectedServiceAuthGroupMemberRuntimeState => ({ quotaExhaustedUntilMs: resetAtMs, quotaSnapshot: {
+      capturedAtMs: observedAtMs, staleAfterMs: 60_000, effectiveRemainingPercent: remaining,
+      meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: remaining, resetAtMs, providerLimitId: null }],
+    } });
+    let current = { ...state('primary', 1), members: state('primary', 1).members.slice(0, 1),
+      memberStatesByProfileId: new Map([['primary', quota(clock, 0)]]) };
+    let probes = 0;
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => clock,
+      loadState: async () => current,
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => {
+        expect(profileIds).toEqual(['primary']); probes++;
+        current = { ...current, memberStatesByProfileId: new Map([['primary', quota(clock, remainingPct)]]) };
+        return { status: 'complete', requestedProfileCount: 1, completedProfileCount: 1 };
+      },
+      commitSwitch: async () => { throw new Error('The active member must not change'); },
+      applyGeneration: async () => ({ ok: true }),
+    });
+    const evaluate = () => coordinator.switchBeforeTurn({ serviceId: 'openai-codex', groupId: 'main',
+      reason: 'soft_threshold', observedProfileId: 'primary', allowCurrentProfileRetry: true });
+    expect((await evaluate()).status).toBe('no_eligible_member');
+    expect(probes).toBe(0);
+    clock = resetAtMs;
+    const expected = remainingPct > 0 ? 'observed_generation' : 'no_eligible_member';
+    expect((await evaluate()).status).toBe(expected);
+    expect(probes).toBe(1);
+    expect((await evaluate()).status).toBe(expected);
+    expect(probes).toBe(1);
+  });
+
   it('admits the healthy current member for launch while classified failure still switches away', async () => {
     const current = { ...state('primary', 1), memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
       ['backup', { authInvalidUntilMs: 10_000 }],
@@ -853,6 +886,41 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     expect(resetContexts).toEqual([{ groupId: 'main', sessionId: 'source-session', providerLimitIds: [] }]);
     expect(applied).toEqual([resetProfile]);
     expect(stored.generation).toBe(resetProfile === 'primary' ? 1 : 2);
+  });
+  it.each([true, false])('spends a banked free reset before paid credits (reset available %s)', async (resetAvailable) => {
+    const spent = { staleAfterMs: 60_000, capturedAtMs: 900, effectiveRemainingPercent: 0, meters: [
+      { meterId: 'weekly', limitCategory: 'usage_limit' as const, remainingPct: 0, resetAtMs: 100_000, providerLimitId: null },
+    ] };
+    let stored: ConnectedServiceAuthGroupSwitchState = {
+      ...state('primary', 1),
+      policy: { ...state('primary', 1).policy, autoUseQuotaResetsWhenExhausted: true },
+      memberStatesByProfileId: new Map([
+        ['primary', { quotaSnapshot: spent }],
+        ['backup', { quotaSnapshot: { ...spent, creditsAvailable: true } }],
+      ]),
+    };
+    const redeemed: string[] = [];
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000,
+      loadState: async () => stored,
+      commitSwitch: async ({ toProfileId }) => (stored = { ...stored, activeProfileId: toProfileId, generation: 2 }),
+      applyGeneration: async () => ({ ok: true, mode: 'hot_apply' }),
+      consumeAvailableRecoveryCreditForProfile: async ({ profileId }) => {
+        if (!resetAvailable || profileId !== 'primary') {
+          return { ok: false, errorCode: 'connected_service_quota_recovery_credit_not_available', error: 'not available' };
+        }
+        redeemed.push(profileId);
+        stored = { ...stored, memberStatesByProfileId: new Map(stored.memberStatesByProfileId).set(profileId, {
+          quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: 1_000, effectiveRemainingPercent: 100 },
+        }) };
+        return { ok: true, snapshot: null, receipt: { idempotencyKey: `reset:${profileId}`, status: 'consumed' } };
+      },
+    });
+    await expect(coordinator.switchAfterClassifiedFailure({
+      serviceId: 'openai-codex', groupId: 'main', reason: 'usage_limit', observedProfileId: 'primary',
+    })).resolves.toMatchObject({ activeProfileId: resetAvailable ? 'primary' : 'backup' });
+    expect(redeemed).toEqual(resetAvailable ? ['primary'] : []);
   });
     it.each(['needs_reauth', 'refresh_failed_retryable'] as const)('validates quota-recovery candidates before CAS and skips a member with %s', async (credentialHealthStatus) => {
         const initial = {

@@ -640,14 +640,14 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(registerRunTargets).not.toHaveBeenCalled();
     });
 
-    it('preserves retryable incomplete quota proof in the materialized Run refusal', async () => {
+    it.each([true, false])('preserves quota refusal evidence in the materialized Run (incomplete %s)', async (incomplete) => {
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
         const serviceId = 'happier.agent.codex/openai-codex';
         const credentials = { token: 'fixture-home-token', encryption: null };
         const api = await ApiClient.create(credentials);
         const group = QualifiedConnectedAccountGroupV4Schema.parse({
             v: 1, ref: { service, groupId: 'pool' }, incarnation: 'pool-row', displayName: 'Pool',
-            policy: { autoSwitch: true }, activeConnectedAccountId: 'first', generation: 7,
+            policy: { autoSwitch: true, preTurnProbeMode: incomplete ? 'when_stale' : 'never' }, activeConnectedAccountId: 'first', generation: 7,
             runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
             members: ['first', 'second'].map((connectedAccountId, priority) => ({
                 v: 1, connectedAccountId, priority, enabled: true,
@@ -705,7 +705,10 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                     [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool' },
                 } },
             });
-            expect(result).toMatchObject({ ok: false, errorCode: 'connected_service_auth_group_quota_probe_incomplete' });
+            expect(result).toMatchObject({ ok: false, errorCode: incomplete
+                ? 'connected_service_auth_group_quota_probe_incomplete' : 'no_eligible_member',
+                ...(!incomplete ? { failureCause: { code: 'usage_limit', phase: 'client_start', failureReason: 'usage_limit' } } : {}),
+            });
             expect(ConnectedServiceRunMaterializationFailureResponseSchema.parse(result)).toEqual(result);
             expect(ConnectedServiceRunRejectedStartResultSchema.parse(result)).toEqual(result);
             expect(registry.getRunTargetByRunKey(runId)).toBeNull();

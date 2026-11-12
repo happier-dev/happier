@@ -18,6 +18,13 @@ function isQuotaSnapshotStale(input: Readonly<{
     const snapshot = input.state?.quotaSnapshot;
     const capturedAtMs = snapshot?.capturedAtMs;
     if (!snapshot || typeof capturedAtMs !== 'number' || !Number.isFinite(capturedAtMs)) return true;
+    // A pre-reset zero is no evidence about the new allowance window. Probe once;
+    // a response observed at/after reset remains authoritative even if still exhausted.
+    if ((snapshot.meters ?? []).some(meter =>
+        meter.remainingPct !== null && meter.remainingPct <= 0
+        && meter.resetAtMs !== null && capturedAtMs < meter.resetAtMs
+        && meter.resetAtMs <= input.nowMs
+    )) return true;
     const probeIfSnapshotOlderThanMs =
         typeof input.policy.probeIfSnapshotOlderThanMs === 'number'
         && Number.isFinite(input.policy.probeIfSnapshotOlderThanMs)
