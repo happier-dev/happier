@@ -8,7 +8,7 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainMachineRowFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { DEFAULT_HOME_ATMOSPHERE } from '@happier-dev/protocol/account/settings/accountSettings';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
@@ -84,7 +84,8 @@ describe('Home Loading at the RN-web layout boundary', () => {
     ])(
         'waits $delay ms for the $placement Home layout, receiving positive pane geometry at $layoutAt ms (cold Profile $coldProfile, empty Sessions $emptySessions)', async ({ delay, layoutAt, placement, coldProfile, emptySessions }) => {
         const machine = createPlainMachineRowFixture({ id: 'loading-dom-machine', accountId: 'loading-dom-account' });
-        const session = createPlainSessionCurrentProjectionRecordFixture({ id: 'loading-dom-session' });
+        // This layout test seeds a current list display, not metadata/display backfill.
+        const session = createPlainSessionWithDisplayRecordFixture({ id: 'loading-dom-session' });
         const artifact = createHomeHubArtifactHttpBoundary('loading-dom-account', undefined, { machines: [machine] });
         artifact.seed({ v: 1, order: [], hidden: [], items: [] });
         const read = createDeferred<void>();
