@@ -33,7 +33,7 @@ export type MachineManagedServiceHandle = ManagedServiceHandle & Readonly<{
     endpointKind: 'native';
     lifecyclePurpose: MachineServiceWatchV1['lifecyclePurpose'];
     actionScope: Readonly<{ kind: 'machine'; machineId: string }>;
-    capabilities: Readonly<{ start: boolean; stop: boolean; restart: boolean; logs: boolean; accounting: boolean }>;
+    capabilities: Readonly<{ exec: boolean; start: boolean; stop: boolean; restart: boolean; logs: boolean; accounting: boolean }>;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     isServing(): boolean;
@@ -291,7 +291,7 @@ export function createMachineManagedServices(input: Readonly<{
                     ...wrapped, kind: 'adopted', serverId: request.serverId, machineId: request.machineId,
                     watch, instance, serviceId: watch.watchId, instanceId: process.snapshot().instanceId, endpointKind: 'native',
                     lifecyclePurpose: watch.lifecyclePurpose, actionScope: { kind: 'machine', machineId: request.machineId },
-                    capabilities: Object.freeze({ start: Boolean(native.start), stop: true, restart: Boolean(native.restart),
+                    capabilities: Object.freeze({ exec: Boolean(serviceExec.executeServiceCommand), start: Boolean(native.start), stop: true, restart: Boolean(native.restart),
                         logs: Boolean(native.logs), accounting: Boolean(native.accounting) }),
                     retirementSignal: lifetime.signal, isCurrent,
                     async inspectCurrentOccurrence() { assertCurrent(); if (!process.inspectCurrentOccurrence) unavailable();

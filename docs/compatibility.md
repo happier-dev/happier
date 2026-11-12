@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Machine service exec presentation (unreleased 0.3)
+
+Machine service rows add optional `capabilities.exec`, and their native state
+adds optional `composeServices`. Missing fields remain valid; the V1 envelope
+and persisted watch format are unchanged. The SDK snapshot transports the latter
+as optional `nativeComposeServices`. Protocol, SDK, machine-services plugin and
+CLI daemon readers reload together: earlier strict development schemas reject
+unknown fields, while consumers that ignore unknown fields remain unaffected.
+The inspected `../0.2` frontier at `b825a99dfedcb68e223155a1ba0be84babe9e2d0`
+has none of these three protocol/SDK source paths and no scoped working changes.
+No predecessor adapter or new admission rule is added.
+
 ## Managed creation mutation admission (unreleased 0.3)
 
 Cancel and Continue without setup retain their resource's controller through CLI

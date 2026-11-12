@@ -53,7 +53,7 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
   })),
   baseUrl: z.optional(z.nullable(z.string().check(z.minLength(1)))),
   port: z.optional(z.nullable(z.number().check(z.int(), z.minimum(1), z.maximum(65535)))),
-  capabilities: z.strictObject({ start: z.boolean(), stop: z.boolean(), restart: z.boolean(), logs: z.boolean(), accounting: z.boolean() }),
+  capabilities: z.strictObject({ exec: z.optional(z.boolean()), start: z.boolean(), stop: z.boolean(), restart: z.boolean(), logs: z.boolean(), accounting: z.boolean() }),
   environmentId: z.optional(id()), watchId: z.optional(id()), watchRevision: z.optional(id()),
 }).check(z.superRefine((row, ctx) => {
   if (row.authority === 'machine' && (!row.watchId || !row.watchRevision)) {

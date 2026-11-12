@@ -471,6 +471,13 @@ return `{ kind: 'ready', launch }` with the literal Exec spawn request. Don't
 spawn it yourself: the host authorizes the launch through your invocation's
 Exec service and runs it inside the operation it already admitted.
 
+The Machine row exposes optional `capabilities.exec` from the admitted host
+handle. Built-in Compose also emits optional `composeServices` in its native
+observation for project-level watches: the sorted, unique list comes from the
+same owner that validates `serviceExec`. The host carries it through the SDK
+snapshot as `nativeComposeServices` into the row's `native.composeServices`.
+Service-level watches omit that list.
+
 Without this method, exec and shell stay unsupported for your watched
 services. Built-in Compose implements it with `docker exec` into the selected
 running service container. This is development source and has not been

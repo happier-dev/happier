@@ -2431,7 +2431,11 @@ adopted Machine watch. It validates an optional Compose-member selection against
 the exact retained resource and returns a literal launch. The host authorizes
 that launch through the invocation's Exec and runs it through the existing
 admitted service command/shell owners. Built-in Compose execs into the selected
-running member's container.
+running member's container. The Machine row consumes the admitted handle's
+optional `capabilities.exec`; it never infers exec support from an adapter id.
+Compose publishes sorted, unique `composeServices` in project-level native
+observations using the same member-list owner as `serviceExec`. The supervisor
+retains it as `nativeComposeServices`, and the row presents it under `native`.
 
 The development Local Services launcher feed carries only diagnostic code,
 severity and sanitized message while a managed lifetime is failed or unhealthy.

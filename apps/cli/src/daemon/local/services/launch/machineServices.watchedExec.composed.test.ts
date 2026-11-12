@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MachineServicesDiscoveryResultV1Schema,
+  MachineServicesListResultV1Schema,
   type MachineMetadataFieldReadV1,
   type MachineMetadataFieldPortV1,
 } from '@happier-dev/protocol';
@@ -107,11 +108,12 @@ else process.exitCode=19;
             },
           }),
         ).toMatchObject({ kind: 'applied' });
-        await runtime.execute({
-          actionId: 'machines.services.list',
-          input: target,
-          context,
-        });
+        const listed = MachineServicesListResultV1Schema.parse(await runtime.execute({
+          actionId: 'machines.services.list', input: target, context,
+        }));
+        expect(listed).toMatchObject({ kind: 'snapshot', services: [{ capabilities: { exec: true }, native: { composeServices: ['web', 'worker'] } }] });
+        if (listed.kind !== 'snapshot') throw new Error('Expected watched row');
+        const members = listed.services[0]!.native!.composeServices!;
         const handle =
           fixture.registry.projectManagedServices.listMachineServices()[0]!;
         expect(handle.kind).toBe('adopted');
@@ -209,6 +211,11 @@ else process.exitCode=19;
           }),
         ).toMatchObject({ ok: false, errorCode: 'machine_access_denied' });
 
+        for (const service of members) {
+          const accepted = await handle.withServiceShell!({ operation: { operationId: `member-${service}`, kind: 'machines.terminal.open' }, service },
+            async launch => ({ kind: 'not_started' as const, terminal: launch.args }));
+          expect(accepted.terminal).toContain(service === 'web' ? webId : workerId);
+        }
         const shell = await handle.withServiceShell!(
           {
             operation: {

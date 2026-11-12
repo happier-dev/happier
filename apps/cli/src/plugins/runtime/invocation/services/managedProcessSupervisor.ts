@@ -270,6 +270,7 @@ export type ManagedServiceProcessSnapshot = Readonly<{
     readiness?: ManagedServiceNativeObservationV1['readiness'];
     nativePhase?: ManagedServiceNativeObservationV1['phase'];
     nativeDisplayName?: ManagedServiceNativeObservationV1['displayName'];
+    nativeComposeServices?: ManagedServiceNativeObservationV1['composeServices'];
     /** Admitted native desired stop, retained until a start or restart changes it. */
     expectedDown?: 'stop';
     baseUrl: string | null;
@@ -1859,6 +1860,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     readiness: observation.readiness,
                     nativePhase: observation.phase,
                     nativeDisplayName: observation.displayName,
+                    nativeComposeServices: observation.composeServices,
                     baseUrl: endpoint?.baseUrl ?? null,
                     port: endpoint?.port ?? null,
                     ...(observation.phase === 'running' && observation.readiness === 'ready'
@@ -1873,6 +1875,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     || snapshot.readiness !== next.readiness
                     || snapshot.nativePhase !== next.nativePhase
                     || snapshot.nativeDisplayName !== next.nativeDisplayName
+                    || JSON.stringify(snapshot.nativeComposeServices) !== JSON.stringify(next.nativeComposeServices)
                     || snapshot.expectedDown !== next.expectedDown
                     || snapshot.baseUrl !== next.baseUrl
                     || snapshot.port !== next.port) {
@@ -2760,7 +2763,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         if (result.status === 'accepted') return { kind: 'accepted' };
                         if (result.status === 'termination_incomplete') return { kind: 'outcome_unknown' };
                         observation = { phase: 'stopped', readiness: 'not_reported', endpoint: null,
-                            ...(snapshot.nativeDisplayName !== undefined ? { displayName: snapshot.nativeDisplayName } : {}) };
+                            ...(snapshot.nativeDisplayName !== undefined ? { displayName: snapshot.nativeDisplayName } : {}),
+                            ...(snapshot.nativeComposeServices !== undefined ? { composeServices: snapshot.nativeComposeServices } : {}) };
                     } else {
                         observation = await nativeControl[operation]!(options);
                     }

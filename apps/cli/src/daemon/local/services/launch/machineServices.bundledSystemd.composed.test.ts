@@ -77,7 +77,7 @@ else process.exitCode=17;
                 native: { displayName: 'worker.service' },
                 accounting: { memoryBytes: sourceFacts.memoryBytes, startedAtMs: Date.parse(sourceFacts.startedAt) },
                 health: { since: Date.parse(sourceFacts.activeSince) },
-                capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false } }] });
+                capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false, exec: false } }] });
             if (listed.kind !== 'snapshot') throw new Error('Expected watched service');
             expect(await runtime.execute({ actionId: 'machines.services.detail', input: { ...target, serviceId: listed.services[0]!.serviceId }, context }))
                 .toMatchObject({ kind: 'service', runtimeFacts: { configuration: null, freshness: 'current',

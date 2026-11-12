@@ -72,7 +72,9 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 && isHappierComposeName(snapshot.nativeDisplayName) ? name : snapshot.nativeDisplayName;
             const native = snapshot.mode === 'native'
                 ? { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported',
-                    ...(displayName !== undefined ? { displayName } : {}) } as const
+                    ...(displayName !== undefined ? { displayName } : {}),
+                    ...(handle.kind === 'adopted' && snapshot.nativeComposeServices !== undefined
+                        ? { composeServices: snapshot.nativeComposeServices } : {}) } as const
                 : undefined;
             const facts = handle.readNativeRuntimeFacts?.();
             const freshness = facts?.freshness === 'current' ? 'current' : 'unavailable';
@@ -108,6 +110,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 && prior.reason === health.reason && prior.expectedDown === health.expectedDown && prior.since === health.since ? prior : Object.freeze(health);
             const configuration = facts ? facts.configuration ? { ports: facts.configuration.ports } : null : undefined;
             const capabilities = handle.kind === 'adopted' ? handle.capabilities : {
+                exec: Boolean(handle.executeServiceCommand),
                 start: handle.kind === 'environment' && handle.nativeControlCapabilities?.start === true,
                 stop: handle.kind === 'environment' && handle.nativeControlCapabilities?.stop === true,
                 restart: handle.kind === 'environment' && handle.nativeControlCapabilities?.restart === true,
@@ -154,7 +157,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 unavailableReason: 'admission_unavailable', watchId: watch.watchId, watchRevision: identity.watchRevision,
                 nativeInstance: Object.freeze({ adapter: watch.adapter, nativeResourceId: watch.nativeResourceId }),
                 native: Object.freeze({ phase: 'unknown', readiness: 'not_reported' }),
-                capabilities: Object.freeze({ start: false, stop: false, restart: false, logs: false, accounting: false }),
+                capabilities: Object.freeze({ exec: false, start: false, stop: false, restart: false, logs: false, accounting: false }),
             });
             unavailable.set(watch, row);
             return row;

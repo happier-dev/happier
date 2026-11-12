@@ -91,15 +91,20 @@ async function containers(context: PluginInvocationContext, options?: PluginCanc
     } catch { return null; }
 }
 
-function observation(rows: readonly Container[]): ManagedServiceNativeObservationV1 {
+function composeServices(rows: readonly Container[]): string[] {
+    return [...new Set(rows.map(row => row.service))].sort();
+}
+
+function observation(rows: readonly Container[], projectLevel = true): ManagedServiceNativeObservationV1 {
     if (!rows.length) return unknown;
     const displayName = rows[0]!.project;
+    const members = projectLevel ? { composeServices: composeServices(rows) } : {};
     if (rows.every(row => ['created', 'exited', 'dead'].includes(row.state))) {
-        return { phase: 'stopped', readiness: 'not_reported', endpoint: null, displayName };
+        return { phase: 'stopped', readiness: 'not_reported', endpoint: null, displayName, ...members };
     }
-    if (rows.some(row => row.state !== 'running')) return { ...unknown, displayName };
+    if (rows.some(row => row.state !== 'running')) return { ...unknown, displayName, ...members };
     return { phase: 'running', readiness: rows.every(row => row.health === 'healthy') ? 'ready'
-        : rows.some(row => row.health === 'unhealthy' || row.health === 'starting') ? 'not_ready' : 'not_reported', endpoint: null, displayName };
+        : rows.some(row => row.health === 'unhealthy' || row.health === 'starting') ? 'not_ready' : 'not_reported', endpoint: null, displayName, ...members };
 }
 
 async function current(instance: ManagedServiceNativeInstanceV1, context: PluginInvocationContext,
@@ -184,7 +189,7 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
     },
     async inspect(instance, options, context) {
         if (!context) return unknown;
-        try { const rows = await current(instance, context, options); return rows ? observation(rows) : unknown; }
+        try { const rows = await current(instance, context, options); return rows ? observation(rows, !selection(instance)?.service) : unknown; }
         catch (error) { failure(error, options); options?.signal?.throwIfAborted(); return unknown; }
     },
     async serviceExec(instance, request, options, context) {
@@ -193,7 +198,7 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
             const rows = await current(instance, context, options);
             if (!rows?.length) return { kind: 'unavailable', code: 'compose_service_unavailable' };
             // Members are the watched resource's own Compose services, never a caller list.
-            const services = [...new Set(rows.map(row => row.service))];
+            const services = composeServices(rows);
             const service = request.service ?? (services.length === 1 ? services[0] : undefined);
             if (!service || !services.includes(service)) return { kind: 'unsupported', code: 'service_selection_invalid' };
             const member = rows.filter(row => row.service === service && row.state === 'running').map(row => row.id).sort()[0];

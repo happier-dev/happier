@@ -419,6 +419,7 @@ export type ManagedServiceSnapshot = Readonly<{
     readiness?: ManagedServiceNativeObservationV1['readiness'];
     nativePhase?: ManagedServiceNativeObservationV1['phase'];
     nativeDisplayName?: ManagedServiceNativeObservationV1['displayName'];
+    nativeComposeServices?: ManagedServiceNativeObservationV1['composeServices'];
     /**
      * The validated base URL required by endpoint-producing contracts such as
      * MCP discovery: a loopback `http:` address for a service the host spawned,

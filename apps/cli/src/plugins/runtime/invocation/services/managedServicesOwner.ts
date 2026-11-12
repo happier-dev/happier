@@ -1701,6 +1701,7 @@ function translateSnapshot(
         ...(value.readiness ? { readiness: value.readiness } : {}),
         ...(value.nativePhase ? { nativePhase: value.nativePhase } : {}),
         ...(value.nativeDisplayName !== undefined ? { nativeDisplayName: value.nativeDisplayName } : {}),
+        ...(value.nativeComposeServices !== undefined ? { nativeComposeServices: value.nativeComposeServices } : {}),
         baseUrl: value.baseUrl,
         startedAtMs: value.startedAtMs,
         lastHealthyAtMs: value.lastHealthyAtMs,
