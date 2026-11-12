@@ -1,3 +1,4 @@
+import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -13,13 +14,13 @@ import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } fro
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { readActionCredentialScopeDeniedHttpFailureV1, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
 import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1,
-  isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+  isDeploymentDomainChildActionIdV1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
@@ -56,7 +57,7 @@ import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema, type WorkspaceSyncSo
   type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema, ExternalActionResponseEnvelopeV1Schema, isExternalActionSubmittedUnknownHttpResponse, projectExternalActionPendingResetStartAdmissionV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema, isExternalActionSubmittedUnknownHttpResponse, projectExternalActionPendingResetStartAdmissionV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -67,7 +68,7 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/a
 import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2,
   projectSessionSpawnNewActionInputV2, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
-import { projectUnexpectedActionFailureV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ExternalActionExecutionAuthorizationRequestV1, ExternalActionRequesterHttpProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { assertResolvedHomeTargetIdentity, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
@@ -402,7 +403,7 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
   const admission = context.machineAdmission;
   const identity = authorization && deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
   if (!authorization || !identity || !root.success || !spawn.success || root.data.sessionRef
-    || parent?.actionId !== 'deployments.prepare' || child?.actionId !== 'session.spawn_new' || child.role !== 'prepare-session'
+    || parent?.actionId !== 'deployments.prepare' || child?.actionId !== 'session.spawn_new' || child.role !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1
     || context.actionRequestId !== identity.requestId || !context.verifyMachineAdmissionCurrent || !admission
     || admission.machineId !== authorization.binding.machineId || admission.installationId !== input.installationId
     || admission.installationId !== authorization.binding.installationId
@@ -977,6 +978,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       }));
       if (!minted.ok) return { ...fail(minted.code),
         ...(minted.details === undefined ? minted.diagnostic ? { details: minted.diagnostic } : {} : { details: minted.details }),
+        ...(minted.requestId === undefined ? {} : { requestId: minted.requestId }),
         ...(minted.failureCause === undefined ? {} : { failureCause: minted.failureCause }) };
       const root = minted.authorization.binding;
       if (!('authentication' in root) || !sameStrictJsonValue(root.authentication, authentication.data)
@@ -1026,6 +1028,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       ...(input.signal ? { signal: input.signal } : {}) }));
     if (!minted.ok) return { ...fail(minted.code),
       ...(minted.details === undefined ? minted.diagnostic ? { details: minted.diagnostic } : {} : { details: minted.details }),
+      ...(minted.requestId === undefined ? {} : { requestId: minted.requestId }),
       ...(minted.failureCause === undefined ? {} : { failureCause: minted.failureCause }) };
     const root = minted.authorization.binding;
     // Home's authority is signed alongside the operand; compare the request
@@ -1130,31 +1133,16 @@ export async function deliverExternalActionRequest(input: Readonly<{
     // A received operation receipt remains true even when observation retired.
     if (isExternalActionSubmittedUnknownHttpResponse(response.status, response.data)) return fail('outcome_unknown');
     if (response.status < 200 || response.status >= 300) {
-      const denied = readActionCredentialScopeDeniedHttpFailureV1(response.status, response.data);
-      if (denied) return denied;
       const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
       if (refusal.success && 'requestId' in refusal.data && refusal.data.requestId !== undefined
         && refusal.data.requestId !== input.envelope.requestId) return fail('invalid_action_output');
-      if (refusal.success && 'code' in refusal.data
-        && (refusal.data.code === 'action_not_admitted' || refusal.data.code === 'action_outcome_unknown')) {
-        return { ...projectUnexpectedActionFailureV1(refusal.data.code === 'action_not_admitted' ? false : null, refusal.data.requestId),
-          ...('failureCause' in refusal.data && refusal.data.failureCause !== undefined ? { failureCause: refusal.data.failureCause } : {}),
-          ...('diagnostic' in refusal.data ? { details: refusal.data } : {}) };
-      }
-      if (refusal.success && 'phase' in refusal.data && refusal.data.phase !== undefined) {
-        return { ...fail(refusal.data.code), details: refusal.data };
-      }
-      if (refusal.success && 'code' in refusal.data && refusal.data.code === 'target_unavailable'
-        && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
-        return { ...fail(refusal.data.code), details: refusal.data.diagnostic };
-      }
-      return fail(refusal.success ? 'code' in refusal.data ? refusal.data.code : refusal.data.error : 'project_transport_unavailable');
+      return refusal.success ? projectExternalActionHttpFailureV1(refusal.data) : fail('project_transport_unavailable');
     }
     if (input.envelope.v === 2 && input.material && input.binding) return openExternalActionResponseV2({ envelope: response.data,
       binding: input.binding, request: input.envelope, material: input.material }) ?? fail('invalid_action_output');
-    const parsed = ExternalActionResponseEnvelopeV1Schema.safeParse(response.data);
-    return parsed.success && parsed.data.actionId === input.actionId && parsed.data.requestId === input.envelope.requestId
-      ? parsed.data.execution : fail('invalid_action_output');
+    const parsed = parseExternalActionResponseEnvelopeV1(response.data);
+    return parsed && parsed.actionId === input.actionId && parsed.requestId === input.envelope.requestId
+      ? readExternalActionResponseExecutionV1(parsed) : fail('invalid_action_output');
   } catch { return fail('outcome_unknown'); }
 }
 
@@ -1724,6 +1712,7 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
     }
     return { ...refused('mint', 'home_minted_authorization'), code: minted.code,
       ...(minted.details === undefined ? {} : { details: minted.details }),
+      ...(minted.requestId === undefined ? {} : { requestId: minted.requestId }),
       ...(minted.failureCause ? { failureCause: minted.failureCause } : {}) };
   }
   if (!await isCurrent()) return refused('binding', 'active_session_action');
@@ -1833,6 +1822,19 @@ export async function resolveExternalActionRequesterServerRequestHeaders(input: 
   });
   return headers ? { ...headers, ...(projection.accountEncryptionMode === undefined ? {}
     : { [requesterAccountEncryptionMode]: projection.accountEncryptionMode }) } : null;
+}
+
+/** Capture the existing signed root transport without substituting Account bearer authority. */
+export function createExternalActionRequesterServerRequestHeaders(context: ActionExecutorContext | undefined):
+  ((request: Readonly<{ method: string; path: string; body?: unknown; signal?: AbortSignal }>) => Promise<RequesterAccountAuthorizationHeaders | null>) | undefined {
+  const authorization = context?.externalActionExecutionAuthorization;
+  const projection = authorization?.requesterHttpProjection;
+  if (!context || !authorization || !projection) return undefined;
+  return async request => await resolveExternalActionRequesterServerRequestHeaders({
+    context, effectActionId: authorization.binding.actionId, serverHttpBaseUrl: projection.serverHttpBaseUrl,
+    method: request.method, path: request.path,
+    ...(request.body === undefined ? {} : { body: request.body }),
+  });
 }
 
 /** Admit this private acquisition once, before the Machine profile materializes a credential. */
@@ -2105,26 +2107,13 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       const error = ExternalActionHttpErrorSchema.safeParse(response.data);
       if (error.success && 'requestId' in error.data && error.data.requestId !== undefined
         && error.data.requestId !== envelope.requestId) return fail('invalid_action_output');
-      if (error.success && 'code' in error.data
-        && (error.data.code === 'action_not_admitted' || error.data.code === 'action_outcome_unknown')) {
-        return { ...projectUnexpectedActionFailureV1(error.data.code === 'action_not_admitted' ? false : null, error.data.requestId),
-          ...('failureCause' in error.data && error.data.failureCause !== undefined ? { failureCause: error.data.failureCause } : {}),
-          ...('diagnostic' in error.data ? { details: error.data } : {}) };
-      }
-      if (error.success && 'phase' in error.data && error.data.phase !== undefined) {
-        return { ...fail(error.data.code), details: error.data };
-      }
-      if (error.success && 'code' in error.data && error.data.code === 'target_unavailable'
-        && 'diagnostic' in error.data && error.data.diagnostic !== undefined) {
-        return { ...fail(error.data.code), details: error.data.diagnostic };
-      }
-      return fail(error.success ? 'code' in error.data ? error.data.code : error.data.error : 'target_unavailable');
+      return error.success ? projectExternalActionHttpFailureV1(error.data) : fail('target_unavailable');
     }
     if (envelope.v === 2 && childMaterial) return await observe(openExternalActionResponseV2({ envelope: response.data,
       binding, request: envelope, material: childMaterial }) ?? fail('invalid_encrypted_envelope'));
-    const responseEnvelope = ExternalActionResponseEnvelopeV1Schema.safeParse(response.data);
-    return await observe(responseEnvelope.success && responseEnvelope.data.actionId === params.actionId
-      && responseEnvelope.data.requestId === requestId ? responseEnvelope.data.execution : fail('invalid_envelope'));
+    const responseEnvelope = parseExternalActionResponseEnvelopeV1(response.data);
+    return await observe(responseEnvelope && responseEnvelope.actionId === params.actionId
+      && responseEnvelope.requestId === requestId ? readExternalActionResponseExecutionV1(responseEnvelope) : fail('invalid_envelope'));
   } catch (error) {
     refuseExternalActionPhase('managed_child_http', params.targetMachineId, error);
     return fail(params.signal?.aborted ? 'cancelled' : 'target_unavailable');

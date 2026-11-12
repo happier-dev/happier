@@ -15,6 +15,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import * as executionAuthorizationOwner from './externalActionExecutionAuthorization';
+import { prepareInstalledWorkflowActionAuthorization } from './installedWorkflowActionAuthorization';
 import { createSessionListActionDeps } from '@/session/actions/sessionListActionDependency';
 import { openExternalActionRequestV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -30,6 +31,7 @@ import { createDaemonPatVerifier } from '@/daemon/auth/daemonPatVerifier';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
@@ -55,6 +57,45 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 });
 
 describe('requester HTTP authority on the existing external Action carrier', () => {
+  it.each(['brokered', 'direct'] as const)('signs the exact reviewed provider child on a finite %s Team acquisition under its original root', async mode => {
+    const admitted = await executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
+      authorization, target, serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
+      serverHttpBaseUrl: 'https://home.test', installationId: 'alice-installation', privateKey: keys.secretKey,
+      rootAdmitted: true,
+    });
+    if (!admitted?.requesterHttpProjection) throw new Error('Missing requester HTTP projection');
+    const actionId = 'acme.cloud/actions/options' as const;
+    const input = { region: 'eu' };
+    const root = { ...contextForReviewedChild(), externalActionExecutionAuthorization: admitted };
+    const consumer = { kind: 'action_operation', operationId: admitted.binding.requestId, actionId,
+      pluginVersion: '1.0.0', purpose: { consumer: { pluginId: 'acme.cloud', localId: 'options' }, purpose: 'cloud-api' } };
+    const inputDigest = computeActionInputApprovalDigestV1(actionId, input);
+    const request = mode === 'brokered'
+      ? { path: PROVIDER_BROKER_OPEN_HTTP_PATH_V1, body: { v: 3, resourceId: 'resource',
+        initiatorMachineId: target.machineId, consumer, inputDigest } }
+      : { path: '/v2/teams/team/credential-resources/resource/direct-material', body: { resourceId: 'resource',
+        consumer, slot: { kind: 'connected_service_purpose', purpose: consumer.purpose },
+        disclosedMember: { service: { pluginId: 'acme.cloud', localId: 'cloud' }, accountId: 'provider' } } };
+    const child = { action: { pluginId: 'acme.cloud', localId: 'options' }, role: 'options', input };
+    const result = await invokeHostReviewedChildV1({ parent: { actionId: admitted.binding.actionId, input: envelope.input },
+      context: root, child, admittedReview: { action: child.action, role: child.role, surface: 'cli' },
+      execute: async (_input, context) => {
+        const resolveHeaders = executionAuthorizationOwner.createExternalActionRequesterServerRequestHeaders(context);
+        const headers = await resolveHeaders?.({ method: 'POST', ...request });
+        const encoded = headers?.['x-happier-action-reviewed-child'];
+        expect(encoded).toBeTypeOf('string');
+        const reviewedChild = JSON.parse(Buffer.from(encoded!, 'base64url').toString('utf8'));
+        expect(reviewedChild).toMatchObject({ actionId, inputDigest });
+        expect(headers).not.toHaveProperty('Authorization');
+        expect(verifyExternalActionMachineRequestV1({ authorizationToken: admitted.token, target,
+          installationId: 'alice-installation', requestId: admitted.binding.requestId,
+          effectActionId: admitted.binding.actionId, method: 'POST', ...request, reviewedChild,
+          signature: headers![EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey })).toBe(true);
+        return { ok: true as const, result: {} };
+      } });
+    expect(result).toMatchObject({ ok: true });
+  });
+
   it.each([
     ['external_credential_without_authorization', { context: { externalActionCredential: principal } }],
     ['signing_key_missing', { privateKey: undefined }],
@@ -597,14 +638,14 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       input: { sessionId: sessionTarget.sessionId, notes: 'Admitted notes' }, target: sessionTarget,
       machineId: 'publisher', serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
       serverHttpBaseUrl: 'https://home.test', installationId: 'publisher-installation', privateKey: keys.secretKey };
-    expect(await executionAuthorizationOwner.prepareInstalledWorkflowActionAuthorization(request))
+    expect(await prepareInstalledWorkflowActionAuthorization(request))
       .toMatchObject({ binding: { target: sessionTarget, workflowActionOrigin: { runId: 'run', requestId } } });
     expect(get).toHaveBeenCalledTimes(1);
     expect(mints).toBe(1);
-    expect(await executionAuthorizationOwner.prepareInstalledWorkflowActionAuthorization({ ...request,
+    expect(await prepareInstalledWorkflowActionAuthorization({ ...request,
       context: { ...context, agentStartContext: { ...start, baseline: { ...start.baseline, machineId: 'another-publisher' } } },
     })).toBeNull();
-    expect(await executionAuthorizationOwner.prepareInstalledWorkflowActionAuthorization({ ...request,
+    expect(await prepareInstalledWorkflowActionAuthorization({ ...request,
       context: { ...context, executionRunWorkflowRunId: 'another-run' },
     })).toBeNull();
     expect(get).toHaveBeenCalledTimes(1);
@@ -1455,3 +1496,51 @@ describe('requester HTTP authority on the existing external Action carrier', () 
 function contextForReviewedChild(): ActionExecutorContext {
   return { surface: 'cli', authority: 'account_automation', runtimeAccountId: 'bob', externalActionTarget: target };
 }
+
+
+describe('closed HTTP refusal projection', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+it('retains HTTP refusal cause and outer-only execution IDs through the shared CLI delivery owner', async () => {
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 } as const;
+  const post = vi.spyOn(axios, 'post');
+  const deliver = () => executionAuthorizationOwner.deliverExternalActionRequest({ actionId: 'notifications.notify_me',
+    serverHttpBaseUrl: 'https://home.test', body: {}, envelope, headers: {}, isCurrent: async () => true });
+  for (const code of ['target_not_local', 'credential_scope_denied'] as const) {
+    const projected = code === 'credential_scope_denied'
+      ? projectExternalActionHttpError(code, envelope.requestId, undefined, { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause })
+      : projectExternalActionHttpError(code, envelope.requestId, undefined, undefined, 'target_installation', undefined, failureCause);
+    post.mockResolvedValueOnce({ status: projected.statusCode, data: projected.payload });
+    expect(await deliver()).toMatchObject({ ok: false, errorCode: code, requestId: envelope.requestId, failureCause,
+      ...(code === 'target_not_local' ? { details: { phase: 'target_installation' } } : {}) });
+    post.mockResolvedValueOnce({ status: projected.statusCode, data: { ...projected.payload, requestId: 'mismatched' } });
+    expect(await deliver()).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+  }
+  post.mockResolvedValueOnce({ status: 200, data: { v: 1, actionId: 'notifications.notify_me', requestId: envelope.requestId,
+    execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local' } } });
+  expect(await deliver()).toMatchObject({ ok: false, errorCode: 'target_not_local', requestId: envelope.requestId });
+});
+
+
+it.each(['target_not_local', 'credential_scope_denied'] as const)('retains HTTP refusal cause and correlation from %s mint through original Account execution', async code => {
+  const actionId = 'machines.vitals.get';
+  const requestId = 'typed-mint-refusal';
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 } as const;
+  const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true,
+    installationId: 'installation', revokedAt: null, replacedByMachineId: null,
+    access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+  vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
+    ? { status: 200, data: { mode: 'plain', updatedAt: 1 } } : { status: 200, data: { machine } });
+  const projected = code === 'credential_scope_denied'
+    ? projectExternalActionHttpError(code, requestId, undefined, { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause })
+    : projectExternalActionHttpError(code, requestId, undefined, undefined, 'target_installation', undefined, failureCause);
+  const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: projected.statusCode, data: projected.payload });
+  const result = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId, input: { machineId: target.machineId }, requestId, target,
+    credentials: { token: accountToken, encryption: null, credentialProvenance: 'stored_session' },
+    serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_bob_home' });
+  expect(result).toMatchObject({ ok: false, errorCode: code, requestId, failureCause,
+    ...(code === 'target_not_local' ? { details: { phase: 'target_installation' } } : {}) });
+  expect(post).toHaveBeenCalledTimes(1);
+});
+
+});

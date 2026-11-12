@@ -853,3 +853,38 @@ describe('captured Account Action response decoding', () => {
         expect(await execute()).toMatchObject({ ok: false, errorCode: code });
     });
 });
+
+
+it.each([{ code: 'target_not_local', stage: 'effect' }, { code: 'credential_scope_denied', stage: 'effect' },
+    { code: 'target_not_local', stage: 'mint' }, { code: 'credential_scope_denied', stage: 'mint' }] as const)('keeps closed cause, phase and request correlation for $code at $stage', async ({ code, stage }) => {
+    const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 } as const;
+    const refusal = code === 'credential_scope_denied'
+        ? projectExternalActionHttpError(code, binding.requestId, undefined, { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause })
+        : projectExternalActionHttpError(code, binding.requestId, undefined, undefined, 'target_installation', undefined, failureCause);
+    homes.answer(serverId, stage === 'mint' ? `${path}/execution-authorization` : path, { status: refusal.statusCode, body: refusal.payload });
+    if (!account) throw new Error('Expected captured Account');
+    const result = stage === 'mint' ? await executeOriginalAccountActionTransport({ account, binding, input: {}, authority: 'present_user',
+        machineCustody: { accountMode: 'plain', installationId: 'installation-1', custodian: { accountId: 'foreign-owner' },
+            installationPublicKey: nacl.box.keyPair().publicKey } }) : await execute();
+    expect(result).toMatchObject({ ok: false, errorCode: code, requestId: binding.requestId, failureCause,
+        ...(code === 'target_not_local' ? { details: { phase: 'target_installation' } } : {}) });
+});
+
+it('keeps an outer-only V1 execution failure correlation after matching the response', async () => {
+    homes.answer(serverId, path, { body: { v: 1, actionId: binding.actionId, requestId: binding.requestId,
+        execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local' } } });
+    expect(await execute()).toMatchObject({ ok: false, requestId: binding.requestId, errorCode: 'target_not_local' });
+});
+
+
+it.each([true, false])('keeps closed cause but binds encrypted diagnostic adoption to the issued request (%s)', async correlated => {
+    if (!account) throw new Error('Expected captured Account');
+    const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+    homes.answer(serverId, path, { status: 409, body: { error: 'invalid_request', code: 'target_unavailable', diagnostic,
+        ...(correlated ? { requestId: binding.requestId } : {}) } });
+    const result = await executeOriginalAccountActionTransport({ account, binding, input: {},
+        material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(13) } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    if (correlated) expect(result).toMatchObject({ details: diagnostic });
+    else expect(result).not.toHaveProperty('details');
+});

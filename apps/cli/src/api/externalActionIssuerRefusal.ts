@@ -7,6 +7,7 @@ export type ExternalActionIssuerRefusal = Readonly<{
   phase: 'preparation' | 'mint' | 'binding' | 'requester_bootstrap';
   requiredFact: string;
   code?: string;
+  requestId?: string;
   details?: unknown;
   failureCause?: ActionExecuteFailure['failureCause'];
 }>;
@@ -20,6 +21,7 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
   // result instead of inventing a missing Account authorization.
   if (refusal.code === 'target_unavailable') return {
     ok: false, errorCode: refusal.code, error: refusal.code,
+    ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
     ...(refusal.details === undefined ? {} : { details: refusal.details }),
     failureCause: refusal.failureCause ?? projectActionFailureCauseV1({ code: refusal.code }, phase),
   };
@@ -32,11 +34,11 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
       : refusal.phase === 'binding'
         ? 'Update Home and this Machine, then retry from a fresh Session'
         : 'Start a fresh Session on the connected Machine, then retry the action';
-  const errorCode = refusal.code === 'credential_scope_denied' || refusal.code === 'present_user_required'
-    ? refusal.code : 'action_forbidden';
+  const errorCode = refusal.code ?? 'action_forbidden';
   // Only our static branch fact is logged, never Home details, proof, or input.
   refuseExternalActionPhase(phase, machineId, undefined, { refusalBranch: refusal.requiredFact });
   return { ok: false, errorCode, error: errorCode,
-    details: { ...ownerDetails, reason: 'external_authorization_refused', phase, requiredFact, remedy },
+    ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
+    details: { ...ownerDetails, reason: 'external_authorization_refused', phase: 'phase' in ownerDetails ? ownerDetails.phase : phase, requiredFact, remedy },
     failureCause: refusal.failureCause ?? projectActionFailureCauseV1({ code: errorCode }, phase) };
 }

@@ -56,7 +56,7 @@ describe('whole external Action encryption', () => {
     expect(prepared.body).not.toContain('review');
     expect(prepared.body).not.toContain('D'.repeat(43));
     // The person's client opens exactly that refusal and its review.
-    expect(openExternalActionResponseV2({ envelope: prepared.response, binding: reviewBinding, request, material })).toEqual(execution);
+    expect(openExternalActionResponseV2({ envelope: prepared.response, binding: reviewBinding, request, material })).toEqual({ ...execution, requestId: reviewBinding.requestId });
     // Without the Account material there is no review and no plaintext fallback.
     expect(openExternalActionResponseV2({ envelope: prepared.response, binding: reviewBinding, request,
       material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(8) } })).toBeNull();
@@ -719,7 +719,7 @@ describe('whole external Action encryption', () => {
     const prepared = prepareExternalActionResponseV2({ binding, request, execution, material,
       executedMachineId: binding.target.machineId, randomBytes });
     expect(openExternalActionResponseV2({ envelope: prepared.response, binding, request, material }))
-      .toEqual(execution);
+      .toEqual({ ...execution, requestId: binding.requestId });
   });
 
   it('binds approval decision admission to the encrypted input without exposing private operands', () => {
@@ -966,7 +966,7 @@ describe('whole external Action encryption', () => {
     const response = prepareExternalActionResponseV2({ binding, request, executedMachineId: 'machine-1',
       execution, material, randomBytes });
     expect(response.body).not.toContain('sentinel');
-    expect(openExternalActionResponseV2({ envelope: response.response, binding, request, material })).toEqual(execution);
+    expect(openExternalActionResponseV2({ envelope: response.response, binding, request, material })).toEqual({ ...execution, requestId: binding.requestId });
     const changed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: { ...input, message: 'other' }, material, randomBytes });
     expect(openExternalActionResponseV2({ envelope: response.response, binding, request: changed, material })).toBeNull();
     const resealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material,
@@ -1020,4 +1020,15 @@ describe('whole external Action encryption', () => {
     }
     expect(computeCanonicalDomainSeparatedDigest('happier:external_action_request:v2', [request.payload.c])).toHaveLength(43);
   });
+});
+
+
+it('retains a V2 outer-only failure ID only after authenticated request matching', () => {
+  const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+    binding, input: { sessionId: 'session-1', message: 'hello' }, material, randomBytes });
+  const execution = { ok: false as const, errorCode: 'target_not_local', error: 'target_not_local' };
+  const prepared = prepareExternalActionResponseV2({ binding, request, executedMachineId: 'machine-1', execution, material, randomBytes });
+  expect(openExternalActionResponseV2({ envelope: prepared.response, binding, request, material }))
+    .toEqual({ ...execution, requestId: binding.requestId });
+  expect(openExternalActionResponseV2({ envelope: { ...prepared.response, requestId: 'other-request' }, binding, request, material })).toBeNull();
 });

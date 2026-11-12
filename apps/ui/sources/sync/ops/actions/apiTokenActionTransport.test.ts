@@ -151,3 +151,20 @@ describe('API-token Action transport', () => {
         expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
     });
 });
+
+
+it('preserves closed HTTP causes and target phase while refusing correlation it did not issue', async () => {
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 };
+  for (const payload of [
+    { error: 'invalid_request', code: 'target_not_local', phase: 'target_installation', failureCause },
+    { error: 'credential_scope_denied', diagnostic: { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause } },
+  ]) {
+    const request: ServerFetch = async () => Response.json(payload, { status: 403 });
+    expect(await executeApiTokenAction({ request }, 'session.stop', { sessionId: 'session-1' }))
+      .toMatchObject({ ok: false, errorCode: 'code' in payload ? payload.code : payload.error, failureCause,
+        ...('phase' in payload ? { details: { phase: 'target_installation' } } : {}) });
+    const unrelated: ServerFetch = async () => Response.json({ ...payload, requestId: 'unissued' }, { status: 403 });
+    expect(await executeApiTokenAction({ request: unrelated }, 'session.stop', { sessionId: 'session-1' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+  }
+});

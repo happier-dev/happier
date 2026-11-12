@@ -1,4 +1,4 @@
-import { ExternalActionHttpErrorSchema, ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionHttpFailureV1, ExternalActionHttpErrorSchema, ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -39,12 +39,7 @@ export async function executeApiTokenAction(transport: ApiTokenActionTransport, 
         if (!failure.success || ('requestId' in failure.data && failure.data.requestId !== undefined)) {
             return refused('invalid_action_output');
         }
-        if ('code' in failure.data && failure.data.code === 'target_unavailable'
-            && 'diagnostic' in failure.data && failure.data.diagnostic !== undefined && !('managedAdmission' in failure.data)) {
-            return { ...refused(failure.data.code), details: failure.data.diagnostic };
-        }
-        return { ...refused('code' in failure.data ? failure.data.code : failure.data.error),
-            ...('diagnostic' in failure.data ? { details: failure.data } : {}) };
+        return projectExternalActionHttpFailureV1(failure.data);
     }
     const parsed = parseExternalActionResponseEnvelopeV1(raw);
     if (!parsed || parsed.actionId !== actionId || parsed.requestId !== undefined) return refused('invalid_action_output');

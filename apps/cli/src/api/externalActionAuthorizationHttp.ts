@@ -9,12 +9,12 @@ import { refuseExternalActionPhase, readSessionInputAdmissionDiagnostic } from '
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
-import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { projectExternalActionHttpFailureV1, type ExternalActionHttpErrorCode } from '@happier-dev/protocol/actions/externalActionHttpError';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-type ExternalActionAuthorizationHttpFailure = Pick<ActionExecuteFailure, 'details' | 'failureCause'> & Readonly<{
+type ExternalActionAuthorizationHttpFailure = Pick<ActionExecuteFailure, 'details' | 'failureCause' | 'requestId'> & Readonly<{
   ok: false;
-  code: 'invalid_token' | 'credential_scope_denied' | 'present_user_required' | 'auth_unavailable' | 'server_unavailable' | 'target_unavailable';
+  code: ExternalActionHttpErrorCode;
   /** Private preparation fact; HTTP adapters still project only their existing code. */
   retryable?: true;
   diagnostic?: MachineAvailabilityDiagnosticV1;
@@ -85,29 +85,29 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
         ? refusal.data.code : refusal.data.error } : {}),
     });
   }
-  if (response.status === 403) {
-    const denied = readActionCredentialScopeDeniedHttpFailureV1(response.status, response.data);
-    if (denied) return { ok: false, code: denied.errorCode,
-      ...(denied.details === undefined ? {} : { details: denied.details }),
-      ...(denied.failureCause === undefined ? {} : { failureCause: denied.failureCause }) };
-    if (refusal?.success && refusal.data.error === 'present_user_required') {
-      return { ok: false, code: refusal.data.error };
-    }
-  }
-  if (response.status === 401 || response.status === 403) {
-    return { ok: false, code: 'invalid_token' };
-  }
-  if (response.status === 409) {
-    if (refusal?.success && refusal.data.error === 'invalid_request' && refusal.data.code === 'target_unavailable') {
-      if ('diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
-        if (refusal.data.requestId !== undefined && refusal.data.requestId !== input.envelope.requestId) {
-          return { ok: false, code: 'auth_unavailable' };
-        }
-        return { ok: false, code: 'target_unavailable', diagnostic: refusal.data.diagnostic };
+  if (refusal?.success) {
+    if ('requestId' in refusal.data && refusal.data.requestId !== undefined
+      && refusal.data.requestId !== input.envelope.requestId) {
+      // The incumbent code-only availability refusal carries no correlated target evidence.
+      if ('code' in refusal.data && refusal.data.code === 'target_unavailable'
+        && !('diagnostic' in refusal.data && refusal.data.diagnostic !== undefined)) {
+        return { ok: false, code: refusal.data.code };
       }
-      return { ok: false, code: 'target_unavailable' };
+      return { ok: false, code: 'auth_unavailable' };
     }
+    const failure = projectExternalActionHttpFailureV1(refusal.data);
+    return { ok: false, code: 'code' in refusal.data ? refusal.data.code : refusal.data.error,
+      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+      ...(failure.details === undefined ? {} : { details: failure.details }),
+      ...(failure.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+      ...(classifyServerEndpointError(createHttpStatusError(response.status, 'Home authorization unavailable')).retryable
+        ? { retryable: true as const } : {}),
+      ...('code' in refusal.data && refusal.data.code === 'target_unavailable'
+        && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined
+        ? { diagnostic: refusal.data.diagnostic } : {}),
+    };
   }
+  if (response.status === 401 || response.status === 403) return { ok: false, code: 'invalid_token' };
   if ([404, 405, 501].includes(response.status)) {
     return { ok: false, code: 'server_unavailable' };
   }

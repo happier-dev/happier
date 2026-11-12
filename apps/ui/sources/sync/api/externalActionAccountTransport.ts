@@ -3,7 +3,7 @@ import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/au
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSchema, ExternalActionMachineBootstrapV1Schema,
-    ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+    ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1, projectExternalActionHttpFailureV1, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
     isExternalActionSubmittedUnknownHttpResponse, projectExternalActionManagedAdmissionV1,
     type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1,
@@ -13,7 +13,7 @@ import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActio
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isActionOutcomeUnknownErrorCodeV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -183,14 +183,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             const refusal = ExternalActionHttpErrorSchema.safeParse(minted);
             if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
                 && refusal.data.requestId !== envelope.requestId) return failure('admission_unavailable');
-            if ('code' in refusal.data && refusal.data.code === 'target_unavailable'
-                && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
-                return { ...failure(refusal.data.code), effectAttempted: false,
-                    details: 'managedAdmission' in refusal.data ? refusal.data : refusal.data.diagnostic };
-            }
-            return { ...failure('code' in refusal.data ? refusal.data.code : refusal.data.error), effectAttempted: false,
-                ...('failureCause' in refusal.data && refusal.data.failureCause !== undefined
-                    ? { failureCause: refusal.data.failureCause } : {}) };
+            return { ...projectExternalActionHttpFailureV1(refusal.data), effectAttempted: false };
         }
         const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(minted);
         if (!authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
@@ -285,28 +278,21 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         // ran. An invalid or differently bound reply cannot settle an issued request.
         if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
             && refusal.data.requestId !== envelope.requestId) return failure(invalid);
-        const code = 'code' in refusal.data ? refusal.data.code : refusal.data.error;
-        const result = code === 'action_not_admitted' || code === 'action_outcome_unknown'
-            ? projectUnexpectedActionFailureV1(code === 'action_not_admitted' ? false : null,
-                'requestId' in refusal.data ? refusal.data.requestId : undefined) : {
-                    ...failure(code), ...('failureCause' in refusal.data && refusal.data.failureCause !== undefined
-                        ? { failureCause: refusal.data.failureCause } : {}),
-                };
+        const result = projectExternalActionHttpFailureV1(refusal.data);
         const classified = isActionOutcomeUnknownErrorCodeV1(result.errorCode) ? result : { ...result, effectAttempted: false };
-        if (code === 'target_unavailable' && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined
-            && !('managedAdmission' in refusal.data)
-            && (envelope.v === 1 || 'requestId' in refusal.data && refusal.data.requestId === envelope.requestId)) {
-            return { ...classified, details: refusal.data.diagnostic };
+        // Protected requests adopt diagnostic/managed receipts only when their
+        // existing outer correlation binds them to this invocation.
+        if (envelope.v === 2 && !('requestId' in refusal.data && refusal.data.requestId === envelope.requestId)
+            && ('diagnostic' in refusal.data || 'managedAdmission' in refusal.data)) {
+            const { details: _details, ...uncorrelated } = classified;
+            return uncorrelated;
         }
-        return ('managedAdmission' in refusal.data || 'diagnostic' in refusal.data
-            && 'code' in refusal.data && refusal.data.code === 'action_outcome_unknown')
-            && (envelope.v === 1 || 'requestId' in refusal.data && refusal.data.requestId === envelope.requestId)
-            ? { ...classified, details: refusal.data } : classified;
+        return classified;
     }
     if (envelope.v === 2 && material) return openExternalActionResponseV2({ envelope: payload, binding, material, request: envelope }) ?? failure(invalid);
-    const parsed = ExternalActionResponseEnvelopeV1Schema.safeParse(payload);
-    return parsed.success && parsed.data.actionId === binding.actionId && parsed.data.requestId === envelope.requestId
-        ? parsed.data.execution : failure(invalid);
+    const parsed = parseExternalActionResponseEnvelopeV1(payload);
+    return parsed && parsed.actionId === binding.actionId && parsed.requestId === envelope.requestId
+        ? readExternalActionResponseExecutionV1(parsed) : failure(invalid);
 }
 
 type OriginalAccountMachineActionParams = Readonly<{

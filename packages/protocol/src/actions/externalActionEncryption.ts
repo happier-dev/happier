@@ -24,7 +24,7 @@ import {
   EXTERNAL_ACTION_ENCRYPTED_REQUEST_PLAINTEXT_MAX_BYTES_V2,
   EXTERNAL_ACTION_ENCRYPTED_RESPONSE_PLAINTEXT_MAX_BYTES_V2,
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
-  prepareExternalActionResponseEnvelopeV1, isExternalActionRequestWithinLimit,
+  prepareExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1, isExternalActionRequestWithinLimit,
   externalActionTargetsEqualV1,
   measureExternalActionResponseEnvelopeUtf8BytesV1,
   projectExternalActionPendingResetStartAdmissionV1,
@@ -301,6 +301,6 @@ export function openExternalActionResponseV2(params: Readonly<{
       || (params.binding.target.kind === 'machine' && decoded.data.executedMachineId !== params.binding.target.machineId)) return null;
     if (measureExternalActionResponseEnvelopeUtf8BytesV1({ v: 1, actionId: decoded.data.actionId,
       requestId: decoded.data.requestId, execution: decoded.data.execution }) > EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) return null;
-    return decoded.data.execution;
+    return readExternalActionResponseExecutionV1(decoded.data);
   } catch { return null; }
 }

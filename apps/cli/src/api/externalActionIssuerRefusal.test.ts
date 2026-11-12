@@ -22,10 +22,21 @@ describe('Session Action issuer refusal projection', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', details });
   });
 
-  it('keeps an actual missing issuer authorization classified as forbidden', () => {
+  it('keeps an absent issuer decision classified as forbidden', () => {
     expect(projectSessionActionIssuerRefusal({
-      ok: false, phase: 'mint', requiredFact: 'home_minted_authorization', code: 'invalid_token',
+      ok: false, phase: 'mint', requiredFact: 'home_minted_authorization',
     })).toMatchObject({ ok: false, errorCode: 'action_forbidden',
       details: { reason: 'external_authorization_refused', requiredFact: 'home_minted_authorization' } });
   });
+});
+
+
+it('retains HTTP refusal cause and correlation through the Session issuer projection', () => {
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 } as const;
+  for (const code of ['target_not_local', 'credential_scope_denied', 'invalid_token']) {
+    expect(projectSessionActionIssuerRefusal({ ok: false, phase: 'mint', requiredFact: 'home_minted_authorization',
+      code, requestId: 'mint-request', failureCause, ...(code === 'target_not_local' ? { details: { phase: 'target_installation' } } : {}) }))
+      .toMatchObject({ ok: false, errorCode: code, requestId: 'mint-request', failureCause,
+        ...(code === 'target_not_local' ? { details: { phase: 'target_installation' } } : {}) });
+  }
 });
