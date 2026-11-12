@@ -154,7 +154,7 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
   /** Implements the private exact-source envelope consumed by the host broker. */
   sourceEnvelopeTransport: z.optional(z.literal('cpx-v1')),
   dependencies: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.maxLength(16))),
-  unavailableConnectedAccounts: z.optional(z.array(ProviderManagedUnavailableConnectedAccountPurposeV1Schema)),
+  unavailableConnectedAccounts: z.optional(z.readonly(z.array(ProviderManagedUnavailableConnectedAccountPurposeV1Schema))),
   connectedAccounts: z.optional(z.array(z.extend(ConnectedAccountPurposeDeclarationV1Schema, {
     /** Passive copy for a restriction enforced by the family's operation owner. */
     operationRestriction: z.optional(ProviderManagedPurposeOperationRestrictionV1Schema),

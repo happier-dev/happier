@@ -73,7 +73,11 @@ describe('ProviderContributionV1Schema', () => {
     expect(families?.filter(row => row.status === 'available')).toHaveLength(4);
     expect(families?.filter(row => row.status === 'unavailable')).toHaveLength(4);
     expect(gatewayContributions.chooseProviderGatewayContributionV1(declarations, { purpose: 'unavailable-0' }))
-      .toEqual({ status: 'unavailable', choices: [] });
+      .toEqual({ status: 'unavailable', choices: [], unavailableFamilies: [{
+        ...unavailable[0],
+        contributionKey: 'acme.gateway/gateway',
+        service: { pluginId: implementationIdentity.pluginId, localId: unavailable[0].service },
+      }] });
     expect(gatewayContributions.chooseProviderGatewayContributionV1(declarations, { purpose: 'active-0' }).status).toBe('selected');
     expect(ProviderContributionV1Schema.safeParse({ ...base, managedRuntime: {
       ...base.managedRuntime, unavailableConnectedAccounts: [{ ...unavailable[0], materializationKinds: ['httpHeaders'] }],
