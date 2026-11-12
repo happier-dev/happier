@@ -15,6 +15,7 @@ import {
 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorizationSchemas';
 import { createSpeechTranscriptionApplicationAuthorityDigestV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { DaemonVoiceInferenceSttStreamChunkResponse } from '@happier-dev/protocol';
 import {
   decodePeerTcpTunnelBinarySubstreamFrame, decodePeerTcpTunnelBinaryFrameForSession,
   encodePeerTcpTunnelBinaryFrameForSubstream, type PeerTcpTunnelFrame,
@@ -43,6 +44,7 @@ const { createMachineFixture, waitForTestEvent } = await import('@/dev/testkit')
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { storage } = await import('@/sync/domains/state/storage');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { DaemonVoiceInferenceClient } = await import('./DaemonVoiceInferenceClient');
 const { openProductionVoiceMediaTunnel, createProductionDaemonSpeechStreamingSttTransport } = await import('./DaemonSpeechStreamProductionTunnelTransport');
@@ -55,6 +57,8 @@ const PORT = 3005;
 const FORMAT = { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' } as const;
 const originalState = { settings: storage.getState().settings, machines: storage.getState().machines,
   machineListByServerId: storage.getState().machineListByServerId };
+const originalAppliedServer = getAppliedActiveServerSnapshot();
+const originalRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 let direct = true;
 let relay = true;
@@ -77,7 +81,8 @@ let authorization: PeerTcpTunnelRelayAuthorizationV2 | null = null;
  */
 let accountE2ee = false;
 let highestAcknowledgedInput = -1;
-let holdPcmResponse: ((encodedBytes: number) => Promise<void>) | null = null;
+let streamGeneration = 7;
+let holdPcmResponse: ((encodedBytes: number) => Promise<void | DaemonVoiceInferenceSttStreamChunkResponse>) | null = null;
 const grants: unknown[] = [];
 const opens: unknown[] = [];
 const receivedPcm: Uint8Array[] = [];
@@ -113,23 +118,23 @@ function selectMachine(hasEndpoint = true, httpPort: number | null = PORT, machi
       endpointFingerprint: 'fingerprint-1', expiresAt: Date.now() + 600_000,
     } } } } : {}),
   } });
-  storage.setState({ machines: { ...originalState.machines, [machine.id]: machine },
-    machineListByServerId: { ...originalState.machineListByServerId, [account.home.id]: [machine] } });
+  storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
 }
-function chunkResult(sequence: number) {
-  return { ok: true, streamId: 'stream-1', generation: 7, ackSeq: sequence,
+function chunkResult(sequence: number, generation = streamGeneration) {
+  return { ok: true, streamId: 'stream-1', generation, ackSeq: sequence,
     events: [{ type: 'partial', seq: sequence, text: 'hel', isEndpoint: false, confidence: null }] };
 }
 function finishResult(ackSeq: number) {
-  return { ok: true, streamId: 'stream-1', generation: 7, ackSeq,
+  return { ok: true, streamId: 'stream-1', generation: streamGeneration, ackSeq,
     finalText: 'hello', language: 'en', modelPackId: 'stt-pack-1', events: [] };
 }
 async function daemonResponse(substreamId: string, frame: Extract<PeerTcpTunnelFrame, { kind: 'data' }>) {
+  const generation = streamGeneration;
   receivedPcm.push(frame.payload);
   highestAcknowledgedInput = frame.sequence;
-  await holdPcmResponse?.(frame.payload.byteLength);
+  const response = await holdPcmResponse?.(frame.payload.byteLength);
   return encodePeerTcpTunnelBinaryFrameForSubstream({ substreamId, frame: {
-    ...frame, direction: 'daemon_to_client', payload: new TextEncoder().encode(JSON.stringify(chunkResult(frame.sequence))),
+    ...frame, direction: 'daemon_to_client', payload: new TextEncoder().encode(JSON.stringify(response ?? chunkResult(frame.sequence, generation))),
   } });
 }
 
@@ -173,7 +178,7 @@ async function mint(input: RequestInfo | URL, init?: RequestInit) {
   const body: unknown = JSON.parse(String(init?.body));
   grants.push(body);
   await holdGrantResponse?.(init?.signal ?? null);
-  const request = body as { kind?: string; scope: { tunnelId: string }; relaySocketId: string; machineId: string };
+  const request = body as { kind?: string; scope: { tunnelId: string; applicationAttemptId: string; applicationAuthorityDigest: string }; relaySocketId: string; machineId: string };
   if (request.kind === 'ephemeral_ed25519') {
     const directRequest = DirectRouteGrantRequestV2Schema.parse(body);
     return Response.json({ ok: true, grant: {
@@ -188,8 +193,8 @@ async function mint(input: RequestInfo | URL, init?: RequestInit) {
   authorization = {
     payload: { v: 2, grantId: 'relay-grant-1', accountId: 'artifact-account', targetMachineId: 'machine-1',
       flowKind: 'voice_media', routeKind: 'server_relay', tunnelId: request.scope.tunnelId,
-      applicationKind: 'speech_transcription', applicationAttemptId: 'request-1',
-      applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request-1'),
+      applicationKind: 'speech_transcription', applicationAttemptId: request.scope.applicationAttemptId,
+      applicationAuthorityDigest: request.scope.applicationAuthorityDigest,
       relaySocketId: request.relaySocketId, destination: { host: '127.0.0.1', port: PORT },
       capProfileId: 'default', maxFrameBytes: 65_536, maxIdleMs: 30_000, maxDurationMs: 300_000,
       maxTotalBytes: 8_388_608, iat: Date.now(), exp: Date.now() + 600_000,
@@ -223,7 +228,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
       ...(contentKeyPair ? { dataKeyPublicKey: contentKeyPair.publicKey } : {}),
     }) : null;
     direct = true; relay = true; mintVersions = [2]; applicationCaps = {};
-    startFailure = null; finishFailure = false; cancelFailure = null; closeFailure = false;
+    startFailure = null; finishFailure = false; cancelFailure = null; closeFailure = false; streamGeneration = 7;
     grantFailure = false; accountE2ee = e2eeKind !== null;
     holdGrantResponse = null; holdOpenResponse = null; holdFeaturesResponse = null; holdRelayConnect = null;
     authorization = null; highestAcknowledgedInput = -1;
@@ -259,6 +264,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
       } });
     await waitForTestEvent(storage.subscribe, () => storage.getState().profile.id, id => id === 'artifact-account');
     expect(storage.getState().profile.id).toBe('artifact-account');
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     storage.getState().applySettingsLocal({ experiments: true, featureToggles: {
       voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true, machines: true, 'machines.liveStream': true,
     }, voice: { ...storage.getState().settings.voice, executionMachine: {
@@ -272,7 +278,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
         if (startFailure === 'throw') throw new Error('daemon_start_failed');
         if (startFailure === 'response') return { ok: false, errorCode: 'runtime_unavailable', error: 'daemon_start_failed' };
         highestAcknowledgedInput = -1;
-        return { ok: true, requestId: input.requestId, streamId: 'stream-1', generation: 7, ackSeq: -1, format: FORMAT };
+        return { ok: true, requestId: input.requestId, streamId: 'stream-1', generation: streamGeneration, ackSeq: -1, format: FORMAT };
       }
       if (method.endsWith('.finish')) {
         if (finishFailure) return { ok: false, errorCode: 'runtime_unavailable', error: 'daemon_finish_failed' };
@@ -281,7 +287,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
       if (method.endsWith('.cancel')) {
         if (cancelFailure) return { ok: false, errorCode: cancelFailure, error: cancelFailure === 'stream_not_found'
           ? 'daemon_voice_inference_stream_not_found' : 'daemon_cancel_failed' };
-        return { ok: true, streamId: 'stream-1', generation: 7 };
+        return { ok: true, streamId: 'stream-1', generation: streamGeneration };
       }
       throw new Error('Unexpected compatibility RPC: ' + method);
     });
@@ -330,6 +336,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     holdPcmResponse = null;
     relayDenial = false;
     await account?.dispose();
+    publishAppliedActiveServerSnapshot(originalAppliedServer, originalRuntimeAvailable);
     storage.setState(originalState);
     resetServerFeaturesClientForTests();
     vi.unstubAllGlobals(); vi.unstubAllEnvs();
@@ -338,6 +345,13 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
   it.each(['direct', 'relay'] as const)('admits one %s tunnel for a call across finished and cancelled utterances', async route => {
     direct = route === 'direct';
     selectMachine(direct); publishFeatures();
+    const countRelayOpens = () => physicalSockets.flatMap(boundary => boundary.socket.emit.mock.calls)
+      .filter(([event, payload]) => {
+        if (event !== PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) return false;
+        const parsed = PeerTcpTunnelRelayEnvelopeSchema.safeParse(payload);
+        return parsed.success && parsed.data.v === 1 && parsed.data.frame.kind === 'open';
+      }).length;
+    const relayOpensBefore = countRelayOpens();
     const call = new AbortController();
     const client = new DaemonVoiceInferenceClient({ createRequestId: () => 'request-1' });
     const next = () => client.createStreamingSttSender({
@@ -357,10 +371,58 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
       await expect(resumed.finish()).resolves.toMatchObject({ ok: true, finalText: 'hello' });
       expect(grants).toHaveLength(1);
       expect(opens).toHaveLength(direct ? 1 : 0);
+      expect(NativeWebSocket.instances).toHaveLength(direct ? 1 : 0);
+      expect(countRelayOpens() - relayOpensBefore).toBe(direct ? 0 : 1);
       expect(receivedPcm).toEqual([new Uint8Array([1, 0]), new Uint8Array([2, 0])]);
       expect(receipt()?.localTransport).not.toBe('closed');
     } finally {
       call.abort();
+    }
+    await vi.waitFor(() => expect(receipt()?.localTransport).toBe('closed'));
+  });
+
+  it.each(['direct', 'relay'] as const)('keeps fresh %s call PCM alive when a cancelled utterance settles after capture restarts', async route => {
+    direct = route === 'direct'; selectMachine(direct); publishFeatures();
+    let request = 0;
+    const client = new DaemonVoiceInferenceClient({ createRequestId: () => `request-${++request}` });
+    const previousCall = new AbortController();
+    const call = new AbortController();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const appending = new Promise<void>(resolve => { entered = resolve; });
+    const next = (signal: AbortSignal) => client.createStreamingSttSender({
+      packId: 'stt-pack-1', language: 'en', callSignal: signal,
+    });
+    try {
+      const previous = await next(previousCall.signal);
+      await previous.start(); await previous.pushChunk(new Uint8Array([1, 0])); await previous.finish();
+      previousCall.abort();
+      streamGeneration += 1;
+      const interrupted = await next(call.signal);
+      expect(interrupted.transportKind).toBe('binary_tunnel');
+      await interrupted.start();
+      holdPcmResponse = async () => {
+        entered(); await held;
+        return { ok: false, errorCode: 'cancelled', error: 'daemon_voice_inference_cancelled' };
+      };
+      const abandoned = interrupted.pushChunk(new Uint8Array([2, 0])).catch(() => undefined);
+      await appending;
+      await interrupted.cancel(); await abandoned;
+      streamGeneration += 1;
+      const resumed = await next(call.signal);
+      await resumed.start();
+      holdPcmResponse = null;
+      release();
+      // Drain the old boundary reply after the new utterance has started.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await resumed.pushChunk(new Uint8Array([3, 0]));
+      await resumed.pushChunk(new Uint8Array([4, 0]));
+      await expect(resumed.finish()).resolves.toMatchObject({ ok: true, finalText: 'hello' });
+      expect(grants).toHaveLength(2);
+      expect(receivedPcm).toEqual([1, 2, 3, 4].map(value => new Uint8Array([value, 0])));
+    } finally {
+      release(); previousCall.abort(); call.abort();
     }
     await vi.waitFor(() => expect(receipt()?.localTransport).toBe('closed'));
   });

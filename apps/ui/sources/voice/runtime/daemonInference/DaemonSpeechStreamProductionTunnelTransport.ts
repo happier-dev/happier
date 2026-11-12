@@ -383,6 +383,7 @@ function createSelection(input: Readonly<{
     return localTransportClosePromise;
   };
   const createStreamTransport = (controlTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport): DaemonSpeechStreamTransport => {
+    let cancelled = false;
     const tunnelTransport = createDaemonSpeechStreamTunnelTransport({
       tunnelId: input.tunnelId,
       maxFrameBytes: input.maxFrameBytes,
@@ -420,10 +421,10 @@ function createSelection(input: Readonly<{
       chunk: async (payload) => {
         try {
           const response = await tunnelTransport.chunk(payload);
-          if (!response.ok) await recordLocalTransportClose();
+          if (!response.ok && !cancelled) await recordLocalTransportClose();
           return response;
         } catch (error) {
-          await recordLocalTransportClose().catch(() => undefined);
+          if (!cancelled) await recordLocalTransportClose().catch(() => undefined);
           throw error;
         }
       },
@@ -439,6 +440,9 @@ function createSelection(input: Readonly<{
         }
       },
       cancel: async (payload) => {
+        // A cancelled utterance can still receive an in-flight PCM failure.
+        // That reply no longer owns the tunnel retained by the next utterance.
+        cancelled = true;
         let result: 'ok' | 'error' = 'error';
         try {
           const response = await tunnelTransport.cancel(payload);
