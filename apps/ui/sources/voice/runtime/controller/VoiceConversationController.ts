@@ -28,6 +28,7 @@ import {
 } from '@/voice/runtime/protocol/VoiceTurnControlCapabilities';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import {
   normalizeVoiceRuntimeFailureCode,
   recordVoiceRuntimeFailure,
@@ -57,6 +58,7 @@ export type VoiceConversationToolBarrier = Readonly<{
     responseId: string;
     calls: readonly VoiceRealtimeToolCallV1[];
     signal?: AbortSignal | null;
+    turnOrigin?: SpokenActionTurnOrigin;
   }>): Promise<Readonly<{ status: 'submitted' | 'cancelled' | 'detached' | 'failed' }>>;
   /** Cancel only the detached provider-delivery leg; preserve attempt execution custody. */
   detach(responseId: string): void;
@@ -180,10 +182,15 @@ export type VoiceConversationController = Readonly<{
         code: 'voice_turn_action_unsupported' | 'voice_connection_not_open';
       }>
   >;
-  sendClientControl(event: VoiceRealtimeJsonValue): Promise<
+  sendClientControl(event: VoiceRealtimeJsonValue, input?: Readonly<{
+    turnOrigin: SpokenActionTurnOrigin;
+    continuation?: boolean;
+    opensResponse?: boolean;
+  }>): Promise<
     | Readonly<{ status: 'sent' }>
     | Readonly<{ status: 'unavailable'; code: 'voice_connection_not_open' }>
   >;
+  noteSyntheticResponseRequested(attemptId: number): void;
   getActiveControlSessionId(): string | null;
   canCommitInput(): boolean;
   canHoldToTalk(): boolean;
@@ -213,6 +220,8 @@ export type VoiceHeldInput = Readonly<{
 export type CreateVoiceConversationController = (
   input: VoiceConversationControllerDeps,
 ) => VoiceConversationController;
+
+type ResponseInput = { origin: SpokenActionTurnOrigin; audioItemId?: string };
 
 type Attempt = {
   heldInput: VoiceHeldInput | null;
@@ -244,7 +253,31 @@ type Attempt = {
   providerSessionEndPromise: Promise<void> | null;
   providerPreparationReleasePromise: Promise<void> | null;
   connectionSequence: number;
+  /** Input awaiting an independent provider response.created edge. */
+  pendingResponseInput: ResponseInput | null;
+  /** Last actual input for SDKs that expose call IDs but no response identity. */
+  currentTurnInput: ResponseInput | null;
+  responseInputs: Map<string, ResponseInput>;
 };
+
+function clearInputOrigins(attempt: Attempt): void {
+  attempt.pendingResponseInput = null;
+  attempt.currentTurnInput = null;
+  attempt.responseInputs.clear();
+}
+
+function recordResponseInput(attempt: Attempt, input: ResponseInput, opensResponse: boolean, continuation = false): void {
+  if (opensResponse) {
+    // response.created has no opening-input identity. Overlapping distinct
+    // inputs therefore cannot grant person authority to either response.
+    attempt.pendingResponseInput = attempt.pendingResponseInput ? { origin: 'synthetic' } : input;
+  } else if (attempt.pendingResponseInput) {
+    // Context does not open a response, but cannot leave an older pending
+    // person's authority available for a host-triggered response.
+    attempt.pendingResponseInput = { origin: 'synthetic' };
+  }
+  if (!continuation) attempt.currentTurnInput = input;
+}
 
 class VoiceConnectionReadyTimeoutError extends Error {
   readonly code = 'voice_connection_timeout' as const;
@@ -329,20 +362,13 @@ export function createVoiceConversationController(
     preparation: Extract<VoiceRealtimePreparation, Readonly<{ kind: 'prepared' }>>,
   ): void => {
     attempt.inputCommitRequired = preparation.session.inputCommitRequired === true;
-    // A provider declaration says what its implementation can support in
-    // principle. Only this concrete prepared carrier can establish that the
-    // original response/call identities survived this reconnect.
-    attempt.toolResultReplay = (
-      deps.adapter.turnControls.resumption === 'resume'
-      && deps.adapter.turnControls.replay === 'stable_ids'
-      && preparation.session.toolResultReplay === 'stable_ids'
-    ) ? 'stable_ids' : 'none';
+    // Only this concrete prepared carrier owns whether original call identities
+    // can receive retained results after reconnect.
+    attempt.toolResultReplay = preparation.session.toolResultReplay ?? 'none';
   };
 
   const canRedeliverRetainedToolResult = (attempt: Attempt): boolean => (
-    deps.adapter.turnControls.resumption === 'resume'
-    && deps.adapter.turnControls.replay === 'stable_ids'
-    && attempt.toolResultReplay === 'stable_ids'
+    attempt.toolResultReplay === 'stable_ids'
   );
 
   const createToolBarrier = (attempt: Attempt): void => {
@@ -402,6 +428,7 @@ export function createVoiceConversationController(
   ): Promise<void> => {
     void attempt.heldInput?.cancel().catch(() => undefined);
     disposeToolBarrier(attempt);
+    clearInputOrigins(attempt);
     // Media/audio release is independent of hosted attestation and starts now.
     if (attempt.resourcesPrepared) {
       attempt.resourceReleasePromise ??= deps.resources?.release({
@@ -541,6 +568,7 @@ export function createVoiceConversationController(
         // execution and its redacted settlement attempt-owned so a resumed
         // provider response can receive it without replaying the tool.
         detachActiveToolResponses(attempt);
+        clearInputOrigins(attempt);
         if (attempt.connection === previousConnection) attempt.connection = null;
         await previousConnection.close({ code: 'remote_close' }).catch(() => {});
         await endProviderSession(attempt, 'reconnect');
@@ -761,6 +789,48 @@ export function createVoiceConversationController(
             await deps.onCanonicalEvent(event, attempt.abortController.signal);
             continue;
           }
+          if (event.type === 'input_audio_committed') {
+            const input: ResponseInput = { origin: 'synthetic', audioItemId: event.itemId };
+            recordResponseInput(attempt, input, true);
+            continue;
+          }
+          if (event.type === 'input_transcript_finished') {
+            if (event.itemId === undefined) {
+              // The SDK's finished mic callback has no independent response
+              // identity. A later host input replaces this conservative fallback.
+              const input: ResponseInput = { origin: 'person' };
+              recordResponseInput(attempt, input, true);
+            } else {
+              // Transcription can finish after response.created. Mutate only
+              // the input descriptor bound to that exact committed audio item.
+              let input = attempt.pendingResponseInput?.audioItemId === event.itemId
+                ? attempt.pendingResponseInput
+                : attempt.currentTurnInput?.audioItemId === event.itemId
+                  ? attempt.currentTurnInput
+                  : null;
+              if (!input) {
+                for (const candidate of attempt.responseInputs.values()) {
+                  if (candidate.audioItemId !== event.itemId) continue;
+                  input = candidate;
+                  break;
+                }
+              }
+              if (input) input.origin = 'person';
+            }
+            continue;
+          }
+          if (event.type === 'response_created') {
+            if (!attempt.responseInputs.has(event.responseId)) {
+              attempt.responseInputs.set(event.responseId, attempt.pendingResponseInput ?? { origin: 'synthetic' });
+              attempt.pendingResponseInput = null;
+            }
+            continue;
+          }
+          if (event.type === 'response_finished') {
+            // Decoder order admits this response's tool batch before retirement.
+            attempt.responseInputs.delete(event.responseId);
+            continue;
+          }
           if (event.type === 'transcript') {
             if (deps.projectTranscript) {
               deps.projectTranscript({
@@ -775,11 +845,17 @@ export function createVoiceConversationController(
           if (event.type === 'tool_calls') {
             const barrier = attempt.toolBarrier;
             if (!barrier) throw new Error('voice_tool_barrier_unavailable');
-            attempt.activeToolResponseIds.add(event.responseId);
+            const responseId = event.responseId ?? event.calls[0]?.responseId;
+            if (!responseId) continue;
+            const turnOrigin = (event.responseId === undefined
+              ? attempt.currentTurnInput?.origin
+              : attempt.responseInputs.get(event.responseId)?.origin) ?? 'synthetic';
+            attempt.activeToolResponseIds.add(responseId);
             const runBarrier = async () => await barrier.run({
-              responseId: event.responseId,
+              responseId,
               calls: event.calls,
               signal: attempt.abortController.signal,
+              turnOrigin,
             });
             const task = runBarrier().then(async (result) => {
               if (!owns(attempt) || result.status === 'cancelled' || result.status === 'submitted') return;
@@ -810,14 +886,14 @@ export function createVoiceConversationController(
                 return;
               }
 
-              attempt.activeToolResponseIds.add(event.responseId);
+              attempt.activeToolResponseIds.add(responseId);
               const redelivered = await runBarrier();
               if (!owns(attempt) || redelivered.status === 'cancelled' || redelivered.status === 'submitted') return;
               await settleReconnectFailure(attempt, 'voice_tool_submission_failed');
             }).catch(async () => {
               if (owns(attempt)) await settleReconnectFailure(attempt, 'voice_tool_barrier_failed');
             }).finally(() => {
-              attempt.activeToolResponseIds.delete(event.responseId);
+              attempt.activeToolResponseIds.delete(responseId);
               attempt.toolTasks.delete(task);
             });
             attempt.toolTasks.add(task);
@@ -935,6 +1011,9 @@ export function createVoiceConversationController(
       providerSessionEndPromise: null,
       providerPreparationReleasePromise: null,
       connectionSequence: 0,
+      pendingResponseInput: null,
+      currentTurnInput: null,
+      responseInputs: new Map(),
     };
     const claiming = claimAttemptOwnership(attempt);
     if (claiming) await claiming;
@@ -1204,6 +1283,7 @@ export function createVoiceConversationController(
 
   const sendClientControl = async (
     event: VoiceRealtimeJsonValue,
+    input?: Readonly<{ turnOrigin: SpokenActionTurnOrigin; continuation?: boolean; opensResponse?: boolean }>,
   ): Promise<Readonly<{ status: 'sent' }> | Readonly<{
     status: 'unavailable';
     code: 'voice_connection_not_open';
@@ -1212,8 +1292,19 @@ export function createVoiceConversationController(
     if (!attempt?.connection || !owns(attempt) || attempt.connection.state() !== 'open') {
       return { status: 'unavailable', code: 'voice_connection_not_open' };
     }
+    if (input) {
+      // A continuation keeps its opening response's origin, but never turns
+      // a later actual host input back into person speech on an ID-less SDK.
+      recordResponseInput(attempt, { origin: input.turnOrigin }, input.opensResponse !== false, input.continuation);
+    }
     await attempt.connection.sendControl(event);
     return { status: 'sent' };
+  };
+
+  const noteSyntheticResponseRequested = (attemptId: number): void => {
+    const attempt = current;
+    if (!attempt || attempt.id !== attemptId || !owns(attempt)) return;
+    recordResponseInput(attempt, { origin: 'synthetic' }, true);
   };
 
   const getActiveControlSessionId = (): string | null => {
@@ -1344,6 +1435,7 @@ export function createVoiceConversationController(
     fail,
     performTurnControl,
     sendClientControl,
+    noteSyntheticResponseRequested,
     getActiveControlSessionId,
     canCommitInput,
     canHoldToTalk,

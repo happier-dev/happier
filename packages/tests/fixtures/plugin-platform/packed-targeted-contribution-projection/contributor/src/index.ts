@@ -98,7 +98,7 @@ const plugin = definePlugin({
         platforms: ['web', 'ios', 'android'],
         capabilities: {
           turn: { cancelResponse: false, bargeIn: false },
-          tools: { effectCalls: 'stable_ids' },
+
         },
         client: CLIENT_MODULE,
       },

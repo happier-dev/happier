@@ -282,7 +282,7 @@ export function assertPackedTargetedClientBoundaryManifest(manifest: unknown): v
     || !isDeepStrictEqual(voiceProvider.client, expectedTarget)
     || !isDeepStrictEqual(voiceProvider.capabilities, {
       turn: { cancelResponse: false, bargeIn: false },
-      tools: { effectCalls: 'stable_ids' },
+
     })
   ) {
     throw new Error('packed_targeted_voice_provider_boundary_invalid');
@@ -839,7 +839,6 @@ export async function assertPackedTargetedFixtureSourcesArePublicOnly(): Promise
     || !contributorSource.includes("dangerLevel: 'writesLocal'")
     || !contributorSource.includes('confirmation')
     || !contributorSource.includes('voiceProviders')
-    || !contributorSource.includes("effectCalls: 'stable_ids'")
     || !contributorSource.includes("container: 'appPage'")
     || !contributorSource.includes("id: 'packed-provider-page'")
     || !clientRuntimeSource.includes("api.actions.register('inspect-context'")

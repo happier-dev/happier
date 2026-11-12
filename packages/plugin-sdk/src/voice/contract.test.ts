@@ -210,8 +210,6 @@ describe('Voice author source contract', () => {
       'VoiceTranscriptCanonicalEvent',
       'VoiceConversationCapabilities',
       'VoiceConversationProviderRole',
-      'VoiceConversationToolCapabilities',
-      'VoiceConversationToolEffectCalls',
       'VoiceSpeechCatalogDeclaration',
       'VoiceSpeechInputMimeType',
       'VoiceSpeechProviderLimits',
@@ -241,8 +239,6 @@ describe('Voice author source contract', () => {
       'VoiceProviderRuntime',
       'VoiceConversationCapabilities',
       'VoiceConversationProviderRole',
-      'VoiceConversationToolCapabilities',
-      'VoiceConversationToolEffectCalls',
       'VoiceRealtimeJsonValue',
       'VoiceRealtimeToolCall',
       'VoiceRealtimeToolResult',
@@ -260,8 +256,6 @@ describe('Voice author source contract', () => {
     for (const clientType of [
       'VoiceConversationCapabilities',
       'VoiceConversationProviderRole',
-      'VoiceConversationToolCapabilities',
-      'VoiceConversationToolEffectCalls',
       'VoiceRealtimeJsonValue',
       'VoiceRealtimeToolCall',
       'VoiceRealtimeToolResult',
@@ -351,23 +345,6 @@ describe('Voice author source contract', () => {
       .toBe(CanonicalVoiceProviderContributionSchema.safeParse({}).success);
     expect(credentialSlotId).toBe('api_key');
     expectTypeOf(credentialSlotId).toEqualTypeOf<VoiceCredentialSlotId>();
-  });
-
-  it('projects Protocol-owned effectful tool custody closed by default', () => {
-    const provider = VoiceProviderContributionSchema.parse({
-      id: 'conversation',
-      title: 'Conversation',
-      kind: 'conversation',
-      roles: ['realtime_conversation'],
-      platforms: ['web'],
-      capabilities: { turn: { cancelResponse: false, bargeIn: false } },
-      client: { artifactId: 'voice-runtime-web', exportName: 'activate' },
-    });
-    if (provider.kind !== 'conversation') throw new Error('Expected a conversation Voice provider');
-
-    expect(provider.capabilities).toMatchObject({
-      tools: { effectCalls: 'none' },
-    });
   });
 
   it('projects the canonical Voice header materialization request without a local structural alias', () => {

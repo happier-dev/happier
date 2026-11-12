@@ -11,6 +11,7 @@ function record(value: unknown): Record<string, unknown> | null {
 export function createHostTextPlayback(input: Readonly<{
   send(event: VoiceRealtimeJsonValue): Promise<void>;
   capture(): VoiceOutputPlayback | null;
+  onSyntheticResponseRequested?: () => void;
 }>) {
   let utteranceSequence = 0;
   let pending: {
@@ -42,6 +43,7 @@ export function createHostTextPlayback(input: Readonly<{
         } };
       pending = current;
       signal.addEventListener('abort', cancel, { once: true });
+      input.onSyntheticResponseRequested?.();
       void input.send({ type: 'conversation.item.create', item: {
         id: current.itemId, type: 'force_message', role: 'assistant', interruptible: true,
         content: [{ type: 'output_text', text }],

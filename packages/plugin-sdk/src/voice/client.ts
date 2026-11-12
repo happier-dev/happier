@@ -19,8 +19,6 @@ export type { VoiceGuidanceAvailability } from '@happier-dev/protocol/actions/ac
 export type {
     VoiceConversationCapabilities,
     VoiceConversationProviderRole,
-    VoiceConversationToolCapabilities,
-    VoiceConversationToolEffectCalls,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
     VoiceRealtimeJsonValue,
@@ -335,7 +333,6 @@ export type VoiceTurnControlAction =
     | 'commit_input'
     | 'stop_session'
     | 'resume_session'
-    | 'replay_session'
     | 'send_exact_message';
 
 export type VoiceRealtimeCanonicalEvent =
@@ -355,12 +352,21 @@ export type VoiceRealtimeCanonicalEvent =
     }>
     | Readonly<{ type: 'input_speech_started' }>
     | Readonly<{ type: 'input_speech_stopped' }>
+    | Readonly<{ type: 'input_audio_committed'; itemId: string }>
+    | Readonly<{
+        type: 'input_transcript_finished';
+        /** Audio-commit correlation, absent when the SDK exposes only a finished microphone turn. */
+        itemId?: string;
+    }>
+    | Readonly<{ type: 'response_created'; responseId: string }>
+    | Readonly<{ type: 'response_finished'; responseId: string }>
     | Readonly<{ type: 'assistant_output_started'; itemId?: string }>
     | Readonly<{ type: 'assistant_output_stopped' }>
     | Readonly<{ type: 'transcript'; event: VoiceTranscriptCanonicalEvent }>
     | Readonly<{
         type: 'tool_calls';
-        responseId: string;
+        /** Independent response identity; omitted when the vendor exposes only call identities. */
+        responseId?: string;
         calls: readonly VoiceRealtimeToolCall[];
     }>;
 
@@ -537,6 +543,8 @@ export type RealtimeVoiceProviderRuntime = Readonly<{
         signal: AbortSignal;
         execution: VoiceProviderExecutionAuthority;
         credentials: VoiceCredentialAccess<'connection'>;
+        /** Notify immediately before provider-owned greeting or host-readback input opens a response. */
+        onSyntheticResponseRequested?: () => void;
     }>): Promise<VoiceRealtimeConnection>;
     encodeToolResults(results: readonly VoiceRealtimeToolResult[]): readonly VoiceRealtimeJsonValue[];
     encodeToolContinuation(responseId: string): VoiceRealtimeJsonValue;

@@ -184,7 +184,7 @@ function desiredElevenLabsToolConfig(tool: Readonly<{
     parameters: toElevenLabsToolParameters(tool.parameters),
     expects_response: true,
     execution_mode: 'immediate',
-    response_timeout_secs: tool.name === 'spawnSession' ? 120 : 60,
+    response_timeout_secs: 120,
     interruption_mode: 'allow',
     disable_interruptions: false,
     pre_tool_speech: 'auto',

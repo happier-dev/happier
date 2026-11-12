@@ -8,7 +8,6 @@ export type VoiceTurnControlCapabilities = Readonly<{
   commitInput?: boolean;
   stopSession: boolean;
   resumption: 'none' | 'resume';
-  replay: 'none' | 'stable_ids';
   exactMessage: boolean;
 }>;
 
@@ -43,10 +42,6 @@ export function resolveVoiceTurnControlAction(
     case 'resume_session':
       return capabilities.resumption === 'resume'
         ? { status: 'available', strategy: 'resume' }
-        : UNAVAILABLE;
-    case 'replay_session':
-      return capabilities.replay === 'stable_ids'
-        ? { status: 'available', strategy: 'stable_ids' }
         : UNAVAILABLE;
     case 'send_exact_message':
       return capabilities.exactMessage ? { status: 'available' } : UNAVAILABLE;

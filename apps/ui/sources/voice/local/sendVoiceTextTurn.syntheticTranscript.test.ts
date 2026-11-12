@@ -426,7 +426,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         spoken.push(text); activeSpeech = options;
         if (text === narration?.[0]) { options.onStart?.(); firstNarration.resolve(options); }
         else {
-          if (streamedNarration && text === carrier?.readPending()?.operation.summary) {
+          if (streamedNarration && carrier?.readPending() && text !== narration?.[1]) {
             summaryAttempted = true; summaryOptions = options; hostSummary.resolve(options);
           } else {
             options.onStart?.(); options.onDone?.();
@@ -481,11 +481,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       status: 'connected', mode: 'listening', canStop: true });
     const carrier = getVoiceSessionSpokenActionConfirmation();
     if (!carrier) throw new Error('Missing live call');
-    const actionId = 'notifications.webhooks.remove';
-    carrier.prepare({ actionId, actionRequestId: 'remove-webhook',
-      serverId: account.homes.voice!.id, defaultSessionId: 's1',
-      normalizedInput: { channelId: 'deployment-webhook' },
-      summary: 'Remove the deployment webhook.' });
+    carrier.prepare();
     const pendingReadBack = carrier.readPending();
     const base = buildAccountSettings();
     const local = readLocalConversationVoiceSettings(base.voice);
@@ -565,13 +561,13 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     await speech.speak.withImplementation((text, options) => {
       activeSpeech = options;
       spoken.push(text);
-      if (text === carrier.readPending()?.operation.summary && completion === 'not-started') {
+      if (carrier.readPending() && completion === 'not-started') {
         summaryStarted.resolve(options);
         options.onStopped?.();
         return;
       }
       options.onStart?.();
-      if (text === carrier.readPending()?.operation.summary) summaryStarted.resolve(options);
+      if (carrier.readPending()) summaryStarted.resolve(options);
       else options.onDone?.();
     }, async () => await speech.stop.withImplementation(() => { activeSpeech?.onStopped?.(); }, async () => {
       const sending = sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
@@ -580,7 +576,6 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         const summarySpeech = await Promise.race([summaryStarted.promise, sending.then(() => {
           throw new Error('The model repeated the Action without host summary playback');
         })]);
-        expect(spoken).toContain(carrier.readPending()!.operation.summary);
         expect(carrier.readPending()).not.toBeNull();
         expect(webhookRevision).toBe(1);
         if (completion === 'done') summarySpeech.onDone?.();

@@ -137,6 +137,40 @@ describe('hosted ElevenLabs settlement through host teardown', () => {
     vi.restoreAllMocks();
   });
 
+  it('admits provider-identified effect calls through the declared custody and keeps input validation authoritative', async () => {
+    const { TextConversation } = await vi.importActual<typeof import('@elevenlabs/client')>('@elevenlabs/client');
+    let incoming!: (event: unknown) => Promise<void>;
+    const sent: unknown[] = [];
+    const network = {
+      conversationId: 'provider-conversation',
+      onMessage(callback: typeof incoming) { incoming = callback; },
+      onDisconnect() {}, onModeChange() {}, onOutgoingMessage() {},
+      sendMessage(event: unknown) { sent.push(event); }, close() {},
+    };
+    // Provider network and media startup are replaced. The installed SDK dispatches
+    // its real incoming-event callback before invoking the registered tool.
+    sdk.startSession.mockImplementation(async (options) => Object.assign(
+      Reflect.construct(TextConversation, [options, network]),
+      { setMicMuted() {}, setVolume() {} },
+    ));
+    await start();
+    expect(adapter().getSnapshot().status).toBe('connected');
+    const event = { type: 'client_tool_call', client_tool_call: {
+      tool_call_id: 'r126-effect-call', tool_name: 'action_execute',
+      parameters: { arguments_json: JSON.stringify({ actionId: 'session.message.send', input: { message: 42 } }) },
+    } };
+    await incoming(event);
+    const results = sent.filter((value) => (value as { type?: unknown }).type === 'client_tool_result');
+    expect(results).toEqual([expect.objectContaining({
+      tool_call_id: 'r126-effect-call', is_error: true,
+      result: expect.stringContaining('invalid_parameters'),
+    })]);
+    await incoming(structuredClone(event));
+    expect(sent.filter((value) => (value as { type?: unknown }).type === 'client_tool_result')).toEqual([
+      results[0], results[0],
+    ]);
+  });
+
   it('keeps End retry reachable after two failed completion/release attempts, with media ended once', async () => {
     await start();
     expect(adapter().getSnapshot().status).toBe('connected');

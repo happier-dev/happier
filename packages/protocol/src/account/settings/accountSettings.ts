@@ -58,7 +58,7 @@ import {
   readBackendTargetKeyV2,
   type BackendTargetRefV2Input,
 } from '../../backends/targets/backendTargetRefV2.js';
-import { LlmTaskRunnerConfigV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
+import { LlmTaskRunnerChoiceV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import { InstallableAutoUpdateModeSchema } from '../../installables/descriptor.js';
 import { ComputerUseByMachineIdV1Schema } from '../../computer/v1.js';
 import {
@@ -458,6 +458,8 @@ export const RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS = Object.freeze([
   'reviewPromptLikedApp',
   'lastUsedPermissionMode',
   'lastUsedModelMode',
+  // 0.3 development summary-model string; read once into scm.diffSummary.runnerV1.
+  'scm.diffSummary.modelProfileOverride',
 ] as const);
 
 const RETIRED_ACCOUNT_SETTINGS_ROOT_KEY_SET = new Set<string>(RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS);
@@ -550,7 +552,49 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
 
   next.attentionDeliveryPolicyV1 = readAccountAttentionDeliveryPolicy(source);
 
+  // Read from the raw document: the retired string key never reaches `source`.
+  if (next['scm.diffSummary.runnerV1'] === undefined) {
+    const runner = migrateLegacyScmDiffSummaryModel(raw['scm.diffSummary.modelProfileOverride']);
+    if (runner) next['scm.diffSummary.runnerV1'] = runner;
+  }
+
+  if (next.scmCommitMessageGeneratorRunnerV1 === undefined) {
+    const runner = migrateLegacyCommitMessageAgent(source.scmCommitMessageGeneratorBackendId);
+    if (runner) next.scmCommitMessageGeneratorRunnerV1 = runner;
+  }
+  // The 0.2 Agent id is migration input only; the projection never re-emits it.
+  delete next.scmCommitMessageGeneratorBackendId;
+
   return next;
+}
+
+/**
+ * 0.2 stored only an Agent id, defaulting to 'claude'. That default (or empty)
+ * carries no evidence of a choice, so it stays Auto; any other Agent becomes an
+ * explicit runner on its default model. Commit generation is never tool-capable.
+ */
+function migrateLegacyCommitMessageAgent(raw: unknown): Record<string, unknown> | null {
+  const agentId = typeof raw === 'string' ? raw.trim() : '';
+  if (!agentId || agentId === 'claude') return null;
+  const agentTargetKey = readBackendTargetKeyV2({ kind: 'builtInAgent', agentId });
+  return agentTargetKey ? { v: 1, modelSelection: { agentTargetKey, providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' } : null;
+}
+
+/**
+ * The retired summary-model string: '' was Auto, `model:{…}` an explicit model
+ * selection with its connected route. Anything unreadable stays Auto.
+ */
+function migrateLegacyScmDiffSummaryModel(raw: unknown): unknown {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (!value.startsWith('model:')) return null;
+  try {
+    const { connectedServices, agentTargetKey, providerConnectionId, modelId } = JSON.parse(value.slice('model:'.length)) as Record<string, unknown>;
+    const runner = LlmTaskRunnerChoiceV1Schema.safeParse({ v: 1, modelSelection: { agentTargetKey, providerConnectionId, modelId },
+      ...(connectedServices !== undefined ? { connectedServices } : {}) });
+    return runner.success ? runner.data : null;
+  } catch {
+    return null;
+  }
 }
 
 type AccountCatalogDefinitionOptions = Readonly<{
@@ -1215,12 +1259,16 @@ const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     scmSessionAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 300000, 'source control'),
     scmFilesAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 60000, 'source control'),
     scmCommitMessageGeneratorEnabled: accountPreference(z.boolean(), true, 'source control'),
-    scmCommitMessageGeneratorBackendId: accountPreference(accountBoundedString(256), 'claude', 'source control'),
+    /** 0.2 Agent id; read only to migrate into scmCommitMessageGeneratorRunnerV1. */
+    scmCommitMessageGeneratorBackendId: accountPreference(accountBoundedString(256), '', 'source control'),
+    /** Null or `{ mode: 'auto' }`: the task runner owner picks on the executing machine. */
+    scmCommitMessageGeneratorRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
     scmCommitMessageGeneratorInstructions: accountPreference(accountBoundedString(16 * 1024), '', 'source control', 16 * 1024),
     'scm.diffSummary.enabled': accountPreference(z.boolean(), true, 'source control'),
     'scm.diffSummary.prefetch': accountPreference(z.boolean(), false, 'source control'),
     'scm.diffSummary.investigateSurroundingFiles': accountPreference(z.boolean(), false, 'source control'),
-    'scm.diffSummary.modelProfileOverride': accountPreference(accountBoundedString(256), '', 'source control'),
+    /** The summary runner choice; null is Auto. */
+    'scm.diffSummary.runnerV1': accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
     // Reuse the Account language preference's scalar storage boundary; empty follows the UI locale.
     'scm.diffSummary.outputLanguage': accountPreference(accountBoundedString(256), '', 'source control'),
     filesDiffSyntaxHighlightingMode: accountPreference(z.enum(['off', 'simple', 'advanced']), 'advanced', 'file presentation'),
@@ -1333,7 +1381,8 @@ const ACCOUNT_RUNTIME_AND_WORKFLOW_CATALOG_DEFINITIONS = {
     pluginUpdateReviewModeV1: accountPreference(PluginUpdateReviewModeV1Schema, DEFAULT_PLUGIN_UPDATE_REVIEW_MODE_V1, 'plugin update review'),
     preferredLanguage: accountPreference(z.nullable(accountBoundedString(256)), null, 'language preference'),
     sessionHandoffDefaultsV1: accountPreference(SessionHandoffDefaultsV1Schema, DEFAULT_SESSION_HANDOFF_DEFAULTS_V1, 'session handoff defaults', 32 * 1024),
-    sessionReplaySummaryRunnerV1: accountPreference(z.nullable(LlmTaskRunnerConfigV1Schema), null, 'session replay', 64 * 1024),
+    // Null or Auto: the background-task runner owner picks on the executing machine.
+    sessionReplaySummaryRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'session replay', 64 * 1024),
     sessionTmuxByMachineId: accountPreference(z._default(z.record(accountBoundedString(1024), SessionTmuxMachineOverrideSchema), {}), {}, 'session terminal defaults', 64 * 1024),
     sessionTerminalHostByMachineId: accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['zellij', 'herdr'])), {}), {}, 'session terminal defaults', 64 * 1024),
     sessionTmuxSessionName: accountPreference(accountBoundedString(256), 'happy', 'session terminal defaults'),

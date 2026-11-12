@@ -19,6 +19,24 @@ function parseFollowUpJson(prompt: string): { toolResults: LocalVoiceAgentToolRe
 }
 
 describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
+  it('derives the Local summary from the privacy-projected result rather than a stripped target label', () => {
+    const prompt = buildToolResultsFollowUpPrompt([{ t: 'spawnSession', args: {},
+      result: { ok: true, target: { label: 'Private Session title' } } }], {
+      shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false,
+    });
+    expect(prompt).not.toContain('Private Session title');
+    expect(parseFollowUpJson(prompt).toolResults[0]?.result).not.toHaveProperty('summary');
+  });
+
+  it('withdraws a previously generated Local summary when summary sharing changes before delivery', () => {
+    const prefs = { shareFilePaths: false, shareSessionSummary: true, sharePermissionRequests: false };
+    const first = parseFollowUpJson(buildToolResultsFollowUpPrompt([{ t: 'spawnSession', args: {},
+      result: { ok: true, target: { label: 'Private Session title' } } }], prefs));
+    expect(JSON.stringify(first)).toContain('Private Session title');
+    const prompt = buildToolResultsFollowUpPrompt(first.toolResults, { ...prefs, shareSessionSummary: false });
+    expect(prompt).not.toContain('Private Session title');
+  });
+
   it.each(['outcomeUnknown', 'pending', 'approval_request_created'])('does not label a %s outcome as completed success', status => {
     const prompt = buildToolResultsFollowUpPrompt([{ t: 'sendSessionMessage', args: {}, result: { ok: true, status } }], {
       shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false, shareDeviceInventory: false,

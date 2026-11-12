@@ -178,7 +178,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
     settingsOperations,
     microphoneMode: 'host_pcm',
     outputLevelMeter: 'measured',
-    async createConnection({ session, attemptId, media, tools, signal }) {
+    async createConnection({ session, attemptId, media, tools, signal, onSyntheticResponseRequested }) {
       const config = record(session.config);
       const settings = XaiRealtimeSettingsV1Schema.safeParse(config?.settings);
       const auth = config?.auth as VoiceClientAuthArtifact | undefined;
@@ -213,6 +213,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
         model,
         conversationId,
         greetOnOpen: config?.greetOnOpen === true,
+        ...(onSyntheticResponseRequested ? { onSyntheticResponseRequested } : {}),
         sessionUpdate: createXaiSessionUpdate({
           ...settings.data,
           instructions: typeof config?.instructions === 'string' ? config.instructions : settings.data.instructions,
@@ -227,6 +228,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
         onAudioDelta: (value) => attemptMedia?.enqueueOutput(value) ?? false,
       });
       const hostText = createHostTextPlayback({ send: driver.sendControl,
+        ...(onSyntheticResponseRequested ? { onSyntheticResponseRequested } : {}),
         capture: () => attemptMedia?.captureOutputPlayback?.() ?? null });
       signal.addEventListener('abort', hostText.cancel, { once: true });
       const observedDriver = { ...driver,

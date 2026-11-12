@@ -64,6 +64,21 @@ async function mountCurrentUiPort(withCommand = false) {
 }
 
 describe('bundled Conversation runtime host tool projection', () => {
+  it.each(['direct', 'generic'] as const)('decodes scalar-string inputs before executing the %s provider callback', async transport => {
+    const lease = createBundledConversationRuntimeHostLease();
+    try {
+      const tool = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
+        .find(candidate => candidate.name === (transport === 'direct' ? 'searchActionSpecs' : 'action_execute'));
+      if (!tool) throw new Error('Expected Action discovery tool');
+      const result = await tool.execute(transport === 'direct'
+        ? { query: 'spawn session', limit: '1' }
+        : { actionId: 'action.spec.search', input: { query: 'spawn session', limit: '1' } });
+      expect(result).toMatchObject(transport === 'direct'
+        ? { ok: true, actionSpecs: [expect.objectContaining({ id: expect.any(String) })] }
+        : { ok: true, result: { ok: true, actionSpecs: [expect.objectContaining({ id: expect.any(String) })] } });
+    } finally { lease.revoke(); }
+  });
+
   let previousSettings: ReturnType<typeof storage.getState>['settings'];
 
   beforeEach(() => {
@@ -130,34 +145,29 @@ describe('bundled Conversation runtime host tool projection', () => {
     }
   });
 
-  it('projects current UI read and effect capabilities only from the local AppShell port and only with stable effect custody', async () => {
+  it('binds current UI reads to the local AppShell port and projects enabled effects', async () => {
     const withoutPort = createBundledConversationRuntimeHostLease();
     const withPort = createBundledConversationRuntimeHostLease({
       currentUiContext: await mountCurrentUiPort(),
     });
     try {
-      const toolNames = (
-        lease: typeof withPort,
-        effectCalls: 'none' | 'stable_ids',
-      ) => lease.host.getRealtimeClientToolDefinitions({ effectCalls, exposure: 'voice_assistant' })
+      const toolNames = (lease: typeof withPort) => lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
         .map((tool) => tool.name);
 
-      expect(toolNames(withoutPort, 'none')).not.toContain('readCurrentUiContext');
-      expect(toolNames(withPort, 'none')).toContain('readCurrentUiContext');
-      expect(toolNames(withPort, 'stable_ids')).toContain('invokeCurrentUiCommand');
-      expect(toolNames(withPort, 'stable_ids')).toContain('invokeAction');
-      expect(toolNames(withPort, 'none')).not.toContain('invokeCurrentUiCommand');
-      expect(toolNames(withPort, 'none')).not.toContain('invokeAction');
+      expect(toolNames(withoutPort)).not.toContain('readCurrentUiContext');
+      expect(toolNames(withPort)).toContain('readCurrentUiContext');
+      expect(toolNames(withPort)).toContain('invokeCurrentUiCommand');
+      expect(toolNames(withPort)).toContain('invokeAction');
     } finally {
       withoutPort.revoke();
       withPort.revoke();
     }
   });
 
-  it('keeps effectful canonical ActionSpecs closed until the provider declares stable call/result custody', () => {
+  it('projects enabled canonical ActionSpecs without a provider custody declaration', () => {
     // `session.user_action.answer` is a canonical mutation with a non-port-bound
     // handler. Contextual commands intentionally require the injected AppShell
-    // port and therefore cannot establish this generic custody invariant.
+    // port and therefore cannot establish generic Action projection.
     const effectfulSpec = resolveEnabledVoiceToolActionSpecsFromState(storage.getState()).find(
       (spec) => spec.id === 'session.user_action.answer' && !isVoiceSdkSafeActionSpec(spec),
     );
@@ -165,15 +175,11 @@ describe('bundled Conversation runtime host tool projection', () => {
     const effectfulToolName = String(effectfulSpec?.bindings?.voiceClientToolName ?? '').trim();
     const lease = createBundledConversationRuntimeHostLease();
     try {
-      const toolNames = (effectCalls: 'none' | 'stable_ids') => lease.host
-        .getRealtimeClientToolDefinitions({ effectCalls, exposure: 'voice_assistant' })
+      const toolNames = lease.host
+        .getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
         .map((tool) => tool.name);
 
-      const withoutStableIds = toolNames('none');
-      const withStableIds = toolNames('stable_ids');
-
-      expect(withoutStableIds).not.toContain(effectfulToolName);
-      expect(withStableIds).toContain(effectfulToolName);
+      expect(toolNames).toContain(effectfulToolName);
     } finally {
       lease.revoke();
     }
@@ -186,9 +192,9 @@ describe('bundled Conversation runtime host tool projection', () => {
       const nonHotPath = enabled.find((spec) => !isVoicePromptHotPathSpec(spec)
         && spec.id !== 'action.spec.search' && spec.id !== 'action.spec.get');
       expect(nonHotPath).toBeDefined();
-      const names = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+      const names = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
         .map((tool) => tool.name);
-      const listTool = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+      const listTool = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
         .find((tool) => tool.name === 'listSessions');
       expect(Object.keys(listTool?.parameters.properties ?? {}).sort()).toEqual(['cursor', 'limit']);
       expect(names).toContain('action_execute');
@@ -205,7 +211,7 @@ describe('bundled Conversation runtime host tool projection', () => {
   it.each(['direct', 'generic'] as const)('delivers the real spawn Action detail through the %s provider callback', async transport => {
     const lease = createBundledConversationRuntimeHostLease();
     try {
-      const tool = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+      const tool = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
         .find(candidate => candidate.name === (transport === 'direct' ? 'getActionSpec' : 'action_execute'));
       if (!tool) throw new Error('Expected Action discovery tool');
       const result = await tool.execute(transport === 'direct'
@@ -222,7 +228,7 @@ describe('bundled Conversation runtime host tool projection', () => {
   it('publishes the canonical Inbox read and its briefing guidance to standalone realtime attempts', () => {
     const lease = createBundledConversationRuntimeHostLease();
     try {
-      const tools = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' });
+      const tools = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' });
       const inbox = tools.find(tool => tool.name === 'inbox_get');
       expect(inbox).toBeDefined();
       expect(inbox?.parameters.required ?? []).toEqual([]);
@@ -242,7 +248,7 @@ describe('bundled Conversation runtime host tool projection', () => {
   it('keeps canonical Inbox reads available while a coding Session waits for a request decision in either Voice mode', () => {
     const lease = createBundledConversationRuntimeHostLease();
     try {
-      const tools = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' });
+      const tools = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' });
       const policy = buildVoiceRealtimeAttemptPolicy({
         actionSpecs: listVoiceToolActionSpecs(),
         availableToolNames: tools.map(tool => tool.name),
@@ -260,7 +266,7 @@ describe('bundled Conversation runtime host tool projection', () => {
   it('keeps generic direct SDK callbacks read-only and rechecks target availability', async () => {
     const lease = createBundledConversationRuntimeHostLease({ currentUiContext: await mountCurrentUiPort() });
     try {
-      const generic = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'none', exposure: 'voice_assistant' })
+      const generic = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
         .find((tool) => tool.name === 'action_execute');
       expect(generic).toBeDefined();
       if (!generic) throw new Error('Expected generic Voice tool');
@@ -298,7 +304,6 @@ describe('bundled Conversation runtime host tool projection', () => {
     ).trim();
     try {
       const tools = lease.host.getRealtimeClientToolDefinitions({
-        effectCalls: 'stable_ids',
         exposure: 'voice_assistant',
       });
       const invokeActionTool = tools.find((tool) => tool.name === invokeActionToolName);
@@ -333,7 +338,6 @@ describe('bundled Conversation runtime host tool projection', () => {
       getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
     ).trim();
     const tool = lease.host.getRealtimeClientToolDefinitions({
-      effectCalls: 'stable_ids',
       exposure: 'voice_assistant',
     }).find((candidate) => candidate.name === toolName);
 
@@ -348,7 +352,6 @@ describe('bundled Conversation runtime host tool projection', () => {
     const previousSettings = storage.getState().settings;
     const lease = createBundledConversationRuntimeHostLease();
     const tool = lease.host.getRealtimeClientToolDefinitions({
-      effectCalls: 'none',
       exposure: 'voice_assistant',
     }).find((candidate) => candidate.name === 'action_execute');
     if (!tool) throw new Error('Expected generic read tool');
@@ -383,7 +386,6 @@ describe('bundled Conversation runtime host tool projection', () => {
     if (!spec) throw new Error('Expected listMachines ActionSpec');
     const lease = createBundledConversationRuntimeHostLease();
     const tool = lease.host.getRealtimeClientToolDefinitions({
-      effectCalls: 'none',
       exposure: 'voice_assistant',
     }).find((candidate) => candidate.name === 'action_execute');
     if (!tool) throw new Error('Expected generic read tool');
@@ -419,7 +421,7 @@ describe('bundled Conversation runtime host tool projection', () => {
           .map((actionId) => String(getActionSpec(actionId).bindings?.voiceClientToolName ?? '').trim()),
       );
       const names = (exposure: 'voice_assistant' | 'current_ui_only') => lease.host
-        .getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure })
+        .getRealtimeClientToolDefinitions({ exposure })
         .map((tool) => tool.name);
 
       const assistantNames = names('voice_assistant');

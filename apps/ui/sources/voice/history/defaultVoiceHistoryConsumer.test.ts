@@ -169,7 +169,7 @@ describe('resolveVoiceHistoryProviderTitleKey', () => {
       declaration: VoiceProviderContributionSchema.parse({
         ...identity,
         kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-        capabilities: { turn: { cancelResponse: true, bargeIn: true }, tools: { effectCalls: 'none' } },
+        capabilities: { turn: { cancelResponse: true, bargeIn: true },  },
         client: { artifactId: 'voice', exportName: 'activate' },
       }),
     }));

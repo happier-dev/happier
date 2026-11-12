@@ -96,7 +96,7 @@ function voiceDeclaration(): ConversationVoiceProviderContribution {
         cancelResponse: false,
         bargeIn: false,
       },
-      tools: { effectCalls: 'none' },
+
     },
     execution: {
       kind: 'experimental_agent_session_realtime' as const,

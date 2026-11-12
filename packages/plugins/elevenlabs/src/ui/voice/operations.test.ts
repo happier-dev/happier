@@ -46,7 +46,7 @@ const EXACT_SEND_MESSAGE_TOOL_CONFIG = Object.freeze({
   tool_call_sound_behavior: 'auto',
   pre_tool_speech: 'auto',
   interruption_mode: 'allow',
-  response_timeout_secs: 60,
+  response_timeout_secs: 120,
   execution_mode: 'immediate',
   expects_response: true,
   parameters: { type: 'object', description: '', dynamic_variable: '', is_omitted: false,
@@ -513,7 +513,7 @@ describe('ElevenLabs public account operations', () => {
       body: {
         tool_config: {
           name: 'sendMessage',
-          response_timeout_secs: 60,
+          response_timeout_secs: 120,
         },
       },
     });

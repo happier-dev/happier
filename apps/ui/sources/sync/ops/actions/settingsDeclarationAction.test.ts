@@ -1527,7 +1527,7 @@ describe('navigation placement Settings Actions', () => {
         ['externalSessions.keepFollowingAfterRestart', false],
         ['sourceControl.confirmBeforePulling', false],
         ['sourceControl.confirmBeforePushing', false],
-        ['sourceControl.commitMessageAgent', 'codex'],
+        ['sourceControl.commitMessageAgent', { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' }],
         ['handoff.workspaceMode', 'copy_once'],
         ['handoff.includeIgnoredMode', 'include_selected'],
         ['handoff.ignoredIncludeGlobs', ['build/**']],
@@ -2094,10 +2094,16 @@ async function offeredSummaryProfiles() {
     }));
 }
 
+function summaryRunner(profile: Readonly<{ modelSelector?: Readonly<{ backendTargetKey?: string; modelId?: string }> }>) {
+    return { v: 1 as const, modelSelection: { agentTargetKey: profile.modelSelector?.backendTargetKey ?? '',
+        providerConnectionId: null, modelId: profile.modelSelector?.modelId ?? 'default' } };
+}
+const UNAVAILABLE_SUMMARY_RUNNER = { v: 1 as const, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'unavailable-model' } };
+
 async function supportedSummaryPreference() {
     const profile = (await offeredSummaryProfiles()).find(candidate => candidate.structuredOutput === 'supported');
     if (!profile) throw new Error('Expected a genuinely supported offered Summary model');
-    return profile.catalogId;
+    return summaryRunner(profile);
 }
 
 describe('declared settings owner', () => {
@@ -2415,7 +2421,7 @@ describe('declared settings owner', () => {
         const providerId = `${pluginId}/cloud`;
         const declaration = VoiceProviderContributionSchema.parse({ id: 'cloud', title: 'Cloud conversation', kind: 'conversation',
             roles: ['realtime_conversation'], platforms: ['web'],
-            capabilities: { turn: { cancelResponse: true, bargeIn: true }, tools: { effectCalls: 'none' } },
+            capabilities: { turn: { cancelResponse: true, bargeIn: true },  },
             client: { artifactId: 'voice', exportName: 'activate' },
             settings: { schemaVersion: 1, fields: [{ id: 'model', title: 'Model', schema: { type: 'string', maxLength: 128 },
                 default: 'fixture-model', presentation: { control: 'text' } }] } });
@@ -2693,16 +2699,16 @@ describe('declared settings owner', () => {
         const profiles = (await offeredSummaryProfiles()).filter(profile => profile.structuredOutput !== 'supported');
         expect(profiles.length).toBeGreaterThan(0);
         const owner = createOwner(undefined, true);
-        for (const value of [...profiles.map(profile => profile.catalogId), 'unknown-summary-model']) {
+        for (const value of [...profiles.map(summaryRunner), UNAVAILABLE_SUMMARY_RUNNER]) {
             expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.summaryModel', value } }))
                 .toMatchObject({ ok: false, errorCode: 'setting_value_unavailable' });
-            expect(owner.account()['scm.diffSummary.modelProfileOverride']).toBe('');
+            expect(owner.account()['scm.diffSummary.runnerV1']).toBeNull();
         }
     });
     it('refuses enabling preparation after turns when no supported Summary model is selected', async () => {
         await offeredSummaryProfiles();
         const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, {
-            'scm.diffSummary.modelProfileOverride': 'unavailable-model',
+            'scm.diffSummary.runnerV1': UNAVAILABLE_SUMMARY_RUNNER,
         }));
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.prepareAfterTurn', value: true } }))
             .toMatchObject({ ok: false, errorCode: 'setting_value_unavailable' });
@@ -2710,7 +2716,7 @@ describe('declared settings owner', () => {
     });
     it('allows disabling preparation after turns after the selected model becomes unavailable', async () => {
         const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, {
-            'scm.diffSummary.prefetch': true, 'scm.diffSummary.modelProfileOverride': 'unavailable-model',
+            'scm.diffSummary.prefetch': true, 'scm.diffSummary.runnerV1': UNAVAILABLE_SUMMARY_RUNNER,
         }));
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.prepareAfterTurn', value: false } }))
             .toEqual({ anchor: 'sourceControl.prepareAfterTurn', value: false });
@@ -2721,12 +2727,13 @@ describe('declared settings owner', () => {
         const owner = createOwner(undefined, true);
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.summaryModel', value } }))
             .toEqual({ anchor: 'sourceControl.summaryModel', value });
-        expect(owner.account()['scm.diffSummary.modelProfileOverride']).toBe(value);
+        expect(owner.account()['scm.diffSummary.runnerV1']).toEqual(value);
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.prepareAfterTurn', value: true } }))
             .toEqual({ anchor: 'sourceControl.prepareAfterTurn', value: true });
         expect(owner.account()['scm.diffSummary.prefetch']).toBe(true);
-        const rebased = createOwner(undefined, true, true, applySettings(settingsDefaults, { 'scm.diffSummary.modelProfileOverride': value }),
-            undefined, current => applySettings(current, { 'scm.diffSummary.modelProfileOverride': 'retired-model' }));
+        const rebased = createOwner(undefined, true, true, applySettings(settingsDefaults, { 'scm.diffSummary.runnerV1': value }),
+            undefined, current => applySettings(current, { 'scm.diffSummary.runnerV1': { ...UNAVAILABLE_SUMMARY_RUNNER,
+                modelSelection: { ...UNAVAILABLE_SUMMARY_RUNNER.modelSelection, modelId: 'retired-model' } } }));
         expect(await rebased.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.prepareAfterTurn', value: true } }))
             .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
         expect(rebased.account()['scm.diffSummary.prefetch']).toBe(false);
@@ -3390,7 +3397,7 @@ describe('declared settings owner', () => {
             // Voice preparation also needs the Account identity of this settings fixture.
             storage.setState({ settingsScope: (await readSummaryCatalogAccount()).accountLifetime.scope });
             const owner = createOwner(host, true, true, applySettings(settingsDefaults, {
-                'scm.diffSummary.modelProfileOverride': value,
+                'scm.diffSummary.runnerV1': value,
             }));
             const discovered = await owner.action({ actionId: 'settings.list', input: {} });
             if (!('items' in discovered) || !discovered.items) throw new Error('Discovery failed');

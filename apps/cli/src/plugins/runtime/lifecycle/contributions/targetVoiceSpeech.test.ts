@@ -153,7 +153,7 @@ describe('target Voice speech registry', () => {
             roles: ['realtime_conversation'], platforms: ['web'],
             capabilities: {
                 turn: { cancelResponse: true, bargeIn: true },
-                tools: { effectCalls: 'none' },
+
             },
             client: { artifactId: 'voice-ui', exportName: 'activate' },
         };

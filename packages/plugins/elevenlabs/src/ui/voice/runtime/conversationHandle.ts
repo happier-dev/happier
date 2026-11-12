@@ -113,15 +113,9 @@ export function createElevenLabsConversationHandle(params: Readonly<{
 
     const buildClientTools = (startSequence: number): PartialOptions['clientTools'] => Object.freeze(Object.fromEntries(params.tools.map((tool) => [
         tool.name,
-        async (parameters: unknown) => {
+        async (parameters: object) => {
             if (!isCurrentStartSequence(startSequence)) throw new Error('tool_cancelled');
-            if (!parameters || typeof parameters !== 'object') {
-                throw new Error('voice_effect_call_custody_unavailable');
-            }
-            const call = callsByParameters.get(parameters);
-            if (!call || call.toolName !== tool.name) {
-                throw new Error('voice_effect_call_custody_unavailable');
-            }
+            const call = callsByParameters.get(parameters)!;
             callsByParameters.delete(parameters);
             // SDK 1.18.0 preserves this object from onIncomingEvent to its
             // synchronous callback. No effect executor or result cache lives

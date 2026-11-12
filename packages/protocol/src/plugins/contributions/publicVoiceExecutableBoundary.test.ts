@@ -99,7 +99,6 @@ describe('public voice executable contribution boundary', () => {
             bargeIn: true,
             clearInput: true,
             resumption: 'resume',
-            replay: 'stable_ids',
             exactMessage: true,
             interruptionPolicy: 'provider_immediate',
           },
@@ -113,52 +112,11 @@ describe('public voice executable contribution boundary', () => {
         turn: expect.objectContaining({
           clearInput: true,
           resumption: 'resume',
-          replay: 'stable_ids',
           exactMessage: true,
           interruptionPolicy: 'provider_immediate',
         }),
       }),
     })]);
-  });
-
-  it('defaults effectful client tools closed and admits only declared stable call identities', () => {
-    const base = {
-      id: 'conversation',
-      title: 'Conversation',
-      kind: 'conversation',
-      roles: ['realtime_conversation'],
-      platforms: ['web'],
-      capabilities: {
-        turn: { cancelResponse: false, bargeIn: false },
-      },
-      client: { artifactId: 'voice-runtime-web', exportName: 'activate' },
-    } as const;
-
-    expect(PluginContributesV2Schema.parse({
-      voiceProviders: [base],
-    }).voiceProviders[0]!.capabilities).toMatchObject({
-      tools: { effectCalls: 'none' },
-    });
-    expect(PluginContributesV2Schema.parse({
-      voiceProviders: [{
-        ...base,
-        capabilities: {
-          ...base.capabilities,
-          tools: { effectCalls: 'stable_ids' },
-        },
-      }],
-    }).voiceProviders[0]!.capabilities).toMatchObject({
-      tools: { effectCalls: 'stable_ids' },
-    });
-    expect(PluginContributesV2Schema.safeParse({
-      voiceProviders: [{
-        ...base,
-        capabilities: {
-          ...base.capabilities,
-          tools: { effectCalls: 'arrival_order' },
-        },
-      }],
-    }).success).toBe(false);
   });
 
   it('catalogs the declaration as one required Voice registration right', () => {

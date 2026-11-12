@@ -14,6 +14,8 @@ import { VoiceRealtimeToolResultV1Schema, type VoiceRealtimeJsonValue } from '@h
 
 import { redactVoiceToolResultForProvider } from '@/voice/context/redactVoiceToolResult';
 import { createRealtimeToolBarrierForVoiceHandlers } from './defaultRealtimeToolBarrier';
+import { t } from '@/text';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const privacy = { shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false };
 
@@ -34,6 +36,66 @@ async function runTool(toolName: string, args: VoiceRealtimeJsonValue, output: u
 }
 
 describe('realtime provider output redaction', () => {
+  it('retains the complete redacted Action failure for owner summary and refreshed delivery', async () => {
+    let shareFilePaths = true;
+    const output = parseActionExecuteFailure({ ok: false, errorCode: 'CustomActionFailure',
+      error: 'Claude is signed out on the selected machine at /home/alice/private',
+      details: { reason: 'provider_signed_out' } });
+    expect(output).not.toBeNull();
+    const submitted: unknown[] = [];
+    const barrier = createRealtimeToolBarrierForVoiceHandlers({
+      handlers: { spawnSession: async () => JSON.stringify(output) },
+      readRedactionPrefs: () => ({ ...privacy, shareFilePaths }),
+      submitResults: async (_id, results) => { submitted.push(results); }, continueResponse: async () => {},
+    });
+    const input = { responseId: 'response-owner-failure', calls: [{ v: 1, responseId: 'response-owner-failure',
+      callId: 'call-owner-failure', toolName: 'spawnSession', order: 0, arguments: {
+        executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/project' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      } }] };
+    try {
+      const first = await barrier.run(input);
+      expect(first.results[0]).toMatchObject({ status: 'error', errorCode: 'CustomActionFailure',
+        summary: expect.stringContaining('Claude is signed out') });
+      shareFilePaths = false;
+      const refreshed = await barrier.run(input);
+      expect(refreshed.results[0]).toMatchObject({ status: 'error', errorCode: 'CustomActionFailure',
+        summary: expect.stringContaining('Claude is signed out') });
+      expect(JSON.stringify(refreshed)).not.toContain('/home/alice');
+      expect(JSON.stringify(submitted.at(-1))).not.toContain('/home/alice');
+      expect(refreshed.results[0]?.output).toBeUndefined();
+    } finally { barrier.dispose(); }
+  });
+
+  it('delivers the Action owner approval summary while preserving typed failure status', async () => {
+    const barrier = createRealtimeToolBarrierForVoiceHandlers({
+      handlers: { spawnSession: async () => JSON.stringify({ ok: false, errorCode: 'present_user_required' }) },
+      readRedactionPrefs: () => privacy,
+      submitResults: async () => {}, continueResponse: async () => {},
+    });
+    try {
+      const result = await barrier.run({ responseId: 'response-1', calls: [{ v: 1, responseId: 'response-1',
+        callId: 'call-1', toolName: 'spawnSession', order: 0, arguments: {
+          executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/project' },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } }] });
+      expect(result.results[0]).toMatchObject({ status: 'error', errorCode: 'present_user_required',
+        summary: t('voiceSurface.approvalTapRequired') });
+      expect(result.results[0]?.output).toBeUndefined();
+    } finally { barrier.dispose(); }
+  });
+
+  it('derives the realtime summary from the privacy-projected result', async () => {
+    const output = { ok: true, target: { label: 'Private Session title' } };
+    const result = await runTool('spawnSession', {
+      executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    }, output);
+    expect(result.results[0]?.status).toBe('success');
+    expect(JSON.stringify(result)).not.toContain('Private Session title');
+    expect(result.results[0]).not.toHaveProperty('summary');
+  });
+
   it('delivers a canonical plugin-target approval without manufacturing an undefined built-in Action id', async () => {
     const request = TargetActionApprovalRequestV1Schema.parse({
       v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,

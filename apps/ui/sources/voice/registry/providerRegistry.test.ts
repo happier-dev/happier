@@ -77,7 +77,7 @@ describe('voice provider registry', () => {
     const declaration = VoiceProviderContributionSchema.parse({
       id: 'voice', title: 'Fixture voice', kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
       ...(description ? { description } : {}),
-      capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+      capabilities: { turn: { cancelResponse: false, bargeIn: false },  },
       client: { artifactId: 'voice', exportName: 'activate' },
     });
     const registry = createVoiceProviderRegistry({
@@ -119,7 +119,7 @@ describe('voice provider registry', () => {
     const declaration = VoiceProviderContributionSchema.parse({
       id: 'conversation', title: 'Installed service', kind: 'conversation',
       mark: { kind: 'icon', name: 'waveform' }, roles: ['realtime_conversation'], platforms: ['web'],
-      capabilities: { turn: { cancelResponse: true, bargeIn: true }, tools: { effectCalls: 'none' } },
+      capabilities: { turn: { cancelResponse: true, bargeIn: true },  },
       client: { artifactId: 'voice', exportName: 'activate' },
     });
     expect(projectVoiceProviderDeclarationRegistryBase({ declaration, providerSettings: null }).mark)
@@ -219,7 +219,7 @@ describe('voice provider registry', () => {
           platforms: ['web'],
           capabilities: {
             turn: { cancelResponse: false, bargeIn: false },
-            tools: { effectCalls: 'none' },
+
           },
           settings: {
             schemaVersion: 2,
@@ -333,6 +333,11 @@ describe('voice provider registry', () => {
       sourceSelection: { kind: 'savedSecret' as const, connectedAccountEligibility: 'unusable' as const },
       savedSecret: { status: 'missing' as const },
     };
+
+    expect(projectVoiceProviderCredentialReadiness(entry, null, {
+      sourceSelection: readyContext.sourceSelection,
+      savedSecret: { status: 'unknown', savedSecret: { resolving: true } },
+    })).toEqual({ status: 'unknown', detailKey: 'settings.updates.checking', resolving: true });
 
     expect(projectVoiceProviderCredentialReadiness(
       entry,

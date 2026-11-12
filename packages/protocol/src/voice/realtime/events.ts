@@ -106,6 +106,8 @@ export const VoiceRealtimeToolResultV1Schema = lazyZodSchema(() => z.strictObjec
   order: z.number().check(z.int(), z.nonnegative()),
   status: VoiceRealtimeToolResultStatusSchema,
   output: z.optional(StrictJsonValueSchema),
+  /** Human outcome produced by the host after its privacy projection. */
+  summary: z.optional(z.string()),
   errorCode: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
   errorDetails: z.optional(StrictJsonValueSchema),
 }).check(z.superRefine((value, ctx) => {
@@ -132,10 +134,17 @@ export type VoiceRealtimeToolResultV1 = z.infer<typeof VoiceRealtimeToolResultV1
 
 /** Provider wire adapters serialize the host's already-redacted terminal result. */
 export function projectVoiceRealtimeToolResultOutput(result: VoiceRealtimeToolResultV1): VoiceRealtimeJsonValue {
-  if (result.status === 'success') return result.output!;
+  if (result.status === 'success') {
+    if (result.summary === undefined) return result.output!;
+    const output = result.output;
+    return output !== null && typeof output === 'object' && !Array.isArray(output)
+      ? { ...output, summary: result.summary }
+      : { value: output!, summary: result.summary };
+  }
   return {
     ok: false,
     errorCode: result.errorCode!,
     ...(result.errorDetails === undefined ? {} : { details: result.errorDetails }),
+    ...(result.summary === undefined ? {} : { summary: result.summary }),
   };
 }

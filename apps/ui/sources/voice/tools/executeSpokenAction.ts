@@ -29,12 +29,7 @@ export async function executeSpokenAction(
   if (turnOrigin !== 'person' || !operation?.canConfirmInFlow || !context.actionRequestId) return prepared.invocation.run();
   if (operation.irreversible || operation.safety === 'danger') {
     if (!playHostText) return prepared.invocation.run();
-    carrier.prepare({
-      actionId, actionRequestId: context.actionRequestId,
-      summary: operation.summary, normalizedInput: operation.normalizedInput,
-      serverId: context.serverId, defaultSessionId: context.defaultSessionId,
-      ...(operation.sessionTargetsV1 ? { sessionTargetsV1: operation.sessionTargetsV1 } : {}),
-    });
+    carrier.prepare();
     const readBack = carrier.readPending();
     let playback: Awaited<ReturnType<VoiceHostTextPlayback>>;
     try {

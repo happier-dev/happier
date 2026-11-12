@@ -2888,7 +2888,7 @@ describe('definePlugin', () => {
                         platforms: ['web'],
                         capabilities: {
                             turn: { cancelResponse: false, bargeIn: false },
-                            tools: { effectCalls: 'none' },
+
                         },
                         client: {
                             artifactId: 'browser-voice',

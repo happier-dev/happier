@@ -39,7 +39,7 @@ const providerRegistry = createVoiceProviderRegistry({ bundledContributions: [
   providerId: `${source.pluginId}/${source.contributionId}`,
   declaration: VoiceProviderContributionSchema.parse({
     id: source.contributionId, title, kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-    capabilities: { turn: { cancelResponse: true, bargeIn: true }, tools: { effectCalls: 'none' } },
+    capabilities: { turn: { cancelResponse: true, bargeIn: true },  },
     client: { artifactId: 'voice', exportName: 'activate' },
   }),
 })), bundledPresentations: [OPENAI_SOURCE, XAI_SOURCE, ELEVENLABS_SOURCE].map(source => ({

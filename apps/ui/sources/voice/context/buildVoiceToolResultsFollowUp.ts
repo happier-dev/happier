@@ -21,16 +21,17 @@ export function projectVoiceToolResultsForFollowUp(
     if (isVoiceToolResultBlockedByPrivacy(resultOwner, prefs)) {
       return { t: entry.t, args: null, result: { ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled' } };
     }
-    const summary = resolveVoiceToolResultHumanSummary({ toolName: entry.t, toolInput: entry.args,
-      toolResult: entry.result, shareFilePaths: prefs.shareFilePaths, shareSessionSummary: prefs.shareSessionSummary });
     const result = entry.t === VOICE_ACTION_EXECUTE_TOOL_NAME
       ? redactVoiceActionExecutionResultForProvider(resultOwner, entry.result, prefs)
       : redactVoiceToolResultForProvider(resultOwner, entry.result, prefs);
+    const args = PROVIDER_RESULT_ARGUMENT_OMITTED_TOOL_NAMES.has(entry.t) ? null : redactVoiceToolResultValue(entry.args, prefs);
+    const summary = resolveVoiceToolResultHumanSummary({ toolName: entry.t, toolInput: args,
+      toolResult: result, shareFilePaths: prefs.shareFilePaths, shareSessionSummary: prefs.shareSessionSummary });
     return {
       t: entry.t,
       // The provider already owns this call. Repeating input would disclose Action
       // operands or an ephemeral current-UI command id in the result channel.
-      args: PROVIDER_RESULT_ARGUMENT_OMITTED_TOOL_NAMES.has(entry.t) ? null : redactVoiceToolResultValue(entry.args, prefs),
+      args,
       result: !summary ? result : result && typeof result === 'object' && !Array.isArray(result)
         ? { ...result, summary } : { summary, value: result },
     };

@@ -4,14 +4,14 @@ import type { SettingDomainValueV1 } from './settingsOwnerActions.js';
 import { normalizeActionsSettingsV1, setActionApprovalOverride, type ActionSurfaceKey } from '../actionSettings.js';
 import { accountNotificationStorageBinding } from './notificationPreferenceMutations.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { DEFAULT_AGENT_ID } from '../../agents/defaultAgent.js';
 import { readDirectConnectionsEnabled, withDirectConnectionsEnabled, readMachineDirectConnectionChoice, withMachineDirectConnectionChoice } from '../../account/settings/peerMediationPreferencesV1.js';
 import { MachineRetentionDefaultsV1Schema, updateMachineRetentionCategoryPreferenceV1, type MachineRetentionCategoryV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
 import { UI_FEATURE_REGISTRY, listUiFeatureToggleDefinitions, resolveUiFeatureToggleEnabled, buildUiFeatureToggleChange, buildUiFeatureExperimentsChange } from './featurePreferenceMutations.js';
 import { GLASS_PRESETS, GLASS_BLUR_STEPS, GLASS_SURFACE_GROUPS, readGlassTintIntensity, resolveGlassTintSettingsDelta, readGlassMaterials, readGlassPreset, readGlassSurfaceMode, resolveGlassSurfaceModeSettingsDelta, resolveGlassPresetSettingsDelta, resolveGlassIntensitySettingsDelta, resolveGlassSurfaceSettingsDelta, type GlassSurfaceGroup } from './glassPreferenceMutations.js';
 import { buildKeyboardShortcutResetDelta, buildKeyboardShortcutSetDelta, buildKeyboardShortcutToggleDelta } from './keyboardPreferenceMutations.js';
 import { prepareDefaultProviderStateSharingChangeV1, prepareAgentProviderStateSharingChangeV1, AgentProviderStateSharingChangeV1Schema, type ProviderStateSharingMutationServicesV1 } from './providerStateSharingMutations.js';
-import { BackendTargetKeyV2InputSchema } from '../../backends/targets/backendTargetRefV2.js';
+import { BackendTargetKeyV2InputSchema, readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { LlmTaskRunnerChoiceV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { SessionReminderPresetIntentSchema, applySessionReminderPresetIntent } from '../../account/settings/sessionReminderPresetsV1.js';
 import { buildScmGitRepoBackendPreferenceSettingsDelta, getFirstPartyScmBackendQualifiedId, getFirstPartyScmBackendLegacyLocalId, resolveScmGitRepoPreferredBackendId } from '../../scm/backendIdentity.js';
@@ -31,7 +31,7 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'scmRemoteConfirmPolicy' | 'attentionDeliveryPolicyV1' | 'sessionThinkingDisplayMode' | 'sessionThinkingInlinePresentation'
     | 'newSessionWizardSectionPresentationV1' | 'sessionProviderUsageGaugeWindowModes' | 'sessionProviderUsageGaugeWindowMode'
     | 'peerMediationPreferencesV1' | 'favoriteProfiles' | 'experiments' | 'featureToggles'
-    | 'glassBlurEnabled' | 'glassBlurIntensity' | 'glassTintIntensity' | 'glassSurfaceMaterials' | 'scmCommitMessageGeneratorBackendId'
+    | 'glassBlurEnabled' | 'glassBlurIntensity' | 'glassTintIntensity' | 'glassSurfaceMaterials' | 'scmCommitMessageGeneratorRunnerV1' | 'scmCommitMessageGeneratorBackendId'
     | 'machineRetentionDefaultsV1' | 'connectedServicesProviderStateSharingSettingsV1'
     | 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1' | 'commandPaletteEnabled'
     | 'sessionTerminalHost' | 'sessionUseTmux' | 'sessionTmuxByMachineId' | 'sessionTerminalHostByMachineId'
@@ -300,15 +300,26 @@ export function glassSurfaceStorageBinding(group: GlassSurfaceGroup, field: 'blu
         ? typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? resolveGlassSurfaceSettingsDelta(settings, group, { opacity: value }) : null
         : value === 'off' || value === 'light' || value === 'regular' || value === 'strong' ? resolveGlassSurfaceSettingsDelta(settings, group, { blur: value }) : null,
 }; }
-function parseCommitMessageAgent(value: unknown) {
-    if (typeof value !== 'string' || !value.trim()) return { success: false as const };
-    const parsed = ACCOUNT_SETTING_DEFINITIONS.scmCommitMessageGeneratorBackendId.parseMutationValue(value.trim());
-    return parsed.success && typeof parsed.data === 'string' ? { success: true as const, value: parsed.data } : { success: false as const };
+/**
+ * The commit message runner choice: `{ v: 1, mode: 'auto' }` or one explicit runner
+ * (LlmTaskRunnerConfigV1). A bare Agent id is accepted as that Agent on its default model.
+ */
+function parseCommitMessageRunner(value: unknown): Readonly<{ success: true; value: SettingDomainValueV1 }> | Readonly<{ success: false }> {
+    const agentId = typeof value === 'string' ? value.trim() : null;
+    const agentTargetKey = agentId ? readBackendTargetKeyV2({ kind: 'builtInAgent', agentId }) : null;
+    if (agentId !== null && !agentTargetKey) return { success: false };
+    const candidate = agentTargetKey
+        ? { v: 1, modelSelection: { agentTargetKey, providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' } : value;
+    const parsed = ACCOUNT_SETTING_DEFINITIONS.scmCommitMessageGeneratorRunnerV1.parseMutationValue(candidate);
+    return parsed.success && parsed.data !== null ? { success: true, value: StrictJsonValueSchema.parse(parsed.data) } : { success: false };
 }
 export const commitMessageAgentStorage: PortableAccountSettingBindingV1 = { ...owner,
-    read: settings => settings.scmCommitMessageGeneratorBackendId.trim() || DEFAULT_AGENT_ID,
-    parse: parseCommitMessageAgent,
-    mutate: (_settings, value) => { const parsed = parseCommitMessageAgent(value); return parsed.success ? { scmCommitMessageGeneratorBackendId: parsed.value } : null; },
+    read: settings => settings.scmCommitMessageGeneratorRunnerV1 ?? { v: 1, mode: 'auto' },
+    parse: parseCommitMessageRunner,
+    mutate: (_settings, value) => { const parsed = parseCommitMessageRunner(value);
+        // Clearing the 0.2 Agent id keeps a reset or a removed runner key from migrating it back.
+        return parsed.success ? { scmCommitMessageGeneratorRunnerV1: LlmTaskRunnerChoiceV1Schema.parse(parsed.value),
+            scmCommitMessageGeneratorBackendId: '' } : null; },
 };
 export const sharingConfigStorage: PortableAccountSettingBindingV1 = { ...owner,
     read: settings => settings.connectedServicesProviderStateSharingSettingsV1.defaults.configMode,

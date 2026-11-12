@@ -1,4 +1,7 @@
 import { expect, vi } from 'vitest';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import type { ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 export const XAI_VOICE_HISTORY_SESSION_ID = 'voice-history-xai-composed';
 export class XaiVoiceWebSocket {
     static readonly CONNECTING = 0;
@@ -83,6 +86,10 @@ export class XaiVoiceWebSocket {
 /** The incumbent generated xAI activation recipe; runtime owners load only after SDK boundaries are installed. */
 export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
     historySessionId?: string;
+    canApproveRequests?: boolean;
+    immediateWelcome?: boolean;
+    actionsSettings?: ActionsSettingsV1;
+    accountRequest?: (input: URL | RequestInfo, init?: RequestInit) => Promise<Response | null> | Response | null;
 }> = {}) {
     const networkEvents = new EventTarget();
     const notifyNetwork = () => networkEvents.dispatchEvent(new Event('network'));
@@ -91,6 +98,8 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
     const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
     const { createCompactSessionListFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    const { createAccountSettingsHttpBoundary } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
     const { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } = await import('@/dev/testkit/harness/voiceWebRtcHarness');
     const { createLiveMicSession } = await import('@/voice/runtime/mic/createLiveMicSession.web');
     const { installWebLockManagerMock, installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
@@ -166,6 +175,8 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
         return entry;
     }
     let xaiPurposes: ReturnType<typeof createConnectedPurposeCatalogHttpBoundary>;
+    const settingsHttp = createAccountSettingsHttpBoundary({ serverUrl: 'https://xai-composed.example.test',
+        initialAccounts: [{ accountId: 'xai-composed-account', snapshot: { content: { t: 'plain', v: {} }, version: 1 } }] });
     async function installXaiSettings(resumptionEnabled: boolean): Promise<void> {
         const { voice: _runtimeVoiceProjection, ...accountSettingsDefaults } = settingsDefaults;
         const entry = xaiEntry();
@@ -177,6 +188,8 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
             throw new Error('realtime_grok recipient contract missing');
         const voice = voiceSettingsParse({
             providerId: 'happier.voice.xai/realtime-grok',
+            ...(options.canApproveRequests === undefined ? {} : { canApproveRequests: options.canApproveRequests }),
+            ...(options.immediateWelcome ? { welcome: { enabled: true, mode: 'immediate' } } : {}),
             providers: {
                 'happier.voice.xai/realtime-grok': {
                     schemaVersion: 1,
@@ -190,6 +203,7 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
         const credentialInput = {
             settings: settingsParse({
                 ...accountSettingsDefaults,
+                ...(options.actionsSettings ? { actionsSettingsV1: options.actionsSettings } : {}),
                 voiceSettingsV1: voice,
             }),
             contribution: {
@@ -214,6 +228,7 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
         // Serve the credential owner's persisted document at HTTP; the public
         // local-storage normalizer seals Plain Account secrets for this device.
         persistedXaiSettings = selected.accountSettings;
+        settingsHttp.replaceAccountSettings('xai-composed-account', { content: { t: 'plain', v: persistedXaiSettings }, version: 1 });
         const scope = storage.getState().settingsScope;
         if (!scope || !xaiAccountConnection)
             throw new Error('Expected the XAI fixture Account lifetime');
@@ -394,6 +409,7 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
     xaiSessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
     const { voice: _runtimeVoiceProjection, ...accountSettingsDefaults } = settingsDefaults;
     persistedXaiSettings = accountSettingsDefaults;
+    settingsHttp.replaceAccountSettings('xai-composed-account', { content: { t: 'plain', v: persistedXaiSettings }, version: 1 });
     await resetServerReachabilitySupervisors();
     resetVoiceAdapterRegistryForTests();
     resetVoiceSessionStoreForTests();
@@ -424,11 +440,22 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
     webLocks = installWebLockManagerMock();
     vi.stubGlobal('WebSocket', XaiVoiceWebSocket);
     const providerFetch = installXaiFetchBoundary();
+    const features = createRootLayoutFeaturesResponse({ features: { voice: { enabled: true, happierVoice: { enabled: true } } } });
     let nextTranscriptSeq = 0;
     const accountRequest = createCompactSessionListFetchBoundary(async (input: URL | RequestInfo, init?: RequestInit) => {
+        const overridden = await options.accountRequest?.(input, init);
+        if (overridden) return overridden;
         if (new URL(String(input)).origin === 'https://api.x.ai') return providerFetch(input, init);
       if (new URL(String(input)).pathname === '/v2/sessions/read-batch' && init?.method === 'POST') return undefined;
         const url = String(input);
+        if (new URL(url).pathname === '/v1/features' || new URL(url).pathname === '/v1/features/authenticated') {
+            return Response.json(features);
+        }
+        if (new URL(url).pathname === '/v1/account/profile') {
+            return Response.json(AccountProfileSchema.parse({ id: 'xai-composed-account' }));
+        }
+        const settingsResponse = settingsHttp.handle(input, init);
+        if (settingsResponse) return settingsResponse;
         if (new URL(url).pathname === '/v1/sessions' && init?.method === 'POST') {
             return xaiSessionHttp.createSessionFromPost(XAI_HISTORY_SESSION_ID, init);
         }
@@ -452,19 +479,6 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
                 headers: { 'content-type': 'application/json' },
             });
         }
-        if (url.endsWith('/v1/features')) {
-            return Response.json({
-                features: { voice: { enabled: true } },
-                capabilities: {
-                    accountStoredContentCompatibility: {
-                        v: 1,
-                        minimumProtocolVersion: 2,
-                        currentProtocolVersion: 3,
-                        declarationTransport: 'http-header-and-socket-auth-v1',
-                    },
-                },
-            });
-        }
         if (url.endsWith('/v2/sessions/lookup-by-tags')) {
             return Response.json({
                 sessions: await Promise.all(historyLookupSessionIds.map(async (id) => {
@@ -476,6 +490,8 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
                 })),
             });
         }
+        const bootstrapResponse = createEmptyAccountBootstrapHttpResponse(new URL(url).pathname, init);
+        if (bootstrapResponse) return bootstrapResponse;
         if (url !== `https://xai-composed.example.test/v2/sessions/${XAI_HISTORY_SESSION_ID}/messages`)
             return Response.json({ error: 'not_found' }, { status: 404 });
         expect(init?.method).toBe('POST');

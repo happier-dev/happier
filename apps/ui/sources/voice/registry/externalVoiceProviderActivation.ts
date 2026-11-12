@@ -587,14 +587,12 @@ export function createExternalProtocol(
   return Object.freeze({
     ...leaf,
     id: providerId,
-    toolEffectCalls: declaration.capabilities.tools.effectCalls,
     turnControls: Object.freeze({
       cancelResponse: declaration.capabilities.turn.cancelResponse ? 'immediate' as const : 'unsupported' as const,
       truncatePlayback: 'unsupported' as const,
       clearInput: declaration.capabilities.turn.clearInput ?? false,
       stopSession: false,
       resumption: declaration.capabilities.turn.resumption ?? 'none' as const,
-      replay: declaration.capabilities.turn.replay ?? 'none' as const,
       exactMessage: declaration.capabilities.turn.exactMessage ?? false,
     }),
     async preflight(preflightInput) {
@@ -660,7 +658,6 @@ export function createExternalProtocol(
           if (declaration.execution?.kind !== 'experimental_agent_session_realtime' && !attemptPolicy) {
             const voice = voiceSettingsParse(readVoiceSettingsInput(host.getSettings()));
             const tools = Object.freeze([...host.getRealtimeClientToolDefinitions({
-              effectCalls: declaration.capabilities.tools.effectCalls,
               exposure: 'voice_assistant',
               ...(snapshot.sessionMetadata ? { sessionMetadata: snapshot.sessionMetadata } : {}),
             })]);
@@ -861,7 +858,6 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
           // the exact catalog admitted before asynchronous preparation.
           const tools = execution
             ? input.host.getRealtimeClientToolDefinitions({
-                effectCalls: protocol.toolEffectCalls ?? 'none',
                 exposure: 'current_ui_only',
               })
             : attemptPreparationByAttemptId.get(connectionInput.attemptId)?.tools;
@@ -1381,7 +1377,6 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                   })
                 ),
                 getRealtimeClientToolDefinitions: () => host.getRealtimeClientToolDefinitions({
-                  effectCalls: declaration.capabilities.tools.effectCalls,
                   // Settings actions provision a direct-media provider's own
                   // remote assistant; only that execution kind declares them.
                   exposure: declaration.execution?.kind === 'experimental_agent_session_realtime'

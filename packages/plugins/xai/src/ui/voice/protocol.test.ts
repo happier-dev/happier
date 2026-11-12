@@ -11,6 +11,21 @@ import { listVoicePromptHotPathSpecs } from '@happier-dev/protocol/actions/actio
 import { createXaiRealtimeProtocolAdapter, createXaiSessionUpdate, encodeXaiToolResult } from './protocol.js';
 
 describe('xAI Realtime protocol adapter', () => {
+  it('preserves microphone and response identity when transcription finishes after response creation', () => {
+    const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+    expect(adapter.decodeControl({ type: 'input_audio_buffer.committed', event_id: 'audio-committed',
+      item_id: 'person-audio', previous_item_id: null }))
+      .toContainEqual({ type: 'input_audio_committed', itemId: 'person-audio' });
+    expect(adapter.decodeControl({ type: 'response.created', event_id: 'response-created',
+      response: { id: 'person-response', status: 'in_progress' } }))
+      .toContainEqual({ type: 'response_created', responseId: 'person-response' });
+    expect(adapter.decodeControl({ type: 'conversation.item.input_audio_transcription.completed', event_id: 'audio-final',
+      item_id: 'person-audio', transcript: 'Change my setting' }))
+      .toContainEqual({ type: 'input_transcript_finished', itemId: 'person-audio' });
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'response-done', response: { id: 'person-response' } }))
+      .toContainEqual({ type: 'response_finished', responseId: 'person-response' });
+  });
+
   it.each([
     ['rate_limit_exceeded', { type: 'provider_error', code: 'rate_limited', providerCode: 'rate_limit_exceeded', terminal: true }],
     ['server_error', { type: 'provider_error', code: 'provider_response_invalid', providerCode: 'server_error', terminal: true }],

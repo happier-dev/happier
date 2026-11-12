@@ -223,8 +223,6 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'VoiceConnectionMediaHost',
     'VoiceConversationCapabilities',
     'VoiceConversationProviderRole',
-    'VoiceConversationToolCapabilities',
-    'VoiceConversationToolEffectCalls',
     'VoiceGuidanceAvailability',
     'VoiceHostedConversationService',
     'VoiceMediaStreamHandle',

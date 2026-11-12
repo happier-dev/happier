@@ -40,9 +40,8 @@ export function createRealtimeClientTools(input: Readonly<{
 }
 
 /**
- * Provider SDKs that do not expose a stable call identity and observable result
- * delivery cannot safely host mutations across connection loss. Keep their
- * tool surface useful by projecting only canonical read-only actions.
+ * Direct SDK execute callbacks have no canonical call identity. Effects use
+ * canonical tool calls and the Action barrier; these callbacks execute reads.
  */
 export function createRealtimeReadOnlyClientTools(input: Readonly<{
   currentUiContext?: VoiceCurrentUiToolPort;

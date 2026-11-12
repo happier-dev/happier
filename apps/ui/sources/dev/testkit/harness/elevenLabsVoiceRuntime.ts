@@ -2,6 +2,8 @@ import type { VoiceAdapterController } from '@/voice/session/types';
 import type { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import type { serveAccountHomes } from './actionHomesHttpHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { expect, vi } from 'vitest';
+import type { ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 type ElevenLabsVoiceRuntimeScope = Readonly<{
     adapter: VoiceAdapterController;
@@ -17,6 +19,11 @@ type ElevenLabsVoiceRuntimeScope = Readonly<{
  */
 export async function withGeneratedElevenLabsVoiceRuntime(
     exercise: (scope: ElevenLabsVoiceRuntimeScope) => Promise<void>,
+    options: Readonly<{
+        canApproveRequests?: boolean;
+        actionsSettings?: ActionsSettingsV1;
+        route?: Parameters<typeof serveAccountHomes>[0]['route'];
+    }> = {},
 ): Promise<void> {
     const { storage } = await import('@/sync/domains/state/storage');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -51,9 +58,13 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const home = await serveAccountHomes({
         homes: [{ key: 'qa', serverUrl: 'https://voice-qa-realtime.example.test', accountId: 'qa-account',
             currentAccount: true,
-            settings: { voice: { ...previousStorage.settings.voice, providerId: entry.providerId,
+            settings: { ...(options.actionsSettings ? { actionsSettingsV1: options.actionsSettings } : {}),
+                voice: { ...previousStorage.settings.voice, providerId: entry.providerId,
+                ...(options.canApproveRequests === undefined ? {} : { canApproveRequests: options.canApproveRequests }),
                 providers: { [entry.providerId]: { schemaVersion: 1, config: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } } } } }],
-        route: createSessionReadBatchHttpBoundary(request => {
+        route: createSessionReadBatchHttpBoundary(async request => {
+            const overridden = await options.route?.(request);
+            if (overridden) return overridden;
             if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(features);
             const preparation = answerVoiceRealtimePreparationHttpRequest(request.url, storage.getState().settings);
             if (preparation) return preparation;
@@ -102,6 +113,9 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const lifecycle = createVoiceSessionLifecycleController();
     lifecycle.setConfiguredProviderId(entry.providerId);
     setVoiceSessionLifecycleController(lifecycle);
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    // Match the real VoiceSessionRuntime publisher in this headless composition.
+    const unsubscribeLifecycle = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
     try {
         disconnect = await home.restoreActiveConnection();
         const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.qa!.serverUrl);
@@ -109,7 +123,10 @@ export async function withGeneratedElevenLabsVoiceRuntime(
             throw new Error('Missing current admitted ElevenLabs Account');
         }
         const { sync } = await import('@/sync/sync');
-        await sync.resumeSync('manual');
+        // This journey starts a cold Account, matching app restoration rather than
+        // requesting the unrelated full manual-refresh census immediately afterward.
+        await sync.awaitBootstrapForegroundAcquisition();
+        await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
         storage.setState({ sessions: {} });
         await sync.ensureHostedSystemSession({
             tag: VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
@@ -127,6 +144,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
         await exercise({ adapter, lifecycle, home, providerId: entry.providerId });
     } finally {
         await lifecycle.dispose();
+        unsubscribeLifecycle();
         setVoiceSessionLifecycleController(previousLifecycle);
         await assembly.dispose();
         await disconnect?.();

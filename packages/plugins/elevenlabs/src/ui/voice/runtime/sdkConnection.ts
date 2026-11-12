@@ -105,7 +105,11 @@ export function createElevenLabsSdkConnection(input: Readonly<{
               signalRemoteClose(event.reason ?? 'sdk_disconnected');
               return;
             case 'message':
-              onControl(event.data);
+              // SDK 1.18.0's user onMessage callback comes only from its
+              // finished user_transcript handler, never sendUserMessage.
+              onControl(event.data.source === 'user'
+                ? { type: 'elevenlabs.user_transcript', message: event.data }
+                : event.data);
               return;
             case 'agent_response_correction':
               // Forwarded in ElevenLabs' own client-event envelope so the leaf

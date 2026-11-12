@@ -1,5 +1,4 @@
 import { VoiceAgentOutputEventV1Schema, resolveVoiceAgentOutputSpeechSegmentLength, VOICE_OUTPUT_INCOMPLETE_TEXT, canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, type VoiceAgentOutputEventV1 } from '@happier-dev/protocol/voice/outputEvents';
-import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
 
 import type { VoiceAgentTurnStreamEvent } from './types';
 
@@ -95,16 +94,15 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
         let finalText = fitVoiceAgentOutputTextV1(budget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
         if (finalText.length < event.assistantText.length) incomplete = true;
         if (incomplete && speechText && !finalText.startsWith(speechText.trimEnd())) finalText = speechText.trimEnd();
-        for (const [actionIndex, actionRaw] of (event.actions ?? []).entries()) {
-          const action = VoiceAssistantActionSchema.safeParse(actionRaw);
-          if (!action.success) continue;
+        // The RPC reader already admitted the typed Action wire envelope.
+        for (const [actionIndex, action] of (event.actions ?? []).entries()) {
           const effect = {
             v: 1,
             kind: 'side_effect',
             turnId: streamId,
             seq: nextSeq,
             effectId: `${streamId}:legacy:${sourceCursor}:${actionIndex}`,
-            action: action.data,
+            action,
           } as const;
           if (!canAppendVoiceAgentOutputEventsV1(budget, [
             effect, { ...finalCandidate, seq: nextSeq + 1, text: `${finalText}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },

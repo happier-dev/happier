@@ -6,8 +6,6 @@ export type { RealtimeVoiceProviderRuntime } from '../client.js';
 export type {
   VoiceConversationCapabilities,
   VoiceConversationProviderRole,
-  VoiceConversationToolCapabilities,
-  VoiceConversationToolEffectCalls,
 } from '../client.js';
 export type { RealtimeVoiceProviderSettingsOperations } from '../client.js';
 export type { VoiceClientAuthArtifact } from '../client.js';

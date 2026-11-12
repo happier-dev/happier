@@ -160,7 +160,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('requires actual provider custody, settles matching deliveries individually and revokes late callbacks', async () => {
+  it('correlates real provider call IDs, settles deliveries individually and revokes late callbacks', async () => {
     startSession.mockResolvedValue({ getId: () => 'custody', endSession: async () => {} });
     const execute = vi.fn(async () => ({ unsafe: true }));
     const tools = [{ name: 'effect', execute }];
@@ -180,7 +180,6 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(execute).not.toHaveBeenCalled();
     handle.settleToolResult({ ...resultIdentity, status: 'success', output: { allowed: true } });
     await expect(delivery).resolves.toEqual({ allowed: true });
-    await expect(options.clientTools.effect({})).rejects.toThrow('voice_effect_call_custody_unavailable');
     const pendingParameters = { message: 'pending' };
     options.onIncomingEvent?.({ type: 'client_tool_call', client_tool_call: {
       tool_call_id: 'pending-call', tool_name: 'effect', parameters: pendingParameters,

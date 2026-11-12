@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { VoiceRealtimeToolCallV1, VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 import { createRealtimeToolBarrier, RealtimeToolExecutionError } from './realtimeToolBarrier';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 function call(callId: string, order: number, toolName = 'listMachines') {
   return {
@@ -15,6 +16,30 @@ function call(callId: string, order: number, toolName = 'listMachines') {
 }
 
 describe('realtime tool barrier', () => {
+  it('retains a known PluginError after cancellation instead of replacing its identity with unknown', async () => {
+    let refuse!: () => void;
+    const executeCall = vi.fn(async () => await new Promise<never>((_resolve, reject) => {
+      refuse = () => reject(new PluginError({ code: 'HostPlaybackFailure', details: { reason: 'speaker_unavailable' } }));
+    }));
+    const barrier = createRealtimeToolBarrier({ classifyCall: () => 'external',
+      executeCall, redactResult: value => value,
+      submitResults: async () => {}, continueResponse: async () => {},
+    });
+    const controller = new AbortController();
+    const input = { responseId: 'response-1', calls: [call('known-failure', 0)] };
+    try {
+      const pending = barrier.run({ ...input, signal: controller.signal });
+      await vi.waitFor(() => expect(executeCall).toHaveBeenCalledTimes(1));
+      controller.abort();
+      await expect(pending).resolves.toMatchObject({ status: 'cancelled' });
+      refuse();
+      await expect(barrier.run(input)).resolves.toMatchObject({ status: 'submitted', results: [expect.objectContaining({
+        status: 'error', errorCode: 'HostPlaybackFailure', errorDetails: { reason: 'speaker_unavailable' },
+      })] });
+      expect(executeCall).toHaveBeenCalledTimes(1);
+    } finally { barrier.dispose(); }
+  });
+
   it('executes allowed calls concurrently but submits deterministic all-results before one continuation', async () => {
     const releases = new Map<string, (value: unknown) => void>();
     const executeCall = vi.fn(async (input: VoiceRealtimeToolCallV1) => await new Promise((resolve) => releases.set(input.callId, resolve)));
@@ -26,7 +51,7 @@ describe('realtime tool barrier', () => {
       events.push('continue');
     });
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -47,10 +72,8 @@ describe('realtime tool barrier', () => {
 
   it('returns safe terminal results for mixed allow, deny, and error outcomes', async () => {
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async (input) => input.callId === 'denied'
-        ? { status: 'denied' as const, code: 'permission_denied' }
-        : { status: 'allowed' as const },
       executeCall: async (input) => {
+        if (input.callId === 'denied') throw new RealtimeToolExecutionError('denied', 'permission_denied');
         if (input.callId === 'error') throw new Error('/secret/path raw failure');
         return { ok: true };
       },
@@ -74,7 +97,7 @@ describe('realtime tool barrier', () => {
   it('redacts before submission and never retains or submits raw private output', async () => {
     const submitResults = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall: async () => ({ path: '/Users/alice/private', secret: 'token' }),
       redactResult: () => ({ summary: 'redacted' }),
       submitResults,
@@ -110,7 +133,7 @@ describe('realtime tool barrier', () => {
     });
     const barrier = createRealtimeToolBarrier({
       validateCall: () => ({ status: 'allowed' as const }),
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall: async (input) => {
         if (input.callId === 'inventory') {
           return { ok: true, machineId: 'MACHINE_SECRET' };
@@ -153,7 +176,7 @@ describe('realtime tool barrier', () => {
       result.results,
       expect.anything(),
     );
-    expect(submitResults.mock.calls[0]?.[1]).toBe(result.results);
+    expect(submitResults.mock.calls[0]?.[1]).toStrictEqual(result.results);
     expect(JSON.stringify(result)).not.toContain('MACHINE_SECRET');
     expect(JSON.stringify(submitResults.mock.calls)).not.toContain('MACHINE_SECRET');
   });
@@ -165,7 +188,7 @@ describe('realtime tool barrier', () => {
     const executeCall = vi.fn(async () => await new Promise((resolve) => { release = resolve; }));
     const controller = new AbortController();
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -180,15 +203,13 @@ describe('realtime tool barrier', () => {
     expect(continueResponse).not.toHaveBeenCalled();
   });
 
-  it('does not authorize or execute tools when the response signal is already aborted', async () => {
-    const authorizeCall = vi.fn(async () => ({ status: 'allowed' as const }));
+  it('does not execute tools when the response signal is already aborted', async () => {
     const executeCall = vi.fn(async () => ({ raw: 'must not run' }));
     const submitResults = vi.fn(async () => undefined);
     const continueResponse = vi.fn(async () => undefined);
     const controller = new AbortController();
     controller.abort();
     const barrier = createRealtimeToolBarrier({
-      authorizeCall,
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -200,7 +221,6 @@ describe('realtime tool barrier', () => {
       calls: [call('pre-cancelled', 0)],
       signal: controller.signal,
     })).resolves.toEqual({ status: 'cancelled', results: [] });
-    expect(authorizeCall).not.toHaveBeenCalled();
     expect(executeCall).not.toHaveBeenCalled();
     expect(submitResults).not.toHaveBeenCalled();
     expect(continueResponse).not.toHaveBeenCalled();
@@ -211,7 +231,7 @@ describe('realtime tool barrier', () => {
     const continueResponse = vi.fn(async () => undefined);
     const controller = new AbortController();
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall: async () => ({ ok: true }),
       redactResult: (value) => value,
       submitResults: async (_responseId, _results, signal) => {
@@ -248,7 +268,7 @@ describe('realtime tool barrier', () => {
     const continueResponse = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -293,7 +313,7 @@ describe('realtime tool barrier', () => {
       .mockResolvedValueOnce(undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'read_only',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -323,7 +343,7 @@ describe('realtime tool barrier', () => {
     const submitResults = vi.fn(async () => undefined);
     const continueResponse = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => shareInventory ? value : { ok: false, errorCode: 'privacy_disabled' },
       submitResults,
@@ -349,7 +369,7 @@ describe('realtime tool barrier', () => {
     const executeCall = vi.fn(async () => await new Promise((resolve) => { release = resolve; }));
     const submitResults = vi.fn(async () => {});
     const barrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation', authorizeCall: async () => ({ status: 'allowed' }),
+      classifyCall: () => 'mutation',
       executeCall, redactResult: (value) => value,
       submitResults, continueResponse: async () => {},
     });
@@ -366,7 +386,7 @@ describe('realtime tool barrier', () => {
 
   it('rejects rather than normalizes whitespace around the response identity', async () => {
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall: async () => ({ ok: true }),
       redactResult: (value) => value,
       submitResults: async () => undefined,
@@ -379,13 +399,11 @@ describe('realtime tool barrier', () => {
     })).rejects.toMatchObject({ code: 'response_conflict' });
   });
 
-  it('sanitizes untrusted authorization and execution error codes into bounded terminal results', async () => {
+  it('sanitizes untrusted execution error codes into bounded terminal results', async () => {
     const unsafeCode = `private_path_${'x'.repeat(200)}`;
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async (input) => input.callId === 'denied'
-        ? { status: 'denied' as const, code: unsafeCode }
-        : { status: 'allowed' as const },
-      executeCall: async () => {
+      executeCall: async (input) => {
+        if (input.callId === 'denied') throw new RealtimeToolExecutionError('denied', unsafeCode);
         throw new RealtimeToolExecutionError('error', unsafeCode);
       },
       redactResult: (value) => value,
@@ -405,12 +423,10 @@ describe('realtime tool barrier', () => {
     });
   });
 
-  it('rejects an invalid voice action before authorization or execution', async () => {
-    const authorizeCall = vi.fn(async () => ({ status: 'allowed' as const }));
+  it('rejects an invalid voice action before execution', async () => {
     const executeCall = vi.fn(async () => ({ ok: true }));
     const barrier = createRealtimeToolBarrier({
       validateCall: () => ({ status: 'rejected' as const, code: 'invalid_tool_call' }),
-      authorizeCall,
       executeCall,
       redactResult: (value) => value,
       submitResults: async () => undefined,
@@ -421,7 +437,6 @@ describe('realtime tool barrier', () => {
     expect(result.results).toEqual([
       expect.objectContaining({ status: 'error', errorCode: 'invalid_tool_call' }),
     ]);
-    expect(authorizeCall).not.toHaveBeenCalled();
     expect(executeCall).not.toHaveBeenCalled();
   });
 
@@ -429,7 +444,7 @@ describe('realtime tool barrier', () => {
     const submitResults = vi.fn(async () => undefined);
     const continueResponse = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall: async () => ({ ok: true }),
       redactResult: (value) => value,
       submitResults,
@@ -452,7 +467,7 @@ describe('realtime tool barrier', () => {
     const continueResponse = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -479,7 +494,7 @@ describe('realtime tool barrier', () => {
     const continueResponse = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'read_only',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value, input) => input.toolName === 'listMachines' && !shareDeviceInventory
         ? {
@@ -515,14 +530,14 @@ describe('realtime tool barrier', () => {
     expect(continueResponse).toHaveBeenCalledTimes(1);
   });
 
-  it('retains outcome_unknown when cancellation precedes mutation settlement and never retries the effect', async () => {
+  it('cancels delivery promptly while retaining the actual later mutation settlement without re-execution', async () => {
     let release!: (value: unknown) => void;
     const executeCall = vi.fn(async () => await new Promise((resolve) => { release = resolve; }));
     const submitResults = vi.fn(async () => undefined);
     const continueResponse = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -536,11 +551,7 @@ describe('realtime tool barrier', () => {
     controller.abort();
     await expect(first).resolves.toEqual({
       status: 'cancelled',
-      results: [expect.objectContaining({
-        callId: 'mutation-1',
-        status: 'error',
-        errorCode: 'outcome_unknown',
-      })],
+      results: [],
     });
     release({ ok: true, receipt: 'receipt-1' });
 
@@ -548,8 +559,8 @@ describe('realtime tool barrier', () => {
       status: 'submitted',
       results: [expect.objectContaining({
         callId: 'mutation-1',
-        status: 'error',
-        errorCode: 'outcome_unknown',
+        status: 'success',
+        output: { ok: true, receipt: 'receipt-1' },
       })],
     });
     expect(executeCall).toHaveBeenCalledTimes(1);
@@ -563,7 +574,7 @@ describe('realtime tool barrier', () => {
     const submitResults = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => {
         controller.abort();
@@ -597,11 +608,13 @@ describe('realtime tool barrier', () => {
   });
 
   it('reports an unknown mutating outcome after an aborting execution and never retries the effect', async () => {
-    const executeCall = vi.fn(async () => await new Promise<never>(() => {}));
+    const executeCall = vi.fn(async (_call: VoiceRealtimeToolCallV1, signal: AbortSignal) => await new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('Effect transport aborted without a settlement')), { once: true });
+    }));
     const submitResults = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'external',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -613,14 +626,7 @@ describe('realtime tool barrier', () => {
     const first = barrier.run({ ...input, signal: controller.signal });
     await vi.waitFor(() => expect(executeCall).toHaveBeenCalledTimes(1));
     controller.abort();
-    await expect(first).resolves.toEqual({
-      status: 'cancelled',
-      results: [expect.objectContaining({
-        callId: 'external-1',
-        status: 'error',
-        errorCode: 'outcome_unknown',
-      })],
-    });
+    await expect(first).resolves.toMatchObject({ status: 'cancelled' });
 
     await expect(barrier.run(input)).resolves.toMatchObject({
       status: 'submitted',
@@ -633,7 +639,7 @@ describe('realtime tool barrier', () => {
     expect(executeCall).toHaveBeenCalledTimes(1);
   });
 
-  it('retains outcome_unknown when a person cancels a mutation that ignores abort and commits late', async () => {
+  it('keeps a late committed receipt after person cancellation and stops delivery until explicitly retried', async () => {
     let commitLate!: () => void;
     let committed = false;
     const executeCall = vi.fn(async () => await new Promise((resolve) => {
@@ -645,7 +651,7 @@ describe('realtime tool barrier', () => {
     const submitResults = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -659,23 +665,20 @@ describe('realtime tool barrier', () => {
 
     await expect(pending).resolves.toMatchObject({
       status: 'cancelled',
-      results: [expect.objectContaining({
-        callId: 'late-mutation',
-        status: 'error',
-        errorCode: 'outcome_unknown',
-      })],
+      results: [],
     });
     expect(committed).toBe(false);
 
     commitLate();
     await Promise.resolve();
     expect(committed).toBe(true);
+    expect(submitResults).not.toHaveBeenCalled();
     await expect(barrier.run(input)).resolves.toMatchObject({
       status: 'submitted',
       results: [expect.objectContaining({
         callId: 'late-mutation',
-        status: 'error',
-        errorCode: 'outcome_unknown',
+        status: 'success',
+        output: { ok: true, receipt: 'late-mutation-receipt' },
       })],
     });
     expect(executeCall).toHaveBeenCalledTimes(1);
@@ -687,7 +690,7 @@ describe('realtime tool barrier', () => {
     }));
     const submitResults = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -704,7 +707,7 @@ describe('realtime tool barrier', () => {
 
   it('fails closed when redaction throws', async () => {
     const barrier = createRealtimeToolBarrier({
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall: async () => ({ private: 'raw' }),
       redactResult: () => { throw new Error('redactor failed'); },
       submitResults: async () => undefined,
@@ -718,10 +721,8 @@ describe('realtime tool barrier', () => {
   });
 
   it('executes all 65 valid calls in a response', async () => {
-    const authorizeCall = vi.fn(async () => ({ status: 'allowed' as const }));
     const executeCall = vi.fn(async () => ({ ok: true }));
     const barrier = createRealtimeToolBarrier({
-      authorizeCall,
       executeCall,
       redactResult: (value) => value,
       submitResults: async () => undefined,
@@ -742,7 +743,7 @@ describe('realtime tool barrier', () => {
     const executeCall = vi.fn(async (input: VoiceRealtimeToolCallV1) => ({ receipt: input.callId }));
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults: async () => undefined,
@@ -774,7 +775,7 @@ describe('realtime tool barrier', () => {
     const submitResults = vi.fn(async () => { throw new Error('delivery failed'); });
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' as const }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,

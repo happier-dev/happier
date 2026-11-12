@@ -29,9 +29,10 @@ export type VoiceToolResultRedactionPrefs = Readonly<{
  * reach the provider. The human-summary resolver treats `title ?? label ?? name` as equivalent
  * session-summary text, so the raw-channel key-set mirrors that title-equivalent set — otherwise a
  * tool result carrying a session under a `label`/`name` key would survive `shareSessionSummary=false`
- * on the raw `VOICE_TOOL_RESULTS_JSON` channel (X-L2).
+ * on the raw `VOICE_TOOL_RESULTS_JSON` channel (X-L2). Retained human summaries
+ * follow the same rule when sharing is withdrawn before delivery.
  */
-const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'name', 'currentWork']);
+const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'name', 'currentWork', 'summary']);
 
 /**
  * Current-UI presentation is admitted and privacy-qualified by the current
@@ -41,7 +42,8 @@ const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'na
  * one result-redaction owner. Admitted inventory labels name Agents/models,
  * rather than Sessions, and follow the independent inventory permission.
  * Settings and Action declarations also carry catalog labels, never Session
- * summaries. Other tools still treat these keys as session-summary aliases.
+ * summaries. Projected Account request presentation follows its independent
+ * request-sharing permission. Other tools treat these keys as session summaries.
  */
 const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
@@ -291,7 +293,7 @@ export function redactVoiceToolResultForProvider(
     ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : value,
     prefs,
     toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || DECLARATION_LABEL_TOOL_NAMES.has(toolName)
-      || ACTION_CATALOG_TOOL_NAMES.has(toolName),
+      || ACTION_CATALOG_TOOL_NAMES.has(toolName) || ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName),
     ACTION_CATALOG_TOOL_NAMES.has(toolName),
   );
 }

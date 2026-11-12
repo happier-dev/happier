@@ -1565,7 +1565,7 @@ describe('CLI bundled plugin registry projection', () => {
             runtime: { apiVersion: 1 as const }, contributes: { voiceProviders: [{
               id: 'openai', title: 'OpenAI', kind: 'conversation' as const,
               roles: ['realtime_conversation' as const], platforms: ['web' as const, 'ios' as const],
-              capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' as const } },
+              capabilities: { turn: { cancelResponse: false, bargeIn: false } },
               client: { artifactId: 'voice-runtime', exportName: 'activate' },
             }] },
           },
@@ -1677,7 +1677,7 @@ describe('CLI bundled plugin registry projection', () => {
             runtime: { apiVersion: 1 as const }, contributes: { voiceProviders: [{
               id, title: id, kind: 'conversation' as const,
               roles: ['realtime_conversation' as const], platforms: ['web' as const],
-              capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' as const } },
+              capabilities: { turn: { cancelResponse: false, bargeIn: false } },
               client: { artifactId: 'voice-runtime', exportName: 'activate' },
             }] },
           },
@@ -1747,7 +1747,7 @@ describe('CLI bundled plugin registry projection', () => {
           contributes: { voiceProviders: [{
             id: 'realtime-openai', title: 'OpenAI Voice', kind: 'conversation',
             roles: ['realtime_conversation'], platforms: ['web', 'ios', 'android'],
-            capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+            capabilities: { turn: { cancelResponse: false, bargeIn: false } },
             client: { artifactId: 'voice-runtime', exportName: 'activate' },
           }] },
         }));

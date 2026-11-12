@@ -73,7 +73,7 @@ function createPublicEntry(input: Readonly<{
     platforms: ['web' as const, 'ios' as const, 'android' as const],
     capabilities: Object.freeze({
       turn: Object.freeze({ cancelResponse: false, bargeIn: false }),
-      tools: Object.freeze({ effectCalls: 'none' as const }),
+
     }),
     client: Object.freeze({
       artifactId: 'voice-runtime',
@@ -361,7 +361,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     const host = capturedHostRef.current;
     if (!host) throw new Error('tool projection test runtime did not receive a host');
 
-    const baselineDefinitions = host.getRealtimeClientToolDefinitions({ effectCalls: 'none', exposure: 'voice_assistant' });
+    const baselineDefinitions = host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' });
     const baselineNames = baselineDefinitions.map((tool) => tool.name);
     expect(baselineNames.length).toBeGreaterThan(0);
     expect(baselineNames).toContain('searchActionSpecs');
@@ -406,7 +406,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         } }, state.settings),
       },
     }));
-    const privateNames = host.getRealtimeClientToolDefinitions({ effectCalls: 'none', exposure: 'voice_assistant' }).map((tool) => tool.name);
+    const privateNames = host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' }).map((tool) => tool.name);
     expect(privateNames).not.toContain('listRecentPaths');
     expect(privateNames).not.toContain('listMachines');
     expect(privateNames).not.toContain('listServers');

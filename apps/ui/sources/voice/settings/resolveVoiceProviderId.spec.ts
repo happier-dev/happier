@@ -80,7 +80,7 @@ describe('resolveVoiceProviderId', () => {
         const declaration = VoiceProviderContributionSchema.parse({
             id: 'realtime-agent-session', title: 'Agent-session voice fixture',
             kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-            capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+            capabilities: { turn: { cancelResponse: false, bargeIn: false },  },
             execution: { kind: 'experimental_agent_session_realtime',
                 agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             settings: { schemaVersion: 2, fields: [], connectedServicesBinding: {

@@ -47,6 +47,16 @@ const OpenAiSpeechStoppedEventSchema = z.object({
   type: z.literal('input_audio_buffer.speech_stopped'),
   event_id: OpenAiIdSchema,
 });
+const OpenAiAudioCommittedEventSchema = z.object({
+  type: z.literal('input_audio_buffer.committed'),
+  event_id: OpenAiIdSchema,
+  item_id: OpenAiIdSchema,
+});
+const OpenAiResponseCreatedEventSchema = z.object({
+  type: z.literal('response.created'),
+  event_id: OpenAiIdSchema,
+  response: z.object({ id: OpenAiIdSchema }),
+});
 const OpenAiOutputAudioBufferStartedEventSchema = z.object({
   type: z.literal('output_audio_buffer.started'),
   event_id: OpenAiIdSchema,
@@ -141,6 +151,8 @@ const OpenAiServerEventSchemaByType = Object.freeze({
   'error': OpenAiErrorEventSchema,
   'input_audio_buffer.speech_started': OpenAiSpeechStartedEventSchema,
   'input_audio_buffer.speech_stopped': OpenAiSpeechStoppedEventSchema,
+  'input_audio_buffer.committed': OpenAiAudioCommittedEventSchema,
+  'response.created': OpenAiResponseCreatedEventSchema,
   'output_audio_buffer.started': OpenAiOutputAudioBufferStartedEventSchema,
   'output_audio_buffer.stopped': OpenAiOutputAudioBufferStoppedEventSchema,
   'output_audio_buffer.cleared': OpenAiOutputAudioBufferClearedEventSchema,
@@ -161,6 +173,8 @@ type OpenAiRecognizedServerEvent =
   | z.infer<typeof OpenAiErrorEventSchema>
   | z.infer<typeof OpenAiSpeechStartedEventSchema>
   | z.infer<typeof OpenAiSpeechStoppedEventSchema>
+  | z.infer<typeof OpenAiAudioCommittedEventSchema>
+  | z.infer<typeof OpenAiResponseCreatedEventSchema>
   | z.infer<typeof OpenAiOutputAudioBufferStartedEventSchema>
   | z.infer<typeof OpenAiOutputAudioBufferStoppedEventSchema>
   | z.infer<typeof OpenAiOutputAudioBufferClearedEventSchema>
@@ -442,6 +456,10 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
         result.push({ type: 'input_speech_started' });
       } else if (event.type === 'input_audio_buffer.speech_stopped') {
         result.push({ type: 'input_speech_stopped' });
+      } else if (event.type === 'input_audio_buffer.committed') {
+        result.push({ type: 'input_audio_committed', itemId: event.item_id });
+      } else if (event.type === 'response.created') {
+        result.push({ type: 'response_created', responseId: event.response.id });
       }
       if (event.type === 'output_audio_buffer.started') {
         // WebRTC carries output audio on the remote media track. This semantic
@@ -475,7 +493,12 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
         // an empty canonical final reaches the host writer and is discarded
         // there with no row and no record.
         const mapped = transcriptEvent({ itemId: event.item_id, eventId, role: 'user', incoming: text(event.transcript), mode: 'final' });
-        if (mapped) result.push(mapped);
+        if (mapped) {
+          if (mapped.type === 'transcript' && mapped.event.text.trim()) {
+            result.push({ type: 'input_transcript_finished', itemId: event.item_id });
+          }
+          result.push(mapped);
+        }
       } else if (event.type === 'response.output_audio_transcript.delta') {
         const mapped = transcriptEvent({ itemId: event.item_id, eventId, role: 'assistant', incoming: event.delta, mode: 'delta' });
         if (mapped) {
@@ -517,6 +540,7 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
           });
         }
       }
+      if (event.type === 'response.done') result.push({ type: 'response_finished', responseId: event.response.id });
       return Object.freeze(result);
     },
     encodeTurnControl(action: VoiceTurnControlAction): VoiceRealtimeJsonValue | null {

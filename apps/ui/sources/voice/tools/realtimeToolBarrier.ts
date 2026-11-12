@@ -1,6 +1,7 @@
-import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
-import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { VoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema, type VoiceRealtimeJsonValue, type VoiceRealtimeToolCallV1, type VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
+import { decodeVoiceToolInput } from './voiceActionExecution';
+import { resolveVoiceToolExecutionFailure } from './voiceToolExecutionFailure';
+import type { SpokenActionTurnOrigin } from './executeSpokenAction';
 
 export class RealtimeToolBarrierError extends Error {
   readonly code: 'duplicate_call_id' | 'response_conflict' | 'disposed';
@@ -24,12 +25,8 @@ export class RealtimeToolExecutionError extends Error {
   }
 }
 
-export type RealtimeToolAuthorization =
-  | Readonly<{ status: 'allowed' }>
-  | Readonly<{ status: 'denied'; code?: string }>;
-
 export type RealtimeToolValidation =
-  | Readonly<{ status: 'allowed' }>
+  | Readonly<{ status: 'allowed'; call?: VoiceRealtimeToolCallV1 }>
   | Readonly<{ status: 'rejected'; code?: string }>;
 
 export type RealtimeToolEffectClass = 'read_only' | 'mutation' | 'external';
@@ -44,36 +41,54 @@ export type RealtimeToolBarrierResult = Readonly<{
   results: readonly VoiceRealtimeToolResultV1[];
 }>;
 
+// The wire failure envelope excludes output. Keep its already-redacted owner
+// value with the retained result so later delivery can refresh privacy and
+// derive the same human outcome without reconstructing or retaining raw data.
+type RetainedToolResult = Readonly<{
+  result: VoiceRealtimeToolResultV1;
+  redactedFailure?: unknown;
+}>;
+
+type RetainedBarrierResult = Readonly<{
+  status: RealtimeToolBarrierResult['status'];
+  results: readonly RetainedToolResult[];
+}>;
+
+function publicBarrierResult(value: RetainedBarrierResult): RealtimeToolBarrierResult {
+  return Object.freeze({ status: value.status, results: Object.freeze(value.results.map(({ result }) => result)) });
+}
+
 type RealtimeToolBarrierDeps = Readonly<{
   validateCall?: (call: VoiceRealtimeToolCallV1) => RealtimeToolValidation;
   classifyCall?: (call: VoiceRealtimeToolCallV1) => RealtimeToolEffectClass;
-  authorizeCall: (call: VoiceRealtimeToolCallV1, signal: AbortSignal) => Promise<RealtimeToolAuthorization>;
-  executeCall: (call: VoiceRealtimeToolCallV1, signal: AbortSignal) => Promise<unknown>;
+  executeCall: (call: VoiceRealtimeToolCallV1, signal: AbortSignal, turnOrigin: SpokenActionTurnOrigin) => Promise<unknown>;
   redactResult: (value: unknown, call: VoiceRealtimeToolCallV1) => unknown;
+  summarizeResult?: (redactedValue: unknown, call: VoiceRealtimeToolCallV1) => string | null;
   submitResults: (
     responseId: string,
     results: readonly VoiceRealtimeToolResultV1[],
     signal: AbortSignal,
   ) => Promise<void>;
-  continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
+  continueResponse: (responseId: string, signal: AbortSignal, turnOrigin: SpokenActionTurnOrigin) => Promise<void>;
 }>;
 
 type ResponseRecord = {
   fingerprint: string;
   calls: readonly VoiceRealtimeToolCallV1[];
+  turnOrigin: SpokenActionTurnOrigin;
   /** Terminal attempt/call cancellation; never used for a transport detach. */
   controller: AbortController;
   /** The current provider-delivery leg, independently abortable on detach. */
   deliveryController: AbortController;
   detached: boolean;
-  promise: Promise<RealtimeToolBarrierResult>;
+  promise: Promise<RetainedBarrierResult>;
   settled: boolean;
 };
 
 type EffectOutcomeRecord = {
   fingerprint: string;
-  promise: Promise<VoiceRealtimeToolResultV1>;
-  result: VoiceRealtimeToolResultV1 | null;
+  promise: Promise<RetainedToolResult>;
+  result: RetainedToolResult | null;
 };
 
 const SAFE_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
@@ -112,30 +127,30 @@ function effectFingerprint(call: VoiceRealtimeToolCallV1): string {
 }
 
 function projectResultToCall(
-  result: VoiceRealtimeToolResultV1,
+  retained: RetainedToolResult,
   call: VoiceRealtimeToolCallV1,
-): VoiceRealtimeToolResultV1 {
-  return VoiceRealtimeToolResultV1Schema.parse({
-    ...result,
+): RetainedToolResult {
+  return { ...retained, result: VoiceRealtimeToolResultV1Schema.parse({
+    ...retained.result,
     responseId: call.responseId,
     callId: call.callId,
     toolName: call.toolName,
     order: call.order,
-  });
+  }) };
 }
 
 function terminalResult(
   call: VoiceRealtimeToolCallV1,
   status: 'denied' | 'cancelled' | 'error',
   errorCode: string,
-): VoiceRealtimeToolResultV1 {
+): RetainedToolResult {
   const fallbackCode = status === 'denied'
     ? 'permission_denied'
     : status === 'cancelled'
       ? 'tool_cancelled'
       : 'tool_failed';
   const safeErrorCode = SAFE_ERROR_CODE_PATTERN.test(errorCode) ? errorCode : fallbackCode;
-  return VoiceRealtimeToolResultV1Schema.parse({
+  return { result: VoiceRealtimeToolResultV1Schema.parse({
     v: 1,
     responseId: call.responseId,
     callId: call.callId,
@@ -143,7 +158,7 @@ function terminalResult(
     order: call.order,
     status,
     errorCode: safeErrorCode,
-  });
+  }) };
 }
 
 async function raceWithAbort<T>(startOperation: () => Promise<T>, signal: AbortSignal): Promise<T> {
@@ -170,25 +185,32 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   const redactFailure = (
     call: VoiceRealtimeToolCallV1,
     status: VoiceRealtimeToolResultV1['status'],
-    errorCode: string,
-    details: unknown,
-  ): VoiceRealtimeToolResultV1 => {
+    value: unknown,
+  ): RetainedToolResult => {
     try {
-      const projected = deps.redactResult({ ok: false, errorCode,
-        ...(details === undefined ? {} : { details }),
-      }, call);
+      const projected = deps.redactResult(value, call);
       const failure = projected !== null && typeof projected === 'object' && !Array.isArray(projected)
         ? projected : null;
       const projectedErrorCode = failure === null ? undefined : Reflect.get(failure, 'errorCode');
       const errorDetails = failure === null ? undefined : Reflect.get(failure, 'details');
-      return VoiceRealtimeToolResultV1Schema.parse({
+      const summary = deps.summarizeResult?.(projected, call);
+      return { redactedFailure: projected, result: VoiceRealtimeToolResultV1Schema.parse({
         v: 1, responseId: call.responseId, callId: call.callId, toolName: call.toolName,
         order: call.order, status, errorCode: projectedErrorCode,
         ...(errorDetails === undefined ? {} : { errorDetails }),
-      });
+        ...(summary ? { summary } : {}),
+      }) };
     } catch {
       return terminalResult(call, 'error', 'redaction_failed');
     }
+  };
+
+  const projectSuccess = (call: VoiceRealtimeToolCallV1, value: unknown): RetainedToolResult => {
+    const output = deps.redactResult(value, call);
+    const summary = deps.summarizeResult?.(output, call);
+    return { result: VoiceRealtimeToolResultV1Schema.parse({ v: 1, responseId: call.responseId, callId: call.callId,
+      toolName: call.toolName, order: call.order, status: 'success', output, ...(summary ? { summary } : {}),
+    }) };
   };
 
   const resetDeliveryController = (record: ResponseRecord): void => {
@@ -204,15 +226,19 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   };
 
   const redactCompletedResults = (
-    results: readonly VoiceRealtimeToolResultV1[],
+    results: readonly RetainedToolResult[],
     calls: readonly VoiceRealtimeToolCallV1[],
-  ): readonly VoiceRealtimeToolResultV1[] => Object.freeze(results.map((result, index) => {
+  ): readonly RetainedToolResult[] => Object.freeze(results.map((retained, index) => {
     const call = calls[index]!;
+    const result = retained.result;
     if (result.status !== 'success') {
-      return redactFailure(call, result.status, result.errorCode!, result.errorDetails);
+      return redactFailure(call, result.status, retained.redactedFailure ?? {
+        ok: false, errorCode: result.errorCode,
+        ...(result.errorDetails === undefined ? {} : { details: result.errorDetails }),
+      });
     }
     try {
-      return VoiceRealtimeToolResultV1Schema.parse({ ...result, output: deps.redactResult(result.output, call) });
+      return projectSuccess(call, result.output);
     } catch {
       return terminalResult(call, 'error', 'redaction_failed');
     }
@@ -220,9 +246,9 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
 
   const submitCompletedResults = async (
     responseId: string,
-    results: readonly VoiceRealtimeToolResultV1[],
+    results: readonly RetainedToolResult[],
     record: ResponseRecord,
-  ): Promise<RealtimeToolBarrierResult> => {
+  ): Promise<RetainedBarrierResult> => {
     const redactedResults = redactCompletedResults(results, record.calls);
     const executionSignal = record.controller.signal;
     const deliverySignal = record.deliveryController.signal;
@@ -231,13 +257,13 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
     try {
       await raceWithAbort(
-        () => deps.submitResults(responseId, redactedResults, deliverySignal),
+        () => deps.submitResults(responseId, redactedResults.map(({ result }) => result), deliverySignal),
         deliverySignal,
       );
       if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
       if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
       await raceWithAbort(
-        () => deps.continueResponse(responseId, deliverySignal),
+        () => deps.continueResponse(responseId, deliverySignal, record.turnOrigin),
         deliverySignal,
       );
       if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
@@ -253,61 +279,45 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   const executeOne = async (
     call: VoiceRealtimeToolCallV1,
     responseSignal: AbortSignal,
-  ): Promise<VoiceRealtimeToolResultV1> => {
-    const validation = deps.validateCall?.(call) ?? (
-      VoiceAssistantActionSchema.safeParse({ t: call.toolName, args: call.arguments }).success
-        ? { status: 'allowed' as const }
-        : { status: 'rejected' as const, code: 'invalid_tool_call' }
-    );
+    turnOrigin: SpokenActionTurnOrigin,
+  ): Promise<RetainedToolResult> => {
+    const validation = deps.validateCall?.(call) ?? (() => {
+      const input = decodeVoiceToolInput(call.toolName, call.arguments);
+      return input ? { status: 'allowed' as const, call: { ...call, ...input } }
+        : { status: 'rejected' as const, code: 'invalid_tool_call' };
+    })();
     if (validation.status === 'rejected') {
       return terminalResult(call, 'error', validation.code ?? 'invalid_tool_call');
     }
+    const admittedCall = validation.call ?? call;
     const controller = new AbortController();
     const abort = () => controller.abort();
     responseSignal.addEventListener('abort', abort, { once: true });
     try {
-      const authorization = await raceWithAbort(
-        () => deps.authorizeCall(call, controller.signal),
-        controller.signal,
-      );
-      if (authorization.status === 'denied') {
-        return terminalResult(call, 'denied', authorization.code ?? 'permission_denied');
-      }
-      const effectClass = deps.classifyCall?.(call) ?? 'read_only';
-      const executeAndRedact = async (): Promise<VoiceRealtimeToolResultV1> => {
+      const effectClass = deps.classifyCall?.(admittedCall) ?? 'read_only';
+      const executeAndRedact = async (): Promise<RetainedToolResult> => {
         try {
-          const rawResult = effectClass !== 'read_only'
-            ? await raceWithAbort(() => deps.executeCall(call, controller.signal), controller.signal)
-            : await deps.executeCall(call, controller.signal);
+          const rawResult = await deps.executeCall(admittedCall, controller.signal, turnOrigin);
           try {
-            return VoiceRealtimeToolResultV1Schema.parse({
-              v: 1,
-              responseId: call.responseId,
-              callId: call.callId,
-              toolName: call.toolName,
-              order: call.order,
-              status: 'success',
-              output: deps.redactResult(rawResult, call),
-            });
+            if (rawResult !== null && typeof rawResult === 'object' && Reflect.get(rawResult, 'ok') === false) {
+              const errorCode: unknown = Reflect.get(rawResult, 'errorCode');
+              return redactFailure(admittedCall, 'error', { ...rawResult,
+                errorCode: typeof errorCode === 'string' && errorCode ? errorCode : 'tool_failed' });
+            }
+            return projectSuccess(admittedCall, rawResult);
           } catch {
             return terminalResult(call, 'error', 'redaction_failed');
           }
         } catch (error) {
-          const pluginError = isPluginError(error) ? error : null;
-          if (effectClass !== 'read_only' && (controller.signal.aborted || (!(error instanceof RealtimeToolExecutionError) && !pluginError))) {
-            return terminalResult(call, 'error', 'outcome_unknown');
-          }
-          if (pluginError) {
-            return redactFailure(call, 'error', pluginError.code, Reflect.get(pluginError.data, 'details'));
-          }
           if (error instanceof RealtimeToolExecutionError) {
             return terminalResult(call, error.resultStatus, error.safeCode);
           }
-          return terminalResult(call, 'error', 'tool_failed');
+          const failure = resolveVoiceToolExecutionFailure(error, effectClass !== 'read_only');
+          return redactFailure(admittedCall, 'error', failure);
         }
       };
 
-      let execution: Promise<VoiceRealtimeToolResultV1>;
+      let execution: Promise<RetainedToolResult>;
       let effectOutcome: EffectOutcomeRecord | null = null;
       if (effectClass === 'read_only') {
         execution = executeAndRedact();
@@ -347,9 +357,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
         if (effectOutcome?.result) {
           return projectResultToCall(effectOutcome.result, call);
         }
-        if (effectClass !== 'read_only' && effectOutcome && responseSignal.aborted) {
-          return projectResultToCall(await effectOutcome.promise, call);
-        }
         throw error;
       }
     } catch (error) {
@@ -368,9 +375,9 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     responseId: string,
     calls: readonly VoiceRealtimeToolCallV1[],
     record: ResponseRecord,
-  ): Promise<RealtimeToolBarrierResult> => {
+  ): Promise<RetainedBarrierResult> => {
     const controller = record.controller;
-    const retainedEffectResults = (): readonly VoiceRealtimeToolResultV1[] => Object.freeze(
+    const retainedEffectResults = (): readonly RetainedToolResult[] => Object.freeze(
       calls.flatMap((call) => {
         const outcome = effectOutcomes.get(call.callId);
         if (!outcome || outcome.fingerprint !== effectFingerprint(call) || !outcome.result) return [];
@@ -380,7 +387,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     if (controller.signal.aborted) {
       return Object.freeze({ status: 'cancelled', results: Object.freeze([]) });
     }
-    const completedResults = await Promise.all(calls.map(async (call) => await executeOne(call, controller.signal)));
+    const completedResults = await Promise.all(calls.map(async (call) => await executeOne(call, controller.signal, record.turnOrigin)));
     if (controller.signal.aborted) {
       return Object.freeze({ status: 'cancelled', results: retainedEffectResults() });
     }
@@ -395,6 +402,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     responseId: string;
     calls: readonly unknown[];
     signal?: AbortSignal | null;
+    turnOrigin?: SpokenActionTurnOrigin;
   }>): Promise<RealtimeToolBarrierResult> => {
     if (disposed) throw new RealtimeToolBarrierError('disposed');
     const responseId = input.responseId;
@@ -433,7 +441,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
         if (existing.promise === replay) existing.settled = true;
       });
       existing.promise = replay;
-      return await replay;
+      return publicBarrierResult(await replay);
     }
 
     const controller = new AbortController();
@@ -443,6 +451,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     const record: ResponseRecord = {
       fingerprint,
       calls,
+      turnOrigin: input.turnOrigin ?? 'synthetic',
       controller,
       deliveryController: new AbortController(),
       detached: false,
@@ -464,7 +473,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
       });
     record.promise = response;
     responses.set(responseId, record);
-    return await record.promise;
+    return publicBarrierResult(await record.promise);
   };
 
   return Object.freeze({

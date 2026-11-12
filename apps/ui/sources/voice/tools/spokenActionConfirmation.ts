@@ -1,23 +1,11 @@
-import type { ActionPreparedOperation } from '@happier-dev/protocol/actions/executor/types';
+type PendingSpokenAction = object;
 
-/** Normalized operation and safe summary supplied by the shared Action owner. */
-export type SpokenActionOperation = Pick<ActionPreparedOperation,
-  'actionId' | 'summary' | 'normalizedInput' | 'sessionTargetsV1'> & Readonly<{
-  actionRequestId: string;
-  serverId?: string | null;
-  defaultSessionId?: string | null;
-}>;
-
-type PendingSpokenAction = Readonly<{
-  operation: SpokenActionOperation;
-}>;
-
-/** One pending operation on a live carrier, without persistence or expiry. */
+/** One playback identity on a live carrier; the Action owner retains its operation. */
 export function createSpokenActionConfirmation() {
   let pending: PendingSpokenAction | null = null;
   return {
-    prepare(operation: SpokenActionOperation): void {
-      pending = { operation };
+    prepare(): void {
+      pending = {};
     },
     readPending(): PendingSpokenAction | null { return pending; },
     // Capture the pending object before awaiting playback. A superseded speech

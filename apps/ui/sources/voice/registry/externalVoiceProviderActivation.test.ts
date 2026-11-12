@@ -86,7 +86,6 @@ const declaration = requireConversationDeclaration(PluginContributesV2Schema.par
         bargeIn: false,
         clearInput: true,
         resumption: 'resume',
-        replay: 'stable_ids',
         exactMessage: true,
         interruptionPolicy: 'provider_immediate',
       },
@@ -173,7 +172,7 @@ describe('external Voice provider activation', () => {
       voiceProviders: [{
         ...declaration,
         id: 'provision-effect-tools',
-        capabilities: { ...declaration.capabilities, tools: { effectCalls: 'stable_ids' } },
+        capabilities: { ...declaration.capabilities,  },
         settings: {
           schemaVersion: 1,
           fields: [{ id: 'agentId', title: 'Agent ID', schema: { type: 'string', maxLength: 256 }, default: '', presentation: { control: 'text' } }],

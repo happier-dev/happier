@@ -173,7 +173,7 @@ export function resolveVoiceToolResultHumanSummary(params: VoiceToolResultSummar
 export function resolveVoiceToolResultHumanSummary(params: VoiceToolResultSummaryParams): SpokenActionOutcome | null {
     const envelope = asObject(params.toolResult);
     if (!envelope) return null;
-    const execution = params.outcomeOnly && params.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
+    const execution = params.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
         ? resolveVoiceActionExecution(params.toolInput) : null;
     const toolName = execution?.toolName ?? params.toolName;
     const result = execution ? asObject(envelope.result) ?? envelope : envelope;

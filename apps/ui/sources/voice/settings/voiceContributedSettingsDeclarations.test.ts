@@ -38,7 +38,7 @@ describe('contributed Voice settings declaration admission', () => {
         const fieldIds = ['speed', 'pitch', 'volume'];
         const declaration = VoiceProviderContributionSchema.parse({
             id: 'speech', title: 'Fixture voice', kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-            capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+            capabilities: { turn: { cancelResponse: false, bargeIn: false },  },
             client: { artifactId: 'voice', exportName: 'activate' },
             settings: {
                 schemaVersion: 1,

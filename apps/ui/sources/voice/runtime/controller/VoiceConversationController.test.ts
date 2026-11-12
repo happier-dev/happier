@@ -185,7 +185,6 @@ function createAdapter(overrides: Partial<VoiceRealtimeProtocolAdapter> = {}): V
       clearInput: true,
       stopSession: true,
       resumption: 'resume',
-      replay: 'stable_ids',
       exactMessage: false,
     },
     prepare: async () => ({
@@ -2237,7 +2236,7 @@ describe('VoiceConversationController', () => {
     const executeCall = vi.fn(async () => ({ effectReceipt: 'controller-effect' }));
     const submitResults = vi.fn(async () => {});
     const toolBarrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation', authorizeCall: async () => ({ status: 'allowed' }),
+      classifyCall: () => 'mutation',
       executeCall, redactResult: value => value, submitResults, continueResponse: async () => {},
     });
     const projectTranscript = vi.fn<NonNullable<VoiceConversationControllerDeps['projectTranscript']>>(
@@ -2259,7 +2258,7 @@ describe('VoiceConversationController', () => {
 
     await controller.start({ controlSessionId: 'controller-canonical-session' });
     await vi.waitFor(() => expect(submitResults).toHaveBeenCalledOnce());
-    expect(executeCall).toHaveBeenCalledWith(calls[0], expect.any(AbortSignal));
+    expect(executeCall).toHaveBeenCalledWith(calls[0], expect.any(AbortSignal), 'synthetic');
     expect(submitResults).toHaveBeenCalledWith('response-controller-1', [expect.objectContaining({
       callId: 'call-controller-1', status: 'success', output: { effectReceipt: 'controller-effect' },
     })], expect.any(AbortSignal));
@@ -2309,7 +2308,7 @@ describe('VoiceConversationController', () => {
       return request(input, init);
     });
     const barrier = createDefaultRealtimeToolBarrier({
-      resolveSessionId: () => null, effectCalls: 'stable_ids',
+      resolveSessionId: () => null,
       currentSessionAddress: { serverId: account.scope.serverId, sessionId: 'slow-tool-session' },
       submitResults: async (_responseId, results) => { submitted.resolve(results); },
       continueResponse: async () => {},
@@ -2355,7 +2354,7 @@ describe('VoiceConversationController', () => {
     const submitResults = vi.fn(async () => {});
     const continueResponse = vi.fn(async () => {});
     const barrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation', authorizeCall: async () => ({ status: 'allowed' }),
+      classifyCall: () => 'mutation',
       executeCall, redactResult: value => value, submitResults, continueResponse,
     });
     let connectionIndex = 0;
@@ -2387,7 +2386,7 @@ describe('VoiceConversationController', () => {
     expect(executeCall.mock.calls[0]![1].aborted).toBe(true);
     await expect(barrier.run({ responseId: 'after-stop', calls })).rejects.toMatchObject({ code: 'disposed' });
   });
-  it('reconnects and redelivers the same retained tool result without repeating the effect', async () => {
+  it('uses the prepared session replay decision without static replay gates or repeating the effect', async () => {
     const first = createConnectionFixture();
     const second = createConnectionFixture();
     const calls = [{
@@ -2406,7 +2405,7 @@ describe('VoiceConversationController', () => {
     const continueResponse = vi.fn(async () => {});
     const toolBarrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -2415,7 +2414,10 @@ describe('VoiceConversationController', () => {
     let connectionIndex = 0;
     const machine = createMachineFixture();
     const controller = createVoiceConversationController({
-      adapter: createAdapter(),
+      adapter: createAdapter({ turnControls: {
+        cancelResponse: 'immediate', truncatePlayback: 'played_ms', clearInput: true,
+        stopSession: true, resumption: 'none', exactMessage: false,
+      } }),
       machine: machine.machine,
       createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
       isSelectionCurrent: () => true,
@@ -2464,7 +2466,7 @@ describe('VoiceConversationController', () => {
     const continueResponse = vi.fn(async () => {});
     const toolBarrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,
@@ -2522,7 +2524,7 @@ describe('VoiceConversationController', () => {
     const continueResponse = vi.fn(async () => {});
     const toolBarrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
-      authorizeCall: async () => ({ status: 'allowed' }),
+
       executeCall,
       redactResult: (value) => value,
       submitResults,

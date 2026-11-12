@@ -196,6 +196,12 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         result.push({ type: 'input_speech_started' });
       } else if (event.type === 'input_audio_buffer.speech_stopped') {
         result.push({ type: 'input_speech_stopped' });
+      } else if (event.type === 'input_audio_buffer.committed') {
+        const committedItemId = text(event.item_id);
+        if (committedItemId) result.push({ type: 'input_audio_committed', itemId: committedItemId });
+      } else if (event.type === 'response.created') {
+        const responseId = text(record(event.response)?.id);
+        if (responseId) result.push({ type: 'response_created', responseId });
       }
       const outputAudioDelta = text(event.delta);
       if (itemId && eventType === 'response.output_audio.delta' && outputAudioDelta) {
@@ -222,7 +228,12 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         if (mapped) result.push(mapped);
       } else if (itemId && event.type === 'conversation.item.input_audio_transcription.completed') {
         const mapped = transcriptEvent({ itemId, eventId, role: 'user', incoming: text(event.transcript), mode: 'final' });
-        if (mapped) result.push(mapped);
+        if (mapped) {
+          if (mapped.type === 'transcript' && mapped.event.text.trim()) {
+            result.push({ type: 'input_transcript_finished', itemId });
+          }
+          result.push(mapped);
+        }
       } else if (itemId && event.type === 'response.output_audio_transcript.delta') {
         const mapped = transcriptEvent({ itemId, eventId, role: 'assistant', incoming: text(event.delta), mode: 'delta' });
         if (mapped) result.push(mapped);
@@ -279,6 +290,7 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
             });
           }
         }
+        if (responseId) result.push({ type: 'response_finished', responseId });
       }
       return Object.freeze(result);
     },

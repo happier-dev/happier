@@ -1,4 +1,4 @@
-import { isVoiceSdkSafeActionSpec, listVoiceActionBlockSpecs, listVoiceToolActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { listVoiceActionBlockSpecs, listVoiceToolActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -47,13 +47,6 @@ export function isVoiceActionAvailableInState(
 
 export function resolveEnabledVoiceToolActionSpecsFromState(state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>, scope?: VoiceActionSessionScope): readonly ActionSpec[] {
   return listVoiceToolActionSpecs().filter((spec) => isVoiceActionAvailableInState(state, spec.id as ActionId, scope));
-}
-
-export function resolveEnabledVoiceSdkSafeToolActionSpecsFromState(
-  state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>,
-  scope?: VoiceActionSessionScope,
-): readonly ActionSpec[] {
-  return resolveEnabledVoiceToolActionSpecsFromState(state, scope).filter(isVoiceSdkSafeActionSpec);
 }
 
 export function resolveDisabledVoiceActionIdsFromState(state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>, scope?: VoiceActionSessionScope): readonly ActionId[] {

@@ -12,7 +12,7 @@ describe('externalProviderSettings', () => {
   it('admits each declared config once for status, mode, conditional credentials and readiness', () => {
     const declaration = VoiceProviderContributionSchema.parse({
       id: 'voice', title: 'Voice', kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-      capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+      capabilities: { turn: { cancelResponse: false, bargeIn: false },  },
       client: { artifactId: 'voice', exportName: 'activate' },
       credentials: {
         slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'Credential' },
@@ -133,7 +133,7 @@ describe('externalProviderSettings', () => {
     };
     const declaration = VoiceProviderContributionSchema.parse({
       id: 'voice', title: 'Voice', kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-      capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+      capabilities: { turn: { cancelResponse: false, bargeIn: false },  },
       client: { artifactId: 'voice', exportName: 'activate' },
     });
     const project = createDeclaredSettingsProjector(declaration, descriptor, []);

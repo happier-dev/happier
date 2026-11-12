@@ -5,7 +5,7 @@ describe('public Voice service identity', () => {
   const declaration = {
     id: 'conversation', title: 'External Voice', kind: 'conversation',
     roles: ['realtime_conversation'], platforms: ['web'],
-    capabilities: { turn: { cancelResponse: true, bargeIn: true }, tools: { effectCalls: 'none' } },
+    capabilities: { turn: { cancelResponse: true, bargeIn: true },  },
     client: { artifactId: 'voice', exportName: 'activate' },
   };
 

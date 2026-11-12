@@ -139,9 +139,11 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
       const record = readObject(event);
       if (record.type === 'elevenlabs.client_tool_call') {
         const call = VoiceRealtimeToolCallV1Schema.parse(record.call);
-        return [{ type: 'tool_calls', responseId: call.responseId, calls: [call] }];
+        // tool_call_id groups this call, but is not an independent response ID.
+        return [{ type: 'tool_calls', calls: [call] }];
       }
-      const transcript = input.eventMapper.map(event);
+      const userTranscript = record.type === 'elevenlabs.user_transcript';
+      const transcript = input.eventMapper.map(userTranscript ? record.message : event);
       const outputEvent = record.type === 'elevenlabs.mode'
         ? record.mode === 'speaking'
           ? { type: 'assistant_output_started' as const }
@@ -150,6 +152,8 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
             : null
         : null;
       return [
+        ...(userTranscript && transcript?.text.trim()
+          ? [{ type: 'input_transcript_finished' as const }] : []),
         ...(outputEvent ? [outputEvent] : []),
         ...(transcript ? [{ type: 'transcript' as const, event: transcript }] : []),
       ];

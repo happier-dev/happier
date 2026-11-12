@@ -13,7 +13,7 @@ import { AgentSessionRealtimeInspectResultV1Schema } from '@happier-dev/protocol
 import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
 import { resolveActionCatalogSurfaceProjection } from '@happier-dev/protocol/actions/actionCatalog';
 import { isVoiceSdkSafeActionSpec, isVoicePromptHotPathSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { resolveVoiceActionExecution, VoiceActionExecuteInputSchema, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
+import { decodeVoiceToolInput, resolveVoiceActionExecution, VoiceActionExecuteInputSchema, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
@@ -58,7 +58,7 @@ import {
   unbindVoiceRuntimeAttemptBindingIfOwned,
   voiceSessionBindingStore,
 } from '@/voice/binding/voiceConversationBindingStore';
-import { redactVoiceToolResultForProvider, redactVoiceActionExecutionResultForProvider } from '@/voice/context/redactVoiceToolResult';
+import { projectVoiceToolResultsForFollowUp } from '@/voice/context/buildVoiceToolResultsFollowUp';
 import {
   createCurrentUiContextAutomaticUpdateProjector,
   voiceHooks,
@@ -110,7 +110,6 @@ import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
 import {
   isCurrentUiContextVoiceAction,
   isVoiceActionAvailableInState,
-  resolveEnabledVoiceSdkSafeToolActionSpecsFromState,
   resolveEnabledVoiceToolActionSpecsFromState,
 } from '@/voice/tools/resolveDisabledVoiceActionIds';
 import {
@@ -629,12 +628,9 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         providerConfig: readVoiceProviderSettingsConfig(voice, providerId),
       });
     },
-    getRealtimeClientToolDefinitions({ effectCalls, exposure, sessionMetadata }) {
-      const canRunEffects = effectCalls === 'stable_ids';
+    getRealtimeClientToolDefinitions({ exposure, sessionMetadata }) {
       const scope = sessionMetadata === undefined ? undefined : { sessionMetadata };
-      const enabledSpecs = canRunEffects
-        ? resolveEnabledVoiceToolActionSpecsFromState(storage.getState(), scope)
-        : resolveEnabledVoiceSdkSafeToolActionSpecsFromState(storage.getState(), scope);
+      const enabledSpecs = resolveEnabledVoiceToolActionSpecsFromState(storage.getState(), scope);
       // An attached Agent session already owns cross-session, machine, server,
       // activity, and transcript discovery through its canonical tools. Its
       // realtime surface receives only the current-UI tools the Voice
@@ -644,8 +640,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         : enabledSpecs.filter((spec) => isVoicePromptHotPathSpec(spec)
           || spec.id === 'action.spec.search' || spec.id === 'action.spec.get');
       // A direct SDK callback has no response/call identity. It therefore
-      // remains strictly read-only even when the provider separately declares
-      // stable effect custody for canonical `tool_calls` below.
+      // remains strictly read-only; effects use canonical `tool_calls` below.
       const directHandlers = createRealtimeReadOnlyClientTools({
         ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
       });
@@ -665,7 +660,9 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             }
             if (!isReadOnly) throw directVoiceEffectExecutionUnavailable();
             if (typeof handler !== 'function') throw new Error('voice_read_tool_unavailable');
-            const raw = await handler(parameters);
+            const admitted = decodeVoiceToolInput(name, parameters);
+            if (!admitted) throw new Error('invalid_parameters');
+            const raw = await handler(admitted.arguments);
             let value: unknown = raw;
             try {
               value = JSON.parse(raw);
@@ -674,17 +671,15 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
               // JSON scalar after the host privacy boundary below.
             }
             const privacy = readVoicePrivacySettings(storage.getState().settings);
-            return StrictJsonValueSchema.parse(redactVoiceToolResultForProvider(
-              name,
-              value,
-              {
+            return StrictJsonValueSchema.parse(projectVoiceToolResultsForFollowUp([
+              { t: admitted.toolName, args: admitted.arguments, result: value },
+            ], {
                 shareFilePaths: privacy.shareFilePaths,
                 shareSessionSummary: privacy.shareSessionSummary,
                 sharePermissionRequests: privacy.sharePermissionRequests,
                 shareDeviceInventory: privacy.shareDeviceInventory,
                 shareRecentMessages: privacy.shareRecentMessages,
-              },
-            ));
+              })[0]!.result);
           },
         })];
       });
@@ -695,7 +690,8 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
           parameters: createRealtimeClientToolParameters(VoiceActionExecuteInputSchema),
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
-            const target = resolveVoiceActionExecution(parameters);
+            const admitted = decodeVoiceToolInput(VOICE_ACTION_EXECUTE_TOOL_NAME, parameters);
+            const target = admitted ? resolveVoiceActionExecution(admitted.arguments) : null;
             if (!target) throw new Error('invalid_parameters');
             if (!isVoiceActionAvailableInState(storage.getState(), target.spec.id as ActionId, scope)) {
               throw new Error('voice_action_unavailable');
@@ -707,9 +703,9 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             const privacy = readVoicePrivacySettings(storage.getState().settings);
             const result = value && typeof value === 'object' && 'ok' in value && value.ok === false
               ? value : { ok: true, result: value };
-            return StrictJsonValueSchema.parse(redactVoiceActionExecutionResultForProvider(
-              target.toolName, result, privacy,
-            ));
+            return StrictJsonValueSchema.parse(projectVoiceToolResultsForFollowUp([
+              { t: VOICE_ACTION_EXECUTE_TOOL_NAME, args: admitted!.arguments, result },
+            ], privacy)[0]!.result);
           },
         }));
       }

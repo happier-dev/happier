@@ -34,6 +34,7 @@ import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcrip
 import { isCanonicalVoiceTranscriptPersistenceEvent } from '@/voice/transcript/voiceConversationTranscript';
 import { isPermissionDeniedMicrophoneError } from '@/utils/platform/microphonePermissions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import {
   normalizeVoiceRuntimeFailureCode,
   readSafeVoiceRuntimeFailureCode,
@@ -1023,6 +1024,7 @@ export function createBundledRealtimeProviderRuntime(
           media,
           signal,
           execution,
+          onSyntheticResponseRequested: () => runtime!.noteSyntheticResponseRequested(attemptId),
         });
         mediaFactoryOpen = false;
         abortIfRequested(signal);
@@ -1442,7 +1444,7 @@ export function createBundledRealtimeProviderRuntime(
         bargeInCoordinator?.onInputSpeechStopped();
       }
     },
-    onConnectionReady: async ({ controlSessionId, attemptId, request, session, connection, signal }: Readonly<{
+    onConnectionReady: async ({ controlSessionId, attemptId, request, session, signal }: Readonly<{
       controlSessionId: string;
       attemptId: number;
       request: VoiceRealtimeJsonValue;
@@ -1475,16 +1477,16 @@ export function createBundledRealtimeProviderRuntime(
       if (session.initialContextDelivery === 'prepared') return;
       const initialContext = readRequest(request).initialContext;
       if (typeof initialContext !== 'string' || !initialContext.trim()) return;
-      for (const event of config.encodeContextUpdate(initialContext)) {
+      for (const [index, event] of config.encodeContextUpdate(initialContext).entries()) {
         abortIfRequested(signal);
-        await connection.sendControl(event);
+        const sent = await runtime!.sendClientControl(event, index === 0 ? { turnOrigin: 'synthetic', opensResponse: false } : undefined);
+        if (sent.status !== 'sent') throw new Error('voice_connection_not_open');
       }
     },
     createToolBarrier: ({ controlSessionId }) => host.createToolBarrier({
       ...(config.playHostText ? { playHostText: config.playHostText } : {}),
       controlSessionId,
       adapterId: providerId,
-      effectCalls: config.protocol.toolEffectCalls ?? 'none',
       exposure: config.execution.kind === 'direct_media' ? 'voice_assistant' : 'current_ui_only',
       resolveSessionId: (explicitSessionId) => explicitSessionId
         ?? host.resolveConversationSessionId(controlSessionId, providerId),
@@ -1495,11 +1497,11 @@ export function createBundledRealtimeProviderRuntime(
           if (sent.status !== 'sent') throw new Error('voice_connection_not_open');
         }
       },
-      async continueResponse(responseId, signal) {
+      async continueResponse(responseId, signal, turnOrigin) {
         abortIfRequested(signal);
         await config.beforeToolContinuation?.(responseId, signal);
         abortIfRequested(signal);
-        const sent = await runtime!.sendClientControl(config.encodeToolContinuation(responseId));
+        const sent = await runtime!.sendClientControl(config.encodeToolContinuation(responseId), { turnOrigin, continuation: true });
         if (sent.status !== 'sent') throw new Error('voice_connection_not_open');
       },
     }),
@@ -1531,9 +1533,9 @@ export function createBundledRealtimeProviderRuntime(
     };
   };
 
-  const sendEvents = async (events: readonly VoiceRealtimeJsonValue[]): Promise<void> => {
-    for (const event of events) {
-      const sent = await runtime!.sendClientControl(event).catch(() => {
+  const sendEvents = async (events: readonly VoiceRealtimeJsonValue[], turnOrigin?: SpokenActionTurnOrigin, opensResponse = true): Promise<void> => {
+    for (const [index, event] of events.entries()) {
+      const sent = await runtime!.sendClientControl(event, turnOrigin && index === 0 ? { turnOrigin, opensResponse } : undefined).catch(() => {
         // Native SDK exceptions are not a public diagnostic channel. The
         // failed promise alone cannot prove whether bytes reached the provider,
         // so retain an ordinary unknown-outcome failure, not before-effect custody.
@@ -1768,8 +1770,8 @@ export function createBundledRealtimeProviderRuntime(
     return stopPromise;
   };
 
-  const sendContextEvents = (events: readonly VoiceRealtimeJsonValue[]): void => {
-    void sendEvents(events).catch(async () => {
+  const sendContextEvents = (events: readonly VoiceRealtimeJsonValue[], opensResponse: boolean): void => {
+    void sendEvents(events, 'synthetic', opensResponse).catch(async () => {
       await runtime!.fail('voice_context_update_failed').catch(() => {});
     });
   };
@@ -1887,12 +1889,12 @@ export function createBundledRealtimeProviderRuntime(
     },
     sendContextUpdate({ update }) {
       if (runtime!.getActiveControlSessionId()) {
-        sendContextEvents(config.encodeContextUpdate(update));
+        sendContextEvents(config.encodeContextUpdate(update), false);
       }
     },
     sendContextText({ text }) {
       if (runtime!.getActiveControlSessionId()) {
-        sendContextEvents(config.encodeTextTurn(text));
+        sendContextEvents(config.encodeTextTurn(text), true);
       }
     },
     async sendTextTurn({ controlSessionId, conversationSessionId, text, localId, onAccepted }) {
@@ -1964,7 +1966,7 @@ export function createBundledRealtimeProviderRuntime(
         void acceptanceBarrier.catch(() => {});
         activeTypedTurnAcceptanceBarrier = acceptanceBarrier;
         try {
-          await sendEvents(events.slice(0, 1));
+          await sendEvents(events.slice(0, 1), 'person');
           if (host.resolveConversationSessionId(controlSessionId, providerId) !== conversationSessionId) {
             throw new Error('voice_transcript_carrier_changed');
           }
@@ -2038,12 +2040,12 @@ export function createBundledRealtimeProviderRuntime(
       if (!runtime!.getActiveControlSessionId() || !config.resolveSurfaceCapabilities(settings)) return null;
       return {
         hostAuthoredContext,
-        sendContextualUpdate: (update) => { sendContextEvents(config.encodeContextUpdate(update)); },
+        sendContextualUpdate: (update) => { sendContextEvents(config.encodeContextUpdate(update), false); },
         sendTextMessage: (text, context) => {
           sendContextEvents([
             ...(context === undefined ? [] : config.encodeContextUpdate(context)),
             ...config.encodeTextTurn(text),
-          ]);
+          ], true);
         },
       };
     },

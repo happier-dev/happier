@@ -11,7 +11,6 @@ const CAPABILITIES: VoiceTurnControlCapabilities = Object.freeze({
   clearInput: true,
   stopSession: true,
   resumption: 'resume',
-  replay: 'stable_ids',
   exactMessage: false,
 });
 
@@ -36,10 +35,6 @@ describe('resolveVoiceTurnControlAction', () => {
       status: 'available',
       strategy: 'resume',
     });
-    expect(resolveVoiceTurnControlAction(CAPABILITIES, 'replay_session')).toEqual({
-      status: 'available',
-      strategy: 'stable_ids',
-    });
     expect(resolveVoiceTurnControlAction(CAPABILITIES, 'send_exact_message')).toEqual({
       status: 'unavailable',
       code: 'voice_turn_action_unsupported',
@@ -53,7 +48,6 @@ describe('resolveVoiceTurnControlAction', () => {
       clearInput: false,
       stopSession: false,
       resumption: 'none',
-      replay: 'none',
       exactMessage: false,
     };
     for (const action of [
@@ -62,7 +56,6 @@ describe('resolveVoiceTurnControlAction', () => {
       'clear_input',
       'stop_session',
       'resume_session',
-      'replay_session',
       'send_exact_message',
     ] as const) {
       expect(resolveVoiceTurnControlAction(unsupported, action)).toEqual({

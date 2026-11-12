@@ -1,8 +1,6 @@
 import type {
   ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
-  VoiceConversationToolEffectCalls} from '@happier-dev/protocol/plugins/contributions/voice';
-import type {
   VoiceRealtimeJsonValue,
   VoiceRealtimeToolResultV1,
   VoiceTranscriptCanonicalEventV1,
@@ -17,6 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/voice/client';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 
 import type {
   CreateVoiceConversationController,
@@ -167,7 +166,6 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   runCurrentGenerationEffect(callback: () => void): boolean;
   getPlatform(): 'web' | 'ios' | 'android';
   getRealtimeClientToolDefinitions(input: Readonly<{
-    effectCalls: VoiceConversationToolEffectCalls;
     /**
      * How much of the canonical Voice Action inventory this execution kind may
      * publish into the provider's own tool surface. `current_ui_only` leaves
@@ -345,8 +343,6 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
     playHostText?: import('@happier-dev/plugin-sdk/voice/client').VoiceHostTextPlayback;
     controlSessionId: string;
     adapterId: string;
-    /** Provider-declared effect-call custody, fail-closed for undeclared adapters. */
-    effectCalls: VoiceConversationToolEffectCalls;
     exposure?: 'voice_assistant' | 'current_ui_only';
     resolveSessionId(explicitSessionId?: string | null): string | null;
     submitResults(
@@ -354,7 +350,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
       results: readonly VoiceRealtimeToolResultV1[],
       signal: AbortSignal,
     ): Promise<void>;
-    continueResponse(responseId: string, signal: AbortSignal): Promise<void>;
+    continueResponse(responseId: string, signal: AbortSignal, turnOrigin: SpokenActionTurnOrigin): Promise<void>;
   }>): VoiceConversationToolBarrier;
   voiceHooks: Readonly<{
     /**
@@ -397,6 +393,7 @@ type BundledRealtimeProviderRuntimeConfigBase = Readonly<{
     media: BundledVoiceProviderMediaPort;
     signal: AbortSignal;
     execution: VoiceProviderExecutionAuthority;
+    onSyntheticResponseRequested?: () => void;
   }>): Promise<VoiceRealtimeConnection>;
   encodeToolResults(results: readonly VoiceRealtimeToolResultV1[]): readonly VoiceRealtimeJsonValue[];
   encodeToolContinuation(responseId: string): VoiceRealtimeJsonValue;

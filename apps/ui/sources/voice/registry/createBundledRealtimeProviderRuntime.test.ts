@@ -597,7 +597,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
         id: 'realtime_sdk',
         turnControls: {
           cancelResponse: 'unsupported', truncatePlayback: 'unsupported', clearInput: false,
-          stopSession: false, resumption: 'none', replay: 'none', exactMessage: true,
+          stopSession: false, resumption: 'none', exactMessage: true,
         },
         prepare: vi.fn(async () => ({ kind: 'declined' as const, code: 'unused' })),
         decodeControl: vi.fn(() => []),
@@ -1529,14 +1529,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
       execution: { kind: 'direct_media' },
       protocol: {
         id: 'realtime_example',
-        toolEffectCalls: 'stable_ids' as const,
         turnControls: {
           cancelResponse: 'immediate' as const,
           truncatePlayback: 'unsupported' as const,
           clearInput: true,
           stopSession: true,
           resumption: 'none' as const,
-          replay: 'none' as const,
           exactMessage: true,
         },
         prepare, decodeControl: vi.fn(), encodeTurnControl: vi.fn(),
@@ -2130,7 +2128,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
     }>).createToolBarrier;
     createToolBarrier({ controlSessionId: 'session-1', attemptId: 3 });
     const barrier = barrierInput!;
-    expect(barrier).toMatchObject({ effectCalls: 'stable_ids' });
     const signal = new AbortController().signal;
     await barrier.submitResults('response-1', [], signal);
     await barrier.continueResponse('response-1', signal);
@@ -2687,7 +2684,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
         turnControls: {
           cancelResponse: 'immediate' as const, truncatePlayback: 'unsupported' as const,
           clearInput: true, stopSession: true, resumption: 'none' as const,
-          replay: 'none' as const, exactMessage: true,
+          exactMessage: true,
         },
         prepare: vi.fn(), decodeControl: vi.fn(), encodeTurnControl: vi.fn(),
       },

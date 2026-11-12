@@ -23,7 +23,7 @@ it.each([
         runtime: { apiVersion: 1 }, contributes: { voiceProviders: [{
           id, title: id, kind: 'conversation', roles: ['realtime_conversation'],
           platforms: ['web', 'ios', 'android'],
-          capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+          capabilities: { turn: { cancelResponse: false, bargeIn: false } },
           client: { artifactId: 'voice-runtime', exportName: 'activate' },
         }] },
       });

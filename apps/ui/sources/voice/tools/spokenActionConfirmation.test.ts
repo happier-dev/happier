@@ -1,18 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { createSpokenActionConfirmation } from './spokenActionConfirmation';
-
-const actionId = 'notifications.webhooks.remove' as const;
-const operation = (channelId: string, actionRequestId = 'remove-webhook') => ({
-  actionId, actionRequestId,
-  normalizedInput: { channelId },
-  summary: `Remove notification webhook ${channelId}.`,
-});
+import {
+  setVoiceSessionSnapshot,
+  resetVoiceSessionStoreForTests,
+  getVoiceSessionSpokenActionConfirmation,
+  useVoiceSessionStore,
+} from '@/voice/session/voiceSessionStore';
 
 describe('live carrier spoken Action read-back binding', () => {
   it('admits the exact operation only after its captured speech drain, once', () => {
     const carrier = createSpokenActionConfirmation();
-    const request = operation('channel-one');
-    carrier.prepare(request);
+    carrier.prepare();
     const speech = carrier.readPending();
     expect(carrier.completeReadBack(speech)).toBe(true);
     expect(carrier.completeReadBack(speech)).toBe(false);
@@ -21,29 +19,24 @@ describe('live carrier spoken Action read-back binding', () => {
 
   it('replaces a changed operation and never lets an older speech drain confirm its replacement', () => {
     const carrier = createSpokenActionConfirmation();
-    const first = operation('channel-one');
-    carrier.prepare(first);
+    carrier.prepare();
     const oldSpeech = carrier.readPending();
-    const second = operation('channel-two', 'remove-other-webhook');
-    carrier.prepare(second);
+    carrier.prepare();
     expect(carrier.completeReadBack(oldSpeech)).toBe(false);
-    expect(carrier.readPending()?.operation).toEqual(second);
+    expect(carrier.readPending()).not.toBe(oldSpeech);
     expect(carrier.completeReadBack(carrier.readPending())).toBe(true);
   });
 
   it('discards pending playback at call end', () => {
     const carrier = createSpokenActionConfirmation();
-    const request = operation('channel-one');
-    carrier.prepare(request);
+    carrier.prepare();
     const speech = carrier.readPending();
     carrier.clear();
     expect(carrier.completeReadBack(speech)).toBe(false);
     expect(carrier.readPending()).toBeNull();
   });
 
-  it('retires the one binding with the actual call lifetime without publishing speech progress to React', async () => {
-    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests, getVoiceSessionSpokenActionConfirmation,
-      useVoiceSessionStore } = await import('@/voice/session/voiceSessionStore');
+  it('retires the one binding with the actual call lifetime without publishing speech progress to React', () => {
     resetVoiceSessionStoreForTests();
     try {
       setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'person-call',
@@ -54,13 +47,17 @@ describe('live carrier spoken Action read-back binding', () => {
       let publications = 0;
       const unsubscribe = useVoiceSessionStore.subscribe(() => { publications++; });
       try {
-        carrier.prepare(operation('channel-one'));
+        carrier.prepare();
         carrier.completeReadBack(carrier.readPending());
         expect(publications).toBe(0);
       } finally { unsubscribe(); }
+      carrier.prepare();
+      const endingSpeech = carrier.readPending();
+      expect(endingSpeech).not.toBeNull();
       setVoiceSessionSnapshot({ adapterId: null, sessionId: null,
         status: 'disconnected', mode: 'idle', canStop: false });
       expect(carrier.readPending()).toBeNull();
+      expect(carrier.completeReadBack(endingSpeech)).toBe(false);
       expect(getVoiceSessionSpokenActionConfirmation()).toBeNull();
       setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'person-call',
         status: 'connected', mode: 'listening', canStop: true });

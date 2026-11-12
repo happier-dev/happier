@@ -79,7 +79,7 @@ function conversation(
     platforms: ['web'],
     capabilities: {
       turn: { cancelResponse: false, bargeIn: false },
-      tools: { effectCalls: 'none' },
+
     },
     execution: {
       kind: 'experimental_agent_session_realtime',

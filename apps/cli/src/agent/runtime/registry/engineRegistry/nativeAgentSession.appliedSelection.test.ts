@@ -222,7 +222,7 @@ describe('native accepted-open applied selection', () => {
             occurrenceId: 'native-realtime-owner', policyAgentRef, isAgentRuntimeCurrent: () => true,
             providers: [{ provider, occurrenceId: 'native-realtime-provider', isCurrent: () => true, retirementSignal: retirement.signal,
                 declaration: { id: provider.localId, title: 'Native realtime', kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
-                    capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+                    capabilities: { turn: { cancelResponse: false, bargeIn: false } },
                     execution: { kind: 'experimental_agent_session_realtime', agent: policyAgentRef },
                     client: { artifactId: 'voice-runtime', exportName: 'activate' } },
             }],

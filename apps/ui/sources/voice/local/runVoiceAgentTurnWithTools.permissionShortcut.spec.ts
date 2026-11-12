@@ -1,10 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamStartResponseSchema, ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import {
   getStorage,
@@ -82,6 +84,94 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     // Retire the actual Account-captured client before the Home is disconnected.
     await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
   });
+
+  it.each([true, false])('preserves a known playback PluginError and keeps untyped effect failure unknown (typed=%s)', async typed => {
+    const storage = await getStorage();
+    const session = storage.getState().sessions.s1!;
+    storage.__setState({ sessions: { ...storage.getState().sessions, s1: { ...session,
+      agentState: { requests: { 'typed-playback': { tool: 'Bash',
+        arguments: { command: 'touch /tmp/typed-playback' }, createdAt: 1 } }, completedRequests: {} },
+    } } });
+    const { voiceAgentSessions } = await prepareActualAgent([
+      { assistantText: 'Working.', actions: [{ t: 'session_permission_respond',
+        args: { sessionId: 's1', requestId: 'typed-playback', decision: 'allow' } }] },
+      { assistantText: 'The action failed.', actions: [] },
+    ]);
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected', mode: 'listening', canStop: true });
+    let playbackAttempted = false;
+    try {
+      const result = await runVoiceAgentTurnWithTools({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        userText: 'Allow this exact permission.', durableLocalId: 'typed-playback-input',
+        currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions, turnOrigin: 'person',
+        // Playback is an OS/provider boundary; Action admission and handlers remain real.
+        playHostText: async () => {
+          playbackAttempted = true;
+          throw typed ? new PluginError({ code: 'HostPlaybackFailure',
+            details: { reason: 'speaker_unavailable' } }) : new Error('private raw speaker exception');
+        },
+      });
+      expect(playbackAttempted).toBe(true);
+      expect(result.toolResultBatches[0]?.[0]?.result).toMatchObject(typed
+        ? { ok: false, errorCode: 'HostPlaybackFailure', details: { reason: 'speaker_unavailable' } }
+        : { ok: false, errorCode: 'outcome_unknown' });
+      expect(JSON.stringify(result.toolResultBatches)).not.toContain('private raw speaker exception');
+    } finally { resetVoiceSessionStoreForTests(); }
+  });
+
+  it.each([
+    { actionId: 'session.permission.respond', input: { decision: 'deny' }, safety: 'safe' },
+    { actionId: 'session.permission.respond', input: { decision: 'denied' }, safety: 'safe' },
+    { actionId: 'session.permission.respond', input: { decision: 'abort' }, safety: 'safe' },
+    { actionId: 'session.permission.respond', input: { nativeChoice: { requirementId: 'r', choiceId: 'opaque' } }, safety: 'danger' },
+    { actionId: 'session.permission.respond', input: { decision: 'deny', nativeChoice: { requirementId: 'r', choiceId: 'opaque' } }, safety: 'danger' },
+    { actionId: 'session.user_action.answer', input: { decision: 'approve' }, safety: 'danger' },
+    { actionId: 'session.user_action.answer', input: { decision: 'reject' }, safety: 'safe' },
+    { actionId: 'approval.request.decide', input: { decision: 'approve' }, safety: 'danger' },
+  ] as const)('classifies the offered decision at its Action spec ($actionId, $safety)', ({ actionId, input, safety }) => {
+    const spec = getActionSpec(actionId);
+    expect(spec.safetyForInput?.(input) ?? spec.safety).toBe(safety);
+  });
+
+  it.each(['allow', 'approved', 'approved_for_session', 'approved_execpolicy_amendment'] as const)(
+    'reads back a model-produced %s before responding to a permission', async decision => {
+      const storage = await getStorage();
+      const session = storage.getState().sessions.s1!;
+      storage.__setState({ sessions: { ...storage.getState().sessions, s1: { ...session,
+        agentState: { requests: { 'model-permission': { tool: 'Bash',
+          arguments: { command: 'touch /tmp/model-permission' }, createdAt: 1 } }, completedRequests: {} },
+      } } });
+      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+      setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'readback-call',
+        status: 'connected', mode: 'listening', canStop: true });
+      const events: string[] = [];
+      const incumbent = sessionRpcWithServerScope.getMockImplementation();
+      sessionRpcWithServerScope.mockImplementation(async request => {
+        if (request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND) {
+          events.push('permission-response');
+          return { ok: true };
+        }
+        if (!incumbent) throw new Error('Missing daemon boundary');
+        return incumbent(request);
+      });
+      const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
+      const handlers = createVoiceToolHandlers({ currentSessionAddress: currentToolSessionAddress,
+        resolveSessionId: () => 's1', playHostText: async ({ text }) => {
+          expect(text).toBeTruthy();
+          expect(events).toEqual([]);
+          events.push('readback-completed');
+          return { status: 'completed' as const };
+        } });
+      try {
+        const result = JSON.parse(await handlers.action_execute!({ actionId: 'session.permission.respond',
+          input: { sessionId: 's1', requestId: 'model-permission', decision } }, {
+          serverId: currentToolSessionAddress.serverId, effectId: 'model-permission-readback', turnOrigin: 'person',
+        }));
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        expect(events).toEqual(['readback-completed', 'permission-response']);
+      } finally { resetVoiceSessionStoreForTests(); }
+    });
 
   it('does not treat neutral approve-or-deny wording as a deny command', async () => {
     const storage = await getStorage();

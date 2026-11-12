@@ -27,6 +27,7 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import type { VoiceToolResultRedactionPrefs } from '@/voice/context/redactVoiceToolResult';
 import { buildToolResultsFollowUpPrompt, projectVoiceToolResultsForFollowUp } from '@/voice/context/buildVoiceToolResultsFollowUp';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
+import { resolveVoiceToolExecutionFailure } from '@/voice/tools/voiceToolExecutionFailure';
 
 type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
 
@@ -233,10 +234,9 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
           ? createLocalToolErrorResult(input.toolName, input.args, 'outcome_unknown')
           : { t: input.toolName, args: input.args, result: parsedResult };
         return redactCompletedLocalEffectOutcome(result);
-      } catch {
-        return redactCompletedLocalEffectOutcome(
-          createLocalToolErrorResult(input.toolName, input.args, 'outcome_unknown'),
-        );
+      } catch (error) {
+        return redactCompletedLocalEffectOutcome({ t: input.toolName, args: input.args,
+          result: resolveVoiceToolExecutionFailure(error, true) });
       }
     })();
     retainedEffectOutcomes.set(input.effectId, { fingerprint, outcome });
@@ -309,11 +309,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         results.push({
           t: toolName,
           args: action?.args ?? null,
-          result: {
-            ok: false,
-            errorCode: 'tool_failed',
-            errorMessage: error instanceof Error ? error.message : 'tool_failed',
-          },
+          result: resolveVoiceToolExecutionFailure(error, false),
         });
       }
     }
@@ -382,7 +378,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     const toolResults = actionRun.results;
     toolResultBatches.push(toolResults);
     const summaryPrefs = resolveVoiceToolResultPrivacyPrefs();
-    const outcomes = toolResults.map(entry => resolveVoiceToolResultHumanSummary({
+    const outcomes = projectVoiceToolResultsForFollowUp(toolResults, summaryPrefs).map(entry => resolveVoiceToolResultHumanSummary({
       toolName: entry.t, toolInput: entry.args, toolResult: entry.result,
       shareFilePaths: summaryPrefs.shareFilePaths, shareSessionSummary: summaryPrefs.shareSessionSummary,
       outcomeOnly: true,

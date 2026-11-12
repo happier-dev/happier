@@ -4,9 +4,20 @@ import {
   VoiceRealtimeToolCallV1Schema,
   VoiceRealtimeToolResultV1Schema,
   VoiceTranscriptCanonicalEventV1Schema,
+  projectVoiceRealtimeToolResultOutput,
 } from './events';
 
 describe('canonical realtime voice events', () => {
+  it('delivers an owner summary alongside a typed failure without manufacturing a success output', () => {
+    const failure = VoiceRealtimeToolResultV1Schema.parse({ v: 1, responseId: 'response-1', callId: 'call-1',
+      toolName: 'spawnSession', order: 0, status: 'error', errorCode: 'present_user_required',
+      summary: 'Please approve this request in the app.' });
+    expect(projectVoiceRealtimeToolResultOutput(failure)).toEqual({ ok: false, errorCode: 'present_user_required',
+      summary: 'Please approve this request in the app.' });
+    expect(failure.status).toBe('error');
+    expect(failure.output).toBeUndefined();
+  });
+
   it('keeps typed failure details as strict JSON without opening the result envelope', () => {
     const failure = { v: 1, responseId: 'response-1', callId: 'call-1', toolName: 'inbox_get',
       order: 0, status: 'error', errorCode: 'action_input_invalid', errorDetails: { reason: 'directory_missing' } };

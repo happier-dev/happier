@@ -23,6 +23,22 @@ const TRANSCRIPTION_USAGE = Object.freeze({
 });
 
 describe('OpenAI Realtime protocol adapter', () => {
+  it('preserves microphone and response identity when transcription finishes after response creation', () => {
+    const adapter = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+    expect(adapter.decodeControl({ type: 'input_audio_buffer.committed', event_id: 'audio-committed',
+      item_id: 'person-audio', previous_item_id: null }))
+      .toContainEqual({ type: 'input_audio_committed', itemId: 'person-audio' });
+    expect(adapter.decodeControl({ type: 'response.created', event_id: 'response-created',
+      response: { id: 'person-response', status: 'in_progress' } }))
+      .toContainEqual({ type: 'response_created', responseId: 'person-response' });
+    expect(adapter.decodeControl({ type: 'conversation.item.input_audio_transcription.completed', event_id: 'audio-final',
+      item_id: 'person-audio', transcript: 'Change my setting' }))
+      .toContainEqual({ type: 'input_transcript_finished', itemId: 'person-audio' });
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'response-done',
+      response: { id: 'person-response', status: 'completed', output: [] } }))
+      .toContainEqual({ type: 'response_finished', responseId: 'person-response' });
+  });
+
   it('preserves typed tool failure details in the provider output', () => {
     const details = { reason: 'inbox_owner_unavailable', retryable: true };
     const result = {
@@ -80,13 +96,17 @@ describe('OpenAI Realtime protocol adapter', () => {
     expect(adapter.decodeControl({
       type: 'response.done', event_id: 'failed-response',
       response: { id: 'response', status: 'failed', status_details: { type: 'failed', error: { code: 'rate_limit_exceeded' } }, output: [{ type: 'function_call', name: 'effect', call_id: 'call', arguments: '{}' }] },
-    })).toEqual([{ type: 'provider_error', code: 'rate_limited', terminal: false }]);
+    })).toEqual([{ type: 'provider_error', code: 'rate_limited', terminal: false },
+      { type: 'response_finished', responseId: 'response' }]);
   });
 
   it('keeps cancelled responses inert and reports incomplete output without ending the session', () => {
     const adapter = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
-    expect(adapter.decodeControl({ type: 'response.done', event_id: 'interrupted', response: { id: 'response', status: 'cancelled', status_details: { type: 'cancelled', reason: 'turn_detected' } } })).toEqual([]);
-    expect(adapter.decodeControl({ type: 'response.done', event_id: 'limited', response: { id: 'response', status: 'incomplete', status_details: { type: 'incomplete', reason: 'max_output_tokens' } } })).toEqual([{ type: 'provider_error', code: 'voice_response_incomplete', terminal: false }]);
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'interrupted', response: { id: 'response', status: 'cancelled', status_details: { type: 'cancelled', reason: 'turn_detected' } } })).toEqual([
+      { type: 'response_finished', responseId: 'response' },
+    ]);
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'limited', response: { id: 'response', status: 'incomplete', status_details: { type: 'incomplete', reason: 'max_output_tokens' } } })).toEqual([{ type: 'provider_error', code: 'voice_response_incomplete', terminal: false },
+      { type: 'response_finished', responseId: 'response' }]);
   });
 
   it('uses public Voice composition at raw OpenAI JSON seams', async () => {
@@ -519,7 +539,7 @@ describe('OpenAI Realtime protocol adapter', () => {
       type: 'response.done',
       event_id: 'response-done',
       response: { id: 'response-1' },
-    })).toEqual([]);
+    })).toEqual([{ type: 'response_finished', responseId: 'response-1' }]);
     expect(adapter.decodeControl({
       type: 'output_audio_buffer.started', event_id: 'buffer-start', response_id: 'response-1',
     })).toEqual([{ type: 'assistant_output_started' }]);
@@ -535,12 +555,12 @@ describe('OpenAI Realtime protocol adapter', () => {
       type: 'response.done',
       event_id: 'response-done-1a',
       response: { id: 'response-1', object: 'realtime.response', status: 'in_progress', output: [] },
-    })).toEqual([]);
+    })).toEqual([{ type: 'response_finished', responseId: 'response-1' }]);
     expect(adapter.decodeControl({
       type: 'response.done',
       event_id: 'response-done-1b',
       response: { id: 'response-1', object: 'realtime.response', status: 'completed', output: [] },
-    })).toEqual([]);
+    })).toEqual([{ type: 'response_finished', responseId: 'response-1' }]);
 
     // One unrecognized output entry is skipped as a tool call; it must not cost
     // the well-formed sibling tool call.
@@ -566,6 +586,7 @@ describe('OpenAI Realtime protocol adapter', () => {
         responseId: 'response-2',
         calls: [expect.objectContaining({ callId: 'call-survivor', toolName: 'happier_noop' })],
       }),
+      { type: 'response_finished', responseId: 'response-2' },
     ]);
   });
 

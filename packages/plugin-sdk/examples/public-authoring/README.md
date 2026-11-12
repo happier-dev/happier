@@ -247,15 +247,14 @@ overview does not publish this Session-only command. `currentUiContextMode:
 'off'` exposes no current-UI read or command tool and sends no updates;
 `'on_demand'` permits an explicit read; and `'automatic'` adds metadata-only
 transitions. A read may disclose opaque command descriptors, but command
-invocation is a separate effectful capability: the account-mediated
-`credentialed-browser` provider declares `effectCalls: 'stable_ids'`. After a
+invocation follows canonical Action approval. After a
 normal text control, it emits the ordinary provider tool-call sequence:
 `readCurrentUiContext`, then, after the host returns that tool result and its
 normal response continuation, `invokeCurrentUiCommand` using the opaque
 command id. Both calls retain stable provider call ids, so the incumbent host
 effect barrier owns execution, result delivery, and replay/conflict protection.
 It emits no invoke call when the current read has no command and does nothing
-on bare connection. The raw browser provider remains `effectCalls: 'none'`. The `open-review-status`
+on bare connection. The `open-review-status`
 Action has one declaration with `ui` and `voice` invocation surfaces and one
 web/iOS/Android client target. Its `reviewClientActions.activate(api)` entry
 registers the handler once, so it runs only in the invoking client through
@@ -332,9 +331,8 @@ The Voice leaves use only the final public `/voice`, `/voice/client`, and
 providers in the browser realm; the code-defined daemon activation binds the
 distinct STT and TTS runtimes. The raw-capable browser declaration exercises
 the generic credential permission materializer at connection time for the
-exact declared HTTPS origin and `authorization` header. Its runtime still
-advertises `effectCalls: 'none'`; raw credential access does not grant
-tool-effect authority.
+exact declared HTTPS origin and `authorization` header. Raw credential access
+does not bypass canonical Action approval.
 
 `definition.ts` is the sole projected source of truth. `index.ts` applies
 `definePlugin(publicAuthoringDefinition)`; the canonical author build projects

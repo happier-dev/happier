@@ -3263,35 +3263,6 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     });
 
     it('executes declared Voice account operations through the provider runtime owner', async () => {
-        const manifest = readExampleManifest('public-authoring');
-        const credentialedDeclaration = manifest.contributes.voiceProviders.find(
-            ({ id }) => id === 'credentialed-browser',
-        );
-        const rawDeclaration = manifest.contributes.voiceProviders.find(
-            ({ id }) => id === 'raw-browser',
-        );
-        const readEffectCalls = (declaration: unknown): unknown => {
-            const record = declaration !== null
-                && typeof declaration === 'object'
-                && !Array.isArray(declaration)
-                ? declaration as Readonly<Record<string, unknown>>
-                : null;
-            const capabilities = record?.capabilities;
-            const capabilityRecord = capabilities !== null
-                && typeof capabilities === 'object'
-                && !Array.isArray(capabilities)
-                ? capabilities as Readonly<Record<string, unknown>>
-                : null;
-            const tools = capabilityRecord?.tools;
-            return tools !== null
-                && typeof tools === 'object'
-                && !Array.isArray(tools)
-                ? (tools as Readonly<Record<string, unknown>>).effectCalls
-                : null;
-        };
-        expect(readEffectCalls(credentialedDeclaration)).toBe('stable_ids');
-        expect(readEffectCalls(rawDeclaration)).toBe('none');
-
         const voiceModule = await import(pathToFileURL(
             join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
         ).href) as Readonly<{

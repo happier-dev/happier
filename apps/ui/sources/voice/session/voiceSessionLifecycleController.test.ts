@@ -1271,7 +1271,7 @@ describe('createVoiceSessionLifecycleController', () => {
             start: vi.fn(async ({ sessionId }) => {
                 targetStarts += 1;
                 targetToolSetsSeenByProvider.push(
-                    hostLease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+                    hostLease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
                         .map((tool) => tool.name)
                         .filter((name) => currentUiToolNames.has(name)),
                 );

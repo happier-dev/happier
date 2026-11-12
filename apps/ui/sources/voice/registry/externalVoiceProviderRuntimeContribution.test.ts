@@ -461,7 +461,6 @@ function createHostFixture(input: Readonly<{
           shareDeviceInventory: true,
           shareRecentMessages: true,
         }),
-      ...(input.currentUiContext ? { effectCalls: barrierInput.effectCalls } : {}),
       submitResults: barrierInput.submitResults,
       continueResponse: barrierInput.continueResponse,
     }),
@@ -1106,7 +1105,6 @@ describe('external Voice provider host composition', () => {
         turn: Object.freeze({
           ...declaration.capabilities.turn,
           resumption: 'resume' as const,
-          replay: 'stable_ids' as const,
         }),
       }),
     });
@@ -1151,40 +1149,6 @@ describe('external Voice provider host composition', () => {
       session: { config: { carrier: 'fresh' }, safeMetadata: null },
     });
   });
-
-  it.each(['web', 'ios', 'android'] as const)(
-    'projects declaration-held effect-call custody into the provider-neutral %s protocol',
-    (platform) => {
-    const leaf: RealtimeVoiceProviderRuntime['protocol'] = {
-      async prepare() {
-        return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } };
-      },
-      decodeControl: () => [],
-      encodeTurnControl: () => null,
-    };
-    const stableDeclaration = PluginContributesV2Schema.parse({
-      voiceProviders: [{
-        ...declaration,
-        platforms: ['web', 'ios', 'android'],
-        capabilities: {
-          ...declaration.capabilities,
-          tools: { effectCalls: 'stable_ids' },
-        },
-      }],
-    }).voiceProviders[0]!;
-    if (stableDeclaration.kind !== 'conversation') {
-      throw new Error('expected stable tool-capable conversation declaration');
-    }
-    const host = createHostFixture({ transcriptEvents: [], lifecycleEvents: [] });
-
-    expect(createExternalProtocol(host, providerId, platform, declaration, leaf)).toMatchObject({
-      toolEffectCalls: 'none',
-    });
-    expect(createExternalProtocol(host, providerId, platform, stableDeclaration, leaf)).toMatchObject({
-      toolEffectCalls: 'stable_ids',
-    });
-    },
-  );
 
   it('binds account operations to protocol preparation without routing through the selected daemon', async () => {
     type PrepareInput = Parameters<RealtimeVoiceProviderRuntime['protocol']['prepare']>[0];
@@ -1939,7 +1903,7 @@ describe('external Voice provider host composition', () => {
         ...declaration,
         capabilities: {
           ...declaration.capabilities,
-          tools: { effectCalls: 'stable_ids' },
+
         },
       }],
     }).voiceProviders[0]!;
@@ -1990,7 +1954,7 @@ describe('external Voice provider host composition', () => {
     await startAdapterAtKnownSession(runtime.adapter, 'stable-tool-attempt');
 
     expect(createConnection).toHaveBeenCalledTimes(1);
-    expect(getAttemptTools).toHaveBeenCalledWith(expect.objectContaining({ effectCalls: 'stable_ids', exposure: 'voice_assistant' }));
+    expect(getAttemptTools).toHaveBeenCalledWith(expect.objectContaining({ exposure: 'voice_assistant' }));
     await runtime.dispose();
   });
 
@@ -2491,7 +2455,6 @@ describe('external Voice provider host composition', () => {
       ]);
       expect(hostCreateSdkHandleConnection).toHaveBeenCalledTimes(1);
       expect(getRealtimeClientToolDefinitions).toHaveBeenCalledWith({
-        effectCalls: 'stable_ids',
         exposure: 'current_ui_only',
       });
       expect(fixtureEvents).toContainEqual({

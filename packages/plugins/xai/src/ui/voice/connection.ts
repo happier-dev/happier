@@ -68,6 +68,7 @@ export type XaiWebSocketDriverInput = Readonly<{
   conversationId: string | null;
   sessionUpdate: VoiceRealtimeJsonValue;
   greetOnOpen?: boolean;
+  onSyntheticResponseRequested?: () => void;
   createWebSocket?: CreateXaiWebSocket;
   endpoint?: string;
   onAudioDelta?: (base64Pcm16: string) => boolean;
@@ -137,7 +138,10 @@ export function createXaiWebSocketDriver(input: XaiWebSocketDriverInput) {
           try {
             opened = true;
             sendJson(input.sessionUpdate);
-            if (input.greetOnOpen) sendJson({ type: 'response.create' });
+            if (input.greetOnOpen) {
+              input.onSyntheticResponseRequested?.();
+              sendJson({ type: 'response.create' });
+            }
             flushEarlyAudio();
             resolve();
           } catch (error) { reject(error); }

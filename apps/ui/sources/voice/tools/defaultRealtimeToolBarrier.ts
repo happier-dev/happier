@@ -1,10 +1,6 @@
 import type {
-  VoiceConversationToolEffectCalls} from '@happier-dev/protocol/plugins/contributions/voice';
-import type {
   VoiceRealtimeToolResultV1,
 } from '@happier-dev/protocol/voice/realtime/events';
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
@@ -14,6 +10,7 @@ import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindi
 import {
   redactVoiceToolResultForProvider,
   redactVoiceActionExecutionResultForProvider,
+  redactVoiceToolResultValue,
   type VoiceToolResultRedactionPrefs,
 } from '@/voice/context/redactVoiceToolResult';
 import {
@@ -22,11 +19,12 @@ import {
   type VoiceToolHandler,
 } from '@/voice/tools/handlers';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
-import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { resolveVoiceActionExecution, resolveVoiceExecutionToolName, VOICE_ACTION_EXECUTE_TOOL_NAME } from './voiceActionExecution';
+import { decodeVoiceToolInput, resolveVoiceExecutionToolName, VOICE_ACTION_EXECUTE_TOOL_NAME } from './voiceActionExecution';
+import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
 import { isCurrentUiContextVoiceAction } from './resolveDisabledVoiceActionIds';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
+import type { SpokenActionTurnOrigin } from './executeSpokenAction';
 import {
   createRealtimeToolBarrier,
   RealtimeToolExecutionError,
@@ -37,15 +35,13 @@ type VoiceToolHandlers = Readonly<Record<string, VoiceToolHandler>>;
 type VoiceHandlerBarrierDeps = Readonly<{
   handlers: VoiceToolHandlers;
   exposure?: 'voice_assistant' | 'current_ui_only';
-  /** Omission is intentionally fail-closed for internal and legacy callers. */
-  effectCalls?: VoiceConversationToolEffectCalls;
   readRedactionPrefs: () => VoiceToolResultRedactionPrefs;
   submitResults: (
     responseId: string,
     results: readonly VoiceRealtimeToolResultV1[],
     signal: AbortSignal,
   ) => Promise<void>;
-  continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
+  continueResponse: (responseId: string, signal: AbortSignal, turnOrigin: SpokenActionTurnOrigin) => Promise<void>;
 }>;
 
 type DefaultRealtimeToolBarrierDeps = Readonly<{
@@ -60,14 +56,12 @@ type DefaultRealtimeToolBarrierDeps = Readonly<{
   currentSessionAddress?: SessionAddress | null;
   /** Provider-local current-context capability; absent means no such tool. */
   currentUiContext?: VoiceCurrentUiToolPort;
-  /** Omission is intentionally fail-closed for internal and legacy callers. */
-  effectCalls?: VoiceConversationToolEffectCalls;
   submitResults: (
     responseId: string,
     results: readonly VoiceRealtimeToolResultV1[],
     signal: AbortSignal,
   ) => Promise<void>;
-  continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
+  continueResponse: (responseId: string, signal: AbortSignal, turnOrigin: SpokenActionTurnOrigin) => Promise<void>;
 }>;
 
 function parseHandlerResult(serialized: string): unknown {
@@ -78,16 +72,6 @@ function parseHandlerResult(serialized: string): unknown {
   }
 }
 
-function readHandlerFailure(value: unknown): PluginError | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Readonly<Record<string, unknown>>;
-  if (record.ok !== false) return null;
-  const code = typeof record.errorCode === 'string' && record.errorCode.length > 0 ? record.errorCode : 'tool_failed';
-  return new PluginError({ code,
-    ...(record.details === undefined ? {} : { details: StrictJsonValueSchema.parse(record.details) }),
-  });
-}
-
 export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarrierDeps) {
   return createRealtimeToolBarrier({
     validateCall: (call) => {
@@ -96,36 +80,30 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
         const spec = listVoiceToolActionSpecs().find((candidate) => candidate.bindings?.voiceClientToolName === call.toolName);
         if (!spec || !isCurrentUiContextVoiceAction(spec.id)) return rejected;
       }
-      const valid = call.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
-        ? resolveVoiceActionExecution(call.arguments) !== null
-        : VoiceAssistantActionSchema.safeParse({ t: call.toolName, args: call.arguments }).success;
-      return valid ? { status: 'allowed' } : rejected;
+      const input = decodeVoiceToolInput(call.toolName, call.arguments);
+      return input ? { status: 'allowed', call: { ...call, ...input } } : rejected;
     },
     classifyCall: (call) => resolveVoiceToolEffectClass(call.toolName, call.arguments),
-    authorizeCall: async (call) => {
-      if (
-        deps.effectCalls !== 'stable_ids'
-        && resolveVoiceToolEffectClass(call.toolName, call.arguments) !== 'read_only'
-      ) {
-        return { status: 'denied', code: 'voice_effect_call_custody_unavailable' };
-      }
-      return { status: 'allowed' };
-    },
-    executeCall: async (call, signal) => {
+    executeCall: async (call, signal, turnOrigin) => {
       const handler = deps.handlers[call.toolName];
       if (!handler) throw new RealtimeToolExecutionError('error', 'unsupported_action');
-      const parsed = parseHandlerResult(await handler(call.arguments, {
+      return parseHandlerResult(await handler(call.arguments, {
         callId: call.callId,
         signal,
+        turnOrigin,
       }));
-      const failure = readHandlerFailure(parsed);
-      if (failure) throw failure;
-      return parsed;
     },
     redactResult: (value, call) => (call.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
       ? redactVoiceActionExecutionResultForProvider : redactVoiceToolResultForProvider)(
       resolveVoiceExecutionToolName(call.toolName, call.arguments), value, deps.readRedactionPrefs(),
     ),
+    summarizeResult: (value, call) => {
+      const prefs = deps.readRedactionPrefs();
+      return resolveVoiceToolResultHumanSummary({ toolName: call.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
+        ? call.toolName : resolveVoiceExecutionToolName(call.toolName, call.arguments),
+        toolInput: redactVoiceToolResultValue(call.arguments, prefs), toolResult: value,
+        shareFilePaths: prefs.shareFilePaths, shareSessionSummary: prefs.shareSessionSummary });
+    },
     submitResults: deps.submitResults,
     continueResponse: deps.continueResponse,
   });
@@ -144,7 +122,6 @@ export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrie
       playHostText: deps.playHostText ?? (async () => ({ status: 'unavailable', code: 'host_text_playback_unavailable' })),
       ...(deps.currentUiContext ? { currentUiContext: deps.currentUiContext } : {}),
     }),
-    effectCalls: deps.effectCalls,
     exposure: deps.exposure,
     readRedactionPrefs: () => {
       const settings = (storage.getState() as { settings?: unknown }).settings;

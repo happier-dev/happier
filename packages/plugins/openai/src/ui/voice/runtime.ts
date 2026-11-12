@@ -158,7 +158,7 @@ function createOpenAiRealtimeProviderRuntime(
     protocol,
     microphoneMode: 'host_webrtc',
     outputLevelMeter: 'unavailable',
-    async createConnection({ session, attemptId, media, tools, execution }) {
+    async createConnection({ session, attemptId, media, tools, execution, onSyntheticResponseRequested }) {
       const config = record(session.config);
       const preparationId = typeof config?.preparationId === 'number'
         && Number.isSafeInteger(config.preparationId)
@@ -200,6 +200,7 @@ function createOpenAiRealtimeProviderRuntime(
           async onOpen({ sendJson }) {
             await sendJson(sessionUpdate);
             if (activePreparedAuth.greetOnOpen) {
+              onSyntheticResponseRequested?.();
               await sendJson(encodeOpenAiRealtimeClientEvent({ type: 'response.create' }));
             }
           },

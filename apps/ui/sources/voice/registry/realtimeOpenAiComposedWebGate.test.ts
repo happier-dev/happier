@@ -525,7 +525,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       const controller = getVoiceSessionLifecycleController();
       if (!controller) throw new Error('Expected the real Voice lifecycle controller.');
       const tools = getCurrentBundledConversationRuntimeHost()?.getRealtimeClientToolDefinitions({
-        effectCalls: 'stable_ids',
         exposure: 'voice_assistant',
       }) ?? [];
       expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([

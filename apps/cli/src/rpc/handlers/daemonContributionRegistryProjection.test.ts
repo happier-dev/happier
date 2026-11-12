@@ -5569,7 +5569,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                     platforms: ['ios'],
                     capabilities: {
                         turn: { cancelResponse: true, bargeIn: false },
-                        tools: { effectCalls: 'none' },
+
                     },
                     client: {
                         artifactId: artifactGraph.artifactId,

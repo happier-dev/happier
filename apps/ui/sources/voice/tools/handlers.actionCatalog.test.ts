@@ -107,7 +107,8 @@ describe('Voice Action reference catalog', () => {
       const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
         playHostText: async ({ text }: { text: string; signal: AbortSignal }) => {
           if (playback === 'unavailable') return { status: 'unavailable' as const, code: 'host_text_playback_unavailable' as const };
-          expect(text).toBe(getVoiceSessionSpokenActionConfirmation()?.readPending()?.operation.summary);
+          expect(text).toBeTruthy();
+          expect(getVoiceSessionSpokenActionConfirmation()?.readPending()).not.toBeNull();
           started();
           await drain;
           if (playback === 'failed') throw playbackFailure;

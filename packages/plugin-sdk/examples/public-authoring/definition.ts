@@ -806,7 +806,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 platforms: ['web'],
                 capabilities: {
                     turn: { cancelResponse: false, bargeIn: false },
-                    tools: { effectCalls: 'stable_ids' },
+
                 },
                 credentials: {
                     slot: {
@@ -906,7 +906,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 platforms: ['web'],
                 capabilities: {
                     turn: { cancelResponse: true, bargeIn: true },
-                    tools: { effectCalls: 'none' },
+
                 },
                 credentials: {
                     slot: {
