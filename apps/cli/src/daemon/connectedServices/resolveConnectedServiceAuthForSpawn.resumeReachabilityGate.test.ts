@@ -170,8 +170,11 @@ async function callSpawn(params: Readonly<{
     consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
     service: { pluginId: 'happier.voice.openai', localId: 'openai' },
     accountId: 'work',
-    // PI's API-key purpose has no launch-time file or request-header materialization.
-    materializeAccount: async () => { throw new Error('Unexpected PI Account credential materialization'); },
+    // Account materialization is the boundary; native-home relocation and continuity remain real.
+    materializeAccount: async ({ request }) => {
+      if (request.kind !== 'environment') throw new Error('Unexpected PI Account materialization kind');
+      return { kind: 'environment', env: { OPENAI_API_KEY: 'sk-openai-test' } };
+    },
   });
 
   const result = await resolveConnectedServiceAuthForSpawn({

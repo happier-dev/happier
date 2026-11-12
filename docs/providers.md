@@ -2343,12 +2343,17 @@ request-auth slot.
 The development Muse service owns device sign-in, explicit selected-Machine
 native import and manual key credentials in the existing qualified account
 lifecycle. Device sign-in mints once at connection. Each native Session requests
-one nonblocking subscription-usage refresh on its existing MSP host; native Muse
-may mint an inference key for that refresh. Status and standalone quota reads
-acquire nothing. Selected native launches use the private credential file for
-both OAuth and API-key modes and remove the inherited `META_API_KEY` override,
-so an inference key cannot hide the account login needed for usage refresh.
-Other model-source consumers retain their declared environment/header outputs.
+one nonblocking subscription-usage refresh on its existing MSP host only when
+its launch has no Meta API key; native Muse may mint a key for that refresh.
+Status and standalone quota reads acquire nothing. Selected native launches
+retain the private OAuth credential file and deliver `META_API_KEY` when that
+Account has a key, replacing any conflicting inherited key. Catalog listing and
+Sessions consume this same launch declaration, preserving native contributor
+model IDs. Muse's key lane cannot refresh subscription usage (-32081); it skips
+that request and missing usage shows Unavailable. OAuth-only launches retain
+refresh. Native refresh failures retain their typed cause and safe retry/mint
+classification without an automatic retry. Other model-source consumers retain
+their declared environment/header outputs.
 The existing native-home owner prepares the private XDG overlay and removes it
 through local account cleanup. Initial normalized mint usage is transient until
 successful settlement delivers it to the existing usage writer; subsequent
@@ -2512,6 +2517,12 @@ refusal withdraws eligibility until a successful reread. Retained choices do not
 authorize credential use; launch and broker open recheck the current grant,
 resource and source through their existing owners, and each request checks that
 the admitted job is still active.
+In development source, picker and spawn catalog reads share the protocol catalog
+merger. An application refusal outranks generic available discovery with no
+models. A completed broker model read with no models settles as the existing
+`broker_unavailable` / `catalog_empty` refusal and offers Retry; generic
+credential discovery and current Direct material remain independent of broker
+model availability.
 The new-Session model picker's existing Refresh also reloads this Team catalog,
 alongside native/configuration and Provider observations. Favorites runs that
 shared refresh once across its Agent collectors.
@@ -3139,12 +3150,13 @@ Migration descriptors are plugin-owned provider facts. New writes use provider c
 
 In development 0.3, resume and respawn restore an omitted Launch Profile identity from the Session owner metadata. An explicit empty identity selects Default Environment. The daemon then uses its existing Account-scoped Profile defaults and saved-secret materialization owners; retained legacy Profile environments are restored through that same defaults owner. Missing, disabled, or migrated Profiles refuse the launch. Saved-secret materialization retains its canonical policy: required bindings and exact one-shot references fail closed when unavailable; optional defaults may be omitted. Persisted Provider resume selection remains authoritative over current Profile model defaults. This requires the updated CLI daemon and adds no new wire or persisted format.
 
-Connected Account resume admission verifies Session files when authentication relocates
-the Agent's native home. An Agent declaring process-environment authentication
-without a native home, including OpenCode and Gemini, retains its native Session
-storage; its runtime owns resume against that storage. The temporary credential
-directory is not evidence of a relocated Session store. Missing catalog facts
-continue to fail the existing reachability check.
+Connected Account resume admission verifies Session files when materialization
+relocates the Agent's native home. Credential-only launches, including brokered
+Team delivery, retain native Session storage; the Agent runtime owns resume
+against that storage. The materializer reports no relocated target for these
+launches, even when the Agent declares a native home. A temporary credential
+directory is not a relocated Session store. Missing catalog facts continue to
+fail the existing reachability check.
 
 In development 0.3, that continuity hook can also inspect a native Session through
 `nativeInspection.withDeclaredJsonRpcClient`, using the already-prepared launch

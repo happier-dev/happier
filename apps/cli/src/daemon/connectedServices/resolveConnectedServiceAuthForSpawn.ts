@@ -1224,7 +1224,8 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
       cwd: params.sessionDirectory,
       signal: params.signal,
       candidatePersistedSessionFile: params.candidatePersistedSessionFile,
-      resumeReachabilityRequired: params.resumeReachabilityRequired,
+      // The materializer owns whether authentication relocated native Session storage.
+      resumeReachabilityRequired: params.resumeReachabilityRequired && materialized.targetMaterializedRoot !== null,
       ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
     });
   } catch (error) {

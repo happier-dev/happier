@@ -366,7 +366,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
     const diagnostics: ConnectedServicesMaterializationDiagnostic[] = [];
     let materializedStateObservationBinding: ConnectedServiceMaterializedStateObservationBinding | undefined;
     const mergeSharedStateFile = await catalogEntry?.getConnectedServiceSharedStateFileMerge?.() ?? undefined;
-    let targetMaterializedRoot = params.rootDir;
+    let targetMaterializedRoot: string | null = params.rootDir;
     const nativeHome = stateSharingDescriptor?.nativeHome;
     if (params.nativeHomeOnly && (!stateSharingDescriptor?.nativeHome
       || stateSharingDescriptor.providerSupportStatus !== 'supported')) {
@@ -458,7 +458,8 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             try { return (await lstat(join(nativeRoot, entry.path))).isSymbolicLink(); }
             catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false; throw error; }
           }));
-          if (borrowedEntries.some(Boolean)) {
+          const hasBorrowedState = borrowedEntries.some(Boolean);
+          if (hasBorrowedState) {
             let complete = true;
             const records = await readRetainedExecutionRunRecords(() => { complete = false; });
             // Unknown retained custody cannot authorize detaching its source.
@@ -494,6 +495,9 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           }
           const selectedFilesByRoot = new Map<string, Set<string>>();
           for (const sourceRoot of sourceRoots) {
+            // An already-private durable home owns these files in place. Only
+            // detaching borrowed state needs rediscovery within that same home.
+            if (!hasBorrowedState && resolve(sourceRoot) === resolve(nativeRoot)) continue;
             const accountHome = homesRootIsOwned && await isCanonicalConnectedServiceMaterializedRoot({
               baseDir: homesRoot, rootDir: sourceRoot,
             });
@@ -621,7 +625,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           }
           signalController.signal.throwIfAborted();
           await observeConnectedServiceMaterializationPhase(params, 'native_home_manifest',
-            () => writeConnectedServiceStateSharingManifest(nativeRoot, stateSharing.manifest));
+            () => writeConnectedServiceStateSharingManifest(nativeRoot, stateSharing.manifest, undefined, existingManifest));
         };
       };
 
@@ -629,7 +633,11 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         const nativePurposes = (projectionOnly ? [] : snapshot?.fileMaterializationPurposes ?? [])
           .filter(scope => snapshot?.bindings.some(binding =>
             qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(scope.purpose)));
-        if (nativePurposes.length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly && !params.legacyV021 && !projectionOnly) return;
+        if (nativePurposes.length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly && !params.legacyV021 && !projectionOnly) {
+          // Credential-only delivery leaves Session storage in the Agent's native home.
+          targetMaterializedRoot = null;
+          return;
+        }
         const existingHome = await lstat(nativeRoot).catch((error: unknown) => {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
           throw error;
@@ -663,6 +671,11 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           // Credential producers merge against this invocation's copied configuration.
           const applyNativeHome = await prepareNativeHome();
           await writeArtifacts(applyNativeHome);
+          const preparedCredentialFiles = nativePurposes.length > 0
+            ? await readConnectedServiceNativeHomeCredentialFiles({
+                targetRoot: nativeRoot, declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
+              })
+            : Object.freeze({});
           const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
           const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
           for (const scope of nativePurposes) {
@@ -691,10 +704,9 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
                 ? { sessionId: params.purposeBindingSessionId }
                 : {}),
               expectedAccount,
-              existingFiles: await readConnectedServiceNativeHomeCredentialFiles({
-                targetRoot: nativeRoot,
-                declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
-              }),
+              existingFiles: Object.freeze(Object.fromEntries(
+                Object.entries(preparedCredentialFiles).map(([fileId, contents]) => [fileId, Buffer.from(contents)]),
+              )),
               request: Object.freeze({
                 kind: 'files' as const,
                 fileIds: Object.freeze([
@@ -742,6 +754,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             declaredSecretEntries:
               stateSharingDescriptor.authIsolation.secretEntries,
             files: Object.freeze(nativeHomeFiles),
+            existingFiles: preparedCredentialFiles,
           })));
           if (params.agentLaunchTarget) {
             const agentNativeHome = join(params.agentLaunchTarget.runtimeHome, AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH);
@@ -1079,7 +1092,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       : null;
   const serializedSelections = serializeConnectedServiceChildSelections(params.selectionsByServiceId);
   const serializedMaterializedEnvKeys = serializeConnectedServiceMaterializedEnvKeys(materializedEnv);
-  const targetMaterializedRoot = explicitTargetMaterializedRoot
+  const targetMaterializedRoot = materialized.targetMaterializedRoot === null ? null : explicitTargetMaterializedRoot
     ?? resolveConnectedServiceTargetMaterializedRoot({
       agentId: params.agentId,
       targetMaterializedEnv: materializedEnv,
