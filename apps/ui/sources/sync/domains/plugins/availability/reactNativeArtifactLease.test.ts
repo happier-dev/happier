@@ -436,13 +436,13 @@ describe('React Native Artifact lease acquisition', () => {
         acquired.dispose();
     });
 
-    it('carries exact installed origin through the real RN producer, lease and cache without Account selection', async () => {
+    it.each(['absent', 'dataClaim'] as const)('carries exact installed origin through the real RN producer across reload with %s Account intent', async (intentKind) => {
         const current = fixture();
         const response = current.snapshot.intentReads[0]!.response;
         const store = createPluginAccountAvailabilityReaderStore();
         store.replace({ scope, snapshot: { ...current.snapshot, releases: [response.release!],
             intentReads: [{ pluginId: current.cacheIdentity.pluginId, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
-                ...response, intent: null, release: null, uiArtifacts: [],
+                ...response, intent: intentKind === 'absent' ? null : { ...response.intent!, desiredVersion: null }, release: null, uiArtifacts: [],
             }) }],
         } });
         const cache = createPluginReactNativeBundleCache();
@@ -463,10 +463,27 @@ describe('React Native Artifact lease acquisition', () => {
         if (acquired.kind !== 'available') throw new Error('Expected installed RN Artifact');
         expect(acquired.cacheKey).toEqual(expect.any(String));
         expect(acquired.isCurrent()).toBe(true);
+        // A fresh capture republishes the same installed archive, independently
+        // of daemon process/build identity and Account Data declaration claims.
+        store.replace({ scope, snapshot: { ...store.getSnapshot()!.snapshot, availabilityCursor: 43 } });
+        expect(acquired.isCurrent()).toBe(true);
         store.retire([current.cacheIdentity.pluginId]);
         expect(acquired.isCurrent()).toBe(false);
         acquired.dispose();
     });
+    it('attributes preparation refusal without changing its typed cause', async () => {
+        const current = fixture();
+        const producer = createPluginReactNativeArtifactAvailabilityProducer({
+            getCache: () => createPluginReactNativeBundleCache(), appExact: inactiveAppExactSource,
+            fetchDaemonArtifactBytes: async () => current.daemonResponse,
+        });
+        expect(await producer.acquire({ reader: createPluginAccountAvailabilityReader({ scope,
+            snapshot: { ...current.snapshot, intentReads: [] } }), artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity, accountLifetime: permanentlyCurrentLifetime,
+            isCurrent: () => true })).toMatchObject({ kind: 'unavailable', code: 'artifact_not_current',
+                layer: 'artifact', phase: 'preparation', retryable: false, requestId: expect.any(String) });
+    });
+
     function daemonProjectionSelection() {
         return Object.freeze({
             occurrenceId: 'com.acme.preview-occurrence-a',

@@ -1,6 +1,8 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import type {
     PackageAssetArchiveDescriptorV1,
     PluginAccountAvailabilityIntentReadResponseV1,
+    PluginAccountDeclarationBodyV1,
     PluginMachineMaterializationSnapshotV1,
     PluginMachineMaterializationV1,
     PluginMachineMaterializationRefV1,
@@ -8,6 +10,7 @@ import type {
     PluginReleaseFactsV1,
 } from '@happier-dev/protocol/plugins/availability';
 import {
+    isAdmittedPluginMachineUiArtifactSetV1,
     isExactPluginMachineMaterializationReleaseCorrespondenceV1,
     isPluginUiReleaseSlotCompatibleWithArtifactLinkV1,
     snapshotPluginReleaseFactsV1,
@@ -33,7 +36,6 @@ import { projectPluginSkillDeclarationV1 } from '@happier-dev/protocol/plugins/c
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { readAutomationEligibleEventContributionV1, type AutomationEligibleEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest/load';
 import { derivePluginReactNativeBundleCacheKey } from '@/components/plugins/reactNative/bundleCache';
 
 import {
@@ -645,9 +647,16 @@ function cloneMaterialization(
     declarations: Readonly<{
         manifests: Map<PluginPortableReleaseManifestV1, PluginPortableReleaseManifestV1>;
         uiEntries: Map<NonNullable<PluginMachineMaterializationV1['declaredUiEntries']>, NonNullable<PluginMachineMaterializationV1['declaredUiEntries']>>;
+        uiArtifactSets: Map<PluginMachineMaterializationV1['uiArtifacts'], PluginMachineMaterializationV1['uiArtifacts']>;
     }>,
 ): PluginMachineMaterializationV1 {
     if (materialization === previous) return previous;
+    // A decoded list is admitted once, immutable and shared by every Machine row
+    // that reported it: retain it once per replacement, never copy it per row.
+    const admittedUiArtifacts = isAdmittedPluginMachineUiArtifactSetV1(materialization.uiArtifacts)
+        ? declarations.uiArtifactSets.get(materialization.uiArtifacts) ?? declarations.uiArtifactSets.set(materialization.uiArtifacts,
+            retainIfEqual(previous?.uiArtifacts, materialization.uiArtifacts)).get(materialization.uiArtifacts)!
+        : undefined;
     const manifest = materialization.declaredManifest;
     const uiEntries = materialization.declaredUiEntries;
     if (manifest && !declarations.manifests.has(manifest)) declarations.manifests.set(manifest,
@@ -664,10 +673,10 @@ function cloneMaterialization(
         ...(uiEntries ? {
             declaredUiEntries: declarations.uiEntries.get(uiEntries)!,
         } : {}),
-        uiArtifacts: materialization.uiArtifacts === previous?.uiArtifacts ? materialization.uiArtifacts
+        uiArtifacts: admittedUiArtifacts ?? (materialization.uiArtifacts === previous?.uiArtifacts ? materialization.uiArtifacts
             : retainIfEqual(previous?.uiArtifacts, freezeAvailabilitySnapshotValue(materialization.uiArtifacts.map((artifact) => (
                 freezeAvailabilitySnapshotValue({ ...artifact })
-            )))),
+            ))))),
     });
 }
 
@@ -708,18 +717,16 @@ function snapshotIntentReadResponse(
         // The reader snapshots its remaining projection facts here instead of
         // recreating that normalizer in the UI layer.
         release: response.release ? snapshotPluginReleaseFactsV1(response.release) : null,
+        // Declarations are identities here; bodies live in the store's digest-keyed body set.
         ...(response.currentDeclaration === undefined ? {} : {
             currentDeclaration: response.currentDeclaration === null ? null : freezeAvailabilitySnapshotValue({
                 declarationDigestSha256: response.currentDeclaration.declarationDigestSha256,
-                manifest: snapshotDeepDeclaration(response.currentDeclaration.manifest),
             }),
         }),
         ...(response.machineDeclarations === undefined ? {} : {
             machineDeclarations: freezeAvailabilitySnapshotValue(response.machineDeclarations.map(entry =>
-                freezeAvailabilitySnapshotValue({ ...entry, declaration: freezeAvailabilitySnapshotValue({
-                    declarationDigestSha256: entry.declaration.declarationDigestSha256,
-                    manifest: snapshotDeepDeclaration(entry.declaration.manifest),
-                }) }))),
+                freezeAvailabilitySnapshotValue({ machineId: entry.machineId, machineInstallationId: entry.machineInstallationId,
+                    declaration: freezeAvailabilitySnapshotValue({ declarationDigestSha256: entry.declaration.declarationDigestSha256 }) }))),
         }),
         packageAssets: freezeAvailabilitySnapshotValue(response.packageAssets.map((artifact) => (
             freezeAvailabilitySnapshotValue({
@@ -765,10 +772,11 @@ function snapshotPluginAccountAvailabilitySnapshot(
     // The flat census and per-Machine views can carry the same ingress row.
     // Admit it once, then carry that owned value into both projections.
     const admittedRows = new Map<PluginMachineMaterializationV1, PluginMachineMaterializationV1>();
+    const uiArtifactSets = new Map<PluginMachineMaterializationV1['uiArtifacts'], PluginMachineMaterializationV1['uiArtifacts']>();
     const clone = (row: PluginMachineMaterializationV1) => {
         const admitted = admittedRows.get(row);
         if (admitted) return admitted;
-        const owned = cloneMaterialization(row, previousMaterializations.get(materializationLookupKey(row)), { manifests, uiEntries });
+        const owned = cloneMaterialization(row, previousMaterializations.get(materializationLookupKey(row)), { manifests, uiEntries, uiArtifactSets });
         admittedRows.set(row, owned);
         return owned;
     };
@@ -1024,7 +1032,7 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
         })));
         byPluginId.set(materialization.pluginId, installations);
     }
-    const plugins = [...byPluginId].sort(([a], [b]) => a.localeCompare(b)).map(([pluginId, installations]) => retainIfEqual(previousPlugins.get(pluginId), Object.freeze({
+    const plugins = [...byPluginId].sort(([a], [b]) => compareCodeUnits(a, b)).map(([pluginId, installations]) => retainIfEqual(previousPlugins.get(pluginId), Object.freeze({
         pluginId,
         installations: Object.freeze(installations),
     })));
@@ -1147,8 +1155,11 @@ function readInstalledReleaseAdmission(
     if (!snapshot || !origin || !('materializationRef' in origin)
         || origin.materializationRef.pluginId !== pluginId || state?.retiredPluginIds?.includes(pluginId)) return null;
     const intents = state!.intentReadsByPluginId.get(pluginId) ?? [];
-    // An explicit null read proves absence; missing or competing reads do not.
-    if (intents.length !== 1 || intents[0]!.response.intent !== null) return null;
+    // A Data-only declaration claim selects no Account release. Exact installed
+    // custody remains authoritative; disabled or version-selected intent does not.
+    if (intents.length !== 1) return null;
+    const intent = intents[0]!.response.intent;
+    if (intent !== null && (!intent.enabled || intent.desiredVersion !== null)) return null;
     const rows = state!.materializationsByIdentity.get(materializationLookupKey({
         ...origin.materializationRef, serverIdentityId: origin.serverIdentityId,
     })) ?? [];
@@ -1805,7 +1816,7 @@ function retainUiMaterializations(previous: readonly PluginMachineMaterializatio
     const rows = next.map(row => {
         const before = preceding.get(materializationLookupKey(row));
         return before && samePluginUiMaterializationFacts(before, row) ? before : row;
-    }).sort((left, right) => materializationLookupKey(left).localeCompare(materializationLookupKey(right)));
+    }).sort((left, right) => compareCodeUnits(materializationLookupKey(left), materializationLookupKey(right)));
     return previous?.length === rows.length && rows.every((row, index) => row === previous[index])
         ? previous : Object.freeze(rows);
 }
@@ -1828,7 +1839,7 @@ function retainUiInstalledPlugins(previous: PluginAccountUiProjectionInputs['ins
                 && before.declarationState === installation.declarationState && before.uiDeclarationState === installation.uiDeclarationState
                 && before.uiModel === installation.uiModel && before.execution === execution) return before;
             return installation;
-        }).sort((left, right) => materializationLookupKey(left.materialization).localeCompare(materializationLookupKey(right.materialization)));
+        }).sort((left, right) => compareCodeUnits(materializationLookupKey(left.materialization), materializationLookupKey(right.materialization)));
         return prior?.installations.length === installations.length
             && installations.every((installation, rowIndex) => installation === prior.installations[rowIndex])
             ? prior : Object.freeze({ ...plugin, installations: Object.freeze(installations) });
@@ -1902,7 +1913,7 @@ function deriveDeclarationAvailabilityObservations(state: AvailabilityProjection
         const accountDeclarations = Object.freeze([
             ...prior.value.accountDeclarations.filter(row => row.manifest.id !== pluginId),
             ...(declaration && nextTargets.has(target) ? [declaration] : []),
-        ].sort((left, right) => left.manifest.id.localeCompare(right.manifest.id)));
+        ].sort((left, right) => compareCodeUnits(left.manifest.id, right.manifest.id)));
         if (sameStrictJsonValue(prior.value.accountDeclarations, accountDeclarations)) continue;
         changed = true;
         if (accountDeclarations.length === 0 && !prior.value.retired && prior.value.intentReads.length === 0
@@ -2186,6 +2197,24 @@ function deriveAccountUiProjection(input: Readonly<{
     return { bundles, selections, model: prepared };
 }
 
+/**
+ * The release-less declaration identity an Event watcher on one Machine reads:
+ * that Machine's claim when the plugin has Machine declarations, otherwise the
+ * Account-current (legacy) declaration.
+ */
+function readReleaseLessDeclarationDigest(
+    response: PluginAccountAvailabilityIntentReadResponseV1,
+    machineId: string | undefined,
+    machineInstallationId?: string,
+): string | null {
+    if (response.machineDeclarations !== undefined) {
+        return response.machineDeclarations.find(entry => entry.machineId === machineId
+            && (machineInstallationId === undefined || entry.machineInstallationId === machineInstallationId))
+            ?.declaration.declarationDigestSha256 ?? null;
+    }
+    return response.currentDeclaration?.declarationDigestSha256 ?? null;
+}
+
 function createBoundReader(input: Readonly<{
     scope: ServerAccountScope;
     readInitialFailure: (pluginId: string) => ReturnType<ReturnType<typeof createPluginAccountAvailabilityInitialReadiness>['read']>;
@@ -2197,7 +2226,9 @@ function createBoundReader(input: Readonly<{
     readObservationSnapshot: (pluginId?: string) => object | null;
     ensureBundledDeclarations: (pluginIds: readonly string[]) => Promise<void>;
     ensureTargetDeclarations: (pluginId: string) => Promise<void>;
-    loadMachineDeclarations?: (scope: ServerAccountScope, pluginId: string) => Promise<void>;
+    /** Content-addressed release-less declaration bodies held for this scope, admitted once. */
+    readDeclarationBody: (digest: string) => PluginPortableReleaseManifestV1 | undefined;
+    ensureDeclarationBodies: (pluginId: string, digests: readonly string[]) => Promise<void>;
 }>): PluginAccountAvailabilityReader {
     return Object.freeze({
         getObservationSnapshot: input.readObservationSnapshot,
@@ -2220,15 +2251,11 @@ function createBoundReader(input: Readonly<{
             if (response.intent?.enabled !== true) return null;
             // Portable release facts already carry the exact selected declaration.
             // Release-less reads require the server's claim, never a local bundle.
-            const machineDeclaration = response.machineDeclarations?.find(entry => entry.machineId === request.machineId
-                && (request.machineInstallationId === undefined || entry.machineInstallationId === request.machineInstallationId));
-            const admittedMachineManifest = response.intent.desiredVersion === null && machineDeclaration
-                ? PluginManifestV2LoadSchema.safeParse(machineDeclaration.declaration.manifest) : null;
-            const manifest = response.intent.desiredVersion === null && response.machineDeclarations !== undefined
-                ? admittedMachineManifest?.success ? admittedMachineManifest.data : null
-                : response.currentDeclaration === undefined
-                ? response.release && response.intent.desiredVersion === response.release.ref.version ? response.release.normalizedManifest : null
-                : response.currentDeclaration?.manifest;
+            const digest = response.intent.desiredVersion === null
+                ? readReleaseLessDeclarationDigest(response, request.machineId, request.machineInstallationId) : null;
+            const manifest = response.intent.desiredVersion === null
+                ? digest ? input.readDeclarationBody(digest) ?? null : null
+                : response.release && response.intent.desiredVersion === response.release.ref.version ? response.release.normalizedManifest : null;
             if (manifest?.id !== request.pluginId || manifest.version !== request.version || !manifest.contributes.events) return null;
             return readAutomationEligibleEventContributionV1({ events: manifest.contributes.events,
                 eventLocalId: request.eventLocalId, sourceContractVersion: request.sourceContractVersion });
@@ -2239,9 +2266,9 @@ function createBoundReader(input: Readonly<{
             const reads = state!.intentReadsByPluginId.get(pluginId);
             if (reads?.length !== 1) return;
             const response = reads[0]!.response;
-            const declaration = response.machineDeclarations?.find(entry => entry.machineId === machineId)?.declaration;
-            if (response.intent?.enabled && response.intent.desiredVersion === null
-                && declaration && declaration.manifest === undefined) await input.loadMachineDeclarations?.(input.scope, pluginId);
+            if (response.intent?.enabled !== true || response.intent.desiredVersion !== null) return;
+            const digest = readReleaseLessDeclarationDigest(response, machineId);
+            if (digest && !input.readDeclarationBody(digest)) await input.ensureDeclarationBodies(pluginId, [digest]);
         },
         ensureCurrentAccountExecution: async (pluginId: string) => {
             const current = input.readInitialFailure(pluginId) ?? readAccountExecutionSelection(input.readState(), input.scope, pluginId);
@@ -2364,12 +2391,19 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
     /** App-owned package facts are acquired before the first Account publication, not anonymous boot. */
     loadHostBundledUi: () => readonly PluginHostBundledUiDeclaration[];
 }>) & Readonly<{
-    loadMachineDeclarations?: (scope: ServerAccountScope, pluginId: string) => Promise<void>;
+    /** Reads release-less declaration bodies by digest (admitted at that read) for a demanded plugin. */
+    loadDeclarationBodies?: (scope: ServerAccountScope, pluginId: string, digests: readonly string[])
+        => Promise<readonly PluginAccountDeclarationBodyV1[]>;
 }> = {}): PluginAccountAvailabilityReaderStore {
     let loadHostBundledUi = input.loadHostBundledUi;
     let hostBundledUi = loadHostBundledUi ? Object.freeze([]) : prepareBundledUiDeclarations(input.hostBundledUi ?? []);
     let bundledUiByPluginId = indexAvailabilityRows(hostBundledUi, bundle => bundle.pluginId);
     let state: AvailabilityProjectionState | null = null;
+    // Content-addressed declaration bodies for the current scope: shared by every
+    // Machine and intent read that names a digest, admitted once, kept across
+    // publications of the same scope and dropped with it.
+    let declarationBodies: Readonly<{ scope: ServerAccountScope; byDigest: Map<string, PluginPortableReleaseManifestV1> }> | null = null;
+    const declarationBodyLoads = new Map<string, Promise<void>>();
     const initialReadiness = createPluginAccountAvailabilityInitialReadiness();
     let derived: AvailabilityDerivedProjection | null = null;
     let observations: AvailabilityObservations | undefined;
@@ -2390,6 +2424,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
             loadHostBundledUi = undefined;
         }
         const sameScope = state !== null && areServerAccountScopesEqual(state.scope, next.scope);
+        if (declarationBodies && !areServerAccountScopesEqual(declarationBodies.scope, next.scope)) declarationBodies = null;
         if (sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
             && state!.intentCensusIncomplete === next.intentCensusIncomplete
             && state!.snapshot.inventoryComplete === next.snapshot.inventoryComplete
@@ -2534,6 +2569,41 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
         const failure = declarations.find(result => result.status === 'rejected');
         if (failure) throw failure.reason;
     };
+    const readDeclarationBody = (scope: ServerAccountScope, digest: string) => declarationBodies
+        && areServerAccountScopesEqual(declarationBodies.scope, scope) ? declarationBodies.byDigest.get(digest) : undefined;
+    /** Reads only digests this scope does not hold; one in-flight read per digest. */
+    const ensureDeclarationBodies = async (scope: ServerAccountScope, pluginId: string, digests: readonly string[]) => {
+        const load = input.loadDeclarationBodies;
+        if (!load) return;
+        const key = (digest: string) => `${scope.serverId}\0${scope.accountId}\0${digest}`;
+        const missing = [...new Set(digests)].filter(digest => !readDeclarationBody(scope, digest));
+        const pending = missing.flatMap(digest => declarationBodyLoads.get(key(digest)) ?? []);
+        const started = missing.filter(digest => !declarationBodyLoads.has(key(digest)));
+        if (started.length > 0) {
+            const operation = load(scope, pluginId, started).then(bodies => {
+                if (!state || !areServerAccountScopesEqual(state.scope, scope)) return;
+                if (!declarationBodies || !areServerAccountScopesEqual(declarationBodies.scope, scope)) {
+                    declarationBodies = Object.freeze({ scope, byDigest: new Map() });
+                }
+                let added = false;
+                for (const body of bodies) {
+                    if (declarationBodies.byDigest.has(body.declarationDigestSha256)) continue;
+                    declarationBodies.byDigest.set(body.declarationDigestSha256, freezeDeepDeclaration(body.manifest));
+                    added = true;
+                }
+                if (!added || !observations) return;
+                // Body arrival changes what this plugin's readers can resolve.
+                const prior = observations.byPluginId.get(pluginId);
+                observations = Object.freeze({ ...observations, all: Object.freeze({}),
+                    byPluginId: prior ? new Map(observations.byPluginId).set(pluginId, Object.freeze({ ...prior, token: Object.freeze({}) }))
+                        : observations.byPluginId });
+                notify();
+            }).finally(() => { for (const digest of started) declarationBodyLoads.delete(key(digest)); });
+            for (const digest of started) declarationBodyLoads.set(key(digest), operation);
+            pending.push(operation);
+        }
+        await Promise.all(pending);
+    };
     const ensureTargetDeclarations = async (pluginId: string) => {
         await ensureBundledDeclarations(hostBundledUi.filter(bundle => {
             if (bundle.pluginId !== pluginId && !bundle.targetedPluginIds?.includes(pluginId)) return false;
@@ -2579,7 +2649,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 .map(entry => Object.freeze({ ...entry, response: Object.freeze({ ...entry.response,
                     release: retainIfEqual(previousIntentReads.get(entry.pluginId)?.response.release, entry.response.release),
                 }) }))
-                .sort((left, right) => left.pluginId.localeCompare(right.pluginId))));
+                .sort((left, right) => compareCodeUnits(left.pluginId, right.pluginId))));
             const retainedPluginIds = new Set(intentReads.map((entry) => entry.pluginId));
             const stalePluginIds = new Set(canMerge ? previous.stalePluginIds : []);
             for (const pluginId of replacedPluginIds) stalePluginIds.delete(pluginId);
@@ -2593,7 +2663,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 scope: Object.freeze({ ...input.scope }),
                 intentCensusIncomplete: input.intentCensusIncomplete === true && (!canMerge || previous.intentCensusIncomplete === true),
                 retiredPluginIds: canMerge ? previous.retiredPluginIds?.filter(pluginId => !replacedPluginIds.has(pluginId)) : [],
-                stalePluginIds: Object.freeze([...stalePluginIds].sort((left, right) => left.localeCompare(right))),
+                stalePluginIds: Object.freeze([...stalePluginIds].sort(compareCodeUnits)),
                 snapshot: Object.freeze({
                     ...incoming,
                     availabilityCursor: Math.max(
@@ -2619,6 +2689,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
         clear: () => {
             const previous = state;
             const failed = initialReadiness.clear();
+            declarationBodies = null;
             if (!previous && !failed) return previous;
             state = null;
             derived = null;
@@ -2668,7 +2739,8 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 readObservationSnapshot,
                 ensureBundledDeclarations,
                 ensureTargetDeclarations,
-                loadMachineDeclarations: input.loadMachineDeclarations,
+                readDeclarationBody: (digest) => readDeclarationBody(scoped, digest),
+                ensureDeclarationBodies: (pluginId, digests) => ensureDeclarationBodies(scoped, pluginId, digests),
             });
             if (!state || areServerAccountScopesEqual(state.scope, scoped)) boundReader = { scope: scoped, reader };
             return reader;

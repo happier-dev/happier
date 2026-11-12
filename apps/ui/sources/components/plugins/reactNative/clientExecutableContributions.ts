@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import * as React from 'react';
 
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -98,6 +99,7 @@ export type PluginUiClientExecutableRegistrationReader = Readonly<{
 export type PluginUiClientExecutableFailure = Readonly<{
     ok: false;
     code: string;
+    requestId?: string;
     layer: 'artifact' | 'registration';
     phase: 'preparation' | 'activation';
     retryable: boolean;
@@ -774,7 +776,7 @@ function clientExecutableActivationFingerprint(
         clientExecutableAuthorityKey(activation.authority),
         (activation.target.realm === 'account' ? derivePluginAccountContributionRegistrationRights : derivePluginClientContributionRegistrationRights)(registrationContributes, activation.target)
             .map((right) => `${right.family}\u0000${right.localId}`)
-            .sort((left, right) => left.localeCompare(right))
+            .sort(compareCodeUnits)
             .join('\u0001'),
     ].join('\u0000');
 }
@@ -1410,14 +1412,22 @@ export function resolvePluginUiClientActionRegistration(input: Readonly<{
  * Presentation consumers re-render when the generic index commits or
  * withdraws. This observes the existing publication stream; it starts no
  * Action-specific reconciliation, polling, or second registry.
+ *
+ * A consumer that is not presenting Actions (a closed row menu, a closed
+ * palette) passes `enabled: false`: it observes nothing and reads a constant,
+ * so an index commit does not redraw it. On enabling it reads the current
+ * revision, which always differs from the disabled constant.
  */
+const subscribeDisabledRegistrationRevision = () => () => {};
+const readDisabledRegistrationRevision = () => -1;
 export function usePluginUiClientExecutableRegistrationRevision(
     composition: PluginUiClientExecutableComposition = getInstalledPluginUiClientExecutableComposition(),
+    enabled = true,
 ): number {
     return React.useSyncExternalStore(
-        composition.subscribe,
-        composition.revision,
-        composition.revision,
+        enabled ? composition.subscribe : subscribeDisabledRegistrationRevision,
+        enabled ? composition.revision : readDisabledRegistrationRevision,
+        enabled ? composition.revision : readDisabledRegistrationRevision,
     );
 }
 

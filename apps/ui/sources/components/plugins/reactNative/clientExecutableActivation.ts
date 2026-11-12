@@ -205,6 +205,7 @@ async function createAcquiredClientExecutableActivation(input: Readonly<{
     if (acquired.kind !== 'available') {
         if (!isCurrent(input)) return null;
         const refusal: PluginUiClientExecutableFailure = Object.freeze({ ok: false, code: acquired.code,
+            requestId: acquired.requestId,
             layer: acquired.layer, phase: acquired.phase, retryable: acquired.retryable, diagnostics: Object.freeze([acquired.code]) });
         input.composition.refuse(targetAdmission(target), refusal);
         return { refusal };
