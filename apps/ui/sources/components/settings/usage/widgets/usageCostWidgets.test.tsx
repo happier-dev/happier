@@ -104,6 +104,20 @@ describe('one selected money basis across Usage bodies', () => {
     ]));
   });
 
+  it('ranks an agent with unmeasured usage under a quiet dash, its reason on its own line, never a bold word', async () => {
+    const base = mountedCosts();
+    const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['agent'] });
+    const accounting = base.slice.accounting!;
+    const unmeasured = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const slice = { ...base.slice, accounting: { ...accounting, breakdowns: { agent: [
+      ...accounting.breakdowns.agent!, { key: 'codex', eventCount: 1, tokens: unmeasured, cost: accounting.totals.cost },
+    ] } } };
+    const screen = await renderScreen(<UsageBreakdownsWidget {...base} query={query} slice={slice}
+      model={{ ...base.model, slice }} id="usage_breakdowns" testID="unmeasured-agents" />);
+    expect(screen.getTextContent()).not.toContain(t('usage.board.plans.cellUnknown'));
+    expect(screen.getTextContent()).toContain('—');
+  });
+
   it('says a chosen ranking with nothing recorded is waiting for usage, never asks to choose a breakdown (C5)', async () => {
     const base = mountedCosts();
     const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });

@@ -153,7 +153,9 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
               color: block.dimension === 'agent' ? getAgentIdentityColor(theme, row.id) : usageMeterFill(theme, index === 0),
             })),
             total,
-            unknownLabel: t('usage.board.plans.cellUnknown'),
+            // An unmeasured value is a quiet dash in the figure column; the row's own line says why ("Without an API
+            // price"). A bold word there read as the figure (unknowns stay quiet).
+            unknownLabel: '—',
             testID: `${props.testID}.${block.dimension}`,
             valueFormatter:
               metric === 'cost'
