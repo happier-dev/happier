@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import type { ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
+import { resolveTeamCredentialModelCompatibility } from '@/providers/broker/teamCredentialModelCompatibility';
 import { resolveTeamCredentialBrokerRequestPolicy } from '@/providers/broker/requestPolicySnapshot';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -88,6 +89,10 @@ it('reads custodian Muse models for a Team member without impersonating requeste
       && catalog.rows[0]?.descriptor.id === 'muse-spark-1.3-contributor' && catalog.rows[0]?.confidence === 'probe')).toBe(true);
     expect(nativeReads).toBe(1);
     const catalog = result.catalogs[0]!;
+    await expect(resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: 'pi',
+      model: { ...catalog.rows[0]!, application: { ...catalog.application, agentTargetKey: 'agent:happier.agent.pi/pi' },
+        deliveryMode: 'brokered' },
+    })).resolves.toMatchObject({ confirmed: true });
     const authority: ProviderBrokerRouteGrantPayloadV1 = {
       v: 1, grantId: 'home-admitted-member', aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 200,
       teamId: 'team', resourceId: 'shared-muse', sourceRevision: catalog.sourceRevision, brokerPlacementFingerprint: 'c'.repeat(64), initiatorTokenEpoch: 0,

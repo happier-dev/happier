@@ -1,9 +1,10 @@
 import type { TeamCredentialProviderModelCatalogEntryV1, TeamCredentialRouteV1 } from '@happier-dev/protocol/teams';
-import { resolveProviderBindingCompatibilityFromSourceFactsV1, ProviderModelBindingSourceV1Schema, type ProviderModelBindingSourceV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { resolveProviderBindingCompatibilityFromSourceFactsV1, ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
-import { teamCredentialBrokerLocalCredentialTransport } from './providerBrokerPrivateProtocol';
+import { providerBrokerLocalCredentialRequirement } from './providerBrokerPrivateProtocol';
 
 export type TeamCredentialModelCompatibilityInput = Pick<TeamCredentialProviderModelCatalogEntryV1,
   'descriptor' | 'application' | 'sourceFacts'> & Readonly<{ deliveryMode: TeamCredentialRouteV1 }>;
@@ -16,18 +17,22 @@ export async function resolveTeamCredentialModelCompatibility(input: Readonly<{
   agentId: string;
   signal?: AbortSignal;
 }>) {
+  await activateAgentRuntimeContributionOnDemand(input.lease.registry, input.agentId);
   const adapter = readLeasedAgentProviderBindingAdapter(input);
   const facts = ProviderModelBindingSourceV1Schema.safeParse(input.model.sourceFacts);
   if (!adapter || !facts.success || facts.data.endpoint.id !== input.model.application.endpointTemplateId
     || facts.data.endpoint.protocol !== input.model.application.protocol) {
     throw Object.assign(new Error('provider_incompatible_with_agent'), createProviderErrorV1('provider_incompatible_with_agent'));
   }
-  const credential = input.model.deliveryMode === 'brokered' ? { kind: 'apiKey' as const, required: true, slotId: 'apiKey',
-    transports: [teamCredentialBrokerLocalCredentialTransport(input.model.application.protocol, adapter.support)] } satisfies NonNullable<ProviderModelBindingSourceV1['credential']> : facts.data.credential;
+  const credential = input.model.deliveryMode === 'brokered'
+    ? providerBrokerLocalCredentialRequirement(input.model.application.protocol, adapter.support) : facts.data.credential;
+  if (input.model.deliveryMode === 'brokered' && !credential) {
+    throw Object.assign(new Error('provider_incompatible_with_agent'), createProviderErrorV1('provider_incompatible_with_agent'));
+  }
   const compatibility = resolveProviderBindingCompatibilityFromSourceFactsV1({
     agentTargetKey: input.model.application.agentTargetKey, agent: adapter.support,
     adapterVersion: adapter.adapter.adapterVersion, endpoints: [facts.data.endpoint],
-    credential,
+    credential: credential ?? undefined,
     compatibilityOverrides: facts.data.compatibilityOverrides, model: input.model.descriptor,
   });
   return { ...compatibility, confirmed: compatibility.result.status !== 'incompatible' };

@@ -15,7 +15,7 @@ export { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 /** The worker authenticates to the carrier, independently of upstream auth. */
-export function teamCredentialBrokerLocalCredentialTransport(protocol: ProviderWireProtocol, agent: AgentProviderRequirementsV1): ProviderCredentialTransportV1 {
+function selectProviderBrokerLocalCredentialTransport(protocol: ProviderWireProtocol, agent: AgentProviderRequirementsV1): ProviderCredentialTransportV1 | null {
   // Prefer standard Bearer auth. Raw-key-only native clients use their declared
   // header; the carrier authenticates and removes all these local credentials.
   const destinations = [
@@ -28,7 +28,21 @@ export function teamCredentialBrokerLocalCredentialTransport(protocol: ProviderW
       transports: [{ id: 'team-provider-broker-local-capability-v1', protocols: [protocol], uses: ['runtime'], destination }] });
     if (transport) return transport;
   }
-  throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent');
+  return null;
+}
+
+/** Broker compatibility describes the local consumer credential, independently of upstream auth. */
+export function providerBrokerLocalCredentialRequirement(protocol: ProviderWireProtocol, agent: AgentProviderRequirementsV1): Readonly<{
+  kind: 'apiKey'; required: true; slotId: 'apiKey'; transports: readonly [ProviderCredentialTransportV1];
+}> | null {
+  const transport = selectProviderBrokerLocalCredentialTransport(protocol, agent);
+  return transport ? { kind: 'apiKey', required: true, slotId: 'apiKey', transports: [transport] } : null;
+}
+
+export function teamCredentialBrokerLocalCredentialTransport(protocol: ProviderWireProtocol, agent: AgentProviderRequirementsV1): ProviderCredentialTransportV1 {
+  const credential = providerBrokerLocalCredentialRequirement(protocol, agent);
+  if (!credential) throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent');
+  return credential.transports[0];
 }
 
 /** Host-private members of the existing signed broker application. They are not
