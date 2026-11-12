@@ -18,26 +18,34 @@ function resolvePairingSystemPath(path: string): string {
     }
 }
 
-/** Expo owns ordinary route normalization; redirect only framework and pairing intents. */
+/** Expo owns ordinary routes; secret-bearing Artifact links enter custody before routing. */
 export function redirectNativeSystemPath({ path }: Readonly<{ path: string; initial: boolean }>): string {
     try {
         // Expo's launcher intent opens Home after selecting its development bundle.
         if (new URL(path).hostname === 'expo-development-client') return '/';
     } catch {
-        // Relative Router paths pass through to Expo unchanged.
+        // Scheme-less Router paths have no development-launcher hostname.
     }
-    return resolvePairingSystemPath(path);
+    const systemPath = resolvePairingSystemPath(path);
+    if (systemPath !== path) return systemPath;
+    const href = resolveNativeAppLinkPath(path);
+    if (href && captureNativeArtifactSignedInLinkSecret(path, href)) return href;
+    return path;
 }
 
 /** One native URI codec for OS Linking and desktop deep-link delivery. */
 export function resolveNativeAppLinkHref(url: string): string | null {
+    const href = resolveNativeAppLinkPath(url);
+    if (href) captureNativeArtifactSignedInLinkSecret(url, href);
+    return href;
+}
+
+function resolveNativeAppLinkPath(url: string): string | null {
     let parsed: URL;
-    try { parsed = new URL(url); } catch { return null; }
+    try { parsed = new URL(url, 'https://native.invalid'); } catch { return null; }
     // Universal links already carry their internal route in the pathname.
     if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-        const href = `${parsed.pathname}${parsed.search}`;
-        captureNativeArtifactSignedInLinkSecret(url, href);
-        return href;
+        return `${parsed.pathname}${parsed.search}`;
     }
     if (!isAcceptedHappierUrlProtocol(parsed.protocol)) return null;
     // Native capture is an intent handled before renderer readiness, like notification activation.
@@ -50,7 +58,5 @@ export function resolveNativeAppLinkHref(url: string): string | null {
     const pathname = parsed.pathname.startsWith('/') ? parsed.pathname : `/${parsed.pathname}`;
     const path = parsed.hostname ? `/${parsed.hostname}${pathname === '/' ? '' : pathname}` : pathname;
     if (path.startsWith('//')) return null;
-    const href = `${path}${parsed.search}`;
-    captureNativeArtifactSignedInLinkSecret(url, href);
-    return href;
+    return `${path}${parsed.search}`;
 }

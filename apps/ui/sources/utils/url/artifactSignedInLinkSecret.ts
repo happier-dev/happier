@@ -7,7 +7,7 @@ export function captureArtifactSignedInLinkSecret(input: Readonly<{
     replaceUrl(path: string): void;
 }>) {
     const { lookupId: addressedLookupId } = input;
-    const url = new URL(input.url);
+    const url = new URL(input.url, 'https://native.invalid');
     input.replaceUrl(`${url.pathname}${url.search}`);
     let secret = readStoredContentPublicShareSecretV1(url.hash);
     return {
@@ -24,15 +24,16 @@ export function captureArtifactSignedInLinkSecret(input: Readonly<{
 type CapturedSecret = ReturnType<typeof captureArtifactSignedInLinkSecret>;
 let nativeOpening: Readonly<{ lookupId: string; captured: CapturedSecret }> | null = null;
 
-/** The native URI codec strips fragments before routing; custody lasts only until that surface takes it. */
-export function captureNativeArtifactSignedInLinkSecret(url: string, href: string): void {
+/** Recognize Artifact routes even when unusable; their fragments never reach routing. */
+export function captureNativeArtifactSignedInLinkSecret(url: string, href: string): boolean {
     const path = new URL(href, 'https://native.invalid').pathname;
     const match = /\/share\/artifact\/([^/]+)\/?$/.exec(path);
-    if (!match) return;
+    if (!match) return false;
     let lookupId: string;
-    try { lookupId = decodeURIComponent(match[1]!); } catch { return; }
+    try { lookupId = decodeURIComponent(match[1]!); } catch { return true; }
     nativeOpening?.captured.dispose();
     nativeOpening = { lookupId, captured: captureArtifactSignedInLinkSecret({ lookupId, url, replaceUrl: () => {} }) };
+    return true;
 }
 
 export function takeNativeArtifactSignedInLinkSecret(lookupId: string): CapturedSecret | null {
