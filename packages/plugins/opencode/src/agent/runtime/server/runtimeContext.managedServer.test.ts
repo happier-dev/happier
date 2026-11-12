@@ -4,10 +4,11 @@ import type {
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { resolveOpenCodeManagedServerDialect } from './managedServerDialect.js';
 import { createOpenCodeRuntimeContext } from './runtimeContext.js';
 
 describe('OpenCode managed-service runtime context', () => {
-  it('forwards the exact public ManagedServices owner without a local spec or handle adapter', () => {
+  it('keeps the host version probe reachable through the real runtime projection', async () => {
     const managedServices = {
       dependencies: {},
       supervise: vi.fn(),
@@ -16,7 +17,10 @@ describe('OpenCode managed-service runtime context', () => {
       signal: new AbortController().signal,
       services: {
         managedServices,
-        exec: { systemTools: { resolve: vi.fn() } },
+        exec: {
+          systemTools: { resolve: async () => ({ executablePath: '/managed/opencode', executable: { kind: 'systemTool', id: 'opencode-cli' } }) },
+          run: async () => ({ termination: { observed: { kind: 'exit', exitCode: 0 } }, stdout: new TextEncoder().encode('opencode v2.2.5\n') }),
+        },
         logger: {
           debug: vi.fn(),
           info: vi.fn(),
@@ -41,7 +45,11 @@ describe('OpenCode managed-service runtime context', () => {
       cwd: '/repo',
     } satisfies AgentSessionOpenRequest;
 
-    expect(createOpenCodeRuntimeContext(request, context).managedServices)
-      .toBe(managedServices);
+    const runtime = createOpenCodeRuntimeContext(request, context);
+    expect(runtime.managedServices).toBe(managedServices);
+    // R1112A: projecting only systemTools silently selected V1 against native V2,
+    // so POST /session failed with 405 before any inference request.
+    await expect(resolveOpenCodeManagedServerDialect({ exec: runtime.exec, systemToolId: 'opencode-cli' }))
+      .resolves.toEqual({ dialect: 'v2', healthPath: '/api/info' });
   });
 });

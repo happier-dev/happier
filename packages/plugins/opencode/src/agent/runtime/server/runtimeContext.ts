@@ -6,6 +6,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   InteractionTransientApprovalAuthorRequestV1,
@@ -43,7 +44,7 @@ type OpenCodeWorkStateSnapshot = Readonly<{
 export type { OpenCodeSystemToolResolver } from './managedServerDialect.js';
 
 export type OpenCodeRuntimeContext = Readonly<{
-  exec: Readonly<{ systemTools: OpenCodeSystemToolResolver }>;
+  exec: Readonly<{ systemTools: OpenCodeSystemToolResolver; run?: ExecService['run'] }>;
   logger: Readonly<{
     debug(message: string, fields?: Readonly<Record<string, unknown>>): void;
     info(message: string, fields?: Readonly<Record<string, unknown>>): void;
@@ -178,7 +179,7 @@ export function createOpenCodeRuntimeContext(
   const environment = request.launchEnvironment?.values ?? {};
   const workState = workStateService?.publisher('opencode-todos') ?? null;
   return {
-    exec: { systemTools: context.services.exec.systemTools },
+    exec: context.services.exec,
     logger: {
       debug: (message, fields) => context.services.logger.debug(
         message,
