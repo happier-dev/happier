@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import {
     resolveScopedPluginSettingsTarget,
@@ -94,6 +95,11 @@ export function useScopedPluginSettingsDaemonTargetBinding(
     options: MachineAdministrationTargetSelectionOptions = {},
 ): ScopedPluginSettingsDaemonTargetBindingV1 {
     const selection = useMachineAdministrationTargetSelection(selectionKey, options);
+    // Presentation inventory omits daemon-only revisions. This binding also
+    // presents the exact generation its existing currentness owner compares.
+    useServerScopedMachine(selection.selectedTarget?.serverIdentityId,
+        selection.canExecute ? selection.selectedTarget?.machineId : null,
+        machine => machine?.daemonStateVersion ?? null);
     const selectedServerIdentityId = selection.selectedTarget?.serverIdentityId ?? null;
     const resolveExecutionTarget = selection.resolveExecutionTarget;
     // `resolveExecutionTarget()` re-reads live owner state and freezes a fresh
