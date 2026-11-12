@@ -16,6 +16,7 @@ import {
   createDeploymentReceiptHeaderV1,
   createDeploymentSecretVariableBindingV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
@@ -1637,38 +1638,68 @@ describe('Project deployments page', () => {
     second.controller.retire();
   });
 
-  it.each([['no receipt yet', false], ['a retained receipt', true]] as const)(
-    'offers "Inspect failed step" after a refused Deploy only when logs exist (%s)', async (_name, retained) => {
+  it.each([
+    ['nothing deployed yet', false, null],
+    ['only an older receipt', true, null],
+    ['the refusal naming its failed receipt', true, 'failed-release'],
+  ] as const)('opens "Inspect failed step" on the failed step\'s own receipt, never a dead control (%s)', async (_name, older, failedId) => {
     const base = environmentDetailForHome();
-    // A platform target with nothing serving: only a retained receipt gives this Environment logs to open.
+    // A platform target with nothing serving: logs exist only on a receipt the refusal names.
     const platform = environmentDetailForHome({
       targetLinks: base.targetLinks.map(({ targetLink: { activeDeploymentId: _serving, ...targetLink }, ...link }) => ({ ...link, targetLink: { ...targetLink,
         source: { kind: 'plugin' as const, contribution: { pluginId: 'vercel', localId: 'project' } },
         targetKind: 'vercel', machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a' } })),
     });
-    const { controller } = controllerFor({ detail: platform, history: retained ? [createDeploymentReceiptDetailV1()] : [] });
-    const opened: string[] = [];
-    const review = { ...noReview, openRecovery: (destination: string) => { opened.push(destination); } };
-    const deploy = vi.fn(async () => { throw Object.assign(new Error('native_failed'), { code: 'native_failed' }); });
+    const { controller } = controllerFor({ detail: platform, history: older ? [createDeploymentReceiptDetailV1()] : [] });
+    const opened: unknown[][] = [];
+    const review = { ...noReview, openRecovery: (...args: unknown[]) => { opened.push(args); } };
+    const link = platform.targetLinks[0]!.targetLink;
+    // The controller's refusal names the receipt whose step failed when one was recorded.
+    const deploy = vi.fn(async () => { throw new HappyError('native_failed', false, { code: 'native_failed', details: failedId ? {
+      serverId: platform.environment.serverId, environmentId: platform.environment.id, targetLinkId: link.id,
+      deploymentId: failedId, failure: { code: 'native_failed', phase: 'build' },
+    } : undefined }); });
     const { t } = await import('@/text');
     try {
       const screen = await renderScreen(
         <DeploymentEnvironmentDetail controller={controller} environmentId={platform.environment.id} demand={shown}
           accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={review} onOpenReceipt={() => {}} />,
       );
-      if (retained) await waitForContent(screen, 'project-deployments.receipt.row.deployment-a');
+      if (older) await waitForContent(screen, 'project-deployments.receipt.row.deployment-a');
       await screen.pressByTestIdAsync('project-deployments.environment.deploy');
       const banner = 'project-deployments.outcome.refused.other';
       await vi.waitFor(() => expect(screen.findByTestId(banner)).not.toBeNull());
-      if (retained) {
+      if (failedId) {
         await screen.pressByTestIdAsync(`${banner}.action`);
-        expect(opened).toEqual(['logs']);
+        expect(opened).toEqual([['logs', { deploymentId: failedId }]]);
       } else {
-        // Nothing deployed, so there is nothing to inspect: no dead control, and the banner says why.
+        // This attempt recorded no step to inspect: no dead control, and the banner says why.
         expect(screen.findByTestId(`${banner}.action`)).toBeNull();
         expect(screen.getTextContent()).not.toContain('Open the deployment logs');
         expect(screen.getTextContent()).toContain(t('projects.deployments.refusedBeforeLogs'));
       }
+    } finally { controller.retire(); }
+  });
+
+  it('keeps a failed receipt\'s "Inspect failed step" on that receipt, where its failed step\'s logs are', async () => {
+    const base = createDeploymentReceiptDetailV1();
+    const failure = { code: 'native_failed', phase: 'build' as const };
+    const failed = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: 'failed-release', state: 'failed' }),
+      content: DeploymentOwnServerContentV1Schema.parse({ ...base.content, failure }),
+    });
+    const { controller, detail } = controllerFor({ receipt: failed, history: [failed] });
+    routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id, deployment: failed.deployment.id });
+    try {
+      const screen = await renderScreen(<ProjectDeploymentsView controller={controller} demand={shown}
+        accountId="account-owner" serverId={scope.serverId} lifetime={null} sourceId="source-app" />);
+      await waitForContent(screen, 'project-deployments.receipt.outcome.failed.recovery');
+      routerMock.spies.setParams.mockClear();
+      await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
+      await act(async () => {});
+      // It never leaves the failed step for the Environment's Overview.
+      expect(routerMock.spies.setParams).not.toHaveBeenCalledWith(expect.objectContaining({ deploymentTab: 'overview' }));
+      expect(screen.findByTestId('project-deployments.receipt.outcome.failed')).not.toBeNull();
     } finally { controller.retire(); }
   });
 

@@ -9,13 +9,14 @@ import { HappyError } from '@/utils/errors/errors';
 
 import { readActionApprovalRequestCreatedError } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
+/** Where a recovery destination opens: a build Machine's setup, or the failed deployment's own receipt for its logs. */
+export type DeploymentRecoveryTarget = Readonly<{ machineId?: string; deploymentId?: string }>;
+
 type DeploymentPressReview = Readonly<{
   request: (artifactId: string) => void;
   pendingId?: string | null;
   open?: () => void;
-  openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
-  /** Destinations the pressing page has nothing behind yet (logs before any deploy); a refusal never offers them. */
-  unavailableRecovery?: readonly DeploymentFailureRecoveryDestinationV1[];
+  openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1, at?: DeploymentRecoveryTarget) => void;
 }>;
 
 export type DeploymentOutcomeController = Readonly<{
@@ -23,17 +24,13 @@ export type DeploymentOutcomeController = Readonly<{
   pending: boolean;
   openReview: (() => void) | null;
   retry: () => Promise<void>;
-  openRecovery: ((destination: DeploymentFailureRecoveryDestinationV1) => void) | null;
-  unavailableRecovery: readonly DeploymentFailureRecoveryDestinationV1[];
+  openRecovery: ((destination: DeploymentFailureRecoveryDestinationV1, at?: DeploymentRecoveryTarget) => void) | null;
 }>;
-
-const NO_UNAVAILABLE_RECOVERY: readonly DeploymentFailureRecoveryDestinationV1[] = Object.freeze([]);
 
 function createDeploymentOutcomeController(outcome: DeploymentActionOutcome | null, review: DeploymentPressReview | null,
   retry: () => Promise<void>): DeploymentOutcomeController {
   return { outcome, pending: outcome?.kind === 'approval' && review?.pendingId === outcome.artifactId,
-    openReview: review?.open ?? null, retry, openRecovery: review?.openRecovery ?? null,
-    unavailableRecovery: review?.unavailableRecovery ?? NO_UNAVAILABLE_RECOVERY };
+    openReview: review?.open ?? null, retry, openRecovery: review?.openRecovery ?? null };
 }
 
 /**

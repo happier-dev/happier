@@ -84,7 +84,9 @@ import {
   readDeploymentActionError,
   type DeploymentActionOutcome,
   type DeploymentOutcomeController,
+  type DeploymentRecoveryTarget,
 } from './deploymentActionOutcome';
+import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createDeploymentActions } from './deploymentActions';
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
@@ -208,6 +210,9 @@ export const DeploymentEnvironmentDetail = React.memo(
   ) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const {
+      running: deploying, outcome, reviewPending, press, banner,
+    } = useDeploymentPress(props.review, props.onOpenReceipt);
     const environment = useDeploymentEnvironment(
       props.controller,
       props.environmentId,
@@ -287,12 +292,6 @@ export const DeploymentEnvironmentDetail = React.memo(
     const navigationScope = React.useMemo(() => ({ serverId: props.serverId, accountId: props.accountId }), [props.serverId, props.accountId]);
     const buildDeploymentId = history.result.items[0]?.id ?? activeId;
     const logsOffered = detail !== null && (buildDeploymentId !== null || (machineIds.length === 1 && runtime?.source.kind === 'host'));
-    // A refusal before any deploy leaves no logs: every press on this page leaves "Inspect failed step" out.
-    const review = React.useMemo(() => logsOffered || !props.review ? props.review
-      : { ...props.review, unavailableRecovery: LOGS_RECOVERY }, [logsOffered, props.review]);
-    const {
-      running: deploying, outcome, reviewPending, press, banner,
-    } = useDeploymentPress(review, props.onOpenReceipt);
     const navigation = useEnvironmentNavigation({ scope: navigationScope, environmentId: props.environmentId,
       companions: logsOffered ? LOGS_COMPANION : NO_COMPANION,
       destination: props.destination ?? ownDestination, phone: props.phone,
@@ -439,13 +438,13 @@ export const DeploymentEnvironmentDetail = React.memo(
     const environmentEditing: DeploymentEnvironmentEditing | null = props.environmentActions ? {
       actions: props.environmentActions,
       serverId: props.serverId,
-      review,
+      review: props.review,
       onChanged: () => { void environment.refresh(); },
     } : null;
     const availability = deploymentDeployAvailability(detail);
     const ready = availability.kind === 'ready' && props.deploy !== null;
     const offline = ready && machineOnline === false;
-    const { deploy, environmentId } = props;
+    const { deploy, review, environmentId } = props;
     const pressDeploy = async () => {
       if (!deploy || availability.kind !== 'ready') return;
       await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(sourceMethod ? { sourceMethod } : {}) }));
@@ -607,14 +606,14 @@ export const DeploymentEnvironmentDetail = React.memo(
 
     // P10: the Add sheet opens over the Environment, in place; it never leaves for Store. Settings › Backups reuses it.
     const openAddDatabase = lifetime ? () => {
-      showDeploymentAddSheet({ detail, lifetime, review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
+      showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
         onNavigate: (destination) => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}) });
     } : null;
     const templateRef = detail.content.template?.templateRef;
     const openTemplateUpdate = lifetime && templateRef && detail.environment.capabilities.manage
       && detail.environment.capabilities.manageBindings ? () => showDeploymentTemplateUpdateSheet({
-        detail, lifetime, review, machineName, catalogFilters: {}, template: templateRef,
+        detail, lifetime, review: props.review, machineName, catalogFilters: {}, template: templateRef,
         onNavigate: destination => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}),
       }) : null;
@@ -1186,9 +1185,7 @@ export type DeploymentReviewHandle = Readonly<{
   request: (artifactId: string) => void;
   open: () => void;
   /** Shared with every press and modal sheet; the page owns destination navigation. */
-  openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
-  /** Destinations with nothing behind them yet; the Environment page sets logs here until a deploy leaves some. */
-  unavailableRecovery?: readonly DeploymentFailureRecoveryDestinationV1[];
+  openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1, at?: DeploymentRecoveryTarget) => void;
 }>;
 
 /**
@@ -1257,8 +1254,10 @@ export function DeployOutcomeBanner(
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;
   // The recovery owner's remedy and route for this refusal (E4): a stored generic remedy never hides a typed cause.
   const typedRecovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details);
-  // Its way forward leads nowhere yet (logs before any deploy): no action, and the sentence says why instead.
-  const leadsNowhere = typedRecovery !== null && controller.unavailableRecovery.includes(typedRecovery.nextAction.destination);
+  // A failed step's logs are on the receipt the refusal names. Without one, this attempt left no step to inspect:
+  // no action, and the sentence says why instead.
+  const failedDeploymentId = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data?.deploymentId;
+  const leadsNowhere = typedRecovery?.nextAction.destination === 'logs' && !failedDeploymentId;
   const recovery = leadsNowhere ? null : typedRecovery;
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
   const canonicalReason = failure && failure.reason !== storedRemedy ? failure.reason : null;
@@ -1308,7 +1307,8 @@ export function DeployOutcomeBanner(
       {...(recovery?.nextAction.destination === 'review'
         ? { action: { label: recovery.nextAction.label, onPress: controller.retry } }
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
-          onPress: () => openRecovery(recovery.nextAction.destination) } } : {})}
+          onPress: () => openRecovery(recovery.nextAction.destination,
+            failedDeploymentId ? { deploymentId: failedDeploymentId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left.
       details={failure ? failure.technicalDetails.map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />
@@ -1369,7 +1369,6 @@ const styles = StyleSheet.create((theme) => ({
 type DeploymentService = Readonly<{ name: string; reference: string | null }>;
 const NO_SERVICES: readonly DeploymentService[] = [];
 const LOGS_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze(['logs']);
-const LOGS_RECOVERY: readonly DeploymentFailureRecoveryDestinationV1[] = Object.freeze(['logs']);
 const NO_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze([]);
 
 /**

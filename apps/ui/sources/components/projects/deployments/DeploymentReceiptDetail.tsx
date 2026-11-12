@@ -65,7 +65,7 @@ import {
   deploymentWorkStatus,
 } from './deploymentPresentation';
 import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
-import { useDeploymentPress } from './deploymentActionOutcome';
+import { useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentReceipt } from './useDeploymentReads';
@@ -116,7 +116,7 @@ export const DeploymentReceiptDetail = React.memo(
       /** The Action owner's per-step stage-log read; absent while the Source's Account is not current. */
       readLogs: DeploymentReadLogs | null;
       /** Opens the Environment where a failure's canonical next action points (RECOVERY-COPY); absent, it is not offered. */
-      onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1, machineId?: string) => void;
+      onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1, at?: DeploymentRecoveryTarget) => void;
     }>,
   ) {
     // The serving pointer lives on the Environment's runtime link; the controller shares that read.
@@ -476,9 +476,14 @@ export const DeploymentReceiptDetail = React.memo(
                 moreActions={recovery && props.onOpenRecoveryDestination ? [{
                   label: recovery.nextAction.label,
                   testID: 'project-deployments.receipt.outcome.failed.recovery',
-                  onPress: () => recovery.nextAction.destination === 'buildMachineSetup'
-                    ? props.onOpenRecoveryDestination?.(recovery.nextAction.destination, content.buildMachineId)
-                    : props.onOpenRecoveryDestination?.(recovery.nextAction.destination),
+                  // The build Machine's setup, or this receipt itself for its failed step's logs.
+                  onPress: () => {
+                    const destination = recovery.nextAction.destination;
+                    const at = destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
+                      : destination === 'logs' ? { deploymentId: deployment.id } : null;
+                    if (at) props.onOpenRecoveryDestination?.(destination, at);
+                    else props.onOpenRecoveryDestination?.(destination);
+                  },
                 }] : undefined}
                 details={facts.failure ? [facts.failure.code] : undefined}
               />

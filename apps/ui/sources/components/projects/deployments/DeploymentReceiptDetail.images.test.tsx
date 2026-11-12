@@ -236,7 +236,8 @@ describe('Receipt → failed', () => {
       // The canonical next action opens where the cause is fixed.
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
       expect(opened).toEqual([[readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination,
-        ...(code === 'build_platform_unsupported' ? ['builder-c'] : [])]]);
+        // A failed step's logs open on this receipt itself.
+        code === 'build_platform_unsupported' ? { machineId: 'builder-c' } : { deploymentId: receipt.deployment.id }]]);
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

@@ -44,6 +44,7 @@ import { DeploymentEnvironmentDetail, type DeploymentReviewHandle } from './Depl
 import { DeploymentEnvironmentDraft } from './DeploymentEnvironmentDraft';
 import { DeploymentReceiptDetail } from './DeploymentReceiptDetail';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import type { DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { projectSourceRoute } from '@/components/projects/sources/ProjectSourcesScreen';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -276,12 +277,18 @@ const ProjectDeploymentsPage = React.memo(
       navigateEnvironment({ tab: 'settings', section: 'previews' });
     }, [navigateEnvironment, setSelection]);
     // A failed receipt's recovery opens the place its typed destination names: an Environment page in place, or
-    // the Source, Machines, Connected services or Store page. Logs and review live on the Environment's Overview.
-    const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1, machineId?: string) => {
+    // the Source, Machines, Connected services or Store page. A failed step's logs are on its own receipt, which
+    // opens on that step; review lives on the Environment's Overview.
+    const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1,
+      at?: DeploymentRecoveryTarget) => {
+      const machineId = at?.machineId;
       switch (destination) {
         case 'history': case 'variables': case 'domains': case 'permissions': case 'settings':
           openEnvironmentTab({ tab: destination, section: null }); return;
-        case 'logs': case 'review':
+        case 'logs':
+          if (at?.deploymentId) { setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: at.deploymentId }); return; }
+          openEnvironmentTab({ tab: 'overview', section: null }); return;
+        case 'review':
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'source': router.push(projectSourceRoute(props.sourceId)); return;
         case 'machines': router.push(SETTINGS_ROUTES.machines); return;
@@ -290,7 +297,7 @@ const ProjectDeploymentsPage = React.memo(
         case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
         case 'store': router.push(PLUGINS_APP_ROUTE); return;
       }
-    }, [openEnvironmentTab, props.sourceId, props.serverId, router]);
+    }, [openEnvironmentTab, props.sourceId, props.serverId, router, setSelection]);
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.
