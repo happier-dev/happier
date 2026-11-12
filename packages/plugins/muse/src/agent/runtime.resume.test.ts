@@ -194,7 +194,7 @@ it('applies an explicit resumed model through the shared native configuration ow
     await fixture.closeSession();
     const audit = await fixture.readAudit();
     expect(audit.methods.filter(method => method !== 'initialize' && method !== 'initialized'))
-      .toEqual(['session/resume', 'approval/listPending', 'model/list', 'session/setModel', 'turn/start']);
+      .toEqual(['session/resume', 'usage/refresh', 'approval/listPending', 'model/list', 'session/setModel', 'turn/start']);
     expect(audit.commandTargets.filter(target => target.method === 'session/setModel'))
       .toEqual([expect.objectContaining({ sessionId: providerSessionId, providerId: 'meta', modelId: 'muse-wonder-1.0' })]);
     expect(audit.modelSelections).toEqual([]);

@@ -29,7 +29,9 @@ it('selects the same qualified Muse Account independently for model demand and f
         "if (process.argv.includes('--version')) { console.log('1.4.14'); process.exit(0); }",
         // Only booleans cross this test evidence boundary; no credential bytes
         // are written by the native process or included in assertion output.
-        `fs.appendFileSync(${JSON.stringify(credentialAudit)}, JSON.stringify({ selectedCredentialMatches: process.env.META_API_KEY === 'synthetic-selected-muse-key', ambientCredentialUsed: process.env.META_API_KEY === 'synthetic-ambient-muse-key' }) + '\\n');`,
+        "const path = require('node:path');",
+        "const auth = JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME, 'muse/auth.json'), 'utf8'));",
+        `fs.appendFileSync(${JSON.stringify(credentialAudit)}, JSON.stringify({ selectedCredentialMatches: auth.providers.meta.api_key === 'synthetic-selected-muse-key', ambientCredentialUsed: process.env.META_API_KEY === 'synthetic-ambient-muse-key', credentialEnvironmentAbsent: process.env.META_API_KEY === undefined, nativeKeyMode: auth.providers.meta.mechanism === 'api_key' }) + '\\n');`,
         `process.env.MUSE_TEST_RECORDING ??= ${JSON.stringify(JSON.stringify(recording))};`,
         `process.env.MUSE_TEST_AUDIT_PATH ??= ${JSON.stringify(catalogAudit)};`,
         MUSE_MSP_PLAYBACK_SCRIPT,
@@ -71,7 +73,7 @@ it('selects the same qualified Muse Account independently for model demand and f
       expect(catalog).toMatchObject({ initializeCount: 1, initializedCount: 1, commandCount: 0,
         autoUpdate: '1', cwd: foreground.directory });
       const readEquality = async () => (await readFile(credentialAudit, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-      expect(await readEquality()).toEqual([{ selectedCredentialMatches: true, ambientCredentialUsed: false }]);
+      expect(await readEquality()).toEqual([{ selectedCredentialMatches: true, ambientCredentialUsed: false, credentialEnvironmentAbsent: true, nativeKeyMode: true }]);
 
       // This admission independently acquires its own materialization. The
       // model probe's prepared environment is never fed into launch.
@@ -102,8 +104,8 @@ it('selects the same qualified Muse Account independently for model demand and f
         expect(launch.methods).not.toContain('turn/start');
         expect(launch).toMatchObject({ initializeCount: 1, initializedCount: 1, cwd: foreground.directory, autoUpdate: '1' });
         expect(await readEquality()).toEqual([
-          { selectedCredentialMatches: true, ambientCredentialUsed: false },
-          { selectedCredentialMatches: true, ambientCredentialUsed: false },
+          { selectedCredentialMatches: true, ambientCredentialUsed: false, credentialEnvironmentAbsent: true, nativeKeyMode: true },
+          { selectedCredentialMatches: true, ambientCredentialUsed: false, credentialEnvironmentAbsent: true, nativeKeyMode: true },
         ]);
       } finally { await session.dispose(); }
     });

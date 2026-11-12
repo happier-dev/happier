@@ -18,6 +18,17 @@ function diagnostic(code: string, reason: string, httpStatus?: number) {
 function nonBlank(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0; }
 async function read(store: CredentialReader, key: string, options?: SignalOptions) { return await store.get(key, options) ?? ''; }
 
+/** The same sealed credential shapes serve health, explicit tests and native delivery. */
+async function readMuseUsableCredentials(store: CredentialReader, options?: SignalOptions) {
+  const [mode, key, expiry] = await Promise.all(['credentialMode', 'inferenceKey', 'expiresAtMs'].map(name => read(store, name, options)));
+  if (!mode) return null;
+  if (key) return { mode, key, expiry };
+  if (mode !== 'native') return null;
+  const [token, mechanism] = await Promise.all(['accountToken', 'nativeMechanism'].map(name => read(store, name, options)));
+  return token && mechanism === '"oauth"' && expiry && Number.isFinite(Number(expiry)) && Number(expiry) > Date.now()
+    ? { mode, key, expiry } : null;
+}
+
 /** Named fields remain in the host's existing sealed credential payload. */
 export async function stageMuseNativeCredentials(store: CredentialStore, meta: MuseNativeMetaAuth, options?: SignalOptions): Promise<void> {
   await Promise.all([
@@ -161,16 +172,19 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
   async refresh() { return { status: 'reconnectRequired', diagnostic: diagnostic('connected_account_refresh_unsupported', 'explicit_reconnect_required') }; },
   async revoke() { return { status: 'remoteUnsupported' }; },
   async status(context, options) {
-    const key = await read(context.credentials, 'inferenceKey', options);
-    if (!key || !await read(context.credentials, 'credentialMode', options)) return { status: 'unavailable', diagnostic: diagnostic('plugin_connected_account_credentials_unavailable', 'credentials_missing') };
+    if (!await readMuseUsableCredentials(context.credentials, options)) return { status: 'unavailable', diagnostic: diagnostic('plugin_connected_account_credentials_unavailable', 'credentials_missing') };
     // Account-token expiry is not the lifetime of the separately minted inference key.
     return museAccountConnectedResult(context.credentials, options);
   },
   async testConnection(context, options) {
     const signal = options?.signal ?? context.signal;
     signal.throwIfAborted();
-    const [key, mode, nativeBase] = await Promise.all(['inferenceKey', 'credentialMode', 'nativeApiBaseUrl'].map(name => read(context.credentials, name, { signal })));
-    if (!key || !mode) return { status: 'needsReauth', code: 'muse_credentials_unavailable', reason: 'Reconnect Muse to test its connection.' };
+    const credential = await readMuseUsableCredentials(context.credentials, { signal });
+    if (!credential) return { status: 'needsReauth', code: 'muse_credentials_unavailable', reason: 'Reconnect Muse to test its connection.' };
+    const { mode, key } = credential;
+    // MSP usage/read is cached; usage/refresh acquires an inference key. Neither proves a read-only remote test for an access-only snapshot.
+    if (!key) return { status: 'unsupported', code: 'muse_test_access_only_unsupported', reason: 'This shared Muse login contains an access token only. A remote connection test requires acquiring an inference key, which this read-only test does not do.' };
+    const nativeBase = await read(context.credentials, 'nativeApiBaseUrl', { signal });
     const base = mode === 'native' ? nativeBase.replace(/\/+$/u, '') : `${META_API_ORIGIN}/v1`;
     // Meta's documented authenticated read is /v1/models; MSP usage/read is only a local cache.
     if (base !== `${META_API_ORIGIN}/v1`) return { status: 'unsupported', code: 'muse_test_endpoint_unsupported', reason: 'A connection check is not available for this Muse API server.' };
@@ -189,16 +203,11 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
   },
   async quota() { return readMuseQuotaObservation(); },
   async materialize(request, context, options) {
-    const [mode, key, expiry] = await Promise.all(['credentialMode', 'inferenceKey', 'expiresAtMs'].map(name => read(context.credentials, name, options)));
-    if (!mode || (!key && (request.kind === 'httpHeaders' || mode !== 'native'))) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Muse credentials are unavailable; reconnect the account.' });
-    if (!key) {
-      const [token, mechanism] = await Promise.all(['accountToken', 'nativeMechanism'].map(name => read(context.credentials, name, options)));
-      if (!token || mechanism !== '"oauth"' || !expiry || !Number.isFinite(Number(expiry)) || Number(expiry) <= Date.now()) {
-        throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable or expired; reconnect the account.' });
-      }
-      // Native Muse reads this access-only login from its isolated home and acquires its own inference key.
-      if (request.kind === 'environment') return { kind: 'environment', env: {} };
-    }
+    const credential = await readMuseUsableCredentials(context.credentials, options);
+    if (!credential || (!credential.key && request.kind === 'httpHeaders')) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Muse credentials are unavailable; reconnect the account.' });
+    const { mode, key, expiry } = credential;
+    // Native Muse reads access-only login from its isolated home and acquires its own inference key.
+    if (!key && request.kind === 'environment') return { kind: 'environment', env: {} };
     if (request.kind === 'environment') {
       const env: Record<string, string> = request.keys.includes(META_API_KEY_ENV_KEY) ? { [META_API_KEY_ENV_KEY]: key } : {};
       if (request.keys.includes(MUSE_CODE_CREDENTIAL_ENV_KEY)) {
@@ -221,10 +230,12 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       return { kind: 'httpHeaders', headers };
     }
     const files: Record<string, Uint8Array> = {};
-    if (mode !== 'native') return { kind: 'files', files };
-    if (expiry && Number(expiry) <= Date.now()) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token has expired; reconnect the account.' });
+    if (mode === 'native' && expiry && Number(expiry) <= Date.now()) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token has expired; reconnect the account.' });
     if (request.fileIds.includes(MUSE_NATIVE_AUTH_FILE_ID)) {
-      const meta = await readNativeMeta(context.credentials, options);
+      const meta = mode === 'native' ? await readNativeMeta(context.credentials, options) : {
+        access_token: key, api_key: key, api_base_url: `${META_API_ORIGIN}/v1`,
+        mechanism: 'api_key', obtained_via: 'api_key',
+      };
       if (!meta.access_token) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable; reconnect the account.' });
       if (!key) {
         const { api_key: _custodianInferenceKey, ...accessOnlyMeta } = meta;

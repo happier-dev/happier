@@ -9,7 +9,7 @@ import { museAccountDescriptor, museNativeConnectedAccountPurpose, MUSE_ACCOUNT_
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { museAccountConnectedResult, museConnectedAccountRuntime as runtime } from './museAccountRuntime.js';
 
-function fixture(responses: unknown[] = []) {
+function fixture(responses: unknown[] = [], httpStatus = 200) {
   const values = new Map<string, string>();
   const requests: Array<{ url: string; method: string; headers?: Readonly<Record<string, string>>; body?: Uint8Array }> = [];
   const credentials = {
@@ -23,7 +23,7 @@ function fixture(responses: unknown[] = []) {
       requests.push(request);
       const value = responses.shift();
       if (value instanceof Error) throw value;
-      return { status: 200, headers: {}, finalUrl: request.url, body: new TextEncoder().encode(JSON.stringify(value)) };
+      return { status: httpStatus, headers: {}, finalUrl: request.url, body: new TextEncoder().encode(JSON.stringify(value)) };
     } } },
   } as Parameters<ConnectedAccountRuntime['materialize']>[1] & Parameters<Extract<ConnectedAccountRuntime['authentication']['modes'][string], {kind:'oauthDeviceCode'}>['poll']>[0];
   return { values, requests, context };
@@ -36,6 +36,29 @@ function deviceMode() {
 }
 
 describe('Muse account runtime', () => {
+  it.each([[200, 'ok'], [401, 'needsReauth'], [503, 'networkUnavailable'], [new Error('synthetic-secret'), 'networkUnavailable']] as const)(
+    'tests saved subscription credentials with a read-only model request (%s)', async (response, status) => {
+      const f = fixture([response instanceof Error ? response : { data: [] }], typeof response === 'number' ? response : 200);
+      for (const [key, value] of Object.entries({ credentialMode: 'native', inferenceKey: 'synthetic-key', accountToken: 'synthetic-secret', nativeMechanism: '"oauth"', expiresAtMs: String(Date.now() + 60_000), nativeApiBaseUrl: 'https://api.meta.ai/v1' })) f.values.set(key, value);
+      const before = [...f.values];
+      const result = await runtime.testConnection!(f.context);
+      expect(result.status).toBe(status);
+      expect(JSON.stringify(result)).not.toContain('synthetic-secret');
+      expect(f.requests).toEqual([expect.objectContaining({ method: 'GET', url: 'https://api.meta.ai/v1/models', headers: expect.objectContaining({ Authorization: 'Bearer synthetic-key' }) })]);
+      expect([...f.values]).toEqual(before);
+    });
+
+  it('keeps valid access-only Muse health connected and explains why its remote test is unsupported', async () => {
+    const f = fixture();
+    for (const [key, value] of Object.entries({ credentialMode: 'native', accountToken: 'synthetic-member-access', expiresAtMs: String(Date.now() + 60_000), nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1' })) f.values.set(key, value);
+    expect(await runtime.status(f.context)).toMatchObject({ status: 'connected', accessMode: 'subscription' });
+    expect(await runtime.testConnection!(f.context)).toMatchObject({ status: 'unsupported', reason: expect.any(String) });
+    expect(f.requests).toEqual([]);
+    f.values.set('expiresAtMs', String(Date.now() - 1));
+    expect(await runtime.status(f.context)).toMatchObject({ status: 'unavailable' });
+    expect(await runtime.testConnection!(f.context)).toMatchObject({ status: 'needsReauth' });
+  });
+
   it('materializes an access-only Team snapshot without inference or refresh credentials', async () => {
     const f = fixture();
     const expiry = Date.now() + 60_000;
@@ -273,7 +296,7 @@ describe('Muse account runtime', () => {
     expect(f.requests).toHaveLength(5);
   });
 
-  it('keeps manual keys separate from subscription files and performs no acquisition on reads', async () => {
+  it('materializes manual keys in native API-key mode without acquiring a subscription', async () => {
     const f = fixture();
     const mode = runtime.authentication.modes['api-key'];
     if (!mode || mode.kind !== 'manual') throw new Error('Expected key mode');
@@ -284,7 +307,15 @@ describe('Muse account runtime', () => {
     await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY'] }, f.context)).resolves.toEqual({ kind: 'environment', env: { META_API_KEY: 'synthetic-manual-key' } });
     await expect(runtime.materialize({ kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] }, f.context)).resolves.toEqual({ kind: 'environment', env: {} });
     await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY', 'MUSE_CODE_CREDENTIAL'] }, f.context)).resolves.toEqual({ kind: 'environment', env: { META_API_KEY: 'synthetic-manual-key' } });
-    await expect(runtime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, f.context)).resolves.toEqual({ kind: 'files', files: {} });
+    const files = await runtime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, f.context);
+    if (files.kind !== 'files') throw new Error('Expected native key file');
+    expect(files.files['muse/auth.json']).toBeInstanceOf(Uint8Array);
+    expect(JSON.parse(new TextDecoder().decode(files.files['muse/auth.json']))).toEqual({
+      schema_version: 1, providers: { meta: {
+        access_token: 'synthetic-manual-key', api_key: 'synthetic-manual-key',
+        api_base_url: 'https://api.meta.ai/v1', mechanism: 'api_key', obtained_via: 'api_key',
+      } },
+    });
     await expect(runtime.quota?.(f.context)).rejects.toMatchObject({ code: 'plugin_connected_account_usage_unavailable' });
     expect(f.requests).toHaveLength(0);
   });
