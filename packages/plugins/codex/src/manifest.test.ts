@@ -12,11 +12,59 @@ import { join } from 'node:path';
 import { extractGitHubReleaseAsset } from '../../../cli-common/src/agents/extractGitHubReleaseAsset.js';
 import { PLUGIN_MANIFEST as KIMI_PLUGIN_MANIFEST } from '../../kimi/src/manifest.js';
 import { PLUGIN_MANIFEST as OPENAI_PLUGIN_MANIFEST } from '../../openai/src/manifest.js';
+import { PLUGIN_MANIFEST as MUSE_PLUGIN_MANIFEST } from '../../muse/src/manifest.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
 import { CODEX_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Codex plugin manifest', () => {
+  it('offers the Muse account through the shared managed Responses endpoint', async () => {
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ purpose: 'meta-inference',
+        service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+        credentialKinds: ['token', 'oauth'], managedProviderEndpoint: {
+          provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+          purpose: 'meta-upstream', modelIdPrefix: 'meta/',
+        } }),
+    ]));
+    const { CODEX_PROVIDER_BINDING_ADAPTER_V1 } = await import('./agent/providerBinding/adapter.js');
+    const agentTargetKey = 'backend:codex:built_in';
+    const bindingKey = 'connected_account:muse';
+    const transport = { id: 'bearer', protocols: ['openai-responses'], uses: ['runtime'],
+      destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } as const;
+    const materialized = await CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize({ v: 1,
+      prepared: CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare({ v: 1, agentTargetKey, bindingKey }),
+      binding: { v: 1, agentTargetKey,
+        selection: { bindingKey, model: { id: 'muse-spark-1.3-contributor', name: 'Muse Spark', capabilities: {} } },
+        contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+        endpoint: { endpointTemplateId: 'cliproxyapi-openai-responses',
+          normalizedUrl: 'http://127.0.0.1:5100/v1', protocol: 'openai-responses', publicHeaders: {} },
+        runtimeCredentialTransport: transport, compatibilityFingerprint: 'pcf1:muse' },
+      credential: { kind: 'apiKey', transport, value: 'fixture-downstream-bearer' },
+    });
+    expect(materialized).toMatchObject({ kind: 'engineConfig', engineConfig: { config: {
+      [`model_providers.${materialized.kind === 'engineConfig' ? materialized.engineConfig.modelProvider : ''}`]: {
+        base_url: 'http://127.0.0.1:5100/v1', wire_api: 'responses',
+        env_key: 'HAPPIER_CODEX_PROVIDER_API_KEY', requires_openai_auth: false,
+      },
+    } } });
+  });
+  it('leaves managed Muse source credentials and listing to the Provider catalog owner', async () => {
+    const { prepareCodexConnectedAccountKeyPreflight } = await import('./agent/runtime/connectedAccountKeys.js');
+    const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+    const prepared = await prepareCodexConnectedAccountKeyPreflight({ environment: {},
+      modelId: 'meta/muse-spark-1.3-contributor', signal: new AbortController().signal,
+      connectedAccounts: {
+        async getBinding(purpose) { return purpose === 'meta-inference' ? { purpose, service,
+          account: { service, accountId: 'selected-muse' }, target: { kind: 'account', displayName: 'Muse' } } : null; },
+        async materialize() { throw new Error('Managed Muse credentials must stay with the Provider owner'); },
+        watch(_purpose, listener) { void listener({ kind: 'resync', authorityChanged: false }); return { dispose() {} }; },
+      },
+    });
+    try { expect(prepared.environment).toEqual({}); }
+    finally { await prepared.dispose(); }
+  });
   it('declares the plugin-cache skill pattern through canonical manifest ingestion', () => {
     const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
     if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
@@ -93,11 +141,16 @@ describe('Codex plugin manifest', () => {
     if (!kimiResult.ok) {
       throw new Error(`Expected the Kimi plugin manifest to ingest: ${JSON.stringify(kimiResult.diagnostics)}`);
     }
-    // Codex declares the Kimi and OpenAI API-key connected accounts, so both descriptor owners join the set.
+    const museResult = ingestPluginManifestV2(MUSE_PLUGIN_MANIFEST);
+    if (!museResult.ok) {
+      throw new Error(`Expected the Muse plugin manifest to ingest: ${JSON.stringify(museResult.diagnostics)}`);
+    }
+    // Resolve each declared connected-account service against its descriptor owner.
     expect(resolvePluginManifestSetReferencesV2([
       result.manifest,
       openAiResult.manifest,
       kimiResult.manifest,
+      museResult.manifest,
     ])).toEqual({ ok: true });
     expect(ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST))).toEqual(result);
     const missingAgentResult = ingestPluginManifestV2({
@@ -191,6 +244,7 @@ describe('Codex plugin manifest', () => {
       credentialKinds: ['oauth'],
       materializationKinds: ['files'],
     },
+    expect.objectContaining({ purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } }),
     expect.objectContaining({ purpose: 'kimi-code-api-key', credentialKinds: ['token'], materializationKinds: ['environment'] }),
     expect.objectContaining({ purpose: 'openai-api-key', credentialKinds: ['token'], materializationKinds: ['environment'] }),
     ]);

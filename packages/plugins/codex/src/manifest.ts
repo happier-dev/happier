@@ -274,6 +274,15 @@ export const CODEX_PLUGIN = definePlugin({
           required: false,
           materializationKinds: ['files'],
           credentialKinds: ['oauth'],
+        }, {
+          purpose: 'meta-inference',
+          service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+          materializationKinds: ['environment'],
+          credentialKinds: ['token', 'oauth'],
+          managedProviderEndpoint: {
+            provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+            purpose: 'meta-upstream', modelIdPrefix: 'meta/',
+          },
         }, ...CODEX_KEY_DECLARATIONS.map(row => ({
           ...row,
           materializationKinds: [...row.materializationKinds],
