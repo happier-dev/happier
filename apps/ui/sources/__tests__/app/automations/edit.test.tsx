@@ -245,10 +245,11 @@ describe('retired Automation routes', () => {
         const { WorkflowEditorRoute } = await import('@/components/workflows/screens/WorkflowEditorRoute');
         const { WorkflowEditorBody } = await import('@/components/workflows/screens/WorkflowEditorBody');
         const screen = await renderRoute(<WorkflowEditorRoute />);
-        const body = () => screen.findAllByType(WorkflowEditorBody)[0]?.props;
-        await waitForHomeGovernance(() => expect(body()?.draft.name).toBe('B workflow'));
+        const body = (): React.ComponentProps<typeof WorkflowEditorBody> | undefined =>
+            screen.findAllByType(WorkflowEditorBody)[0]?.props;
+        await waitForHomeGovernance(() => expect(body()?.draftStore.get().name).toBe('B workflow'));
         await waitForHomeGovernance(() => expect(body()?.projectTarget).toEqual(projectB));
-        await act(async () => { body()!.onChange({ ...body()!.draft, name: 'B updated' }, 'rename', true); });
+        await act(async () => { body()!.onChange({ ...body()!.draftStore.get(), name: 'B updated' }, 'rename', true); });
         const credentialsRead = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
         const recheck = createDeferred<void>();
         let rechecking = false;
@@ -260,8 +261,8 @@ describe('retired Automation routes', () => {
             const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
             await act(async () => { await upsertServerProfile({ serverUrl: 'https://other-automation.test', name: 'B renamed' }); });
             await waitForHomeGovernance(() => expect(rechecking).toBe(true));
-            expect(body()?.draft.name).toBe('B updated');
-            await act(async () => { body()!.onSave(); });
+            expect(body()?.draftStore.get().name).toBe('B updated');
+            await act(async () => { body()!.onSave!(); });
             expect(homes.requests.filter(request => request.path.includes(`/v1/artifacts/${workflowId}`)
                 && request.input !== null)).toEqual([]);
         } finally {
@@ -270,8 +271,8 @@ describe('retired Automation routes', () => {
         }
         const { WorkflowEditorHostScreen } = await import('@/components/workflows/screens/WorkflowEditorHostScreen');
         await waitForHomeGovernance(() => expect(screen.findAllByType(WorkflowEditorHostScreen)[0]?.props.accountLifetime?.isCurrent()).toBe(true));
-        expect(body()?.draft.name).toBe('B updated');
-        await act(async () => { body()!.onSave(); });
+        expect(body()?.draftStore.get().name).toBe('B updated');
+        await act(async () => { body()!.onSave!(); });
         await waitForHomeGovernance(() => expect(homes.requests.some(request => request.serverId === serverB
             && request.path.includes(`/v1/artifacts/${workflowId}`) && request.input !== null)).toBe(true));
         expect(homes.requests.filter(request => request.serverId === serverA && request.path.includes(`/v1/artifacts/${workflowId}`)
