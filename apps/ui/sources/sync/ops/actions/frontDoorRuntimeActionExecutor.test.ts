@@ -80,14 +80,15 @@ describe('composed UI Action front-door adapters', () => {
     });
     afterEach(() => standardCleanup());
 
-    it('retains the Browser download failure code at the file-save UI boundary', async () => {
+    it('retains the complete Browser download refusal at the file-save UI boundary', async () => {
         const serverId = await homes.addHome({ name: 'Download Home', serverUrl: 'https://download-home.test',
             serverIdentityId: 'srv_download_home', accountId: 'alice', currentAccount: true });
         const { requestSaveFile } = await import('@/sync/runtime/files/requestSaveFile');
         const result = await requestSaveFile({ fileName: 'download.bin', source: { kind: 'browserDownload',
             reference: { machineId: 'machine', browserSessionId: 'missing-browser', viewId: 'missing-view', downloadId: 'download' },
         } }, { serverId, accountId: 'alice' });
-        expect(result).toMatchObject({ status: 'failed', errorCode: 'browser_download_unavailable' });
+        expect(result).toMatchObject({ status: 'failed', ok: false, errorCode: 'browser_download_unavailable',
+            error: 'browser_download_unavailable' });
     });
 
     it('keeps the prepared Voice target through the full-context confirmed handoff when the primary Session changes', async () => {

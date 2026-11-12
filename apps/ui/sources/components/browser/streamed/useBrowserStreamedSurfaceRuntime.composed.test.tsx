@@ -1223,7 +1223,15 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             if (refused) {
                 expect(requested).toEqual([8000]);
                 expect(click).not.toHaveBeenCalled();
-                expect(alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('owner_disconnected'));
+                expect(alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('owner_disconnected'),
+                    expect.arrayContaining([expect.objectContaining({ onPress: expect.any(Function) })]));
+                const { t } = await import('@/text');
+                const details = alert.mock.calls[0]?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+                expect(details?.onPress).toBeTypeOf('function');
+                await act(async () => { details?.onPress?.(); });
+                expect(alert).toHaveBeenLastCalledWith(t('approvals.technicalDetails'), expect.any(String));
+                const technicalDetails = JSON.parse(alert.mock.calls.at(-1)![1]!);
+                expect(technicalDetails).toMatchObject({ code: 'owner_disconnected' });
                 return;
             }
             expect(requested).toEqual([8000, 8000, 8000]);

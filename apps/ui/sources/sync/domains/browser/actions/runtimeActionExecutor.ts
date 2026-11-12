@@ -370,10 +370,6 @@ async function executeBrowserControlAction(
             } }, { ...input, control });
         }
     }
-    if (command.data.kind === 'openView' && !control && machineTarget?.kind === 'machine') {
-        return await executeBrowserMachineAction(args, command.data, input.executeOnMachine);
-    }
-
     if (!control) {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_unavailable');
     }
@@ -383,6 +379,9 @@ async function executeBrowserControlAction(
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_unavailable');
     }
     const view = 'viewId' in command.data ? state.viewsById[command.data.viewId] : null;
+    if (command.data.kind === 'openView' && !input.control && machineTarget?.kind === 'machine' && !view) {
+        return await executeBrowserMachineAction(args, command.data, input.executeOnMachine);
+    }
     if (command.data.kind !== 'openView' && 'viewId' in command.data && !view) {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_unavailable');
     }

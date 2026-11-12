@@ -217,7 +217,7 @@ describe('retained Browser through the external plugin-UI Action API', () => {
             expect(mounted.store.getPortalSnapshot()).toEqual([]);
             expect(mounted.subscriptions()).toBe(0);
             await expect(mounted.api.executeAction('browser.automation.press', { ...mounted.request, automationRequestId: 'removed-slot' }))
-                .rejects.toMatchObject({ code: 'unavailable', diagnostics: [{ code: 'runtime_action_disabled' }] });
+                .rejects.toMatchObject({ code: 'runtime_action_disabled', diagnostics: [{ code: 'runtime_action_disabled' }] });
             expect(mounted.effects()).toBe(1);
         } finally { mounted.dispose(); }
     });
@@ -259,9 +259,11 @@ describe('retained Browser through the external plugin-UI Action API', () => {
             expect(mounted.subscriptions()).toBe(0);
             expect(mounted.siblingSubscriptions()).toBe(1);
             await expect(mounted.api.executeAction('browser.automation.press', { ...mounted.request, automationRequestId: 'closed-press' }))
-                .rejects.toMatchObject({ code: 'unavailable', diagnostics: [{ code: 'runtime_action_disabled' }] });
+                .rejects.toMatchObject({ code: 'runtime_action_disabled', diagnostics: [{ code: 'runtime_action_disabled' }] });
             expect(mounted.effects()).toBe(2);
-            await mounted.screen.pressByTestIdAsync('close-other');
+            const siblingTab = mounted.pane.current!.scopeState!.details.tabs.find(tab => tab.kind === 'file');
+            expect(siblingTab).toBeDefined();
+            await mounted.screen.pressByTestIdAsync(`close-${toTestIdSafeValue(siblingTab!.key)}`);
             await flushHookEffects();
             expect(mounted.store.getPortalSnapshot()).toEqual([]);
             expect(mounted.siblingSubscriptions()).toBe(0);
@@ -279,7 +281,7 @@ describe('retained Browser through the external plugin-UI Action API', () => {
             expect(mounted.store.getPortalSnapshot()).toEqual([]);
             expect(mounted.subscriptions()).toBe(0);
             await expect(mounted.api.executeAction('browser.automation.press', mounted.request))
-                .rejects.toMatchObject({ code: 'unavailable', diagnostics: [{ code: 'runtime_action_disabled' }] });
+                .rejects.toMatchObject({ code: 'runtime_action_disabled', diagnostics: [{ code: 'runtime_action_disabled' }] });
             expect(mounted.effects()).toBe(0);
         } finally { mounted.dispose(); }
     });

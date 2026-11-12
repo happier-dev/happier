@@ -487,7 +487,9 @@ describe('browser runtime action executor', () => {
         const execute = createBrowserRuntimeActionExecutor({ resolveControl: () => local, executeOnMachine });
         const context = { authority: 'present_user' as const,
             externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } };
-        expect(await execute(runtimeArgs({ actionId: 'browser.view.open', input: command, context }))).toEqual(result);
+        const refusal = await execute(runtimeArgs({ actionId: 'browser.view.open', input: command, context }));
+        // Closed public parsing admits published additive fields without dropping an unknown carrier.
+        expect(BrowserCommandDispatchResultV1Schema.parse(refusal)).toMatchObject(result);
         expect(local.applyDispatchResult).not.toHaveBeenCalled();
         const unavailable = createBrowserRuntimeActionExecutor({ resolveControl: () => local });
         expect(await unavailable(runtimeArgs({ actionId: 'browser.view.open', input: command, context })))

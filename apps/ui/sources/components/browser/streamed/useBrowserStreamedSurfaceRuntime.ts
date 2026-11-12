@@ -32,7 +32,8 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { createBrowserStreamInputRelay } from './inputRelay';
 import { saveBrowserDownloadRanges } from '@/sync/runtime/files/browserDownload';
 import { requestSaveFile } from '@/sync/runtime/files/requestSaveFile';
-import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -303,10 +304,11 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         const result = await requestSaveFile({ fileName: download.name, source: { kind: 'browserDownload',
             reference: { machineId, browserSessionId, viewId, downloadId } } }, accountBinding.scope);
         if (result.status === 'failed') {
-            Modal.alert(t('common.error'), resolveActionExecutionFailureMessage(
-                { ok: false, errorCode: result.errorCode },
-                t('errors.operationFailed'),
-            ) ?? t('errors.operationFailed'));
+            const presentation = presentActionExecutionFailure(result);
+            alertActionFailure({ reason: presentation.reason, code: result.errorCode, requestId: result.requestId,
+                context: Object.fromEntries(presentation.technicalDetails
+                    .filter(line => line.key !== 'code' && line.key !== 'requestId')
+                    .map(line => [line.key, line.value])) });
         }
     });
     const clipboardShortcut = React.useMemo(() => inputRelay && metadata?.viewerInput?.controlling
