@@ -1,5 +1,5 @@
 import { createServer, type RequestListener, type Server } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFetchPluginHttpRuntime } from './fetchTransport.js';
 import { createPluginHttpService } from './service.js';
@@ -20,6 +20,45 @@ async function listen(handler: RequestListener) {
     if (!address || typeof address === 'string') throw new Error('Missing fixture address');
     return `http://127.0.0.1:${address.port}`;
 }
+
+it.each(['runtime', 'service'] as const)('preserves a completed portable native response after final-read cancellation (%s)', async owner => {
+    const expected = new TextEncoder().encode('{"resourceId":"created-portable-resource"}');
+    let requests = 0;
+    const origin = await listen((_request, response) => {
+        requests += 1;
+        response.writeHead(201, { 'content-type': 'application/json', 'x-native-ack': 'created' });
+        response.end(expected);
+    });
+    const cancellation = new AbortController();
+    let completelyRead = false;
+    // Observe actual platform Fetch IO and cancel only after its real body reaches EOF.
+    const fetchAtEof: typeof fetch = async (input, init) => {
+        const response = await globalThis.fetch(input, init);
+        const body = response.body;
+        if (!body) throw new Error('Native acknowledgement requires a body');
+        const reader = body.getReader();
+        const read = reader.read.bind(reader);
+        vi.spyOn(reader, 'read').mockImplementation(async () => {
+            const chunk = await read();
+            if (chunk.done) {
+                completelyRead = true;
+                queueMicrotask(() => cancellation.abort());
+            }
+            return chunk;
+        });
+        Object.defineProperty(body, 'getReader', { value: () => reader });
+        return response;
+    };
+    const runtime = createFetchPluginHttpRuntime(fetchAtEof);
+    const service = owner === 'runtime' ? runtime : createPluginHttpService({ adapter: runtime });
+    const response = await service.request({ url: origin + '/native/create', method: 'POST', redirect: 'error' },
+        { signal: cancellation.signal });
+    expect(completelyRead).toBe(true);
+    expect(cancellation.signal.aborted).toBe(true);
+    expect(response).toMatchObject({ status: 201, headers: { 'x-native-ack': 'created' } });
+    expect(response.body).toEqual(expected);
+    expect(requests).toBe(1);
+});
 
 // Only the Fetch platform boundary is substituted: browsers hide manual redirect
 // responses. HTTP admission, redirect policy, transport and real HTTP stay intact.

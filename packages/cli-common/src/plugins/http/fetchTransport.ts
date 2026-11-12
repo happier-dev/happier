@@ -38,7 +38,6 @@ export function createFetchPluginHttpRuntime(fetch: Fetch): PluginHttpRuntimeAda
                     return { ...metadata(response, request.url), body: new Uint8Array() };
                 }
                 const body = await readBoundedPluginHttpResponseBody(response, controller);
-                controller.signal.throwIfAborted();
                 return { ...metadata(response, request.url), body };
             } finally {
                 options.signal?.removeEventListener('abort', abort);

@@ -5284,6 +5284,12 @@ Discord's explicit worker stop awaits actual Gateway teardown. Caller cancellati
 returns `pending`; the existing exact-predecessor completion/report path can still
 confirm stop afterward. Elapsed stop time supplies no quiescence evidence.
 
+A Gateway dispatch for a deleted or unsupported channel settles as the existing
+typed `notReady` / `unsupported` refusal for that message. The healthy Gateway
+stays open, retaining its session, so later messages in that or another supported
+channel still reach admission. Malformed or unavailable lookup evidence retains
+its existing connection-level failure behavior.
+
 In unreleased 0.3 source, background services invoke provider Actions through
 the same host-stamped caller and currentness checks as other plugin callers,
 including installed plugins. Registry shutdown, occurrence retirement and
@@ -9761,34 +9767,23 @@ body and pagination metadata without spending the primary REST budget. Every
 read still passes current HTTP admission, and timing headers come only from the
 current response. Credential rotation and occurrence retirement clear retained
 representations. Existing caller-owned cursor validators keep their raw 304
-contract; GraphQL checks and viewer facts remain independent reads because a
-PR representation's validator does not cover them. No cache supplies a response
-without provider revalidation, and retaining a representation starts no work.
+contract. The checks owner retains complete GraphQL checks, requiredness, review
+and viewer facts only for cadence-scoped Watch reads. Before reuse it revalidates
+the PR and every head check-runs/status page; a change in any witness refreshes
+the GraphQL projection. Missing validators or incomplete reads remain fresh.
+Overview and mutation admission reads remain fresh. Retaining a representation
+starts no work.
 This follows GitHub's [conditional request contract](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate).
 
-The development GitHub Channels comment/PR poll producer supplies the existing
-`retryHint` on successful baselines and batches from GitHub's poll/retry headers
-and primary REST budget headers. Without `x-poll-interval`, it spaces the next
-cycle's REST acquisitions over the remaining reset window and request budget;
-when fewer requests remain than one cycle needs, the reset is the next wake.
-GraphQL's separate points budget does not replace the REST budget. Conditional
-304 reads count toward the next cycle's potential acquisition cost because
-that cycle may return changed 200 representations. Explicit provider waits
-remain lower bounds, normalized to the existing Channels retry carrier bound.
-This policy lives in `scm-github/src/observations/githubChannelPollCadence.ts`;
-the existing Channels supervisor owns scheduling and the Account request owner
-still owns rate parking. It adds no polling timer, persisted cache, or fixed
-comments interval. If a transport omits all usable provider timing and budget
-headers, the same admitted client makes one documented `GET /rate_limit` read
-and derives cadence from that account's `resources.core.remaining` and `reset`.
-The overview's own headers remain authoritative when present. This endpoint
-does not consume the primary REST bucket, so it does not inflate the next
-cycle's primary acquisition cost; it can still consume secondary capacity.
-An unreadable overview uses the existing provider failure classifier; malformed
-or expired budget facts use the existing `github_api_response_invalid` refusal
-instead of committing a successful unpaced poll. No interval is invented and
-no budget cache, retry owner or scheduling timer is added. This follows GitHub's
-[rate-limit endpoint contract](https://docs.github.com/en/rest/rate-limit/rate-limit).
+The development GitHub cadence owner supplies existing refresh hints to Channels
+comment/PR watches, Session PR status and Forge CI reads. It honors GitHub's
+`x-poll-interval` and `Retry-After`; when neither is supplied, the approved
+headerless fallback is 60 seconds. Existing consumer lifetimes own scheduling
+and stop with no demand. The Account request owner independently owns rate
+parking; remaining-budget headers neither stretch the refresh interval nor
+trigger an additional `GET /rate_limit`. This policy lives in
+`scm-github/src/observations/githubChannelPollCadence.ts` and adds no timer,
+retry owner, public format or persisted cache.
 
 The development GitHub deployment observer retains waiting-list page validators
 and compact run facts in its existing source checkpoint. Each page is read

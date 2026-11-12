@@ -135,11 +135,11 @@ export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
         let body: Uint8Array;
         if (request.responseBody === 'discard') {
           await response.body?.cancel();
+          requestAbort.controller.signal.throwIfAborted();
           body = new Uint8Array();
         } else {
           body = await readBoundedPluginHttpResponseBody(response, requestAbort.controller);
         }
-        requestAbort.controller.signal.throwIfAborted();
         return Object.freeze({
           status: response.status,
           finalUrl: response.url || request.url,

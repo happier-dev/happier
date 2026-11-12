@@ -67,6 +67,51 @@ describe('createGlobalFetchRuntime', () => {
         }));
     });
 
+    it.each(['runtime', 'service'] as const)('preserves a completed native response when cancellation arrives after its final body read (%s)', async owner => {
+        const expected = new TextEncoder().encode('{"resourceId":"created-native-resource"}');
+        let requests = 0;
+        const server = createServer((_request, response) => {
+            requests += 1;
+            response.writeHead(201, { 'content-type': 'application/json', 'x-native-ack': 'created' });
+            response.end(expected);
+        });
+        servers.push(server);
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing native HTTP listener');
+        const cancellation = new AbortController();
+        const native = await vi.importActual<typeof import('undici')>('undici');
+        let completelyRead = false;
+        // Observe the real native HTTP body reader, then cancel at its EOF boundary.
+        // No response bytes or provider outcomes are substituted.
+        vi.mocked(undici.fetch).mockImplementation(async (...args) => {
+            const response = await native.fetch(...args);
+            const body = response.body;
+            if (!body) throw new Error('Native acknowledgement requires a body');
+            const reader = body.getReader();
+            const read = reader.read.bind(reader);
+            vi.spyOn(reader, 'read').mockImplementation(async () => {
+                const chunk = await read();
+                if (chunk.done) {
+                    completelyRead = true;
+                    queueMicrotask(() => cancellation.abort());
+                }
+                return chunk;
+            });
+            Object.defineProperty(body, 'getReader', { value: () => reader });
+            return response;
+        });
+        const runtime = createGlobalFetchRuntime();
+        const service = owner === 'runtime' ? runtime : createPluginHttpService({ adapter: runtime });
+        const result = await service.request({ url: 'http://127.0.0.1:' + address.port + '/native/create',
+            method: 'POST', redirect: 'error' }, { signal: cancellation.signal });
+        expect(completelyRead).toBe(true);
+        expect(cancellation.signal.aborted).toBe(true);
+        expect(result).toMatchObject({ status: 201, headers: { 'x-native-ack': 'created' } });
+        expect(result.body).toEqual(expected);
+        expect(requests).toBe(1);
+    });
+
     it('releases a metadata-only response without pulling any response-body bytes', async () => {
         const tracked = createTrackedStream([new TextEncoder().encode('private response body')]);
         // Genuine network boundary: only status and peer metadata are consumed.

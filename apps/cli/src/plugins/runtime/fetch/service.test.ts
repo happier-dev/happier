@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import { createGlobalFetchRuntime } from './globalFetchRuntime';
 import { describe, expect, it, vi } from 'vitest';
 import { snapshotPluginHttpRequest } from './request';
 import { createPluginInvocationSecretRedactor } from '../invocation/services/logger';
@@ -1144,25 +1146,35 @@ describe('createPluginHttpService', () => {
         expect(adapter.mock.calls[0]?.[0]).toMatchObject({ url: `${rawUrl}?audit=1` });
     });
 
-    it('enforces a bound host deadline when a terminal adapter never settles', async () => {
-        const adapter = vi.fn(async () => await new Promise<TestFetchResponse>(() => undefined));
-        const host = createStablePluginHttpHost({ adapter });
-        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-never-settles');
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-7', correlationId: 'correlation-never-settles', surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, binding);
-
-        await expect(service.request({
-            url: 'https://api.telegram.org/slow',
-            method: 'GET',
-            timeoutMs: 5,
-            redirect: 'error',
-        })).rejects.toMatchObject({ name: 'AbortError' });
-        expect(adapter).toHaveBeenCalledOnce();
+    it('aborts an admitted native body read when the bound request timeout elapses', async () => {
+        let requests = 0;
+        const server = createServer((_request, response) => {
+            requests += 1;
+            response.writeHead(200, { 'content-type': 'text/plain' });
+            response.write('pending native body');
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        try {
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing native fixture address');
+            const host = createProductionStablePluginHttpHost({ adapter: createGlobalFetchRuntime() });
+            const binding = createPluginInvocationServiceBinding('generation-7', 'binding-pending-native-body');
+            const service = host.bind({
+                plugin: { id: 'caller.plugin', version: '1.0.0' },
+                contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+                occurrenceId: 'generation-7', correlationId: 'correlation-pending-native-body', surface: 'agent',
+                signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+            }, binding);
+            await expect(service.request({
+                url: `http://127.0.0.1:${address.port}/pending-body`,
+                method: 'GET', timeoutMs: 1_000, redirect: 'error',
+            })).rejects.toMatchObject({ name: 'AbortError' });
+            expect(requests).toBe(1);
+        } finally {
+            server.closeAllConnections();
+            await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
     });
 
     it('applies current installation-wide interceptor policy while retaining private callback separation', async () => {
@@ -2047,23 +2059,6 @@ describe('createPluginHttpService', () => {
             name: 'AbortError',
         });
         expect(adapter).toHaveBeenCalledTimes(1);
-    });
-
-    it('rejects on timeout even when the host adapter ignores abort signals', async () => {
-        const adapter = vi.fn(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            return createResponse('late');
-        });
-        const service = createPluginHttpService({
-            adapter,
-        });
-
-        await expect(service({
-            url: 'https://example.test/slow',
-            timeoutMs: 5,
-        })).rejects.toMatchObject({
-            name: 'AbortError',
-        });
     });
 
     it('does not duplicate interceptor effects when the terminal adapter retries', async () => {

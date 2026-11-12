@@ -694,10 +694,12 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams): 
                             effectiveRequest = next;
                         }
                     };
-                    const response = await raceWithAbort(
-                        execute(),
-                        timeout.signal,
-                    );
+                    // Buffered transport owns cancellation through body completion;
+                    // a later abort cannot erase its complete response. Streams still
+                    // race cancellation until their headers transfer body ownership.
+                    const response = transport.retain
+                        ? await raceWithAbort(execute(), timeout.signal)
+                        : await execute();
                     if (transport.retain) {
                         const result = transport.retain(response, timeout.dispose, timeout.signal);
                         retained = true;
