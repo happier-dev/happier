@@ -256,6 +256,7 @@ import {
   readDaemonRestartVerifyTimeoutMs,
 } from './startupWaitDefaults';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { startDaemonExternalSessionIdentityBackfill } from './startup/externalSessionIdentityBackfill';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { resolveLegacyPluginGenerationRoot } from '@/plugins/store/pathLayout';
@@ -1963,6 +1964,21 @@ export async function startDaemon(
     const pluginRuntimeInitialization = settleDaemonOptionalCapability(
       'plugin_runtime', pluginRuntimeOwner.initialize(), reportOptionalCapabilityUnavailable,
     );
+    // Background, once per Machine: link.ensure keeps its scan fallback until
+    // this Machine's released external-session identities are indexed.
+    void pluginRuntimeInitialization.then((pluginRuntime) => {
+      if (pluginRuntime.status !== 'ready' || !machineId || homeTransportCancellation.signal.aborted) return;
+      return settleDaemonOptionalCapability(
+        'external_session_identity_backfill',
+        startDaemonExternalSessionIdentityBackfill({
+          credentials,
+          machineId,
+          reloadController: pluginReloadController,
+          signal: homeTransportCancellation.signal,
+        }),
+        reportOptionalCapabilityUnavailable,
+      );
+    });
     await accountCatalogReadiness;
     const registryUpdateCheck = createCliRegistryUpdateCheck({ credentials, secretSources: daemonSecretSources, signal: homeTransportCancellation.signal });
     const checkRegistryUpdates = () => startBackgroundRegistryUpdateCheck(registryUpdateCheck);
@@ -2617,6 +2633,7 @@ export async function startDaemon(
           .hardRevokeRunningSessionsForGenerationIntegrityFailure,
       resolveManagedPurposeBindingIntent:
         connectedAccountPurposeBindingRuntime.resolveBindingIntent,
+      resolveManagedPurposeBindingIntentSelection: connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
       projectProviderModelsForAccount: async (request, context) => {
         const producer = providerOperationsProducer;
         if (!producer) throw new Error('provider_source_projection_unavailable');
