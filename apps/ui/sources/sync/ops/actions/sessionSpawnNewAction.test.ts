@@ -13,6 +13,7 @@ import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creat
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { clearBugReportUserActionTrail, getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 const boundary = await installSessionOpsNetworkBoundary();
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
@@ -64,12 +65,13 @@ describe('Session creation pending settlement', () => {
     });
 
     it.each([
-        { state: 'succeeded', daemonReceipt: true, outcome: 'accepted' },
-        { state: 'failed', daemonReceipt: true, outcome: 'accepted' },
-        { state: 'cancelled', daemonReceipt: true, outcome: 'accepted' },
-        { state: 'succeeded', daemonReceipt: false, outcome: 'accepted' },
-        { state: 'succeeded', daemonReceipt: true, outcome: 'unknown' },
-    ] as const)('joins the returned operation in requester scope ($state, daemon receipt: $daemonReceipt, outcome: $outcome)', async ({ state, daemonReceipt, outcome }) => {
+        { state: 'succeeded', daemonReceipt: true, outcome: 'accepted', providerRefusal: false },
+        { state: 'failed', daemonReceipt: true, outcome: 'accepted', providerRefusal: false },
+        { state: 'cancelled', daemonReceipt: true, outcome: 'accepted', providerRefusal: false },
+        { state: 'succeeded', daemonReceipt: false, outcome: 'accepted', providerRefusal: false },
+        { state: 'succeeded', daemonReceipt: true, outcome: 'unknown', providerRefusal: false },
+        { state: 'failed', daemonReceipt: true, outcome: 'accepted', providerRefusal: true },
+    ] as const)('joins the returned operation in requester scope ($state, daemon receipt: $daemonReceipt, outcome: $outcome, provider refusal: $providerRefusal)', async ({ state, daemonReceipt, outcome, providerRefusal }) => {
         const home = await boundary.addHome('https://spawn-pending.test', 'spawn-account');
         const daemonServerId = 'stack_agent-qa-voice-dev__id_default';
         const input = { creationKey: SessionCreationKeyV1Schema.parse('pending-creation'),
@@ -80,8 +82,12 @@ describe('Session creation pending settlement', () => {
             requestId: 'transport-request', title: 'Create session', createdAt: 1, startedAt: 2, cancellation: 'supported' };
         const success: SessionSpawnNewResultV1 = { type: 'success', disposition: 'created', sessionId: 'settled-session',
             executionTarget: { ...input.executionTarget, serverId: daemonServerId }, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+        const refusal = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+            providerError: createProviderErrorV1('provider_materialization_failed', { connectionId: 'pc_work', machineId: 'machine-1' }) });
         const settled: ActionOperationSnapshotV1 = { ...running, revision: 3, state, settledAt: 3,
-            ...(state === 'succeeded' ? { result: projectSessionSpawnNewActionResultV1(success) }
+            ...(providerRefusal ? { result: projectSessionSpawnNewActionResultV1(refusal),
+                error: { errorCode: 'spawn_failed', error: 'spawn_failed' } }
+                : state === 'succeeded' ? { result: projectSessionSpawnNewActionResultV1(success) }
                 : state === 'failed' ? { error: { errorCode: 'target_unavailable', error: 'operation_refused' } } : {}) };
         const reading = createDeferred<void>();
         const terminal = createDeferred<void>();
@@ -115,7 +121,8 @@ describe('Session creation pending settlement', () => {
             await Promise.race([reading.promise, action.then(() => { throw new Error('Pending creation returned before settlement'); })]);
             expect(onAccepted).toHaveBeenCalledTimes(outcome === 'accepted' ? 1 : 0);
             terminal.resolve();
-            await expect(action).resolves.toEqual(state === 'succeeded' ? { ok: true, result: { ...success, executionTarget: input.executionTarget } }
+            await expect(action).resolves.toEqual(providerRefusal ? { ok: true, result: refusal }
+                : state === 'succeeded' ? { ok: true, result: { ...success, executionTarget: input.executionTarget } }
                 : state === 'failed' ? { ok: false, ...settled.error }
                     : { ok: false, errorCode: 'action_cancelled', error: 'action_cancelled' });
             expect(onAccepted).toHaveBeenCalledTimes(1);

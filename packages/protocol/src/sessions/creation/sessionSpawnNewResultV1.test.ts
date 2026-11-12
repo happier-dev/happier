@@ -7,6 +7,7 @@ import {
   SessionSpawnNewResultV1Schema,
 } from './sessionSpawnNewResultV1.js';
 import { createProviderErrorV1 } from '../../providers/errors.js';
+import { completeSpawnActionResult, settleActionOutput } from '../../actions/executor/resultProjection.js';
 import { SessionSpawnNewResultV1Schema as preObservationResultSchema } from './testFixtures/sessionSpawnResultBeforeCommitObservation.js';
 
 describe('Session creation fork files', () => {
@@ -201,12 +202,17 @@ describe('Session creation Provider recovery', () => {
     expect(SessionSpawnNewResultV1Schema.safeParse({ ...result, terminalHostError: { ...terminalHostError, localPath: '/private' } }).success).toBe(false);
     expect(SessionSpawnNewResultV1Schema.safeParse({ type: 'error', code: 'incompatible_target', retryable: false }).success).toBe(true);
   });
-  it('preserves bounded Provider details and their canonical retryability', () => {
-    const providerError = createProviderErrorV1('provider_not_enabled_on_machine', {
+  it.each(['provider_not_enabled_on_machine', 'provider_compatibility_unverified', 'provider_materialization_failed',
+    'provider_incompatible_with_agent', 'provider_credential_transport_unavailable'] as const)(
+    'preserves bounded Provider details and their canonical retryability (%s)', code => {
+    const providerError = createProviderErrorV1(code, {
       connectionId: 'pc_work', machineId: 'machine-1',
     });
     const result = { type: 'error', code: 'spawn_failed', retryable: false, providerError };
     expect(SessionSpawnNewResultV1Schema.safeParse(result)).toMatchObject({ success: true, data: result });
+    expect(SessionSpawnNewActionResultV1Schema.safeParse(result)).toMatchObject({ success: true, data: result });
+    expect(settleActionOutput('session.spawn_new', completeSpawnActionResult(result)))
+      .toMatchObject({ ok: true, result });
     expect(SessionSpawnNewResultV1Schema.safeParse({ ...result, retryable: true }).success).toBe(false);
     expect(SessionSpawnNewResultV1Schema.safeParse({ ...result, code: 'machine_offline' }).success).toBe(false);
     expect(SessionSpawnNewResultV1Schema.safeParse({ ...result, providerError: { ...providerError, token: 'secret' } }).success).toBe(false);
