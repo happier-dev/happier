@@ -36,13 +36,16 @@ it.each(([
     ['deployments.environments.create', 'plain', 'existing-source-first-link'],
     ['deployments.environments.create', 'plain', 'new-project-first-link'],
     ['machines.managed.delete', 'e2ee', 'admission-refused'],
+    ['machines.managed.delete', 'plain', 'terminal-own-replay'],
+    ['machines.command.run', 'plain', 'terminal-own-replay'],
 ] as const).map(([actionId, encryptionMode, createShape]) => [actionId, encryptionMode, createShape ?? ''] as const))
 ('settles public CLI %s approval replay at its origin (%s) %s', async (actionId, encryptionMode, createShape) => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-delete-replay-' }, async () => {
         const accountId = 'delete-owner';
         const admissionRefused = createShape === 'admission-refused';
+        const workflowCommand = actionId === 'machines.command.run';
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
-            provenance: admissionRefused
+            provenance: admissionRefused || createShape === 'terminal-own-replay'
                 ? { v: 2, kind: 'terminal', authority: 'account_automation', evidence: [{ kind: 'home_method', methodId: 'key_challenge' }] }
                 : { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const machineKey = new Uint8Array(32).fill(37);
@@ -77,6 +80,7 @@ it.each(([
             patch: { ingress: { kind: 'cloudflareTunnel' } } }
             : actionId === 'deployments.teardown' ? { serverId: 'srv_home', environmentId: 'environment',
             expectedRevision: 3, targetLinkId: 'own-server', expectedTargetLinkRevision: 2, requestKey: 'teardown', reason: 'manual' }
+            : workflowCommand ? { command: 'printf approved' }
             : actionId === 'machines.managed.inspect' ? { homeId: 'srv_home', managedId: 'lima-leaf' }
             : actionId === 'machines.managed.acquire' ? { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
                 selection: { kind: 'one-off', homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
@@ -95,12 +99,17 @@ it.each(([
                 target, deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, actionArgs),
             } }) : undefined;
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId,
+            createdBy: { surface: workflowCommand ? 'agent' : 'cli' }, requestedSurface: workflowCommand ? 'agent' : 'cli', actionId,
             actionArgs, summary: 'Control managed machine.',
             approval: { flow: 'deferred', result: 'required' },
-            executionOriginV1: { v: 1, authority: authorization ? 'account_automation' : 'present_user', surface: 'cli', caller: { kind: 'host' },
+            executionOriginV1: { v: 1, authority: authorization || workflowCommand ? 'account_automation' : 'present_user', surface: workflowCommand ? 'agent' : 'cli',
+                caller: workflowCommand ? { kind: 'workflowRun', runId: 'native-workflow', authorization: {
+                    principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
+                }, authenticatedStarterV1: { requestRef: 'accepted-start', requester: { serverId: 'srv_home', accountId } } } : { kind: 'host' },
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', accountId,
-                machineId: 'controller', target: { kind: 'machine', machineId: 'controller' },
+                machineId: 'controller', target: { kind: 'machine', machineId: 'controller', ...(workflowCommand ? {
+                    project: { machineId: 'controller', directory: '/workspace' },
+                } : {}) },
                 actionId, requestId: 'original-delete', ...(authorization ? {
                     externalActionExecutionAuthorization: authorization,
                     externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
@@ -134,14 +143,14 @@ it.each(([
         const machine = { id: 'controller', kind: 'persistent', active: true,
             installationId: 'installation', installationPublicKey: encodeBase64(installationKeys.publicKey, 'base64'),
             revokedAt: null, replacedByMachineId: null, dataEncryptionKey: resource.dataEncryptionKey, runnerContentKeyBinding: null,
-            access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: encryptionMode, accessState: 'ready' } };
+            access: { custodian: { accountId: admissionRefused ? 'foreign-machine-owner' : accountId, displayName: 'Owner' }, role: 'manage', resourceMode: encryptionMode, accessState: 'ready' } };
         app.get('/v1/machines/controller', async () => ({ machine }));
         app.get('/v1/machines', async () => [machine]);
-        if (admissionRefused) app.post('/v1/actions/approval.request.decide/execution-authorization', async (request, reply) => {
-            // Substitute the Home HTTP refusal observed on READY106. Keep the
-            // real CLI decision, Artifact lifecycle, E2EE sealing and replay.
+        if (admissionRefused || createShape === 'terminal-own-replay') app.post('/v1/actions/approval.request.decide/execution-authorization', async (request, reply) => {
+            // Home refuses a paired terminal's fresh reviewer root. Keep the
+            // real CLI decision, Artifact lifecycle, codecs and replay routing.
             const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
-            expect(body.envelope.v).toBe(2);
+            expect(body.envelope.v).toBe(encryptionMode === 'e2ee' ? 2 : 1);
             return reply.code(403).send({ error: 'credential_scope_denied' });
         });
         const origin = 'https://delete-home.test';
@@ -150,7 +159,8 @@ it.each(([
         type Call = Parameters<ClientToServerEvents[typeof SOCKET_RPC_EVENTS.CALL]>[0];
         const calls: Call[] = [];
         const accountSettings = AccountSettingsSchema.parse({});
-        const deleted = preparedCreate ? { ok: true, environmentId: environment.id, revision: 1 }
+        const deleted = workflowCommand ? { exitCode: 0, stdout: 'approved', stderr: '' }
+            : preparedCreate ? { ok: true, environmentId: environment.id, revision: 1 }
             : actionId === 'deployments.environments.update'
             ? { ok: true, environmentId: environment.id, revision: environment.revision + 1 }
             : { kind: 'accepted', managedId: 'lima-leaf', intentRevision: 1,
@@ -182,7 +192,8 @@ it.each(([
                 serverId: configuration.activeServerId, serverApiUrl: origin, serverIdentityId: 'srv_home',
                 resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }),
                 actionsSettingsProvider: { getActionsSettings: () => accountSettings.actionsSettingsV1,
-                    getAccountSettings: () => accountSettings } });
+                    getAccountSettings: () => accountSettings },
+                onRequesterSessionCredentialDisclosure: async () => true });
             const result = await executor.execute('approval.request.decide', { artifactId: 'delete-approval', decision: 'approve' },
                 { surface: 'cli', authority: 'present_user', actionRequestId: 'approve-delete' });
             if (admissionRefused) {
@@ -218,11 +229,17 @@ it.each(([
             expect(result, JSON.stringify({ result, paths, calls })).toMatchObject({ ok: true, result: { ok: true, status: 'executed',
                 execution: { ok: true, effectAttempted: true, result: deleted } } });
             expect(calls).toMatchObject([{ method: `controller:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}` }]);
+            if (createShape === 'terminal-own-replay') {
+                // Consent was committed by the local CLI decision owner. The
+                // paired credential delivers replay without minting a new reviewer.
+                expect(paths).not.toContain('/v1/actions/approval.request.decide/execution-authorization');
+                expect(paths).not.toContain('/v1/actions/approval.request.decide');
+            }
             if (signedEnvironment) {
                 expect(calls).toHaveLength(1);
                 expect(environmentPatches).toEqual([]);
                 expect(environmentCreates).toEqual([]);
-            } else {
+            } else if (!workflowCommand) {
                 expect(paths).not.toContain(managedMachineActionEndpointPathV1(actionId));
             }
         } finally {

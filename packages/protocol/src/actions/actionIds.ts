@@ -9,6 +9,7 @@ import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 export const APPROVAL_REQUEST_LIST_ACTION_ID_V1 = 'approval.request.list' as const;
+export const APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 = 'approval.request.decide' as const;
 export { INBOX_GET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 
 export const SESSION_RUNTIME_REFRESH_ACTION_ID_V1 = 'session.runtime.refresh' as const;
@@ -47,7 +48,7 @@ export function isLocalServiceStopActionIdV1(actionId: unknown): actionId is 'lo
 
 /** Preserve the private deciding or new-Session invocation on same-Account delivery. */
 export function requiresOriginalAccountInvocationMachineProofV1(actionId: string): boolean {
-  return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === 'approval.request.decide';
+  return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === APPROVAL_REQUEST_DECIDE_ACTION_ID_V1;
 }
 
 /** Exact controller lifecycle effects that retain their original requester through Ask. */
@@ -83,6 +84,7 @@ import { MACHINE_VITALS_ACTION_IDS } from './specs/machineVitalsActionIdsV1.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './specs/machineProcessesActionIdsV1.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './specs/storageActionIdsV1.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './specs/machineResourcesActionIdsV1.js';
+import { MACHINE_ROLES_ACTION_IDS } from './specs/machineRolesActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';
 import { MACHINE_REBOOT_ACTION_IDS } from '../machines/rebootActionIdsV1.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
@@ -336,6 +338,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   machine_processes: MACHINE_PROCESSES_ACTION_IDS,
   machine_storage: MACHINE_STORAGE_ACTION_IDS,
   machine_resources: MACHINE_RESOURCES_ACTION_IDS,
+  machine_roles: MACHINE_ROLES_ACTION_IDS,
   machine_agent_isolation: MACHINE_AGENT_ISOLATION_ACTION_IDS,
   machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
   machine_reachability: MACHINE_REACHABILITY_ACTION_IDS_V1,
@@ -816,7 +819,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     APPROVAL_REQUEST_LIST_ACTION_ID_V1,
     'approval.request.get',
     'approval.request.create',
-    'approval.request.decide',
+    APPROVAL_REQUEST_DECIDE_ACTION_ID_V1,
   ],
   plugin_dev_loop: [
     ...PLUGIN_DEV_LOOP_ACTION_IDS_V1,

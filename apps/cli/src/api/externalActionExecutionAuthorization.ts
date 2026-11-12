@@ -1,13 +1,15 @@
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { MachineRolesSetInputV1Schema, type MachineRolesSetInputV1 } from '@happier-dev/protocol/actions/specs/machineRoles';
+import { matchesManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -811,9 +813,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         serverHttpBaseUrl: homeUrl, homeId: managed.homeId, managedId: managed.managedId,
         ...(input.signal ? { signal: input.signal } : {}) }));
       if (row.id !== managed.managedId || row.homeId !== managed.homeId
-        || !row.controller || row.controller.machineId !== input.target.machineId) return fail('controller_retired');
+        || (row.controller ? row.controller.machineId !== input.target.machineId
+          : !isManagedAccountNativeControlInvocationV1(input.actionId, input.input))) return fail('controller_retired');
       if (row.enrollmentAccountId === accountId && row.custodianAccountId !== accountId) {
-        if (!row.controllerAccess) return fail('controller_unavailable');
+        if (!row.controller || !row.controllerAccess) return fail('controller_unavailable');
         scopedController = { ...row.controller, ...row.controllerAccess };
       }
     } else if ('selection' in managed && managed.selection.kind === 'preset') {
@@ -842,9 +845,17 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (!await isCurrent()) return fail('target_unavailable');
     const own = machines.find(row => row.id === machineId);
     const ordinary = readAuthTokenProvenance(claims, { allowLegacyHome: true });
-    if (!requiresMachineProof && ordinary?.provenance.kind === 'account'
-      && ordinary.provenance.authority === 'present_user' && input.authority !== 'account_automation'
-      && accountId && own?.access?.custodian.accountId === accountId) return null;
+    // A native approval has already committed consent in the CLI owner. Its
+    // own paired terminal delivers the admitted replay, not a fresh reviewer
+    // root. Exact RPC ingress retains the terminal's automation ceiling and
+    // the replay owner still rejects effects requiring present-user authority.
+    const nativeTerminalApprovalReplay = input.actionId === APPROVAL_REQUEST_DECIDE_ACTION_ID_V1
+      && ordinary?.provenance.kind === 'terminal'
+      && input.invocation?.caller.kind === 'host' && input.invocation.surface === 'cli'
+      && input.invocation.authority === 'present_user';
+    if (accountId && own?.access?.custodian.accountId === accountId
+      && (nativeTerminalApprovalReplay || !requiresMachineProof && ordinary?.provenance.kind === 'account'
+        && ordinary.provenance.authority === 'present_user' && input.authority !== 'account_automation')) return null;
   }
   const extras = claims && typeof claims.extras === 'object' && claims.extras !== null && !Array.isArray(claims.extras)
     ? claims.extras as Readonly<Record<string, unknown>> : {};
@@ -1929,7 +1940,11 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     return { ok: true, machineRpcAuthorization: 'account', headers: { Authorization: `Bearer ${input.daemonToken}`,
       ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
-  const effectActionId = templateParentActionId ?? input.effectActionId;
+  const managedReadEffect = input.method.toUpperCase() === 'POST'
+    && input.path.split('?')[0] === managedMachineActionEndpointPathV1('machines.managed.get')
+    ? managedAccountNativeReadEffectActionIdV1(binding.actionId, binding.managedAdmission?.input, input.effectActionId)
+    : input.effectActionId;
+  const effectActionId = templateParentActionId ?? managedReadEffect;
   const reviewedChild = admittedChild?.actionId === input.effectActionId
     && !templateChild ? { actionId: admittedChild.actionId, role: admittedChild.role, inputDigest: admittedChild.inputDigest } : undefined;
   return {
@@ -1987,9 +2002,9 @@ export async function dispatchManagedSessionStart(params: ManagedChildDispatchPa
 
 async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
   input: SessionSpawnNewInputV2 | MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
-    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1;
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1;
   actionId: 'session.spawn_new' | 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.adminAccess.set'
-    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set'; serverId: string; targetMachineId: string;
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set'; serverId: string; targetMachineId: string;
   retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
 }>): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
@@ -2023,6 +2038,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       input = { ...parsed, executionTarget: { ...parsed.executionTarget, serverId: serverIdentityId } };
     } else if (params.actionId === 'machines.setup.adminAccess.set') {
       const parsed = MachineAdminAccessSetInputV1Schema.parse(params.input);
+      if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
+      input = parsed;
+    } else if (params.actionId === 'machines.roles.set') {
+      const parsed = MachineRolesSetInputV1Schema.parse(params.input);
       if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
       input = parsed;
     } else if (params.actionId === 'machines.agentIsolation.preview' || params.actionId === 'machines.agentIsolation.set') {
@@ -2156,6 +2175,13 @@ export async function dispatchManagedMachineAdminAccess(params: Omit<ManagedChil
   return dispatchManagedChild({ ...params, actionId: 'machines.setup.adminAccess.set', targetMachineId: params.input.machineId });
 }
 
+/** Seeds the reviewed install-type role set on the exact enrolled guest (OWNER-RULINGS 2026-11-12). */
+export async function dispatchManagedMachineRoles(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
+  input: MachineRolesSetInputV1; serverId: string;
+}>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: 'machines.roles.set', targetMachineId: params.input.machineId });
+}
+
 type ManagedAgentIsolationChild = Readonly<
   { actionId: 'machines.agentIsolation.preview'; input: MachineAgentIsolationPreviewInputV1 }
   | { actionId: 'machines.agentIsolation.set'; input: MachineAgentIsolationSetInputV1 }>;
@@ -2185,6 +2211,13 @@ export async function verifyManagedCreationAgentIsolationInput(input: Omit<Param
     request: MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 }>): Promise<boolean> {
   return verifyManagedCreationEnrollmentPolicyInput(input, input.actionId, row =>
     matchesManagedMachineEnrollmentAgentIsolationV1({ homeId: row.homeId, machineId: input.request.machineId,
+      enrollmentIdentity: row.enrollmentIdentity }, input.request));
+}
+
+export async function verifyManagedCreationRolesInput(input: Omit<Parameters<typeof verifyManagedCreationAdminAccessInput>[0], 'request'>
+  & Readonly<{ request: MachineRolesSetInputV1 }>): Promise<boolean> {
+  return verifyManagedCreationEnrollmentPolicyInput(input, 'machines.roles.set', row =>
+    matchesManagedMachineEnrollmentRolesV1({ homeId: row.homeId, machineId: input.request.machineId,
       enrollmentIdentity: row.enrollmentIdentity }, input.request));
 }
 
@@ -2299,6 +2332,13 @@ export async function dispatchLocalManagedMachineAdminAccess(params: Omit<Parame
   return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.setup.adminAccess.set' });
 }
 
+export async function dispatchLocalManagedMachineRoles(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'> & Readonly<{
+  input: MachineRolesSetInputV1; homeId: string;
+  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
+}>): Promise<ActionExecuteResult> {
+  return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.roles.set' });
+}
+
 export async function dispatchLocalManagedMachineAgentIsolation(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'>
   & ManagedAgentIsolationChild & Readonly<{ homeId: string;
     managedContinuation: NonNullable<ExternalActionExecutionAuthorizationRequestV1['managedContinuation']> }>): Promise<ActionExecuteResult> {
@@ -2307,9 +2347,9 @@ export async function dispatchLocalManagedMachineAgentIsolation(params: Omit<Par
 
 async function dispatchLocalManagedCreationAction(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'> & Readonly<{
   input: MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
-    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1;
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1;
   homeId: string; actionId: 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.adminAccess.set'
-    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set';
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set';
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   admittedSetupChild?: true;
 }>): Promise<ActionExecuteResult> {
