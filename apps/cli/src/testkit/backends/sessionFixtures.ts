@@ -298,6 +298,10 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
         getAgentStateSnapshot() {
             return agentState;
         },
+        async endSessionAndClose() {
+            // Offline persistence acknowledges semantic end before transport close.
+            await fixture.close();
+        },
         async close() {
             closed = true;
             events.emit('local-closed');

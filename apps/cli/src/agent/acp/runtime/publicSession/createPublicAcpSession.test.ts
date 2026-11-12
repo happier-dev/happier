@@ -3950,7 +3950,7 @@ describe('createPublicAcpSession', () => {
                 response: { approved: false, decision: 'denied' } },
             ],
           },
-        }, {
+        }, expect.objectContaining({
           signal: expect.any(AbortSignal),
           permissionContext: {
             turnId: 'turn-permission',
@@ -3959,7 +3959,7 @@ describe('createPublicAcpSession', () => {
               admittedPermissionCeiling: 'read-only',
             },
           },
-        });
+        }));
         expect(events).toContainEqual(expect.objectContaining({
           kind: 'message-delta',
           turnId: 'turn-permission',
@@ -4474,7 +4474,7 @@ describe('createPublicAcpSession', () => {
         expect(hangingFixture.requestInteraction).toHaveBeenCalledWith(expect.objectContaining({
           kind: 'approval',
           allowSessionPersistence: true,
-        }), {
+        }), expect.objectContaining({
           signal: expect.any(AbortSignal),
           permissionContext: {
             turnId: 'turn-primary',
@@ -4483,7 +4483,7 @@ describe('createPublicAcpSession', () => {
               admittedPermissionCeiling: 'read-only',
             },
           },
-        });
+        }));
         await waitForCondition(
           () => hangingEvents.some((event) => event.kind === 'turn-start'),
           { timeoutMs: 5_000, intervalMs: 10, label: 'public ACP primary turn start after steer evidence' },

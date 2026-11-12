@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { expect, vi } from 'vitest';
 import { accountSettingsParse, createActionExecutor, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogKeyV1Schema, emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { SessionTurnMutationV1Schema, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
@@ -18,6 +19,12 @@ import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runner
 import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLifecycleActions';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { io } from 'socket.io-client';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
@@ -29,6 +36,13 @@ import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCreden
 import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
+// Socket.IO is a network boundary. Keep its ordinary implementation outside
+// this fixture so sibling composed paths retain their own transport behavior.
+vi.mock('socket.io-client', async importOriginal => {
+    const actual = await importOriginal<typeof import('socket.io-client')>();
+    return { ...actual, io: vi.fn(actual.io) };
+});
+
 /** The existing startup-refusal composition. Native producers can supply their
  * actual host startup; its lifecycle publishes at the Session
  * persistence boundary before attestation, Action and strict CLI consumers. */
@@ -37,13 +51,14 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
     settlementKind: 'returned' | 'nonce';
     sessionId?: string;
     expectedFailureCause?: NonNullable<SessionRuntimeIssueV1['failureCause']>;
+    expectedRetryable?: false;
     publishFailure?: (persist: (mutation: SessionTurnMutationV1) => Promise<void>) => Promise<void>;
 }>) {
     const { preparationCode, settlementKind } = input;
     const home = await mkdtemp(join(tmpdir(), 'happier-native-startup-failure-'));
     const sessionId = input.sessionId ?? 'c1234567890123456789012345';
     const machineId = 'machine-native-startup-failure';
-    const credentials = { token: 'fixture-token', encryption: null } as const;
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'fixture-account' })).toString('base64url')}.signature`, encryption: null } as const;
     let operationSequence = 0;
     const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'fixture-account',
         generateOperationId: () => `native-startup-${++operationSequence}` });
@@ -60,6 +75,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
     let publishedIssue: SessionRuntimeIssueV1 | null = null;
     let publicationFailure: unknown;
     const producerFetch = globalThis.fetch;
+    const producerIo = vi.mocked(io).getMockImplementation();
     const producerServerHttpBaseUrl = resolveServerHttpBaseUrl();
     const producerGet = vi.isMockFunction(axios.get) ? vi.mocked(axios.get).getMockImplementation() : undefined;
     const producerPost = vi.isMockFunction(axios.post) ? vi.mocked(axios.post).getMockImplementation() : undefined;
@@ -76,12 +92,21 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
         input.publishFailure && producerGet && !String(url).startsWith('https://fixture.example.test')
         ? await producerGet(url, options) : String(url).includes('/v1/access-keys/')
         ? { status: 200, data: { accessKey: 'fixture-existing-binding' } }
+        : String(url).endsWith('/v2/account/settings') ? { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } }
+        : String(url).includes(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/`) ? { status: 200, data: {
+            status: 'present', revision: 1, content: { t: 'plain', v: emptyConnectedAccountCatalogRecordV1(
+                ConnectedAccountCatalogKeyV1Schema.parse(String(url).split('/').at(-1))) } } }
+        : String(url).endsWith('/v1/machines/'+machineId) ? { status: 200, data: { machine: {
+            id: machineId, active: true, installationId: 'fixture-installation', kind: 'persistent', storageMode: 'plain',
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
+        } } }
         : String(url).includes('/v2/sessions/') ? { status: 200, data: { session: row } }
             : { status: 200, data: createAccountEncryptionCurrentnessFixture() });
     vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
         if (input.publishFailure && producerPost && !String(url).startsWith('https://fixture.example.test')) {
             return await producerPost(url, body, options);
         }
+        if (String(url).endsWith('/v1/home/governance/get')) return { status: 200, data: { homeDefaults: null } };
         if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: row ? [row] : [] } };
         if (String(url).endsWith(`/sessions/${sessionId}/pending`)) {
             admittedInputs += 1;
@@ -144,11 +169,35 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 ? new SessionTeamCredentialLaunchUnavailableError(preparationCode) : { code: preparationCode }, occurredAt: Date.now(),
         }) : null,
     }) });
+    const machineTransport: NonNullable<Parameters<typeof createCliActionDeps>[0]['machineActionDirectTargetTransport']> = { machineId, invoke: async (method, ...args) => {
+            // This Machine RPC boundary reports the executable whose native
+            // startup is exercised below; readiness and admission stay real.
+            if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+                protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+                    codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+                } },
+            };
+            if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { 'cli.codex': {
+                ok: true, checkedAt: 1, data: { installed: true, version: null, latestVersion: null,
+                    update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+                    platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
+            } } };
+            return await createLocalMachineActionTransportFixture(machineId).invoke(method, ...args);
+        } };
+    bindApiSessionSocketMock(vi.mocked(io), createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
+        if (event !== SOCKET_RPC_EVENTS.CALL || !raw || typeof raw !== 'object'
+            || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) throw new Error('Unexpected Machine RPC envelope');
+        const content = { mode: 'plain' as const };
+        const decoded = await socketRpcCodec.decodeRequestParams(content, raw.params, raw.method);
+        const method = raw.method.slice(raw.method.indexOf(':') + 1);
+        const result = await machineTransport.invoke(method, decoded.params);
+        return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+    } }));
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
         sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {}, serverId: 'fixture-home',
         serverHttpBaseUrl: 'https://fixture.example.test',
         actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
-        machineActionDirectTargetTransport: createLocalMachineActionTransportFixture(machineId),
+        machineActionDirectTargetTransport: machineTransport,
         sessionSpawnDirectTargetTransport: { machineId,
             prepare: async () => ({ ok: true, directory: home, directoryKind: 'managed', directoryCreationRequired: false, checkout: null }),
             spawnedSession: { spawn: async (request, options) => {
@@ -185,7 +234,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 presentUserConfirmation: { actionId: 'session.spawn_new' } })) });
     };
     try {
-        const nonRetryableNativeFailure = preparationCode === 'agent_cli_not_runnable'
+        const nonRetryableNativeFailure = input.expectedRetryable === false || preparationCode === 'agent_cli_not_runnable'
             || preparationCode === 'connected_service_credential_reconnect_required'
             || preparationCode === 'provider_compatibility_unverified';
         const observesCommit = (preparationCode === 'broker_unavailable' || preparationCode === 'opened'
@@ -263,6 +312,8 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 await once(child, 'exit');
             }
         }));
+        if (producerIo) vi.mocked(io).mockImplementation(producerIo);
+        else bindApiSessionSocketMock(vi.mocked(io), createApiSessionSocketStub());
         vi.restoreAllMocks(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests();
         await rm(home, { recursive: true, force: true });
     }

@@ -2,10 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
 import { assertStartupFailureThroughCli } from '@/session/services/createSpawnedSession.startupFailure.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createPublicAcpSession } from './createPublicAcpSession';
+import { createPublicAcpDiagnostic } from './diagnostic';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { createFirstConversationAgentFixture } from '@/daemon/testkit/firstConversationAgent.testkit';
@@ -14,7 +16,10 @@ import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSe
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
-vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async (input: Parameters<typeof startDaemonControlServer>[0]) => {
+vi.mock('@/daemon/controlServer', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/controlServer')>(),
+  // Only listening on the OS socket is replaced; the daemon router stays real.
+  startDaemonControlServer: async (input: Parameters<typeof startDaemonControlServer>[0]) => {
   boundary.control = input;
   return { port: 43129, stop: async () => {} };
 } }));
@@ -71,6 +76,12 @@ it('retains a native ACP authentication refusal through host publication, attest
       }
     `;
     const script = writeAcpTestAgentScript({ dir: directory, fileName: 'native.mjs', source: nativeSource });
+    // An authored Agent declares its executable entrypoint. A raw Node binary
+    // is a runtime, so the real system-tool resolver correctly refuses it.
+    const nativeCli = join(directory, process.platform === 'win32' ? 'native-agent.cmd' : 'native-agent');
+    await writeExecutableScript(nativeCli, process.platform === 'win32'
+      ? '@echo off\r\n"' + process.execPath + '" %*\r\n'
+      : '#!/bin/sh\nexec \'' + process.execPath.replaceAll("'", "'\\''") + '\' "$@"\n');
     const lifetime = new AbortController();
     const publications = createNativeAgentSessionPublications({ agentId: 'acp-start-canary', session: null,
       signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted, supportsInFlightSteer: false });
@@ -97,27 +108,37 @@ it('retains a native ACP authentication refusal through host publication, attest
         await session.dispose();
         throw new Error('Native authentication refusal unexpectedly opened a Session');
       }, error => error);
-      expect(refusal).toMatchObject({ code: -32000, diagnostic: { details: { requestErrorCode: -32000 } } });
+      expect(refusal).toMatchObject({ code: -32000, diagnostic: { details: { requestErrorCode: -32000,
+        v: 1, source: 'auth_error',
+      } } });
       expect(JSON.parse(await readFile(join(directory, 'refused.json'), 'utf8'))).toEqual(['initialize', 'session/new']);
       const home = 'srv_native_start_refusal';
       const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true,
-        createFirstConversationAgentFixture('UNADMITTED_NATIVE_INPUT', { nativeAcp: { source: nativeSource } }), undefined, {
+        createFirstConversationAgentFixture('UNADMITTED_NATIVE_INPUT', {
+          nativeReply: { executableNames: [nativeCli], args: [] }, nativeAcp: { source: nativeSource },
+        }), undefined, {
           externalActionAccountId: 'requester', homeServerIdentityId: home, ordinaryAccountSession: true,
           resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: home, machineId: 'machine' }),
           agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) },
         });
-      await assertStartupFailureThroughCli({ preparationCode: 'agent_startup_rpc_rejected', settlementKind: 'returned',
+      const control = boundary.control;
+      if (!control) throw new Error('Installed daemon control boundary was not started');
+      await assertStartupFailureThroughCli({ preparationCode: 'provider_endpoint_auth_required', settlementKind: 'returned',
+        expectedRetryable: false,
         sessionId: h.sessionId,
-        expectedFailureCause: { phase: 'thread_open', failureReason: 'authentication_required', providerErrorCode: -32000 },
+        // This raw refusal has no declared phase; the shared startup classifier owns it.
+        expectedFailureCause: { phase: 'client_start', failureReason: 'authentication_required', providerErrorCode: -32000 },
         publishFailure: async persist => {
-          const runtime = await runInstalledFirstConversationRuntime({ fixture: h, homeServerIdentityId: home,
+          const runtime = await runInstalledFirstConversationRuntime({ fixture: h, homeServerIdentityId: home, control,
             persistTurnMutation: persist });
           await Promise.race([runtime.failed.promise, runtime.outcome]);
           await runtime.stop();
           await runtime.outcome.catch(() => undefined);
           expect(runtime.assistant).toEqual([]);
           expect(runtime.turns).toContainEqual(expect.objectContaining({ action: 'fail',
-            issue: expect.objectContaining({ code: 'agent_startup_rpc_rejected' }) }));
+            issue: expect.objectContaining({ code: 'provider_endpoint_auth_required', source: 'auth_error',
+              sanitizedPreview: 'Sign in to Conversation fixture or choose a Conversation fixture account.',
+              failureCause: expect.objectContaining({ failureReason: 'authentication_required', providerErrorCode: -32000 }) }) }));
           // A definite native rejection settles without repeating session/new
           // or admitting the initial prompt.
           expect(JSON.parse(await readFile(join(directory, 'host-refused.json'), 'utf8'))).toEqual(['initialize', 'session/new']);
@@ -126,4 +147,15 @@ it('retains a native ACP authentication refusal through host publication, attest
       lifetime.abort(); publications.dispose();
     }
   });
+});
+
+it.each(['authentication', 'thread_open', 'turn'] as const)('retains the shared classifier cause through ACP diagnostics (%s)', phase => {
+  const failureCause = { phase, failureReason: 'authentication_required' as const, providerErrorCode: -32000,
+    providerErrorMessage: 'Authentication required token=synthetic-private-token' };
+  const error = Object.assign(new Error('Authentication required'), { code: -32000, details: { failureCause } });
+  const issue = classifyPrimarySessionRuntimeIssue({ cause: 'status_error', fallbackSource: 'agent_session_error', error });
+  const diagnostic = createPublicAcpDiagnostic('acp_turn_failed', error.message, error);
+  expect(diagnostic.details).toMatchObject({ v: 1, source: issue.source, failureCause: issue.failureCause });
+  expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: diagnostic }).failureCause).toEqual(issue.failureCause);
+  expect(JSON.stringify(diagnostic)).not.toContain('synthetic-private-token');
 });

@@ -3,7 +3,7 @@ import { processIdentityMatches } from '@happier-dev/cli-common/processInstance'
 
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { readAgentStartupFailureCode, readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureCode, readSessionPreparationFailureCode, readSessionRuntimeIssueNativeAuthAgentId } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
@@ -190,13 +190,14 @@ export async function awaitTrackedRunnerAgentSessionOpen(
     try {
       const issue = tracked ? await input.readStartupFailure?.(tracked) : null;
       input.signal?.throwIfAborted();
-      const code = readTeamCredentialLaunchFailureCode(issue?.code) ?? readAgentStartupFailureCode(issue?.code);
+      const nativeAuthCode = issue && readSessionRuntimeIssueNativeAuthAgentId(issue) !== null ? issue.code : null;
+      const code = readTeamCredentialLaunchFailureCode(issue?.code) ?? readAgentStartupFailureCode(issue?.code) ?? nativeAuthCode;
       const isBrokerFailure = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success;
-      const sourceMatches = issue?.source === 'agent_session_error'
+      const sourceMatches = nativeAuthCode !== null || (issue?.source === 'agent_session_error'
         ? !isBrokerFailure || ProviderErrorCodeV1Schema.safeParse(code).success
         : issue?.source === 'team_credential' && isBrokerFailure
           || issue?.source === 'dependency_failure' && !isBrokerFailure
-            && readSessionPreparationFailureCode(code) !== null;
+            && readSessionPreparationFailureCode(code) !== null);
       const runnerStartTimeMs = tracked ? resolveTrackedSessionRunnerIdentity(tracked)?.processStartTimeMs : undefined;
       // A retained failure from an older runner cannot explain this launch.
       if (code && tracked?.happySessionId === sessionId && issue?.scope === 'primary_session'

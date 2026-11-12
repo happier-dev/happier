@@ -48,7 +48,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { extname, isAbsolute, relative, sep } from 'node:path';
 
 import { createAcpBackend, type CreateAcpBackendOptions } from '@/agent/acp/createAcpBackend';
-import { readAcpRequestErrorCode } from '@/agent/acp/withRetry';
 import { readAgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import type { AcpBackend, AcpBackendOptions } from '@/agent/acp/AcpBackend';
@@ -83,7 +82,7 @@ import {
 } from '@/agent/acp/runtime/definition/nativeSessionConfig';
 import { prepareAcpSessionSkills } from '@/agent/acp/runtime/definition/skillsSessionDelivery';
 import { buildScopedProcessEnv, stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
-import { authorizeResolvedAgentNativeExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeResolvedAgentNativeExecLaunchForHost, readAgentNativeLaunchHolderRoleForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { buildAcpToolNameResolverInput, createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import { canonicalizeToolNameV2 } from '@/agent/tools/normalization';
 import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHistory';
@@ -103,7 +102,7 @@ import {
   resolveAdvertisedSessionConfigOptionIds,
 } from '@/agent/acp/sessionSettings/sessionSettingsState';
 
-import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { createPublicAcpDiagnostic as diagnostic } from './diagnostic';
 import { classifyProviderLimitEvidence } from '@/daemon/connectedServices/quotas/normalization';
 import { readConnectedServiceChildSelectionsFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { createPublicAcpPermissionHandler } from './createPublicAcpPermissionHandler';
@@ -256,7 +255,8 @@ export type PublicAcpHostLaunchResolver = (
 ) => PublicAcpHostLaunch | Promise<PublicAcpHostLaunch>;
 type ActiveTurn = {
   turnId: string;
-  inputIds: AgentSessionSendRequest['inputIds'];
+  /** Absent for a turn adopted from a crashed runner: its input was admitted there. */
+  inputIds?: AgentSessionSendRequest['inputIds'];
   delivery: 'newTurn' | 'followUp';
   /** Immutable authority from the exact input that opened this turn. */
   causalPermissionAuthority?: AgentSessionSendRequest['causalPermissionAuthority'];
@@ -346,27 +346,6 @@ function validateGeneratedMediaDescriptors(
   return Object.freeze(descriptors);
 }
 
-function diagnostic(code: string, message?: string, error?: unknown): PluginDiagnosticData {
-  const errorRecord = error && typeof error === 'object' && !Array.isArray(error)
-    ? error as Record<string, unknown> : null;
-  const supplied = AgentRuntimeDiagnosticDataV1Schema.safeParse(errorRecord?.diagnostic);
-  if (supplied.success) return Object.freeze(supplied.data);
-  const requestErrorCode = readAcpRequestErrorCode(error);
-  const issue = error === undefined ? null : classifyPrimarySessionRuntimeIssue({ cause: 'status_error', error });
-  const details = {
-    ...(requestErrorCode !== null ? { requestErrorCode } : {}),
-    ...(issue?.source === 'usage_limit' && issue.usageLimit
-      ? { v: 1, source: 'usage_limit', usageLimit: issue.usageLimit } : {}),
-  };
-  return Object.freeze({
-    code,
-    severity: 'error' as const,
-    // AcpAgentPeer owns redaction and its transport byte budget. The strict
-    // runtime diagnostic has its own existing string bound; preserve its cause.
-    ...(message ? { message: redactBugReportSensitiveText(message).slice(0, AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.descriptionMaxCodeUnits) } : {}),
-    ...(Object.keys(details).length ? { details: AgentRuntimeJsonValueV1Schema.parse(details) } : {}),
-  });
-}
 
 function assertComposerCurrent(dependencies: PublicAcpComposerDependencies): void {
   dependencies.signal.throwIfAborted();
@@ -965,6 +944,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
                 // primary-turn callbacks, extensions, permissions or filesystem effects.
                 replayBackend = createAcpBackend({
                   ...backendOptions,
+                  sessionHolderRole: undefined,
                   extensions: [],
                   providerTurnSource: undefined,
                   providerTurnLifecycle: undefined,
@@ -1410,6 +1390,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           ...(launch.launcherCwd === undefined ? {} : { launcherCwd: launch.launcherCwd }),
           ...(launch.stdinPreamble === undefined ? {} : { stdinPreamble: launch.stdinPreamble }),
           ...(launch.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
+          ...(launch.hostFinalizedLaunch && readAgentNativeLaunchHolderRoleForHost(dependencies.nativeLaunch) === 'primary'
+            ? { sessionHolderRole: 'primary' as const } : {}),
           ...(launch.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
           ...(dependencies.transformAgentChildLaunchEnvironment
             ? {
@@ -2250,7 +2232,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         bufferedMessageFailure = null;
         publish({
           kind: 'input-custody-unknown',
-          inputIds: turn.inputIds,
+          inputIds: sendRequest.inputIds,
           issue: diagnostic(
             admissionFailure ? 'acp_pre_admission_buffer_failed' : 'acp_input_custody_unknown',
             admissionFailure
@@ -2277,7 +2259,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         bufferedMessageFailure = null;
         publish({
           kind: 'input-custody-unknown',
-          inputIds: turn.inputIds,
+          inputIds: sendRequest.inputIds,
           issue: diagnostic(
             'acp_pre_admission_buffer_failed',
             `ACP pre-admission buffer rejected a provider message (${admissionFailure.status}${admissionFailure.status === 'overflow' ? `:${admissionFailure.reason}` : ''})`,
@@ -2298,7 +2280,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         bufferedMessageFailure = null;
         publish({
           kind: 'input-rejected',
-          inputIds: turn.inputIds,
+          inputIds: sendRequest.inputIds,
           diagnostic: diagnostic(
             'acp_input_rejected_before_effect',
             settledResult.error.message,
@@ -2317,7 +2299,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       if (settledResult.kind === 'effect_may_have_occurred') {
         publish({
           kind: 'input-custody-unknown',
-          inputIds: turn.inputIds,
+          inputIds: sendRequest.inputIds,
           issue: diagnostic(
             'acp_input_custody_unknown',
             settledResult.error.message,
@@ -2341,7 +2323,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         // acceptance path before projecting output or a terminal turn failure.
         publish({
           kind: 'input-accepted',
-          inputIds: turn.inputIds,
+          inputIds: sendRequest.inputIds,
           delivery: sendRequest.delivery.kind === 'followUp'
             ? { kind: 'followUp', turnId: turn.turnId }
             : sendRequest.delivery,
@@ -2595,6 +2577,18 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     catalogs.open();
     await backendMessageProjectionTail;
     publish({ kind: 'provider-session-id', providerSessionId: opened.sessionId });
+    // A respawned runner adopted an Agent still answering the previous runner's
+    // prompt. Like every backend, it surfaces as a provider-started turn; the
+    // host's turn invariant maps it onto the Session turn that runner admitted.
+    if (request.kind === 'resume' && backend.hasResumedHeldPrompt() && !activeTurn) {
+      const turn: ActiveTurn = { turnId: randomUUID(), delivery: 'newTurn', cancelCause: null,
+        submissionSettled: true, assistantSegmentText: '', lastModelOutputText: '', providerCheckpoint: null,
+        providerCheckpointAmbiguous: false };
+      activeTurn = turn;
+      emittedToolCallIds = new Map();
+      publish({ kind: 'turn-start', turnId: turn.turnId, startedBy: 'provider' });
+      observeTurnCompletion(turn);
+    }
     return session;
   } catch (error) {
     dependencies.signal.removeEventListener('abort', disposeOnAbort);

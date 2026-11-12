@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { onTestFinished, vi } from 'vitest';
 import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { createDaemonControlApp, type startDaemonControlServer } from '@/daemon/controlServer';
+import * as daemonControlHttp from '@/daemon/controlHttp';
 import type { notifyDaemonConnectedServiceTurnLifecycle } from '@/daemon/controlClient';
 import { ConnectedServiceTurnLifecycleResultSchema } from '@/daemon/connectedServices/connectedServiceTurnLifecycleContract';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
@@ -48,19 +49,23 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
   await writeSessionMarker({ pid: h.runner.pid, happySessionId: h.sessionId, startedBy: 'daemon', cwd: h.cwd,
     processStartTimeMs: h.runner.processStartTimeMs, processCommandHash: h.runner.processCommandHash,
     runnerAgentSourceCustodyV1: h.retainedAgent.sourceCustody, agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath });
-  const homeFetch = globalThis.fetch;
+  const readDaemonHttp = daemonControlHttp.readDaemonControlHttpResponse;
   const app = input.control ? createDaemonControlApp({ ...input.control, controlToken: 'first-conversation-control' }) : null;
   if (app) onTestFinished(() => app.close());
-  vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    if (new URL(String(url)).pathname !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) return await homeFetch(url, init);
-    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+  // Daemon control HTTP owns its Undici client, independently of global fetch.
+  // Replace only that network boundary; decoding, route admission and dispatch stay real.
+  vi.spyOn(daemonControlHttp, 'readDaemonControlHttpResponse').mockImplementation(async params => {
+    if (params.path !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) return await readDaemonHttp(params);
+    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(params.body);
     await input.beforeDaemonHttpRequest?.(request.operation);
     if (!app) {
-      return Response.json(await h.dispatch(request.operation, request.context.executionRunSnapshotId));
+      const result = await h.dispatch(request.operation, request.context.executionRunSnapshotId);
+      return { ok: true, status: 200, body: JSON.stringify(result) };
     }
-    const response = await app.inject({ method: 'POST', url: AGENT_RUNTIME_DAEMON_SERVICES_PATH,
-      headers: Object.fromEntries(new Headers(init?.headers)), payload: String(init?.body) });
-    return new Response(response.body, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+    const response = await app.inject({ method: 'POST', url: params.path,
+      headers: params.headers, payload: params.body });
+    return { ok: response.statusCode >= 200 && response.statusCode < 300,
+      status: response.statusCode, body: response.body };
   });
   const source = await createRunnerAgentSessionRuntimeSource({ happyHomeDir: h.f.directory, publicReleaseRing: configuration.publicReleaseRing,
     authorityFilePath, expectedSessionId: h.sessionId });
