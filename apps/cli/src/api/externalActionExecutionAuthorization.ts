@@ -21,7 +21,7 @@ import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happi
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
-import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1,
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1,
   isDeploymentDomainChildActionIdV1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
@@ -691,6 +691,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || actionId === 'deployments.prepare' || actionId === 'deployments.publish.prepare'
     || actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
     || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
+    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
     || actionId === 'deployments.targets.link' && input !== null && typeof input === 'object' && !('contentArtifactId' in input)
     || isDeploymentReceiptObservationActionIdV1(actionId)
     || isDeploymentReadActionIdV1(actionId)

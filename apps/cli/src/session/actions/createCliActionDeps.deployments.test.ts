@@ -1,3 +1,4 @@
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import axios from 'axios';
 import { createHash, randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -283,7 +284,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
   });
 
   it.each(['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown',
-    'deployments.targets.link', 'deployments.health.read', 'deployments.drift.read', 'deployments.logs.read'] as const)(
+    'deployments.targets.link', 'deployments.bindings.set', 'deployments.health.read', 'deployments.drift.read', 'deployments.logs.read'] as const)(
     'relays %s unchanged to its exact Machine with Home admission and no originating storage mutation', async actionId => {
       const isRead = actionId.endsWith('.read');
       const accountToken = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-account', tokenEpoch: 7,
@@ -304,6 +305,9 @@ describe('Deployment Actions through the default CLI Account front door', () => 
           target: { kind: 'account' as const, account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
           providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' },
           providerEnvironment: { kind: 'production' as const } } }
+        : actionId === 'deployments.bindings.set' ? { serverId: 'deployment-home', environmentId: 'staging',
+          expectedRevision: 1, set: [{ purpose: 'dataRole' as const, service: 'database', role: 'readOnlyPassword' as const,
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('read-role'), resourceRevision: 1 } }], remove: [] }
         : isRead ? { serverId: 'deployment-home', environmentId: 'staging', deploymentId: 'selected-receipt',
         targetLinkId: 'target-link', machineId: controller.id, installationId: controller.installationId,
         ...(actionId === 'deployments.logs.read' ? { kind: 'build' as const } : { service }),
@@ -316,6 +320,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
         ...(actionId === 'deployments.teardown' ? { reason: 'manual' as const } : {}) };
       const result = actionId === 'deployments.targets.link' ? { ok: true, environmentId: 'staging', revision: 2,
         targetLinkId: 'linked-target', targetLinkRevision: 1 }
+        : actionId === 'deployments.bindings.set' ? { ok: true, environmentId: 'staging', revision: 2 }
         : isRead ? { ok: false, error: 'deployment_unavailable' }
         : { ok: true, environmentId: 'staging', revision: 2, deploymentId: 'accepted-receipt', deploymentRevision: 1, state: 'succeeded' };
       // Only Home HTTP is substituted: factory admission, routing, envelope digest,
@@ -332,7 +337,9 @@ describe('Deployment Actions through the default CLI Account front door', () => 
         throw new Error(`Unexpected Home read: ${url}`);
       });
       const events: string[] = [];
+      const boundaryErrors: unknown[] = [];
       const transport = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        try {
         const prepared = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
         expect(prepared.envelope).toEqual({ v: 1, requestId: 'relay-request', target: { kind: 'machine', machineId: controller.id }, input });
         if (String(url).endsWith('/execution-authorization')) {
@@ -343,7 +350,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
             installationId: controller.installationId, actionId, requestId: 'relay-request', target: prepared.envelope.target,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(prepared.envelope),
             ...(isRead ? { deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) } : {}),
-            ...(actionId === 'deployments.teardown' ? { environmentId: environment.id } : isRead || actionId === 'deployments.targets.link' ? {}
+            ...(actionId === 'deployments.teardown' || actionId === 'deployments.bindings.set' ? { environmentId: environment.id } : isRead || actionId === 'deployments.targets.link' || actionId === 'deployments.bindings.set' ? {}
               : { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'deployment-account',
                 serverIdentityId: 'srv_deployment_home', actionId, requestId: 'relay-request',
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(prepared.envelope), environmentId: environment.id,
@@ -355,12 +362,15 @@ describe('Deployment Actions through the default CLI Account front door', () => 
         expect(prepared.executionAuthorization?.requesterAccountContext).toBeDefined();
         events.push('dispatch');
         return { status: 200, data: { v: 1, actionId, requestId: 'relay-request', execution: { ok: true, result } } };
+        } catch (error) { boundaryErrors.push(error); throw error; }
       });
       const deps = createCliActionDeps({ token: accountToken, credentials: { token: accountToken, encryption: null },
         sessionId: 'deployment-session', mode: 'plain', ctx: null, serverId: 'deployment-home',
         serverIdentityId: 'srv_deployment_home', serverHttpBaseUrl: 'https://deployment-home.test' });
-      expect(await deps.deploymentAction!(actionId, input, { surface: 'ui', authority: 'present_user',
-        actionCaller: { kind: 'host' }, actionRequestId: 'relay-request', runtimeAccountId: 'deployment-account' })).toEqual(result);
+      const actual = await deps.deploymentAction!(actionId, input, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' }, actionRequestId: 'relay-request', runtimeAccountId: 'deployment-account' });
+      expect(boundaryErrors).toEqual([]);
+      expect(actual).toEqual(result);
       expect(events).toEqual(['authorize', 'dispatch']);
       expect(storage).toHaveBeenCalledTimes(1);
       expect(transport).toHaveBeenCalledTimes(2);

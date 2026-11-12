@@ -10,8 +10,7 @@ const refuse = (code: string): never => { throw Object.assign(new Error(code), {
 
 /** Template provenance supplies the logical data identity; the runtime owner below
  * proves that this exact declaration is the current admitted native service. */
-export function resolveOwnServerDataQueryDefinitionForHost(content: DeploymentEnvironmentContentV1, service: string,
-    runtimeBindings: readonly EnvironmentSecretBindingV1[] = content.bindings) {
+export function resolveOwnServerDataServiceDeclarationForHost(content: DeploymentEnvironmentContentV1, service: string) {
     const template = content.template;
     const candidates = template?.data?.filter(row => row.service === service) ?? [];
     if (!template?.services.includes(service) || candidates.length !== 1) return refuse('target_mismatch');
@@ -19,6 +18,12 @@ export function resolveOwnServerDataQueryDefinitionForHost(content: DeploymentEn
     const engine = data.engine === 'postgres' ? 'postgresql' : data.engine;
     if (engine !== 'postgresql' && engine !== 'mysql' && engine !== 'mariadb') return refuse('unsupported_action');
     assertOwnServerDataQuerySupportedEngine(engine);
+    return { engine, data };
+}
+
+export function resolveOwnServerDataQueryDefinitionForHost(content: DeploymentEnvironmentContentV1, service: string,
+    runtimeBindings: readonly EnvironmentSecretBindingV1[] = content.bindings) {
+    const { engine, data } = resolveOwnServerDataServiceDeclarationForHost(content, service);
     const key = data.variables?.database ?? data.logicalBackup?.database;
     const binding = key ? runtimeBindings.find(row => row.purpose === 'variable' && row.phase === 'runtime' && row.name === key) : undefined;
     if (binding?.purpose !== 'variable' || binding.source.kind !== 'value' || !binding.source.value) return refuse('deployment_invalid');

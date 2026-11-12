@@ -50,6 +50,7 @@ afterEach(async () => {
 });
 
 it.each([
+    { placementChange: false, mode: 'plain' as const, external: false, ownDataRole: true, name: 'refuses read-role setup without an active deployment before acquiring its password' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, name: 'authors plain backup credential references before any target exists' },
     { placementChange: false, mode: 'e2ee' as const, external: false, preTarget: true, name: 'authors E2EE backup credential references before any target exists' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, preTargetWithBuilder: true,
@@ -74,8 +75,9 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole }) => {
     const detail = createDeploymentEnvironmentDetailV1();
+    if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
         document: 'services: {app: {image: "example/app:1"}, database: {image: "postgres:17", volumes: ["data:/var/lib/postgresql/data"]}}\nvolumes: {data: {}}',
         profiles: [], services: ['app', 'database'] });
@@ -139,7 +141,8 @@ it.each([
             source: { kind: 'secret', ref, resourceRevision: 1 } },
     ] : [];
     if (atomicMove) detail.content.bindings = operational;
-    const bindings: EnvironmentSecretBindingV1[] = managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: 'readOnlyPassword',
+    const bindings: EnvironmentSecretBindingV1[] = ownDataRole ? [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } }] : managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: 'readOnlyPassword',
             source: { kind: 'secret', ref, resourceRevision: 1 } }]
         : preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
             role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
@@ -333,6 +336,14 @@ it.each([
         const daemon = createDaemonDeploymentActionDeps({
             resolveRequesterIdentity: async () => requesterIdentity,
             ...host, runtime });
+        if (ownDataRole) {
+            const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
+                environmentId: environment.id, expectedRevision: environment.revision, set: bindings, remove: [] }, {});
+            expect(result).toMatchObject({ ok: false, errorCode: 'service_unavailable' });
+            expect(materialReads).toBe(0);
+            expect(writes).toHaveLength(0);
+            return;
+        }
         if (missingCustody) {
             const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
                 environmentId: environment.id, expectedRevision: environment.revision, set: bindings, remove: [] }, replayContext);
@@ -526,7 +537,8 @@ it.each([
             ];
             for (const binding of unadmitted) {
                 put('candidate', { ...content, bindings: [...bindings, binding] });
-                expect(await prepare({ input, context: {} })).toMatchObject({ ok: false, errorCode: 'secret_missing' });
+                expect(await prepare({ input, context: {} })).toMatchObject({ ok: false,
+                    errorCode: binding.purpose === 'dataRole' && 'service' in binding ? 'target_mismatch' : 'secret_missing' });
                 expect(materialReads).toBe(beforeIncomplete);
                 expect(writes).toHaveLength(beforeIncompleteWrites);
             }

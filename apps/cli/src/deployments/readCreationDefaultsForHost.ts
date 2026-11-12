@@ -1,6 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { ProjectDeploymentDefaultsOutputV1Schema, ProjectDeploymentDefaultsPayloadV1Schema,
-    type ActionExecutorContext,
+    type ActionExecutorContext, type DeploymentEnvironmentGetResultV1, type DeploymentEnvironmentUpdateInputV1,
     type DeploymentTemplateInstantiationReviewV1 } from '@happier-dev/protocol';
 import type { ProjectSourceOwnerV1, ProjectSourcesCreateInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { resolveDeploymentCreationDefaultsV1, type DeploymentCreationDefaultsInputV1 } from '@happier-dev/deployments';
@@ -8,6 +8,7 @@ import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-proto
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
@@ -16,7 +17,8 @@ const refuse = (failure: string | ActionExecuteFailure): never => {
 export type DeploymentCreationDefaultInputsForHost = Pick<DeploymentCreationDefaultsInputV1, 'projectDefaults' | 'account'> & Readonly<{
     reviewBasis?: DeploymentTemplateInstantiationReviewV1['creationDefaultsBasis'];
 }>;
-type CreationPreparationActionId = 'deployments.templates.instantiate' | 'deployments.publish.prepare' | 'deployments.environments.create';
+type CreationPreparationActionId = 'deployments.templates.instantiate' | 'deployments.publish.prepare' | 'deployments.environments.create' | 'deployments.environments.update'
+    | typeof DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
 export type DeploymentCreationDefaultRequestForHost = Readonly<{
     projectSourceId?: string; sourceRevision?: number; projectOwner: ProjectSourceOwnerV1; context: ActionExecutorContext;
     actionId?: CreationPreparationActionId;
@@ -30,6 +32,26 @@ type CreationDefaultsHost = Readonly<{
     open(artifactId: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     readAccountSnapshot(): ActiveAccountSettingsSnapshot | null | Promise<ActiveAccountSettingsSnapshot | null>;
 }>;
+
+/** Environment previews resolve private defaults at the same owner as creation. */
+export async function prepareDeploymentEnvironmentDefaultsForHost(request: Readonly<{
+    input: DeploymentEnvironmentUpdateInputV1;
+    environment: Extract<DeploymentEnvironmentGetResultV1, { ok: true }>;
+    context: ActionExecutorContext;
+}>, host: CreationDefaultsHost) {
+    const { environment, targetLinks } = request.environment;
+    if (environment.revision !== request.input.expectedRevision) return refuse('deployment_conflict');
+    const runtime = targetLinks.find(link => link.id === environment.runtimeTargetLinkId);
+    const target = runtime?.source.kind === 'plugin'
+        ? { kind: 'platform' as const, creatingMachineId: environment.controllerMachineId }
+        : { kind: 'ownServer' as const, machines: runtime?.machines ?? [] };
+    const defaults = await prepareDeploymentCreationDefaultsForHost({
+        projectSourceId: environment.projectSourceId, actionId: 'deployments.environments.update',
+        context: request.context, explicit: request.input.creationDefaults, target,
+    }, host);
+    return { ok: true as const, environmentId: environment.id, revision: environment.revision,
+        creationDefaults: { values: defaults.values, sources: defaults.sources } };
+}
 
 /** One-shot creation preparation. Review retains values, never a pointer to future defaults. */
 export async function prepareDeploymentCreationDefaultsForHost(request: Readonly<{

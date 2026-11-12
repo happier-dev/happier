@@ -1,3 +1,6 @@
+import { createOwnServerDataRoleBindingsForHost } from './targets/ownServer/dataRoleBindings';
+import { createDomainDnsActionsForHost } from './targets/domainDnsActionsForHost';
+import { isDeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { projectDeploymentFailure } from './deploymentFailure';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -125,7 +128,7 @@ import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { createPlatformVariablesForHost } from './targets/platformVariablesForHost';
 import { readDeploymentObservationForHost } from './readObservationForHost';
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
-import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost,
+import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost, prepareDeploymentEnvironmentDefaultsForHost,
     type DeploymentCreationDefaultRequestForHost } from './readCreationDefaultsForHost';
 import { createPrepareEnvironmentCreateForHost, resolveEnvironmentCreateCopyForHost,
     resolveEnvironmentCreatePreviewForHost } from './prepareEnvironmentCreateForHost';
@@ -905,6 +908,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     };
     const platformVariables = createPlatformVariablesForHost({ withTargetRole: contributedTarget.withTargetRole,
         readEnvironment: targetHostReaders.readEnvironment });
+    const dataRoleBindings = createOwnServerDataRoleBindingsForHost({ ...targetHost, open, sendChild,
+        assertCurrent: assertHttpAuthority, ensureServiceObservations: host.ensureServiceObservations });
     const storageDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
         admitAccount: async (serverId, context) => {
             if (serverId !== host.serverId) return failure('server_scope_mismatch');
@@ -913,7 +918,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         resolveRequestHeaders: headers,
         prepareEnvironment: createPrepareEnvironmentContentForHost({ ...host, accountArtifacts: artifacts, resolveRequestHeaders: headers,
             listEnvironments: (input, context) => storage('deployments.environments.list', input, context) }),
-        prepareBindings: createPrepareDeploymentBindingsForHost({ ...host, resolveRequestHeaders: headers, preparePlatformBindings: platformVariables.sync }),
+        prepareBindings: createPrepareDeploymentBindingsForHost({ ...host, resolveRequestHeaders: headers, preparePlatformBindings: platformVariables.sync,
+            prepareDataRoleBindings: dataRoleBindings.prepare }),
         async admitTeardown(input: DeploymentTeardownInputV1, context: ActionExecutorContext) {
             const dataAdmission = await dataTeardown.admit(input, context);
             if (dataAdmission) return 'errorCode' in dataAdmission ? dataAdmission : null;
@@ -999,6 +1005,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         persistPreparedContent: createOwnServerDomainContentWriter({ serverId: host.serverId,
             serverHttpBaseUrl: host.serverHttpBaseUrl, artifacts, headers }) };
     const prepareContributedDomain = createContributedDomainActionsForHost({ ...domainHost, artifacts, target: contributedTarget });
+    const domainDnsActions = createDomainDnsActionsForHost(domainHost);
     const domainActions = createOwnServerDomainActions({ ...domainHost, retireProviderDomain: prepareContributedDomain.retire });
     const readRepositoryWorkspaceRows: CliAdmittedProjectRowsReader = (selection, signal, context, effectActionId) => atHome(() =>
         readProjectAccountRows(context?.externalActionExecutionAuthorization
@@ -1069,6 +1076,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const domainNative = createOwnServerDomainNative({ ...host, open, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt });
     const deploymentChild = createDaemonDeploymentChildExecutor(targetHost, { target, open, storage, assertCurrent, domainNative,
         snapshot: nativeSnapshot.executeChild,
+        dataRole: dataRoleBindings.executeChild,
         teardown: ownServerTeardown.executeNative,
         prepareCandidate: (request): Promise<DaemonDeploymentCandidateResult> => deps.prepareDeployCandidate(request) });
     const nativeReads = createOwnServerDeploymentReads({ ...targetHost, readEnvironmentMetadata,
@@ -1560,6 +1568,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     return link.source.kind === 'plugin' ? contributedTarget.prepareLogs({ input: input.data, context: request.context }) : null;
                 } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
+            if (isDeploymentDomainDnsActionIdV1(request.actionId)) {
+                try { return await domainDnsActions(request); }
+                catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+            }
             if (isDeploymentDomainChildActionIdV1(request.actionId)) {
                 try { return await prepareContributedDomain(request) ?? await prepareOwnServerDomainReviewedChildren(request, { storage, open, dispatch: sendChild,
                     readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation }); }
@@ -1742,6 +1754,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
                 return selected.success ? readCurrentHealth(selected.data, context) : failure('invalid_parameters');
             }
+            if (isDeploymentDomainDnsActionIdV1(actionId)) {
+                try {
+                    const result = await domainDnsActions.execute(actionId, input, context);
+                    return result ? result.ok ? DeploymentActionOutputSchemasV1[actionId].parse(result.result) : result : failure('action_forbidden');
+                } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+            }
             if (isDeploymentDomainChildActionIdV1(actionId)) {
                 const provider = await prepareContributedDomain.execute(actionId, input, context);
                 const result = provider ? provider.ok ? DeploymentActionOutputSchemasV1[actionId].parse(provider.result) : provider
@@ -1816,8 +1834,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     if (!selected.success) return failure('invalid_parameters');
                     const request = selected.data;
                     const detail = await readEnvironmentMetadata({ environmentId: request.environmentId, context });
-                    if (detail.environment.revision !== request.expectedRevision) return failure('deployment_conflict');
                     if (request.patch?.previewTemplate) {
+                        if (detail.environment.revision !== request.expectedRevision) return failure('deployment_conflict');
                         const runtime = detail.targetLinks.find(link => link.id === request.patch!.previewTemplate!.runtimeTargetLinkId);
                         const forkEligibility = await preparePreviewForkEligibilityForHost({ serverId: request.serverId,
                             protection: detail.environment.protection,
@@ -1825,14 +1843,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             input => storage('deployments.environments.list', input, context));
                         return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, forkEligibility };
                     }
-                    const runtime = detail.targetLinks.find(link => link.id === detail.environment.runtimeTargetLinkId);
-                    const target = runtime?.source.kind === 'plugin'
-                        ? { kind: 'platform' as const, creatingMachineId: detail.environment.controllerMachineId }
-                        : { kind: 'ownServer' as const, machines: runtime?.machines ?? [] };
                     const defaultsHost = atHome(() => creationDefaultsHost(context));
-                    const defaults = await atHome(() => prepareDeploymentCreationDefaultsForHost({
-                        projectSourceId: detail.environment.projectSourceId, actionId, context,
-                        explicit: request.creationDefaults, target,
+                    const preview = await atHome(() => prepareDeploymentEnvironmentDefaultsForHost({
+                        input: request, environment: detail, context,
                     }, defaultsHost));
                     const backupSourceChoices = request.defaultsFor === 'backups' ? await atHome(async () => {
                         if (!host.runtime.prepareBackupSourceChoices) throw new PluginError({ code: 'unsupported_action',
@@ -1842,8 +1855,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         });
                         return host.runtime.prepareBackupSourceChoices({ environment, context });
                     }) : undefined;
-                    return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
-                        creationDefaults: { values: defaults.values, sources: defaults.sources },
+                    return { ...preview,
                         ...(backupSourceChoices ? { backupSourceChoices } : {}) };
                 } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
