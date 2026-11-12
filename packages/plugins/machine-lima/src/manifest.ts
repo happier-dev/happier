@@ -4,6 +4,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
   observeMachineProvisionerNativeRead,
+  projectMachineProvisionerActionFailure,
   defineMachineProvisionerSchemas,
   defineMachineProvisionerReconciliationSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -122,11 +123,13 @@ export const LIMA_PLUGIN = definePlugin({
       async run(_input, context) {
         try { return machineCheckPresentation(await (await provider(context)).check()); }
         catch (error) {
-          const code = errorCode(error);
-          // The missing executable is a prerequisite, so the picker treats it like every other tool that isn't installed.
-          return machineCheckPresentation({ available: false, code, ...(code === 'lima_unavailable' ? { prerequisites: [{
-            requirement: { kind: 'managedDependency' as const, id: { pluginId: LIMA_PLUGIN_ID, localId: LIMA_DEPENDENCY_ID } },
-            status: 'unavailable' as const }] } : {}) });
+          return projectMachineProvisionerActionFailure(error, () => {
+            const code = errorCode(error);
+            // The missing executable is a prerequisite, so the picker treats it like every other tool that isn't installed.
+            return machineCheckPresentation({ available: false, code, ...(code === 'lima_unavailable' ? { prerequisites: [{
+              requirement: { kind: 'managedDependency' as const, id: { pluginId: LIMA_PLUGIN_ID, localId: LIMA_DEPENDENCY_ID } },
+              status: 'unavailable' as const }] } : {}) });
+          });
         }
       },
     },
@@ -144,6 +147,7 @@ export const LIMA_PLUGIN = definePlugin({
         { path: 'cpus', title: 'CPU cores', widget: 'integer', required: true },
         { path: 'memoryGiB', title: 'Memory (GiB)', widget: 'integer', required: true },
         { path: 'diskGiB', title: 'Disk (GiB)', widget: 'integer', required: true },
+        { path: 'mounts', title: 'Mounts', widget: 'json', defaultValue: [] },
       ] },
       async run(input, context) { return (await provider(context)).options(input); },
     },
@@ -153,9 +157,9 @@ export const LIMA_PLUGIN = definePlugin({
       inputSchema: LIMA_ROLE_SCHEMAS.acquireInput, resultSchema: LIMA_RECONCILIATION_SCHEMAS.result,
       async run(input, context) {
         try { return await (await provider(context)).acquire(input); }
-        catch (error) { return { kind: 'unknown' as const,
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const,
           recovery: { reference: input.managedId === undefined ? input.launch.store
-            : `${input.launch.store}/${limaAcquisitionResource(input.launch, input.managedId).instance}`, reason: errorCode(error) } }; }
+            : `${input.launch.store}/${limaAcquisitionResource(input.launch, input.managedId).instance}`, reason: errorCode(error) } })); }
       },
     },
     reconcile: {
@@ -178,7 +182,8 @@ export const LIMA_PLUGIN = definePlugin({
       inputSchema: LIMA_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).inspect(input.resource); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error,
+          () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) })); }
       },
     },
     resize: {
@@ -187,7 +192,7 @@ export const LIMA_PLUGIN = definePlugin({
       inputSchema: LIMA_ROLE_SCHEMAS.resizeInput, resultSchema: MachineProvisionerResizeResultV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).resize(input.resource, input.size); }
-        catch (error) { return { kind: 'refused' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'refused' as const, code: errorCode(error) })); }
       },
     },
     power: {
@@ -197,7 +202,7 @@ export const LIMA_PLUGIN = definePlugin({
       async run(input, context) {
         if (input.intent !== 'start' && input.intent !== 'stop') return { kind: 'refused' as const, code: 'LIMA_UNSUPPORTED_INTENT' };
         try { return await (await provider(context)).power(input.resource, input.intent); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
     destroy: {
@@ -206,7 +211,7 @@ export const LIMA_PLUGIN = definePlugin({
       inputSchema: LIMA_RECONCILIATION_SCHEMAS.destroyInput, resultSchema: LIMA_RECONCILIATION_SCHEMAS.destroyResult,
       async run(input, context) {
         try { return await (await provider(context)).destroy('resource' in input ? input.resource : input.nativeOperation); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
     exec: {
@@ -233,9 +238,11 @@ export const LIMA_PLUGIN = definePlugin({
             input.mode === undefined ? undefined : `0${input.mode.toString(8).padStart(3, '0')}`);
           return result.kind === 'written' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const };
         } catch (error) {
-          const code = errorCode(error);
-          return { kind: code === 'invalid_request' || code === 'LIMA_INVALID_PATH' || code === 'resource_mismatch'
-            ? 'refused' as const : 'unknown' as const, code };
+          return projectMachineProvisionerActionFailure(error, () => {
+            const code = errorCode(error);
+            return { kind: code === 'invalid_request' || code === 'LIMA_INVALID_PATH' || code === 'resource_mismatch'
+              ? 'refused' as const : 'unknown' as const, code };
+          });
         }
       },
     },

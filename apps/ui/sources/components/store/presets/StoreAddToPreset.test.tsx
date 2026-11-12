@@ -67,7 +67,7 @@ it('starts a new preset from the door with the picked item already in it, and Ca
     await back.unmount();
 });
 
-it('chooses a local provider and saves the carried Software without a controller or acquisition reads', async () => {
+it('saves and reads back the carried Software with the exact Lima #131 fields and no mounts edit', async () => {
     const { LIMA_PLUGIN } = await import('../../../../../../packages/plugins/machine-lima/src/manifest');
     const { DEVCONTAINER_PLUGIN } = await import('../../../../../../packages/plugins/devcontainer/src/manifest');
     const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
@@ -88,9 +88,12 @@ it('chooses a local provider and saves the carried Software without a controller
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
     const { buildQualifiedPluginContributionKey } = await import('@happier-dev/protocol/plugins/contribution-identity');
+    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetV1Schema, PresetMutationResultV1Schema } =
+        await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
     const descriptor = manifest.contributes.machineProvisioners[0]!;
     const provisioner = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: descriptor.id });
     const onReturn = vi.fn();
+    let saved: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | null = null;
     const runtime = await import('@/utils/system/runtimeFetch');
     const runtimeHost = vi.spyOn(runtime, 'readRuntimeFetchHost');
     onTestFinished(() => runtimeHost.mockRestore());
@@ -105,8 +108,8 @@ it('chooses a local provider and saves the carried Software without a controller
         await waitForHomeGovernance(() => expect(setup(), screen.getTextContent()).toMatchObject({ items: [item] }));
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:store')).not.toBeNull());
         expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
-        for (const [field, value] of Object.entries({ store: '/srv/lima', image: 'https://images.example.test/linux.qcow2',
-            cpus: '2', memoryGiB: '4', diskGiB: '20', mounts: '[]' })) {
+        for (const [field, value] of Object.entries({ store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
+            cpus: '4', memoryGiB: '4', diskGiB: '100' })) {
             await act(async () => screen.changeTextByTestId(`managed-config.field:${field}`, value));
         }
         // Enum fields use the production field-selection contract, just like a press in their menu.
@@ -114,19 +117,35 @@ it('chooses a local provider and saves the carried Software without a controller
         const form = screen.tree.findAllByType(ActionInputFields)[0]!;
         await act(async () => form.props.onPatch({ arch: 'x86_64', vmType: 'qemu' }));
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false));
-        home.answer(serverId, '/v1/machines/presets/create', { select: input => ({ body: { kind: 'saved', preset: { ...input,
-            homeId: 'srv_recipes', revision: 1 } } }) });
+        expect(form.props.input.mounts).toEqual([]);
+        home.answer(serverId, '/v1/machines/presets/create', { select: value => {
+            const input = ManagedMachinePresetCreateInputV1Schema.parse(value);
+            saved = ManagedMachinePresetV1Schema.parse({ ...input, revision: 1 });
+            return { body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: saved }) };
+        } });
         await act(async () => screen.pressByTestId('managed-config.create'));
         await waitForHomeGovernance(() => expect(onReturn).toHaveBeenCalledTimes(1));
         expect(home.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({
             setup: { items: [item] }, launch: { provider: { pluginId: manifest.id, localId: descriptor.id },
-                choices: { store: '/srv/lima', arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 4, diskGiB: 20, mounts: [] } },
+                choices: { store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
+                    arch: 'x86_64', vmType: 'qemu', cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] } },
         });
         expect(runtimeHost).not.toHaveBeenCalled();
         expect(routerPush).not.toHaveBeenCalled();
         expect(home.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
         expect(home.requestsFor('/v4/connect/qualified/accounts')).toHaveLength(0);
     } finally { await screen.unmount(); }
+
+    if (!saved) throw new Error('Expected persisted Lima preset');
+    home.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+    const { createMachinePresetCollectionClient } = await import('@/sync/ops/machines/machinePresetCollectionClient');
+    const readBack = await createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_recipes')
+        .read('machines.presets.get', { homeId: 'srv_recipes', id: saved.id });
+    if (readBack.kind !== 'succeeded' || readBack.value.kind !== 'found') throw new Error('Expected persisted Lima preset readback');
+    expect(readBack.value.preset.launch?.choices).toMatchObject({ store: '/home/happier/.lima',
+        image: 'https://images.example.test/lima.qcow2', arch: 'x86_64', vmType: 'qemu',
+        cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] });
+    expect(home.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
 
     // A second local descriptor takes the same authoring path; its native review digest is never a user field.
     const container = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);

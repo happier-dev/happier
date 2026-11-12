@@ -367,6 +367,83 @@ describe('mounted managed configurator', () => {
       expect(nativeBoundary.rpc).not.toHaveBeenCalled();
     } finally { await screen.unmount(); }
   });
+
+  it('saves and reads back exact Lima #131 fields from the Machines new-preset editor without a mounts edit', async () => {
+    const { LIMA_PLUGIN } = await import('../../../../../../../packages/plugins/machine-lima/src/manifest');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(LIMA_PLUGIN.manifest);
+    onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+      packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima Machines', hasMachineProvisioners: true,
+      entriesById: {}, normalizedManifest: manifest }]));
+    const serverId = await harness.addHome({ name: 'Lima preset', serverUrl: 'https://lima-replay131.example.test',
+      serverIdentityId: 'srv_lima_replay131', accountId: 'owner', currentAccount: true });
+    const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
+    replacePluginAccountAvailabilityProjection({ scope,
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
+      id: defaultController.machineId, installationId: defaultController.installationId,
+    })]);
+    const declarations = await readPluginAccountAvailability(scope)
+      .ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+    if (declarations.kind !== 'available') throw new Error('Expected Lima provisioner declaration');
+    const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
+    const selected = projectAccountManagedProvisioners(declarations.declarations)
+      .find(row => row.contribution.pluginId === manifest.id);
+    if (!selected) throw new Error('Expected real Lima provisioner');
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId: request.actionId, requestId: request.requestId,
+        execution: { ok: true, result: { provisioners: [selected] } } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetV1Schema, PresetMutationResultV1Schema } =
+      await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    let saved: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | null = null;
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetOnly initialController={defaultController} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:store'), screen.getTextContent()).not.toBeNull());
+      for (const [field, value] of Object.entries({ store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
+        cpus: '4', memoryGiB: '4', diskGiB: '100' })) {
+        await act(async () => screen.changeTextByTestId(`managed-config.field:${field}`, value));
+      }
+      const form = screen.tree.findAllByType(ActionInputFields)[0]!;
+      await act(async () => form.props.onPatch({ arch: 'x86_64', vmType: 'qemu' }));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false));
+      expect(form.props.input.mounts).toEqual([]);
+      harness.answer(serverId, '/v1/machines/presets/create', { select: value => {
+        const input = ManagedMachinePresetCreateInputV1Schema.parse(value);
+        const persisted = ManagedMachinePresetV1Schema.parse({ ...input, revision: 1 });
+        saved = persisted;
+        return { body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: persisted }) };
+      } });
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
+      const request = ManagedMachinePresetCreateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/create')[0]?.input);
+      expect(request).toMatchObject({ controller: defaultController, launch: { provider: selected.contribution,
+        choices: { store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
+          arch: 'x86_64', vmType: 'qemu', cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] } } });
+      await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
+    } finally { await screen.unmount(); }
+    if (!saved) throw new Error('Expected persisted Lima preset');
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+    const { createMachinePresetCollectionClient } = await import('@/sync/ops/machines/machinePresetCollectionClient');
+    const readBack = await createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_lima_replay131')
+      .read('machines.presets.get', { homeId: 'srv_lima_replay131', id: saved.id });
+    if (readBack.kind !== 'succeeded' || readBack.value.kind !== 'found') throw new Error('Expected persisted Lima preset readback');
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
+    expect(readBack.value.preset).toMatchObject({ controller: defaultController, launch: { choices: {
+      store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2', arch: 'x86_64', vmType: 'qemu',
+      cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [],
+    } } });
+    expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
+  });
+
   it.each(['cold', 'ready-to-unavailable'] as const)('settles an unavailable delegated review without showing choices loading (%s)', async entry => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://delegated-refusal.example.test',
       serverIdentityId: 'srv_delegated_refusal', accountId: 'owner', currentAccount: true, teamsEnabled: true });
@@ -386,8 +463,9 @@ describe('mounted managed configurator', () => {
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
     const { t } = await import('@/text');
+    const onCancel = vi.fn();
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
-      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id} />);
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id} onCancel={onCancel} />);
     try {
       if (entry === 'ready-to-unavailable') {
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create'), screen.getTextContent()).not.toBeNull());
@@ -399,6 +477,12 @@ describe('mounted managed configurator', () => {
         await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.catalog'
           && node.props.diagnosticCode === 'provider_unavailable')).not.toHaveLength(0));
         expect(screen.findByTestId('managed-config.create')).toBeNull();
+        const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+        const cancel = screen.tree.findByType(PageHeader).props.cancelAction;
+        expect(cancel?.disabled).toBe(false);
+        await act(async () => cancel.onPress());
+        expect(onCancel).toHaveBeenCalledOnce();
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
       }
       expect(screen.getTextContent()).not.toContain(t('managedMachines.options.loading', { provider: 'Virtual machine' }));
       expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
@@ -1563,6 +1647,36 @@ describe('mounted managed configurator', () => {
         harness.requestsFor('/v1/actions/machines.managed.acquire')[0]?.input,
       ).envelope,
     ).input;
+  it('returns the admitted managed resource to its retained creation host without navigating away', async () => {
+    const initial = await mountAddRoute('retained-create');
+    const serverId = route.params.serverId!;
+    await initial.unmount();
+    harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
+      const authorization = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(authorization.envelope);
+      return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: request.requestId,
+        execution: { ok: true, result: { managedId: 'retained-resource' } } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const onCreated = vi.fn();
+    const onCancel = vi.fn();
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController}
+      onCreated={onCreated} onCancel={onCancel} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:small')).not.toBeNull());
+      await screen.pressByTestIdAsync('managed-config.sizes:small');
+      await waitForHomeGovernance(() => expect(createDisabled(screen)).toBe(false));
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+      await screen.pressByTestIdAsync('managed-config.continuation-cancel');
+      expect(onCancel).toHaveBeenCalledOnce();
+      expect(screen.findByTestId('managed-config.save-preset')).not.toBeNull();
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(onCreated).toHaveBeenCalledWith({ serverId, managedId: 'retained-resource' }));
+      expect(route.replace).not.toHaveBeenCalled();
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+    } finally { await screen.unmount(); }
+  });
   it('names the unfinished choice instead of saying it is no longer available', async () => {
     const screen = await mountAddRoute('unfinished-choice', 'personal', 'linux', undefined, false);
     const { ManagedMachineConfigurator } = await import('./ManagedMachineConfigurator');
