@@ -102,7 +102,9 @@ it('says why an empty shelf is unavailable, with the source and a Retry, instead
         await measureMountedCollections(screen);
         await vi.waitFor(() => expect(screen.findByTestId('skills.home.shelf.unavailable')).not.toBeNull());
         expect(screen.getTextContent()).toContain('Team playbook');
-        expect(screen.getTextContent()).toContain('Couldn’t reach this registry.');
+        // 22e00c5425c names the failed registry; the generic producer sentence
+        // remains diagnostic detail rather than a second outage announcement.
+        expect(screen.getTextContent()).toContain(t('promptLibrary.registriesStatus.unreachableSource', { source: 'Team playbook' }));
         await screen.pressByTestIdAsync('skills.home.shelf.unavailable.retry');
         expect(refresh).toHaveBeenCalledTimes(1);
     } finally { await screen.unmount(); await home.dispose(); }

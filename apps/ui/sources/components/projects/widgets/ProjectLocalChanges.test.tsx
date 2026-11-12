@@ -7,6 +7,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { SCM_OPERATION_ERROR_CODES, ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 
@@ -24,14 +25,17 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
+import { HOME_WIDGET_BODY_ROWS } from '@/components/widgets/frame/WidgetFrame';
 
 let disposeActionLoader: (() => void) | undefined;
 let projectInspection: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
+let directoryBrowsing: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
 beforeAll(async () => {
     disposeActionLoader = await installRealActionExecutorModuleLoader();
     projectInspection = await createExternalActionAccountHttpBoundary({
         serverUrl: 'https://session-pane.test', serverIdentityId: 'srv_session_pane', accountId: 'account-a', machineId: 'm1',
-        actionId: 'projects.inspect', tokenEpoch: 0, requesterInvocation: 'none',
+        installationId: 'project-test-installation', actionId: 'projects.inspect', tokenEpoch: 0, requesterInvocation: 'none',
         execute: () => ({
             definition: boundary.manifestPresent ? { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(
                 JSON.stringify({ version: 1, scripts: { build: { source: { kind: 'command', command: 'make build' } } } })) }
@@ -41,11 +45,19 @@ beforeAll(async () => {
             importCandidates: [],
         }),
     });
+    // c0719bda197 routes browser reads through the admitted Action transport.
+    directoryBrowsing = await createExternalActionAccountHttpBoundary({
+        serverUrl: 'https://session-pane.test', serverIdentityId: 'srv_session_pane', accountId: 'account-a', machineId: 'm1',
+        installationId: 'project-test-installation', actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory, tokenEpoch: 0,
+        execute: input => ({ ok: true, path: z.looseObject({ path: z.string() }).parse(input).path, truncated: false,
+            entries: boundary.rootReadme ? [{ name: 'readme.MD', path: '/repo/readme.MD', type: 'file' }] : [] }),
+    });
 });
 afterAll(() => disposeActionLoader?.());
 
 const boundary = vi.hoisted(() => ({ navigate: vi.fn(), denied: false, confirmDiscard: false, confirmPush: false, rootReadme: false,
     manifestPresent: true,
+    alerts: [] as unknown[][],
     pathname: '/', routeParams: {} as Record<string, string | string[] | undefined>, writes: [] as { method: string; params: unknown }[] }));
 installSessionDetailsPanelNonRnModuleMocks({ router: () => createExpoRouterMock({ router: { push: boundary.navigate },
     pathname: () => boundary.pathname, params: () => boundary.routeParams }).module });
@@ -55,7 +67,8 @@ vi.mock('socket.io-client', async (importOriginal) =>
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     renderCustomModals: true,
     // Native confirmation is the boundary; SCM policy, lock, transport and store remain real.
-    spies: { confirm: async () => boundary.confirmDiscard || boundary.confirmPush },
+    spies: { confirm: async () => boundary.confirmDiscard || boundary.confirmPush,
+        alert: (...args) => { boundary.alerts.push(args); } },
 }).module);
 
 const { useWorkspaceScmCommitControls } = await import('@/components/projects/scm/useWorkspaceScmCommitControls');
@@ -80,7 +93,9 @@ const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let accountSettings: ReturnType<typeof storage.getState>['settings'] | null = null;
 let accountSettingsVersion = 0;
-afterEach(() => { Modal.hideAll(); vi.useRealTimers(); approvalArtifacts.clear(); accountSettings = null; accountSettingsVersion = 0; });
+const pendingWatchReplies: (() => void)[] = [];
+afterEach(() => { Modal.hideAll(); vi.useRealTimers(); approvalArtifacts.clear(); accountSettings = null; accountSettingsVersion = 0;
+    for (const reply of pendingWatchReplies.splice(0)) reply(); });
 
 function snapshot(paths: readonly string[]) {
     return ScmWorkingSnapshotSchema.parse({
@@ -104,6 +119,8 @@ const runtime = installSessionPaneRuntimeTestHarness({
         const path = new URL(String(url)).pathname;
         const inspection = await projectInspection.handle(new URL(String(url)), init);
         if (inspection) return inspection;
+        const directory = await directoryBrowsing.handle(new URL(String(url)), init);
+        if (directory) return directory;
         // The real Account bootstrap and Action front door read these Home-owned baselines.
         if (path === AUTHORING_MEMORY_ROUTE_V1 && (init?.method ?? 'GET') === 'GET')
             return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
@@ -128,10 +145,11 @@ const runtime = installSessionPaneRuntimeTestHarness({
         vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
             if (event !== 'rpc-call') throw new Error(`Unexpected event: ${event}`);
             const request = z.looseObject({ method: z.string(), params: z.unknown() }).parse(payload);
-            if (request.method.endsWith(`:${RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY}`)) return { ok: true, result: {
-                ok: true, path: z.looseObject({ path: z.string() }).parse(request.params).path, truncated: false,
-                entries: boundary.rootReadme ? [{ name: 'readme.MD', path: '/repo/readme.MD', type: 'file' }] : [],
-            } };
+            // 4505883b9e2 added native observation. These cases leave its external
+            // long poll pending, then release the transport handles at teardown.
+            if (request.method.endsWith(`:${RPC_METHODS.SCM_WORKSPACE_WATCH}`)) return new Promise(resolve => {
+                pendingWatchReplies.push(() => resolve({ ok: true, result: { status: 'cancelled' } }));
+            });
             if (request.method.endsWith(`:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`)) return { ok: true, result: boundary.denied
                 ? { success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, error: 'Denied' }
                 : { success: true, snapshot: currentSnapshot } };
@@ -177,6 +195,7 @@ beforeEach(async () => {
     boundary.routeParams = {};
     resetActiveReviewFilesForTests();
     boundary.writes.length = 0;
+    boundary.alerts.length = 0;
     currentSnapshot = snapshot(['src/a.ts', 'src/b.ts']);
     storage.setState({ sessions: {} });
     await prepareSessionDraftPersistenceStorage();
@@ -240,8 +259,10 @@ describe('Project Local Changes', () => {
         await flushHookEffects();
         const folder = screen.findHostByTestId('about.folder') ?? screen.findHostByTestId('about.inline');
         expect(folder).not.toBeNull();
-        const text = screen.root.findAll(node => typeof node.props.children === 'string' && node.props.children.includes('scratch'))
-            .map(node => node.props.children as string);
+        // 234cf7d5dd1 composes the glance title with an optional sentence tag.
+        // Query its rendered leaves, regardless of the React children array shape.
+        const text = screen.root.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string'));
         expect(text).toContain('~/scratch');
         expect(text.some(value => value.includes('/Users/tester'))).toBe(false);
     });
@@ -570,8 +591,8 @@ describe('Project Local Changes', () => {
         boundary.confirmPush = true;
         await screen.pressByTestIdAsync('local-changes-push');
         await flushHookEffects({ cycles: 12 });
-        expect(boundary.writes).toEqual([expect.objectContaining({ method: `m1:${RPC_METHODS.SCM_REMOTE_PUSH}`,
-            params: expect.objectContaining({ cwd: '/repo', remote: 'origin', branch: 'main' }) })]);
+        await vi.waitFor(() => expect(boundary.writes, screen.getTextContent()).toEqual([expect.objectContaining({ method: `m1:${RPC_METHODS.SCM_REMOTE_PUSH}`,
+            params: expect.objectContaining({ cwd: '/repo', remote: 'origin', branch: 'main' }) })]));
         expect(screen.findHostByTestId('local-changes-ahead')).toBeNull();
         expect(screen.findHostByTestId('local-changes-clean')).not.toBeNull();
         expect(storage.getState().sessions).toEqual({});
@@ -618,17 +639,21 @@ describe('Project Local Changes', () => {
         const ids = ['project_code', 'project_changes', 'project_scripts', 'project_readme', 'project_checkouts'] as const;
         const screen = await renderScreen(<runtime.Wrapper><CheckoutReachabilityScope scope={machine}>
             <CheckoutReachabilityLine scope={machine} />
+            {/* b75b072cb81 distinguishes framed widgets from standalone tab bodies. */}
+            <WidgetFrameBodyRowsContext.Provider value={HOME_WIDGET_BODY_ROWS}>
             {ids.map(id => <ProjectBuiltinWidgetBody key={id} id={id}
                 checkout={{ serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 }}
                 workspace={{ serverId: runtime.serverId, workspaceId: 'wr_1', machineId: 'm1', rootPath: '/repo' }} testID={id} />)}
+            </WidgetFrameBodyRowsContext.Provider>
         </CheckoutReachabilityScope></runtime.Wrapper>);
         await flushHookEffects({ cycles: 12 });
-        // The page says it once, with when the machine was last seen and the one Retry: no widget
-        // repeats the cause in a freshness line of its own.
+        // b080a380edb puts last-seen in the native lifecycle sentence. The page
+        // says it once with one Retry; no widget repeats the cause.
         const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
         const lines = screen.findAllByType(SurfaceFreshnessLine);
         expect(lines.map(line => line.props.testID)).toEqual(['checkout-reachability']);
-        expect(lines[0].props.asOf).toBeTypeOf('number');
+        const { formatLastSeen } = await import('@/utils/sessions/sessionUtils');
+        expect(lines[0].props.reason).toContain(formatLastSeen(lastHeartbeat));
         expect(lines[0].props.action).toBeDefined();
         // No widget fails on its own.
         const states = screen.findAllByType(SurfaceStateCard);
@@ -637,14 +662,13 @@ describe('Project Local Changes', () => {
         expect(screen.findHostByTestId('project_code-footer')).toBeNull();
         // A widget with nothing last-known inherits one quiet wait (the never-listed folder here); one with
         // last-known content keeps it. Either way nothing offers a second Retry or fails on its own.
-        // The wait names no cause: the page's line already did. It keeps the body's shape with still
-        // placeholders and tells assistive technology what it waits for.
+        // 7a18b51d07a speaks the wait through hidden text rather than a label on
+        // a role-less box. The page still owns the cause and the only Retry.
         expect(states.map(state => String(state.props.testID ?? '')).filter(id => id.endsWith('-unreachable'))).toEqual([]);
         const quietWait = screen.findHostByTestId('repository-tree-unreachable');
-        expect(String(quietWait?.props.accessibilityLabel ?? '')).toMatch(/projects\.checkouts\.waiting|Waiting for/);
-        const texts = screen.root.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
-            .map(node => String(node.props.children));
-        expect(texts.filter(text => /^(projects\.checkouts\.waiting|Waiting for)/.test(text))).toEqual([]);
+        const spokenWait = quietWait?.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        expect(spokenWait).toMatch(/projects\.checkouts\.waiting|Waiting for/);
         expect(states.filter(state => state.props.kind === 'unavailable' && state.props.action !== undefined)
             .map(state => state.props.testID)).toEqual([]);
         expect(screen.findHostByTestId('project_changes-error')).toBeNull();
@@ -711,8 +735,8 @@ describe('Project Local Changes', () => {
         boundary.confirmDiscard = true;
         await act(async () => screen.findAllByType(ScmChangeOverflowMenu)[0].props.onDiscard());
         await flushHookEffects({ cycles: 12 });
-        expect(boundary.writes).toEqual([expect.objectContaining({ method: `m1:${RPC_METHODS.SCM_CHANGE_DISCARD}`,
-            params: expect.objectContaining({ cwd: '/repo', entries: [{ path: 'src/a.ts', kind: 'modified' }] }) })]);
+        await vi.waitFor(() => expect(boundary.writes, screen.getTextContent()).toEqual([expect.objectContaining({ method: `m1:${RPC_METHODS.SCM_CHANGE_DISCARD}`,
+            params: expect.objectContaining({ cwd: '/repo', entries: [{ path: 'src/a.ts', kind: 'modified' }] }) })]));
         expect(screen.findAllByType(ScmChangeRow).map(row => row.props.file.fullPath)).toEqual(['src/b.ts']);
         expect(storage.getState().sessions).toEqual({});
     });
@@ -721,11 +745,11 @@ describe('Project Local Changes', () => {
         const screen = await mount('/repo', 'project_changes', { tall: true });
         await act(async () => screen.findAllByType(ScmChangeRow)[0].props.onToggleSelection());
         await flushHookEffects({ cycles: 12 });
-        expect(boundary.writes[0]).toMatchObject({ method: `m1:${RPC_METHODS.SCM_CHANGE_INCLUDE}`, params: { cwd: '/repo', paths: ['src/a.ts'] } });
+        await vi.waitFor(() => expect(boundary.writes[0], JSON.stringify(boundary.alerts)).toMatchObject({ method: `m1:${RPC_METHODS.SCM_CHANGE_INCLUDE}`, params: { cwd: '/repo', paths: ['src/a.ts'] } }));
         expect(screen.findAllByType(ScmChangeRow)[0].props.file.isIncluded).toBe(true);
         await act(async () => screen.findAllByType(ScmChangeRow)[0].props.onToggleSelection());
         await flushHookEffects({ cycles: 12 });
-        expect(boundary.writes[1]).toMatchObject({ method: `m1:${RPC_METHODS.SCM_CHANGE_EXCLUDE}`, params: { cwd: '/repo', paths: ['src/a.ts'] } });
+        await vi.waitFor(() => expect(boundary.writes[1], screen.getTextContent()).toMatchObject({ method: `m1:${RPC_METHODS.SCM_CHANGE_EXCLUDE}`, params: { cwd: '/repo', paths: ['src/a.ts'] } }));
         expect(screen.findAllByType(ScmChangeRow)[0].props.file.isIncluded).toBe(false);
         expect(storage.getState().sessions).toEqual({});
     });
@@ -793,9 +817,9 @@ describe('Project Local Changes', () => {
         expect(boundary.writes).toEqual([]);
         await act(async () => screen.findByType(ScmCommitComposerCard).props.onCommitFromMessage('My explicit message'));
         await flushHookEffects({ cycles: 12 });
-        expect(boundary.writes).toContainEqual(expect.objectContaining({ params: expect.objectContaining({
+        await vi.waitFor(() => expect(boundary.writes, screen.getTextContent()).toContainEqual(expect.objectContaining({ params: expect.objectContaining({
             cwd: '/repo', message: 'My explicit message', scope: { kind: 'paths', include: ['src/b.ts'] },
-        }) }));
+        }) })));
         expect(storage.getState().sessions).toEqual({});
     });
     it('offers an accepted remote checkout of this Project without mixing another Home or Project', async () => {
