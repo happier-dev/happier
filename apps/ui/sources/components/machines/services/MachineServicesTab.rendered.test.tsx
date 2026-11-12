@@ -168,6 +168,7 @@ it.each([undefined, 'web'])('reads only the requested Environment services (comp
         expect(resource.reads).toBe(1);
         expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown);
         expect(hook.getCurrent().rows).toHaveLength(shown);
+        expect(hook.getCurrent()).toHaveProperty('firstInventoryCount', shown);
         const settled = hook.getCurrent().rows;
         publications.length = 0;
         // This boundary deliberately emits an invalidation even for equal bytes.
@@ -186,6 +187,7 @@ it.each([undefined, 'web'])('reads only the requested Environment services (comp
         if (!composeService) expect(hook.getCurrent().rows?.[1]).toBe(settled?.[1]);
         await hook.rerender({ ...input, composeService: 'worker' });
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.map(row => row.serviceId)).toEqual(['instance/worker']); });
+        expect(hook.getCurrent()).toHaveProperty('firstInventoryCount', 1);
         expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 3 + 1);
     } finally { await hook.unmount(); }
 });
@@ -203,12 +205,14 @@ it('retains settled Services during credential resolution, publishes changes onc
     });
     try {
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows).toHaveLength(2); });
+        expect(hook.getCurrent()).toHaveProperty('firstInventoryCount', 2);
         const settled = hook.getCurrent().rows;
         publications.length = 0;
         await act(async () => { await homes.switchAccount(serverId, accountId, { currentAccount: true }); });
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().pending).toBe(false); });
         expect(publications).toHaveLength(0);
         expect(hook.getCurrent().rows).toBe(settled);
+        expect(hook.getCurrent()).toHaveProperty('firstInventoryCount', 2);
         await resource.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot',
             services: [{ ...row, name: 'Changed continuity' }, stableRow] }));
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.[0]?.name).toBe('Changed continuity'); });
@@ -216,6 +220,7 @@ it('retains settled Services during credential resolution, publishes changes onc
         expect(hook.getCurrent().rows?.[1]).toBe(settled?.[1]);
         await act(async () => { await homes.switchAccount(serverId, 'another-account', { currentAccount: true }); });
         expect(hook.getCurrent().rows).toBeNull();
+        expect(hook.getCurrent()).toHaveProperty('firstInventoryCount', null);
     } finally { await hook.unmount(); }
 });
 
