@@ -85,7 +85,7 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
       });
     } catch (error) {
       const transportFailure = (): HttpResult => { return { kind: method === 'GET' ? 'unavailable' : 'unknown', reason: 'transport' }; };
-      return method === 'GET' || url === FLY_GRAPHQL_API ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+      return projectMachineProvisionerActionFailure(error, transportFailure);
     }
     if (response.status === 404 && method === 'GET') return { kind: 'absent' };
     // Reflected native bodies may contain credentials or private input. They

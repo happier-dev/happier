@@ -83,7 +83,7 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       });
     } catch (error) {
       const transportFailure = (): never => { throw new HetznerNativeError('native_transport_unavailable'); };
-      return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+      return projectMachineProvisionerActionFailure(error, transportFailure);
     }
     if (!response.ok) {
       // REST v1 Errors (https://docs.hetzner.cloud/reference/cloud), fetched
@@ -180,10 +180,12 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
           user_data: buildMachineProvisionerCloudInit(publicKey, options.guestHostKey),
         });
       } catch (error) {
-        const code = codeOf(error);
-        const cause = error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
-        if (['native_authorization_failed', 'native_request_failed'].includes(code)) return { kind: 'rejected', code, ...cause };
-        return { kind: 'unknown', code: code === 'native_transport_unavailable' ? 'native_transport_unknown' : code, correlation: input.correlation, ...cause };
+        return projectMachineProvisionerActionFailure(error, (): HetznerAcquireResult => {
+          const code = codeOf(error);
+          const cause = error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
+          if (['native_authorization_failed', 'native_request_failed'].includes(code)) return { kind: 'rejected', code, ...cause };
+          return { kind: 'unknown', code: code === 'native_transport_unavailable' ? 'native_transport_unknown' : code, correlation: input.correlation, ...cause };
+        });
       }
       try {
         // An accepted create's exact paid id survives missing readiness/connection facts.
@@ -199,7 +201,7 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
         ].filter((id): id is number => typeof id === 'number');
         // Creation evidence owns returned IPs; labeled recovery never adopts attachments.
         return bind(server, { volumeIds: [], primaryIpIds });
-      } catch (error) { return { kind: 'unknown', code: codeOf(error), correlation: input.correlation }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: codeOf(error), correlation: input.correlation })); }
     },
     inspect,
     async snapshot(rawResource: unknown, label: string, waitForObservation: () => Promise<void>): Promise<MachineProvisionerSnapshotResultV1> {
@@ -223,9 +225,11 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
         return { kind: 'confirmed', snapshotId: String(created.image.id), ...HETZNER_SNAPSHOT_FACTS,
           consistency: observed.power === 'running' || observed.power === 'stopped' ? observed.power : 'unknown' };
       } catch (error) {
-        const cause = error instanceof HetznerNativeError ? error.nativeCause : undefined;
-        return { kind: !submitted || !acknowledged && cause !== undefined && 'httpStatusClass' in cause && cause.httpStatusClass === '4xx' ? 'refused' : 'unknown', code: codeOf(error),
-          ...(cause ? { nativeCause: cause } : {}) };
+        return projectMachineProvisionerActionFailure(error, (): MachineProvisionerSnapshotResultV1 => {
+          const cause = error instanceof HetznerNativeError ? error.nativeCause : undefined;
+          return { kind: !submitted || !acknowledged && cause !== undefined && 'httpStatusClass' in cause && cause.httpStatusClass === '4xx' ? 'refused' : 'unknown', code: codeOf(error),
+            ...(cause ? { nativeCause: cause } : {}) };
+        });
       }
     },
     async recover(rawCorrelation: string): Promise<Exclude<HetznerAcquireResult, { kind: 'rejected' }> | { kind: 'rejected'; code: 'managed_not_found' }> {
@@ -278,8 +282,8 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
           nativeOperation: { ...resource, deleteActionId: action.id } };
         if (action?.status === 'error') throw new HetznerNativeError('native_action_failed');
         if ((await inspectServer(resource)).kind !== 'absent') return { kind: 'incomplete' as const, remaining, nativeOperation: resource };
-      } catch (error) { return { kind: 'incomplete' as const, code: codeOf(error), remaining,
-        ...(error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'incomplete' as const, code: codeOf(error), remaining,
+        ...(error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) })); }
       remaining.shift();
       let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
       let code: string | undefined;
@@ -295,7 +299,9 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
           const deletion = await request(path, 'DELETE', undefined, true);
           if (deletion.kind === 'ok' && deletion.status !== 204 && (await request(path, 'GET', undefined, true)).kind !== 'absent') continue;
           remaining.splice(remaining.indexOf(attachment), 1);
-        } catch (error) { code ??= codeOf(error); if (error instanceof HetznerNativeError) nativeCause ??= error.nativeCause; }
+        } catch (error) { projectMachineProvisionerActionFailure(error, () => {
+          code ??= codeOf(error); if (error instanceof HetznerNativeError) nativeCause ??= error.nativeCause;
+        }); }
       }
       return remaining.length ? { kind: 'incomplete' as const, remaining, nativeOperation: resource,
         ...(code ? { code } : {}), ...(nativeCause ? { nativeCause } : {}) } : { kind: 'confirmed' as const };

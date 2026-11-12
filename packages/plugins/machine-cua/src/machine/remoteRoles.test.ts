@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginApi, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { CUA_PLUGIN } from '../manifest.js';
@@ -23,7 +23,8 @@ function processResult(value: unknown): PluginProcessResult {
         stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
 async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'registry' | 'delete-reply'; cliVersion?: string;
-    cliMissing?: boolean; cliStatusFailed?: boolean; noAccount?: boolean; cloudConnected?: boolean; cloudStatusUnreadable?: boolean } = {}) {
+    cliMissing?: boolean; cliStatusFailed?: boolean; noAccount?: boolean; cloudConnected?: boolean; cloudStatusUnreadable?: boolean;
+    authoredFailure?: PluginError; failCommand?: 'create' | 'status' } = {}) {
     const actions = new Map<string, ActionHandler>();
     const processRequests: PluginExecSpawnRequest[] = [];
     const copiedBytes: Buffer[] = [];
@@ -50,6 +51,7 @@ async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'r
         exec: { async run(request: PluginExecSpawnRequest) {
             processRequests.push(request);
             const args = request.args ?? [];
+            if (options.authoredFailure && options.failCommand && args.includes(options.failCommand)) throw options.authoredFailure;
             if (args.includes('status')) {
                 if (options.cloudStatusUnreadable) throw new Error('Native status unavailable');
                 if (options.cloudConnected === false) return processResult({ providers: [{ ...nativeProvider, connected: false }], resources: [] });
@@ -95,6 +97,13 @@ async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'r
 }
 
 describe('activated Cua remote contributions', () => {
+    it('preserves authored failure details through BYOC acquisition and retained reconciliation', async () => {
+        const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
+        const acquire = await harness({ authoredFailure: refusal, failCommand: 'create' });
+        await expect(acquire.invoke('byoc-acquire', { launch: byocLaunch, managedId })).rejects.toBe(refusal);
+        const recovery = await harness({ authoredFailure: refusal, failCommand: 'status' });
+        await expect(recovery.invoke('byoc-reconcile', { nativeOperation: { launch: byocLaunch, sandboxId: `aws:${name}` } })).rejects.toBe(refusal);
+    });
     it('qualifies the offered BYOC launch through its registered acquire role', async () => {
         const h = await harness();
         const options = MachineProvisionerOptionsResultV1Schema.parse(await h.invoke('byoc-options', { cloud: 'aws' }));

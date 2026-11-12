@@ -45,6 +45,15 @@ async function activated(response: unknown, status = 200, errorOnCreate?: { stat
   return { handlers, context, requests };
 }
 describe('public hetzner machine provisioner', () => {
+  it('preserves authored failure details through acquisition, power and deletion Actions', async () => {
+    const refusal = new PluginError({ code: 'credential_unavailable', message: 'Reconnect this account', details: { phase: 'materialization' } });
+    const host = await activated(undefined);
+    host.context.services.connectedAccounts.materialize = async () => { throw refusal; };
+    for (const [id, input] of [
+      ['acquire', { managedId: 'row-1', launch, bootstrapPublicKey: 'ssh-ed25519 AQIDBA==' }],
+      ['power', { resource, intent: 'stop' }], ['destroy', { resource }],
+    ] as const) await expect(host.handlers.get(id)!(input, host.context)).rejects.toBe(refusal);
+  });
   it.each(['success', 'error', 'unavailable'] as const)('settles one exact native snapshot Action with truthful coverage after %s', async outcome => {
     let observations = 0;
     const host = await activated(undefined, 200, undefined, (url, method) => {

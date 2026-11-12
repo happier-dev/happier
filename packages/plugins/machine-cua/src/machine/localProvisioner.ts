@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
-import { observeMachineProvisionerNativeRead, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerObservationV1, MachineProvisionerOptionsResultV1,
     MachineProvisionerPowerResultV1, MachineProvisionerNativeIntentV1,
     MachineProvisionerProcessConfigV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -74,7 +74,7 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
                     && (!('registry' in observed) || observed.registry === 'present')) {
                     return { kind: 'bound' as const, resource: reference(value) };
                 }
-            } catch { /* A canceled or unavailable read cannot prove absence. */ }
+            } catch (error) { projectMachineProvisionerActionFailure(error, () => {}); /* A canceled or unavailable read cannot prove absence. */ }
             return pending(operation);
         },
         async acquire(input: unknown, managedId?: string): Promise<MachineProvisionerAcquireResultV1<CuaLocalResourceV1, ReturnType<typeof CuaLocalNativeOperationV1Schema.parse>>> {
@@ -94,7 +94,7 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
                 if (created.kind === 'bound') return { kind: 'bound', resource: reference(created.resource) };
                 if (created.kind === 'unavailable') return { kind: 'rejected', code: 'invalid_request' };
                 return pending(recovery, created.nativeCause);
-            } catch { /* Native creation may already exist; retain exact lookup custody. */ }
+            } catch (error) { projectMachineProvisionerActionFailure(error, () => {}); /* Native creation may already exist; retain exact lookup custody. */ }
             return pending(recovery);
         },
         async bootstrap(input: unknown) {

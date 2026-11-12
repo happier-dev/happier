@@ -1,4 +1,4 @@
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { projectPluginFailureText, PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginExecSpawnRequest } from '@happier-dev/plugin-sdk/exec';
 import { createSecureTempDirectorySync, writeAtomicFile } from '@happier-dev/plugin-sdk/fs';
@@ -66,7 +66,7 @@ export function createCuaNativeClient(options: {
                 args: ['--embedded', 'sandbox', 'shell', qualified, command], env: environment,
                 ...(timeoutMs == null ? {} : { timeoutMs }) }, { signal,
                 ...(guestProcess ? { outputDelivery: 'invocation' as const } : {}) });
-        } catch { throw new Error('cua_native_exec_unavailable'); }
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => { throw new Error('cua_native_exec_unavailable'); }); }
     }
     async function privateDirectory(sandboxId: string, signal?: AbortSignal) {
         const made = await shell(sandboxId, 'mktemp -d /tmp/happier-cua.XXXXXXXXXX', signal);
@@ -83,7 +83,7 @@ export function createCuaNativeClient(options: {
         try {
             const cleaned = await shell(sandboxId, `rm -rf -- ${quote(directory)}`);
             if (!completed(cleaned)) throw new Error('cleanup failed');
-        } catch { throw new Error('cua_private_input_cleanup_unknown'); }
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => { throw new Error('cua_private_input_cleanup_unknown'); }); }
     }
     async function uploadPrivateFile(sandboxId: string, guestPath: string, bytes: Uint8Array, signal?: AbortSignal) {
         signal?.throwIfAborted();
@@ -119,7 +119,7 @@ export function createCuaNativeClient(options: {
             return { kind: completed(published) ? 'confirmed' as const : 'unknown' as const };
         } finally {
             try { await removePrivateDirectory(sandboxId, directory); }
-            catch { return { kind: 'unknown' as const }; }
+            catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const })); }
         }
     }
     async function run(args: readonly string[], signal?: AbortSignal) {
@@ -152,12 +152,12 @@ export function createCuaNativeClient(options: {
                 return { kind: 'unknown', reason: 'termination', ...(nativeCause ? { nativeCause } : {}) } as const;
             }
             return { kind: 'success', value: result } as const;
-        } catch {
+        } catch (error) {
             // Thrown transport errors can carry private input; retain only the
             // command classification, never their message.
-            return { kind: 'unknown', reason: 'transport', ...(args.includes('create') ? { nativeCause: {
+            return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', reason: 'transport', ...(args.includes('create') ? { nativeCause: {
                 localCause: 'native_command_failed' as const, command: 'create' as const, exitCode: null,
-            } } : {}) } as const;
+            } } : {}) } as const));
         }
     }
     return {
@@ -174,8 +174,10 @@ export function createCuaNativeClient(options: {
                 const started = await shell(sandboxId, command, signal, true);
                 if (!confirmedDaemonStart(started)) throw new Error('cua_guest_daemon_start_unconfirmed');
             } catch (error) {
-                throw new PluginError({ code: 'cua_guest_daemon_hold_unavailable',
-                    message: 'Cua could not confirm the detached guest daemon start.' }, { cause: error });
+                return projectMachineProvisionerActionFailure(error, () => {
+                    throw new PluginError({ code: 'cua_guest_daemon_hold_unavailable',
+                        message: 'Cua could not confirm the detached guest daemon start.' }, { cause: error });
+                });
             }
         },
         async execGuest(sandboxId: string, argv: readonly string[], input?: Uint8Array, signal?: AbortSignal, timeoutMs?: number | null) {

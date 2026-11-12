@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCuaNativeClient } from './nativeClient.js';
 
@@ -12,6 +13,31 @@ function result(stdout = new Uint8Array(), exitCode = 0): PluginProcessResult {
 const text = (value: string) => new TextEncoder().encode(value);
 
 describe('Cua private native bootstrap carrier', () => {
+    it('preserves authored failure details when private file cleanup refuses', async () => {
+        const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow native cleanup', details: { phase: 'cleanup' } });
+        const bytes = text('private input');
+        const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: {
+            async run(request) {
+                const args = request.args ?? [];
+                const command = args.at(-1) ?? '';
+                if (command.startsWith('rm -')) throw refusal;
+                if (command.startsWith('mktemp -d')) return result(text('/tmp/happier-cua.native-private\n'));
+                if (args.includes('cp')) return result(text(JSON.stringify({ direction: 'upload', size: bytes.length,
+                    sha256: createHash('sha256').update(bytes).digest('hex') })));
+                return result();
+            },
+        } });
+        await expect(native.putGuestFile('local:owned', '/tmp/final-private-file', bytes)).rejects.toBe(refusal);
+    });
+    it('preserves authored failure details across native reads, effects and guest startup', async () => {
+        const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
+        const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' },
+            exec: { run: async () => { throw refusal; } } });
+        for (const invoke of [() => native.json(['--embedded', 'runtime', 'doctor']),
+            () => native.effect(['--embedded', 'sandbox', 'rm', 'local:owned']),
+            () => native.execGuest('local:owned', ['true']),
+            () => native.configureGuestProcess('local:owned', ['true'])]) await expect(invoke()).rejects.toBe(refusal);
+    });
     it('runs every native command with the daemon user home so embedded state matches the user CLI', async () => {
         const requests: PluginExecSpawnRequest[] = [];
         const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: {

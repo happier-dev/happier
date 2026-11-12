@@ -69,7 +69,7 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
       catch { return { kind: 'unavailable', reason: 'invalid-response', status: reply.status }; }
     } catch (error) {
       const transportFailure = (): HttpResult => ({ kind: 'unavailable', reason: 'transport' });
-      return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+      return projectMachineProvisionerActionFailure(error, transportFailure);
     }
   }
   async function collection<T>(path: string, key: string, schema: z.ZodMiniType<T>): Promise<{ kind: 'available'; values: T[] } | Unavailable> {

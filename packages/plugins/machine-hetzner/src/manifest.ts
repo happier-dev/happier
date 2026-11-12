@@ -133,6 +133,7 @@ export const PLUGIN = definePlugin({
       inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: ROLE_SCHEMAS.acquireResult,
       async run(input, context) {
         if (!input.managedId || !input.bootstrapPublicKey) return { kind: 'rejected' as const, code: 'invalid_request' as const };
+        const managedId = input.managedId;
         const guestHostCredential = input.guestHostPublicKey === undefined ? undefined : {
           publicKey: input.guestHostPublicKey, lease: await context.services.machineProvisioners.materializeGuestHostCredential(),
         };
@@ -143,7 +144,7 @@ export const PLUGIN = definePlugin({
         const nativeCause = 'nativeCause' in result ? result.nativeCause : undefined;
         return result.kind === 'rejected' ? { kind: 'rejected' as const, code: 'provider_unavailable' as const, ...(nativeCause ? { nativeCause } : {}) }
           : pending(input.managedId, nativeCause); }
-        catch (error) { return pending(input.managedId, error instanceof HetznerNativeError ? error.nativeCause : undefined); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(managedId, error instanceof HetznerNativeError ? error.nativeCause : undefined)); }
         finally { await guestHostCredential?.lease.dispose(); }
       },
     },
@@ -184,7 +185,7 @@ export const PLUGIN = definePlugin({
         if (changed.kind === 'refused') return { kind: 'refused' as const, code: changed.code };
         const observed = await native.inspect(input.resource);
         return observed.kind === 'present' && observed.power === (input.intent === 'start' ? 'running' : 'stopped')
-          ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' }; } catch (error) { return { kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) }; }
+          ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' }; } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) })); }
       },
     },
     destroy: { ...defaults, title: 'Delete exact Hetzner resource', dangerLevel: 'destructive',
@@ -204,7 +205,7 @@ export const PLUGIN = definePlugin({
           }
           return { kind: 'unknown' as const, code: code ?? 'native_cleanup_incomplete',
             ...(nativeCause ? { nativeCause } : {}) };
-        } catch (error) { return { kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) }; } },
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) })); } },
     },
   },
   ui: { translations: [

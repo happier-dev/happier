@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedDependencyStatus } from '@happier-dev/plugin-sdk/managed-services';
@@ -27,6 +28,15 @@ function fixture(run: ExecService['run'], version = '0.46.0') {
 }
 
 describe('activated Docker Sandboxes public role boundary', () => {
+  it('preserves authored failure details from Check through the public action', async () => {
+    const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
+    const boundary = fixture(async () => { throw refusal; });
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
+    try { await expect(kit.invokeAction('check', {}, { surface: 'plugin' })).rejects.toMatchObject({
+      name: 'PluginError', code: refusal.code, message: refusal.message, details: refusal.details,
+    }); }
+    finally { await kit.dispose(); }
+  });
   it('reports the declared missing native prerequisite without inventing an installer or probing a missing executable', async () => {
     const run = vi.fn<ExecService['run']>();
     const boundary = fixture(run);

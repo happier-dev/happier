@@ -34,6 +34,15 @@ const materializeHeaders = async ({ bindingKey }: { bindingKey: string }) => ({ 
   headers: { authorization: 'Bearer private-upstream-' + bindingKey, host: 'wrong-host.invalid' } });
 
 describe('Vercel native credential replacement', () => {
+  it('preserves authored failure details when a native mutation transport refuses', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Reconnect the selected account',
+      details: { phase: 'activation' } });
+    const { client } = fixture((_url, init) => {
+      if (init?.method !== 'GET') throw refusal;
+      return json({ sandbox: named(), session });
+    });
+    await expect(client.applyNativeCredentials(credentialInput(), materializeHeaders)).rejects.toBe(refusal);
+  });
   it('preserves a typed HTTP refusal during a native read', async () => {
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
       details: { phase: 'activation' } });

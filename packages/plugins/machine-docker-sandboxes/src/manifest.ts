@@ -112,11 +112,11 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return machineCheckPresentation(await (await provider(context)).check()); }
-        catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error),
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: errorCode(error),
           ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const,
             id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } }, status: 'unavailable' as const,
             repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-docs' }, input: {} } }] } : {}),
-        }); }
+        })); }
       },
     },
     options: { ...actionDefaults, title: 'Discover Docker Sandbox templates', dangerLevel: 'safe',

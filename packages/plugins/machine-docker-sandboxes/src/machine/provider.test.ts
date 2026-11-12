@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
 import * as nativeModule from './provider.js';
@@ -16,6 +16,17 @@ const inventory = (...names: string[]) => JSON.stringify({ sandboxes: names.map(
 describe('Docker Sandboxes managed provisioner roles', () => {
   const resource = { sandboxName: 'happier-managed-row-1' };
   const launch = { name: 'happier', templateId: 'docker.io/example/template:1' };
+  it('preserves authored failure details across native reads and effects', async () => {
+    const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
+    const native = createDockerSandboxesNativeClient({ run: async request => {
+      if (request.args?.[0] === 'ls' && request.args.includes('--json')) return result(0, inventory(resource.sandboxName));
+      throw refusal;
+    } }, executable);
+    for (const invoke of [() => native.probe(), () => native.create(launch), () => native.start(resource),
+      () => native.stop(resource), () => native.delete(resource)]) await expect(invoke()).rejects.toBe(refusal);
+    const unavailable = createDockerSandboxesNativeClient({ run: async () => { throw refusal; } }, executable);
+    await expect(unavailable.inspect(resource)).rejects.toBe(refusal);
+  });
   it.each([1, 0])('keeps failed or still-stopped native starts pending (exit %s)', async exitCode => {
     const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'run'
       ? { ...result(exitCode), stderr: new TextEncoder().encode('boot failed token=private-acquisition-token') }

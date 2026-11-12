@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createDigitalOceanNativeClient } from './nativeClient.js';
 import { createDigitalOceanProvider } from './provider.js';
 
@@ -27,6 +28,12 @@ const optionResponses = () => [
 ];
 
 describe('DigitalOcean provider admission', () => {
+  it('preserves authored failure details when a native deletion transport refuses', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Reconnect the selected account',
+      details: { phase: 'activation' } });
+    const request: typeof fetch = async () => { throw refusal; };
+    await expect(createDigitalOceanNativeClient({ token: 'test-token', fetch: request }).destroy(resource)).rejects.toBe(refusal);
+  });
   it('sends retained host-key bytes only to cloud-init and retains the exact Droplet for cleanup', async () => {
     const guestHostKey = { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
       privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\nretained-host-key\n-----END OPENSSH PRIVATE KEY-----\n' };

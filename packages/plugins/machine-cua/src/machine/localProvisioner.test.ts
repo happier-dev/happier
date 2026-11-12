@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginApi, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { ManagedDependencyStatus, ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
@@ -66,6 +66,18 @@ function harness(createReplyLost = false, observedRuntime: 'qemu' | 'gvisor' | '
     };
     return { requests, copiedBytes, run, provider: createCuaLocalProvisioner(createCuaNativeClient({ exec: { run }, executable: { kind: 'systemTool', id: 'cua' } }), 'local-sandbox', 10) };
 }
+
+it('preserves authored failure details through local acquisition and retained reconciliation', async () => {
+    const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
+    const h = harness();
+    const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: { run: async request => {
+        if (request.args?.includes('create') || request.args?.includes('info')) throw refusal;
+        return h.run(request);
+    } } });
+    const provider = createCuaLocalProvisioner(native, 'local-sandbox', 10);
+    await expect(provider.acquire(launch, managedId)).rejects.toBe(refusal);
+    await expect(provider.reconcile(localAcquireOperation('local-sandbox', launch, managedId))).rejects.toBe(refusal);
+});
 
 async function activated(dependencyReady = true, nativeRun?: ExecService['run'], signal = new AbortController().signal,
     version = '0.5.0', supervise?: (spec: ManagedServiceSpec) => Promise<unknown>, observedRuntime: 'qemu' | 'gvisor' | 'runc' = 'qemu') {

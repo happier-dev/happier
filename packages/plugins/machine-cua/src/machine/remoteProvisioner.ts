@@ -1,4 +1,4 @@
-import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createCuaByoc } from './byoc.js';
@@ -46,7 +46,7 @@ export async function invokeCuaRemoteRole(role: CuaRemoteRole, input: unknown, c
             if (result.kind === 'bound') return { kind: 'bound', resource: reference(result.resource) };
             if (result.kind === 'unavailable') return { kind: 'rejected', code: 'provider_unavailable' };
             return pending(operation, result.nativeCause);
-        } catch { /* Submission may have allocated. Lookup, never repurchase. */ }
+        } catch (error) { projectMachineProvisionerActionFailure(error, () => {}); /* Submission may have allocated. Lookup, never repurchase. */ }
         return pending(operation);
     }
     if (role === 'reconcile') {
@@ -54,7 +54,7 @@ export async function invokeCuaRemoteRole(role: CuaRemoteRole, input: unknown, c
         try {
             const result = await byoc.recover(operation.launch, operation.sandboxId, signal);
             if (result.kind === 'bound') return { kind: 'bound', resource: reference(result.resource) };
-        } catch { /* Reads cannot release custody or establish no-effect failure. */ }
+        } catch (error) { projectMachineProvisionerActionFailure(error, () => {}); /* Reads cannot release custody or establish no-effect failure. */ }
         return pending(operation);
     }
     if (role === 'destroy') {
