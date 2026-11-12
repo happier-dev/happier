@@ -11,7 +11,7 @@ import {
     DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS,
     retryBlockedAutomationReplyHandoff,
 } from "./automationReplyHandoffService";
-import { DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS, runAutomationReplyHandoffWorkerPass, startAutomationReplyHandoffWorker } from "./automationReplyHandoffWorker";
+import { runAutomationReplyHandoffWorkerPass, startAutomationReplyHandoffWorker } from "./automationReplyHandoffWorker";
 
 const ACCOUNT_ID = "account-reply-handoff-worker";
 const AUTOMATION_ID = "automation-reply-handoff-worker";
@@ -20,21 +20,11 @@ const HANDOFF_ID = "handoff-reply-handoff-worker";
 const OCCURRENCE_KEY = "A".repeat(43);
 const NOW = new Date("2026-08-10T12:00:00.000Z");
 
-function observeFallbackClock() {
+function observeDeadlineClock() {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    const setTimeoutAtBoundary = globalThis.setTimeout;
-    let fires = 0;
-    const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) =>
-        setTimeoutAtBoundary(() => {
-            if (delay === DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS) fires += 1;
-            callback(...args);
-        }, delay));
+    const timers = vi.spyOn(globalThis, "setTimeout");
     return {
-        get fires() { return fires; },
-        get arms() { return timers.mock.calls.filter(([, delay]) => delay === DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS).length; },
-        async waitForArm(count: number) {
-            await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => delay === DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS).length).toBeGreaterThanOrEqual(count));
-        },
+        async waitForArm(count: number) { await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000)).length).toBeGreaterThanOrEqual(count)); },
         close() { timers.mockRestore(); vi.useRealTimers(); },
     };
 }
@@ -137,52 +127,60 @@ describe("Automation reply handoff worker", () => {
         });
     }
 
-    it("keeps one existing fallback scan for cross-API writes and database-only recovery while honoring a future reply deadline", async () => {
+    it("does no idle scans and wakes for a committed retry before a future handoff deadline", async () => {
         await seedReadyHandoff();
-        const futureDueAt = new Date(Date.now() + 600_000);
-        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffDueAt: futureDueAt } });
-        const clock = observeFallbackClock();
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffDueAt: new Date(Date.now() + 600_000) } });
+        const clock = observeDeadlineClock();
         let reads = 0;
-        let transactions = 0;
-        const originalTransaction = db.$transaction;
-        db.$transaction = new Proxy(originalTransaction, {
-            apply(transaction, receiver, args: unknown[]) {
-                transactions += 1;
-                return Reflect.apply(transaction, receiver, args);
-            },
-        });
-        const release = observePrismaRequests(db, { before: request => {
+        let dispatches = 0;
+        const releaseIdle = observePrismaRequests(db, { before: request => {
             if (request.model === "AutomationRun" && request.action.startsWith("find")) reads += 1;
         } });
-        const worker = startAutomationReplyHandoffWorker({ dispatch: async () => {
-            throw new Error("The future handoff must not dispatch before its own deadline");
+        const live = startAutomationReplyHandoffWorker({ dispatch: async () => {
+            dispatches += 1;
+            return { kind: "settled", settlement: { kind: "accepted" }, accountCurrentness: await readCurrentness() };
         } });
         try {
             await clock.waitForArm(1);
-            expect(reads).toBe(1);
-            expect(transactions).toBe(0);
             const startupReads = reads;
-            for (let wake = 1; wake <= 6; wake += 1) {
-                await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
-                await clock.waitForArm(wake + 1);
-                expect(clock.fires).toBe(wake);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(reads - startupReads).toBe(0);
+            expect(dispatches).toBe(0);
+            await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffState: "blocked" } });
+            await retryBlockedAutomationReplyHandoff({ accountId: ACCOUNT_ID, runId: RUN_ID, now: new Date() });
+            await vi.waitFor(() => expect(dispatches).toBe(1));
+            await vi.waitFor(async () => expect(await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID }, select: { replyHandoffState: true } })).toEqual({ replyHandoffState: "accepted" }));
+        } finally { await live.stop(); releaseIdle(); clock.close(); }
+    });
+
+    it("retains a committed wake that arrives while its initial database scan is in flight", async () => {
+        await seedReadyHandoff();
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffState: "blocked" } });
+        let scanStarted!: () => void;
+        let releaseScan!: () => void;
+        const started = new Promise<void>(resolve => { scanStarted = resolve; });
+        const held = new Promise<void>(resolve => { releaseScan = resolve; });
+        let holdFirstScan = true;
+        const release = observePrismaRequests(db, { after: async request => {
+            if (holdFirstScan && request.model === "AutomationRun" && request.action === "findMany") {
+                holdFirstScan = false;
+                scanStarted();
+                await held;
             }
-            expect(reads - startupReads).toBe(6);
-            expect(transactions).toBe(0);
-            await expect(db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
-                select: { replyHandoffDueAt: true, replyHandoffAttempt: true } }))
-                .resolves.toEqual({ replyHandoffDueAt: futureDueAt, replyHandoffAttempt: 0 });
-            await worker.stop();
-            const stoppedReads = reads;
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
-            expect(clock.fires).toBe(6);
-            expect(reads).toBe(stoppedReads);
-        } finally {
-            await worker.stop();
-            release();
-            db.$transaction = originalTransaction;
-            clock.close();
-        }
+        } });
+        let dispatches = 0;
+        const worker = startAutomationReplyHandoffWorker({ dispatch: async () => {
+            dispatches += 1;
+            return { kind: "settled", settlement: { kind: "accepted" }, accountCurrentness: await readCurrentness() };
+        } });
+        try {
+            await started;
+            await retryBlockedAutomationReplyHandoff({ accountId: ACCOUNT_ID, runId: RUN_ID, now: new Date() });
+            releaseScan();
+            await vi.waitFor(() => expect(dispatches).toBe(1));
+            await vi.waitFor(async () => expect(await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+                select: { replyHandoffState: true } })).toEqual({ replyHandoffState: "accepted" }));
+        } finally { releaseScan(); await worker.stop(); release(); }
     });
 
     async function readCurrentness() {
@@ -194,9 +192,10 @@ describe("Automation reply handoff worker", () => {
         return { mode: "plain" as const, version: account.seq, contentKeyFingerprint: null };
     }
 
-    it("reports real database failures privately and recovers through the existing fallback without reconnect or push", async () => {
+    it("reports database failures privately and retains one failure recovery wake", async () => {
         await seedReadyHandoff();
-        const clock = observeFallbackClock();
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffState: "blocked" } });
+        const clock = observeDeadlineClock();
         const privateDetails = "private-prompt result-envelope account-secret";
         const warnings = vi.spyOn(logging, "warn").mockImplementation(() => {});
         let unavailable = true;
@@ -206,23 +205,16 @@ describe("Automation reply handoff worker", () => {
         const worker = startAutomationReplyHandoffWorker({ dispatch: async () => ({ kind: "settled",
             settlement: { kind: "accepted" }, accountCurrentness: await readCurrentness() }) });
         try {
-            await vi.waitFor(() => {
-                expect(warnings).toHaveBeenCalledWith({ module: "automation-reply-handoff-worker", operation: "pass" }, expect.any(String));
-                expect(warnings).toHaveBeenCalledWith({ module: "automation-reply-handoff-worker", operation: "due-scan" }, expect.any(String));
-            });
+            await vi.waitFor(() => expect(warnings).toHaveBeenCalledWith(
+                { module: "automation-reply-handoff-worker", operation: "pass" }, expect.any(String)));
             await clock.waitForArm(1);
             unavailable = false;
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+            await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffState: "ready" } });
+            await vi.advanceTimersByTimeAsync(10_000);
             await vi.waitFor(async () => expect(await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
-                select: { replyHandoffState: true, replyHandoffAttempt: true } }))
-                .toEqual({ replyHandoffState: "accepted", replyHandoffAttempt: 1 }));
+                select: { replyHandoffState: true } })).toEqual({ replyHandoffState: "accepted" }));
             expect(JSON.stringify(warnings.mock.calls)).not.toContain(privateDetails);
-        } finally {
-            await worker.stop();
-            release();
-            warnings.mockRestore();
-            clock.close();
-        }
+        } finally { await worker.stop(); release(); warnings.mockRestore(); clock.close(); }
     });
 
     it.each([0, 1_234])("settles a late RPC retry hint %i at the response clock while retaining the same high-attempt handoff", async (retryAfterMs) => {
@@ -244,48 +236,33 @@ describe("Automation reply handoff worker", () => {
                     : new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS) });
     });
 
-    it("retries a late expired handoff through the existing fallback without an immediate self-wake or attempt ceiling", async () => {
+    it("recovers an expired dispatch at its persisted lease boundary with no idle fallback", async () => {
         await seedReadyHandoff();
-        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffAttempt: 2 } });
-        const clock = observeFallbackClock();
+        const clock = observeDeadlineClock();
         let dispatches = 0;
-        const worker = startAutomationReplyHandoffWorker({ dispatch: async (raw) => {
-            const request = raw as AutomationReplyHandoffDispatchRequestV1;
-            expect(request.handoff.handoffId).toBe(HANDOFF_ID);
+        const worker = startAutomationReplyHandoffWorker({ dispatch: async () => {
             dispatches += 1;
-            if (dispatches === 1) vi.setSystemTime(Date.now() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS + 1);
-            return { kind: "unavailable", code: "contractInvalid" };
+            if (dispatches === 1) {
+                vi.setSystemTime(Date.now() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS + 1);
+                return { kind: "unavailable", code: "contractInvalid" };
+            }
+            return { kind: "settled", settlement: { kind: "accepted" }, accountCurrentness: await readCurrentness() };
         } });
         try {
-            await clock.waitForArm(1);
-            expect(dispatches).toBe(1);
-            await vi.advanceTimersByTimeAsync(0);
-            expect(dispatches).toBe(1);
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
-            await clock.waitForArm(2);
-            expect(dispatches).toBe(2);
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
-            await clock.waitForArm(3);
-            expect(clock.fires).toBe(2);
-            expect(dispatches).toBe(2);
-            await expect(db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
-                select: { replyHandoffState: true, replyHandoffAttempt: true, replyHandoffId: true } }))
-                .resolves.toEqual({ replyHandoffState: "ready", replyHandoffAttempt: 4, replyHandoffId: HANDOFF_ID });
-            await expect(db.automationRun.count()).resolves.toBe(1);
-        } finally {
-            await worker.stop();
-            clock.close();
-        }
+            await vi.waitFor(() => expect(dispatches).toBe(2));
+            await vi.waitFor(async () => expect(await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+                select: { replyHandoffState: true, replyHandoffAttempt: true } })).toEqual({ replyHandoffState: "accepted", replyHandoffAttempt: 2 }));
+        } finally { await worker.stop(); clock.close(); }
     });
 
-    it("discovers a cross-API ready handoff without a push while an unrelated future retry is sleeping", async () => {
+    it("discovers a committed retry while an unrelated future retry is sleeping", async () => {
         await seedReadyHandoff();
-        const retryAt = new Date(Date.now() + 60_000);
+        const retryAt = new Date(Date.now() + 600_000);
         const futureRun = await db.automationRun.update({
             where: { id: RUN_ID },
             data: { replyHandoffDueAt: retryAt, replyHandoffAttempt: 3 },
         });
-        const clock = observeFallbackClock();
+        const clock = observeDeadlineClock();
         const worker = startAutomationReplyHandoffWorker({
             dispatch: async () => ({
                 kind: "settled",
@@ -305,6 +282,7 @@ describe("Automation reply handoff worker", () => {
                     occurrenceKey,
                     replyHandoffId: handoffId,
                     replyHandoffDueAt: new Date(),
+                    replyHandoffState: "blocked",
                     replyHandoffAttempt: 0,
                     resultEnvelope: JSON.stringify({
                         ...RESULT_ENVELOPE,
@@ -320,7 +298,7 @@ describe("Automation reply handoff worker", () => {
                     }),
                 },
             });
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+            await retryBlockedAutomationReplyHandoff({ accountId: ACCOUNT_ID, runId, now: new Date() });
             await vi.waitFor(async () => {
                 await expect(db.automationRun.findUniqueOrThrow({
                     where: { id: runId },

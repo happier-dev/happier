@@ -157,7 +157,7 @@ describe("Automation reply handoff service", () => {
     it("claims the earliest due ready handoff atomically and returns exact raw frozen envelopes", async () => {
         await seedReadyHandoff();
 
-        await expect(findNextAutomationReplyHandoffDueAt({ now: NOW }))
+        await expect(findNextAutomationReplyHandoffDueAt())
             .resolves.toEqual(NOW);
         const [firstClaim, secondClaim] = await Promise.all([
             claimNextAutomationReplyHandoff({ now: NOW }),
@@ -216,7 +216,7 @@ describe("Automation reply handoff service", () => {
             outcome: { kind: "retry", retryAfterMs: 0 },
         })).resolves.toEqual({ applied: true });
         const firstRetryAt = firstLease.replyHandoffDueAt!;
-        await expect(findNextAutomationReplyHandoffDueAt({ now: NOW })).resolves.toEqual(firstRetryAt);
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toEqual(firstRetryAt);
 
         const secondClaim = await claimNextAutomationReplyHandoff({ now: firstRetryAt });
         expect(secondClaim).not.toBeNull();
@@ -228,7 +228,7 @@ describe("Automation reply handoff service", () => {
             outcome: { kind: "retry", retryAfterMs: 0 },
         })).resolves.toEqual({ applied: true });
         const secondRetryAt = secondLease.replyHandoffDueAt!;
-        await expect(findNextAutomationReplyHandoffDueAt({ now: firstRetryAt })).resolves.toEqual(secondRetryAt);
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toEqual(secondRetryAt);
 
         const thirdClaim = await claimNextAutomationReplyHandoff({ now: secondRetryAt });
         expect(thirdClaim).not.toBeNull();
@@ -240,7 +240,7 @@ describe("Automation reply handoff service", () => {
             outcome: { kind: "retry" },
         })).resolves.toEqual({ applied: true });
         const thirdRetryAt = thirdLease.replyHandoffDueAt!;
-        await expect(findNextAutomationReplyHandoffDueAt({ now: secondRetryAt })).resolves.toEqual(thirdRetryAt);
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toEqual(thirdRetryAt);
 
         const fourthClaim = await claimNextAutomationReplyHandoff({ now: thirdRetryAt });
         expect(fourthClaim).not.toBeNull();
@@ -251,7 +251,7 @@ describe("Automation reply handoff service", () => {
             outcome: { kind: "retry", retryAfterMs: 1_234 },
         })).resolves.toEqual({ applied: true });
         const positiveHintRetryAt = new Date(thirdRetryAt.getTime() + 1_234);
-        await expect(findNextAutomationReplyHandoffDueAt({ now: thirdRetryAt })).resolves.toEqual(positiveHintRetryAt);
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toEqual(positiveHintRetryAt);
 
         const acceptedClaim = await claimNextAutomationReplyHandoff({ now: positiveHintRetryAt });
         expect(acceptedClaim).not.toBeNull();
@@ -296,7 +296,7 @@ describe("Automation reply handoff service", () => {
             replyHandoffAttempt: 41,
             replyHandoffDueAt: lease.replyHandoffDueAt,
         });
-        await expect(findNextAutomationReplyHandoffDueAt({ now: settledAt })).resolves.toEqual(lease.replyHandoffDueAt);
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toEqual(lease.replyHandoffDueAt);
     });
 
     it("fails closed without blocking a ready handoff or retaining an immediate wake when E2EE Account currentness is inconsistent", async () => {
@@ -310,7 +310,7 @@ describe("Automation reply handoff service", () => {
             },
         });
 
-        await expect(findNextAutomationReplyHandoffDueAt({ now: NOW })).resolves.toBeNull();
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toBeNull();
         await expect(claimNextAutomationReplyHandoff({ now: NOW })).resolves.toBeNull();
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: RUN_ID },
@@ -626,7 +626,7 @@ describe("Automation reply handoff service", () => {
             revision: 1,
         });
         expect(secondaryHealthyAfter.replyHandoffDueAt).toEqual(healthyAfter.replyHandoffDueAt);
-        await expect(findNextAutomationReplyHandoffDueAt({ now: NOW }))
+        await expect(findNextAutomationReplyHandoffDueAt())
             .resolves.toEqual(healthyAfter.replyHandoffDueAt);
     });
 
@@ -688,7 +688,7 @@ describe("Automation reply handoff service", () => {
                 retryAfterMs: 5_000,
             },
         })).resolves.toEqual({ applied: true });
-        await expect(findNextAutomationReplyHandoffDueAt({ now: NOW }))
+        await expect(findNextAutomationReplyHandoffDueAt())
             .resolves.toEqual(new Date(NOW.getTime() + 5_000));
 
         const reClaim = await claimNextAutomationReplyHandoff({

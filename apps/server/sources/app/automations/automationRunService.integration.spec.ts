@@ -2557,7 +2557,7 @@ describe("automationRunService (integration)", () => {
             replyHandoffDueAt: null,
         });
         const now = new Date();
-        await expect(findNextAutomationReplyHandoffDueAt({ now })).resolves.toBeNull();
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toBeNull();
         await expect(claimNextAutomationReplyHandoff({ now })).resolves.toBeNull();
     });
 
@@ -2644,7 +2644,7 @@ describe("automationRunService (integration)", () => {
                 replyHandoffDueAt: null,
                 revision: before.revision + 1,
             }));
-            await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
+            await expect(findNextAutomationReplyHandoffDueAt()).resolves.toBeNull();
             await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
         },
     );

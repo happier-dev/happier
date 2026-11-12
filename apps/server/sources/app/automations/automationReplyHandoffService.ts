@@ -520,17 +520,13 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
 }
 
 /** Returns the next durable wake, including recovery of an expired handoff lease. */
-export async function findNextAutomationReplyHandoffDueAt(params: Readonly<{
-    now: Date;
-    futureOnly?: boolean;
-}>): Promise<Date | null> {
+export async function findNextAutomationReplyHandoffDueAt(): Promise<Date | null> {
     // Scheduling reads only ordering/currentness metadata. The claim still
     // acquires its transition fence and re-reads the due candidate inTx.
     const next = await findFirstReadReadyAccountHandoffDiscovery({
         reader: db,
         where: {
             ...openReplyHandoffWhere(),
-            ...(params.futureOnly ? { replyHandoffDueAt: { gt: params.now } } : {}),
         },
     });
     return next?.replyHandoffDueAt ?? null;

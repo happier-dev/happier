@@ -16,7 +16,7 @@ import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 
 import { claimAutomationRun } from "./automationClaimService";
 import { createAutomation, updateAutomationTrigger } from "./automationCrudService";
-import { DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS, runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
+import { runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
 import { emitAutomationScheduleWake } from "./automationScheduleWake";
 import { ensureAutomationScheduleCursorsTx } from "./automationRunQueueService";
 import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
@@ -367,72 +367,100 @@ describe("Automation schedule trigger firing (integration)", () => {
         } finally { release(); }
     });
 
-    it("retains only the existing fallback scan while a future schedule remains ineligible", async () => {
+    it("retains admission failure recovery after later scan pages make no progress", async () => {
         await seedTwoScheduleTriggers();
-        await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: new Date(Date.now() + 600_000) } });
+        const failedDueAt = new Date(Date.now() - 1_000);
+        const template = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
+        const heldIds = Array.from({ length: 127 }, () => randomUUID());
+        await db.automationTrigger.createMany({ data: heldIds.map(id => ({ ...template, id, nextRunAt: failedDueAt })) });
+        await db.automationTrigger.update({ where: { id: fastTriggerId }, data: { nextRunAt: failedDueAt } });
+        await db.automationTrigger.update({ where: { id: slowTriggerId }, data: { nextRunAt: new Date(failedDueAt.getTime() + 1) } });
+        await db.automationRun.createMany({ data: [...heldIds, slowTriggerId].map(triggerId => ({
+            id: randomUUID(), accountId, automationId, originKind: "automation", state: "queued",
+            triggerId, causeKind: "trigger", causeTriggerKind: "schedule", causeTriggerRevision: template.revision,
+            causeOccurredAt: failedDueAt, causeScheduledFor: failedDueAt, dueAt: failedDueAt, scheduledAt: failedDueAt,
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: AutomationTriggerIdSchema.parse(triggerId),
+                evidence: { v: 1, kind: "schedule", scheduledFor: failedDueAt.getTime() } }),
+        })) });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        const timers = vi.spyOn(globalThis, "setTimeout");
+        let failed = false;
+        let scans = 0;
+        const release = observePrismaRequests(db, { before: request => {
+            const where = (request.args as { where?: { id?: string } }).where;
+            if (!failed && request.model === "AutomationTrigger" && request.action === "findFirst" && where?.id === fastTriggerId) {
+                failed = true; throw new Error("Temporary admission database failure");
+            }
+        }, after: request => {
+            if (request.model === "AutomationTrigger" && request.action === "findMany") scans += 1;
+        } });
+        const worker = startAutomationScheduleWorker();
+        try {
+            await vi.waitFor(() => expect(scans).toBeGreaterThanOrEqual(4));
+            expect(failed).toBe(true);
+            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => delay === 10_000)).toBe(true));
+            await vi.advanceTimersByTimeAsync(10_000);
+            await vi.waitFor(async () => expect(await db.automationRun.count({ where: { triggerId: fastTriggerId } })).toBe(1));
+        } finally { await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers(); }
+    });
+
+    it("retries a failed database scan once, then leaves a healthy future schedule idle", async () => {
+        await seedTwoScheduleTriggers();
+        await db.automationTrigger.updateMany({ where: { automationId },
+            data: { nextRunAt: new Date(Date.now() + 600_000) } });
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         const timers = vi.spyOn(globalThis, "setTimeout");
         let reads = 0;
-        const release = observePrismaRequests(db, { after: request => {
+        let failNextScan = true;
+        const release = observePrismaRequests(db, { before: request => {
+            if (request.model !== "AutomationTrigger" || !request.action.startsWith("find")) return;
+            reads += 1;
+            if (failNextScan) { failNextScan = false; throw new Error("Database temporarily unavailable"); }
+        } });
+        const worker = startAutomationScheduleWorker();
+        try {
+            await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toHaveLength(1));
+            expect(reads).toBe(1);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toHaveLength(2));
+            const recoveredReads = reads;
+            expect(recoveredReads).toBeGreaterThan(1);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(reads).toBe(recoveredReads);
+        } finally { await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers(); }
+    });
+
+    it("does no idle scans and wakes for a committed schedule change before its old deadline", async () => {
+        await seedTwoScheduleTriggers();
+        const futureAt = new Date(Date.now() + 600_000);
+        await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: futureAt } });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        const timers = vi.spyOn(globalThis, "setTimeout");
+        let reads = 0;
+        const release = observePrismaRequests(db, { before: request => {
             if (request.model === "AutomationTrigger" && request.action.startsWith("find")) reads += 1;
         } });
         const worker = startAutomationScheduleWorker();
         try {
-            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => delay === DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS)).toBe(true));
-            // One due-page read and one next-deadline read; scheduling consumes
-            // that result instead of repeating discovery before arming a wake.
-            expect(reads).toBe(2);
+            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toBe(true));
             const startupReads = reads;
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS / 2);
+            await vi.advanceTimersByTimeAsync(60_000);
             expect(reads - startupReads).toBe(0);
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS / 2);
-            await vi.waitFor(() => expect(reads).toBeGreaterThan(startupReads));
-            await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
-            expect(reads - startupReads).toBe(2);
-            await expect(readRuns()).resolves.toHaveLength(0);
-            expect(vi.getTimerCount()).toBe(1);
-        } finally {
+            const trigger = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
+            const scheduledAt = Date.now() + 60_000;
+            await updateAutomationTrigger({ accountId, automationId, triggerId: fastTriggerId,
+                expectedRevision: trigger.revision,
+                trigger: { kind: "schedule", schedule: { kind: "once", scheduledAt } } });
+            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => typeof delay === "number" && delay > 1_000 && delay <= 60_000)).toBe(true));
+            await vi.advanceTimersByTimeAsync(Math.max(0, scheduledAt - Date.now()));
+            await vi.waitFor(async () => expect(await readRuns()).toMatchObject([{ triggerId: fastTriggerId, causeScheduledFor: new Date(scheduledAt) }]));
             await worker.stop();
-            release();
-            timers.mockRestore();
-            vi.useRealTimers();
-        }
-    });
-
-    it("discovers a database-only due trigger through the existing fallback scan", async () => {
-        await seedTwoScheduleTriggers();
-        const futureAt = new Date(Date.now() + 60_000);
-        await db.automationTrigger.updateMany({
-            where: { automationId },
-            data: { nextRunAt: futureAt },
-        });
-        const template = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-        const timers = vi.spyOn(globalThis, "setTimeout");
-        const worker = startAutomationScheduleWorker();
-        try {
-            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => (
-                delay === DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS
-            ))).toBe(true), { interval: 20 });
-            const triggerId = randomUUID();
-            await db.automationTrigger.create({
-                data: { ...template, id: triggerId, nextRunAt: new Date() },
-            });
-            // Another API replica need not share this process' local wake Set.
-            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS);
-            await vi.waitFor(async () => {
-                await expect(readRuns()).resolves.toMatchObject([
-                    { triggerId, state: "queued", causeKind: "trigger", causeTriggerKind: "schedule" },
-                ]);
-            }, { timeout: 2_000, interval: 20 });
-            await expect(db.automationTrigger.findUniqueOrThrow({
-                where: { id: fastTriggerId },
-                select: { nextRunAt: true, revision: true },
-            })).resolves.toEqual({ nextRunAt: futureAt, revision: template.revision });
+            const stoppedReads = reads;
+            emitAutomationScheduleWake();
+            await vi.advanceTimersByTimeAsync(600_000);
+            expect(reads).toBe(stoppedReads);
         } finally {
-            await worker.stop();
-            timers.mockRestore();
-            vi.useRealTimers();
+            await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers();
         }
     });
 

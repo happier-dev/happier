@@ -5780,6 +5780,19 @@ Account credentials and no custodian-profile or native-login fallback. Machine
 access does not widen private Run readership. Missing custody returns the typed
 re-save/start-again refusal described in [requester custody](encryption.md#access-keys).
 
+Schedule and reply-handoff workers in each API process wake after committed
+schedule-cursor and ready/retry mutations. Durable rows remain authoritative;
+healthy workers sleep until the next schedule or handoff-lease deadline without
+periodic idle scans. The existing 10-second recovery timer remains only after a
+failed database scan or admission. Startup scans recover persisted work.
+
+Workflow step preparation keeps its pending invocation durable before effects.
+Equal pending facts reuse the persisted progress, including for E2EE Runs.
+Pending allocation and preparation facts do not refresh the Run's Account feed;
+input admission still sends the existing origin-Session delivery hint and wake.
+Running, terminal and attention transitions remain published, as do capacity
+allocation and review replacement. These are 0.3 development-source contracts.
+
 Saved health checks can enroll an ordinary executable Workflow through
 `workflow.trigger.*` with a `pluginEvent` trigger, selecting the Machine-services
 `health-check-failed` or `health-check-recovered` contribution. The same request

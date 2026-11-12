@@ -12,6 +12,7 @@ import type {
 } from "./automationTypes";
 import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 import { projectAutomationRunState } from "./automationTypes";
+import { emitAutomationReplyHandoffWake } from "./automationScheduleWake";
 
 export function emitAutomationUpsert(params: {
     accountId: string;
@@ -63,6 +64,7 @@ export function emitAutomationRunUpdated(params: {
     run: AutomationRunItem | AutomationRunWithAutomation;
     cursor: number;
 }): void {
+    if (params.run.replyHandoffState === "ready") emitAutomationReplyHandoffWake();
     eventRouter.emitUpdate({
         userId: params.accountId,
         payload: {

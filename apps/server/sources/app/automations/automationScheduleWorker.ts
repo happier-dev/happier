@@ -11,8 +11,8 @@ import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService
 import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { subscribeAutomationScheduleWake } from "./automationScheduleWake";
 
-/** Existing liveness fallback for cross-API writes without push and DB-only recovery without reconnect. */
-export const DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS = 10_000;
+/** Retain the existing database-failure recovery cadence; healthy idle has no timer. */
+const AUTOMATION_SCHEDULE_DATABASE_RECOVERY_MS = 10_000;
 /** Private query-memory budget; it does not cap due work in one pass. */
 const AUTOMATION_SCHEDULE_SCAN_PAGE_SIZE = 128;
 
@@ -105,10 +105,12 @@ export async function runAutomationScheduleWorkerPass(params: Readonly<{
     shouldStop?: () => boolean;
 }>): Promise<Readonly<{
     progressed: boolean;
+    failed: boolean;
     nextDueAt: Date | null;
     continuationCursor: AutomationScheduleScanCursor | null;
 }>> {
     let progressed = false;
+    let failed = false;
     const page = await findEligibleDueScheduleTriggerPage(params);
     for (const candidate of page.eligible) {
         if (params.shouldStop?.()) break;
@@ -134,6 +136,7 @@ export async function runAutomationScheduleWorkerPass(params: Readonly<{
             // It is durable progress only after its canonical terminal transition.
             progressed ||= admitted?.kind === "admitted";
         } catch {
+            failed = true;
             warn(
                 { module: "automation-schedule-worker", triggerId: candidate.id },
                 "Automation schedule occurrence admission failed",
@@ -143,6 +146,7 @@ export async function runAutomationScheduleWorkerPass(params: Readonly<{
     const next = await findNextScheduleTrigger();
     return {
         progressed,
+        failed,
         nextDueAt: next?.nextRunAt ?? null,
         continuationCursor: page.continuationCursor,
     };
@@ -152,14 +156,13 @@ export function startAutomationScheduleWorker(): Readonly<{ stop: () => Promise<
     let stopped = false;
     let cancelTimer: (() => void) | null = null;
     let active: Promise<void> | null = null;
+    let wakePending = false;
     let scanCursor: AutomationScheduleScanCursor | null = null;
+    let scanFailed = false;
 
-    const schedule = async (lastPass: Readonly<{
-        progressed: boolean;
-        nextDueAt: Date | null;
-        continuationCursor: AutomationScheduleScanCursor | null;
-    }>): Promise<void> => {
+    const schedule = async (lastPass: Awaited<ReturnType<typeof runAutomationScheduleWorkerPass>>): Promise<void> => {
         if (stopped) return;
+        scanFailed ||= lastPass.failed;
         if (lastPass.continuationCursor !== null) {
             scanCursor = lastPass.continuationCursor;
             cancelTimer = armDeadlineTimer(Date.now(), () => {
@@ -169,22 +172,26 @@ export function startAutomationScheduleWorker(): Readonly<{ stop: () => Promise<
             return;
         }
         scanCursor = null;
+        const failed = scanFailed;
+        scanFailed = false;
         const nextDueAt = lastPass.nextDueAt;
         if (stopped) return;
-        const now = Date.now();
-        const nextDeadline = nextDueAt === null || (nextDueAt.getTime() <= now && !lastPass.progressed)
-            ? now + DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS
-            : Math.min(nextDueAt.getTime(), now + DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS);
-        cancelTimer = armDeadlineTimer(nextDeadline, () => {
+        if (!failed && nextDueAt !== null && nextDueAt.getTime() <= Date.now() && !lastPass.progressed) return;
+        const deadline = failed ? Date.now() + AUTOMATION_SCHEDULE_DATABASE_RECOVERY_MS : nextDueAt?.getTime();
+        if (deadline === undefined) return;
+        cancelTimer = armDeadlineTimer(deadline, () => {
             cancelTimer = null;
             void trigger();
         }, { unref: true });
     };
 
     const trigger = async (): Promise<void> => {
-        if (stopped || active) return;
+        if (stopped) return;
+        if (active) { wakePending = true; return; }
+        cancelTimer?.();
+        cancelTimer = null;
         active = withWebLatencyProducerTrace('producer.automation-schedule', async () => {
-            let pass = { progressed: false, nextDueAt: null as Date | null,
+            let pass = { progressed: false, failed: false, nextDueAt: null as Date | null,
                 continuationCursor: null as AutomationScheduleScanCursor | null };
             try {
                 pass = await runAutomationScheduleWorkerPass({
@@ -193,6 +200,7 @@ export function startAutomationScheduleWorker(): Readonly<{ stop: () => Promise<
                     shouldStop: () => stopped,
                 });
             } catch {
+                pass.failed = true;
                 warn({ module: "automation-schedule-worker" }, "Automation schedule worker pass failed");
             } finally {
                 await schedule(pass);
@@ -202,14 +210,16 @@ export function startAutomationScheduleWorker(): Readonly<{ stop: () => Promise<
             await active;
         } finally {
             active = null;
+            if (wakePending && !stopped) { wakePending = false; scanCursor = null; scanFailed = false; void trigger(); }
         }
     };
 
     const unsubscribeWake = subscribeAutomationScheduleWake(() => {
-        if (stopped || active) return;
+        if (stopped) return;
         cancelTimer?.();
         cancelTimer = null;
         scanCursor = null;
+        scanFailed = false;
         void trigger();
     });
 

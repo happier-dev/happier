@@ -11,3 +11,15 @@ export function subscribeAutomationScheduleWake(listener: AutomationScheduleWake
     listeners.add(listener);
     return () => listeners.delete(listener);
 }
+
+const replyHandoffListeners = new Set<AutomationScheduleWakeListener>();
+
+/** Committed ready/retry rows wake the worker in the API process that wrote them. */
+export function emitAutomationReplyHandoffWake(): void {
+    for (const listener of replyHandoffListeners) listener();
+}
+
+export function subscribeAutomationReplyHandoffWake(listener: AutomationScheduleWakeListener): () => void {
+    replyHandoffListeners.add(listener);
+    return () => replyHandoffListeners.delete(listener);
+}

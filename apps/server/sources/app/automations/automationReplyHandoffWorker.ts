@@ -2,6 +2,7 @@ import { AutomationReplyHandoffDispatchRequestV1Schema, AutomationReplyHandoffDi
 import { warn } from "@/utils/logging/log";
 import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
 import { armDeadlineTimer } from "@happier-dev/protocol/common/deadlineTimer";
+import { subscribeAutomationReplyHandoffWake } from "./automationScheduleWake";
 
 import {
     claimNextAutomationReplyHandoff,
@@ -9,8 +10,8 @@ import {
     settleAutomationReplyHandoff,
 } from "./automationReplyHandoffService";
 
-/** Existing liveness fallback for cross-API writes without push and DB-only recovery without reconnect. */
-export const DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS = 10_000;
+/** Retain the existing database-failure recovery cadence; healthy idle has no timer. */
+const AUTOMATION_REPLY_HANDOFF_DATABASE_RECOVERY_MS = 10_000;
 
 export type AutomationReplyHandoffDispatcher = (
     request: unknown,
@@ -86,10 +87,6 @@ function isRetryableUnavailable(
         || code === "cancelled";
 }
 
-async function readNextDueAt(now: Date): Promise<Date | null> {
-    return await findNextAutomationReplyHandoffDueAt({ now });
-}
-
 /**
  * Executes one durable handoff lease. Socket RPC is the only mocked boundary:
  * the Run claim and settlement remain real database transitions below it.
@@ -103,7 +100,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
     const claim = await claimNextAutomationReplyHandoff({ now: claimNow,
         dueThrough: params.dueThrough });
     if (!claim) {
-        return { claimed: false, settled: false, nextDueAt: await readNextDueAt(params.now()) };
+        return { claimed: false, settled: false, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
     }
 
     const request = buildDispatchRequest(claim);
@@ -113,7 +110,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
             now: params.now(),
             outcome: { kind: "blocked" },
         });
-        return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now()) };
+        return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
     }
 
     let rawResult: unknown;
@@ -132,7 +129,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
             now: params.now(),
             outcome: { kind: "retry" },
         });
-        return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now()) };
+        return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
     }
 
     const settlement = result.data.kind === "unavailable"
@@ -153,7 +150,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
             outcome: result.data.settlement,
             accountCurrentness: result.data.accountCurrentness,
         });
-    return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now()) };
+    return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
 }
 
 /**
@@ -166,36 +163,36 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
     let stopped = false;
     let cancelTimer: (() => void) | null = null;
     let active: Promise<void> | null = null;
+    let wakePending = false;
 
-    const schedule = async (knownNextDueAt?: Date | null): Promise<void> => {
+    const schedule = async (knownNextDueAt?: Date | null, failed = false): Promise<void> => {
         if (stopped) return;
-        const now = new Date();
         let nextDueAt: Date | null = knownNextDueAt ?? null;
         try {
-            if (knownNextDueAt === undefined) {
-                nextDueAt = await findNextAutomationReplyHandoffDueAt({ now, futureOnly: true });
+            if (!failed && knownNextDueAt === undefined) {
+                nextDueAt = await findNextAutomationReplyHandoffDueAt();
             }
         } catch {
             warnWorkerFailure("due-scan");
-            // The same fallback owns retry after a transient database failure.
+            failed = true;
         }
         if (stopped) return;
-        const scheduledAt = Date.now();
-        const nextDeadline = nextDueAt === null
-            ? scheduledAt + DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS
-            : Math.min(nextDueAt.getTime(), scheduledAt + DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
-        cancelTimer = armDeadlineTimer(nextDeadline, () => {
+        const deadline = failed ? Date.now() + AUTOMATION_REPLY_HANDOFF_DATABASE_RECOVERY_MS : nextDueAt?.getTime();
+        if (deadline === undefined) return;
+        cancelTimer = armDeadlineTimer(deadline, () => {
             cancelTimer = null;
             void trigger();
         }, { unref: true });
     };
 
     const trigger = async (): Promise<void> => {
-        if (stopped || active) return;
+        if (stopped) return;
+        if (active) { wakePending = true; return; }
         cancelTimer?.();
         cancelTimer = null;
         active = withWebLatencyProducerTrace('producer.automation-reply-handoff', async () => {
             let knownNextDueAt: Date | null | undefined;
+            let failed = false;
             try {
                 if (!stopped) {
                     // A traversal visits the work due when demand arrived.
@@ -203,7 +200,7 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
                     // beyond this traversal, even if a slow RPC returns after
                     // its lease expired. No retained attempted-ID registry.
                     const dueThrough = new Date();
-                    const nextDueAt = await readNextDueAt(dueThrough);
+                    const nextDueAt = await findNextAutomationReplyHandoffDueAt();
                     if (nextDueAt === null || nextDueAt.getTime() > dueThrough.getTime()) {
                         knownNextDueAt = nextDueAt;
                         return;
@@ -217,24 +214,28 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
                     }
                 }
             } catch {
+                failed = true;
                 warnWorkerFailure("pass");
                 // The durable claim remains recoverable when dispatch or DB work fails.
             } finally {
-                await schedule(knownNextDueAt);
+                await schedule(knownNextDueAt, failed);
             }
         });
         try {
             await active;
         } finally {
             active = null;
+            if (wakePending && !stopped) { wakePending = false; void trigger(); }
         }
     };
 
+    const unsubscribeWake = subscribeAutomationReplyHandoffWake(() => { void trigger(); });
     void trigger();
     return {
         stop: async () => {
             if (stopped) return;
             stopped = true;
+            unsubscribeWake();
             cancelTimer?.();
             cancelTimer = null;
             await active;

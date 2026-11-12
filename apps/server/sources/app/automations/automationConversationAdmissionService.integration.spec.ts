@@ -823,7 +823,7 @@ describe("Automation Conversation admission database boundary", () => {
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
         });
-        await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
+        await expect(findNextAutomationReplyHandoffDueAt()).resolves.toBeNull();
         await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
         await expect(admitAutomationConversationV1({
             accountId: ACCOUNT_ID,
