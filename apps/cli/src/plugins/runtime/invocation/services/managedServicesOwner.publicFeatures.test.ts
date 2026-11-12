@@ -764,7 +764,7 @@ function createRotatingHeaderLease() {
         async rotate(nextCredential: string): Promise<void> {
             credential = nextCredential;
             for (const listener of listeners) {
-                listener(Object.freeze({ kind: 'resync' }));
+                listener(Object.freeze({ kind: 'resync', authorityChanged: true }));
             }
             await Promise.resolve();
             await Promise.resolve();

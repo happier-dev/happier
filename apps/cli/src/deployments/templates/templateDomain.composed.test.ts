@@ -120,7 +120,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes
                 ok: true, projectSourceId: 'project', sourceRevision: 1, revision: 0, content: null }) };
             if (path.endsWith('/deployments')) return { status: 200, data: { ok: true, items: [], nextCursor: null } };
             if (path === `/v1/deployments/environments/${environment.environment.id}`) return { status: 200, data: {
-                ok: true, environment: environment.environment, targetLinks: [link] } };
+                ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: [link] } };
             if (path.startsWith('/v1/artifacts/')) {
                 const row = artifacts.get(decodeURIComponent(path.split('/').at(-1)!));
                 return { status: row ? 200 : 404, data: row ?? {} };

@@ -109,6 +109,24 @@ describe('Project readiness through the public Action', () => {
     expect(f.metadataReads()).toBe(1);
     expect(f.nativeReads).toEqual([]);
   });
+  it('keeps admitted backup and secret facts when the health source transport fails', async () => {
+    const f = readinessFixture();
+    f.detail.content.backup = { notNeeded: true };
+    f.detail.secretScope = { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 0, missingGrantCount: 0 };
+    // The HTTP boundary fails; the saved-source reader and composite stay real.
+    vi.spyOn(axios, 'post').mockRejectedValue(Object.assign(new Error('PRIVATE-TRANSPORT'), { code: 'ECONNRESET' }));
+    const result = await f.credentialedExecutor.execute('projects.readiness.read', { serverId: 'home', machineId: 'controller',
+      projectId: 'project', environments: [{ environmentId: 'production', expectedRevision: 2 }] },
+    { surface: 'ui', serverId: 'home', runtimeAccountId: 'account' });
+    expect(result).toMatchObject({ ok: true, result: { status: 'unavailable', facts: expect.arrayContaining([
+      expect.objectContaining({ kind: 'health', status: 'unavailable' }),
+      expect.objectContaining({ kind: 'alerts', status: 'unavailable' }),
+      expect.objectContaining({ kind: 'backups', status: 'ready', reason: 'notNeeded' }),
+      expect.objectContaining({ kind: 'secrets', status: 'ready', reason: 'secret_scope_current' }),
+    ]) } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE-TRANSPORT');
+    expect(f.nativeReads).toEqual([]);
+  });
   it('spends one retained Account source census for two selected Environments on the admitted controller', async () => {
     const f = readinessFixture();
     f.additionalEnvironments.set('staging', { ...f.detail, environment: { ...f.detail.environment, id: 'staging' } });
@@ -352,6 +370,7 @@ describe('Project readiness through the public Action', () => {
   it('reads an exact Environment once through the credentialed host factory and discloses missing owners', async () => {
     const { credentialedExecutor: executor, detail, metadataReads } = readinessFixture();
     detail.content.backup = { notNeeded: true };
+    delete detail.secretScope;
     const result = await executor.execute('projects.readiness.read', {
       serverId: 'home', machineId: 'controller', projectId: 'project',
       environments: [{ environmentId: 'production', expectedRevision: 2 }],

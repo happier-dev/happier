@@ -23,6 +23,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -201,7 +202,7 @@ it.each([
         requestKey: 'root-create', controllerMachineId: 'target',
         ...(linked ? { firstTargetLink: { machines: [{ machineId: 'target', installationId: identity.installationId }] } } : {}) });
     const preparedRoot = await executor.prepare('deployments.environments.create', authored, { surface: 'ui', authority: 'present_user',
-        actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' });
+        actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner', actionsSettings: normalizeActionsSettingsV1(undefined) });
     expect(preparedRoot.kind, JSON.stringify(preparedRoot)).toBe('ready');
     expect(effects).toEqual([]);
     expect(documents.size).toBe(0);
