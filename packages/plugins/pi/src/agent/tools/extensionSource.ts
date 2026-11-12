@@ -13,8 +13,6 @@ const CONFIG_FLAG = ${JSON.stringify(PI_HAPPIER_TOOLS_CONFIG_FLAG)};
 const MCP_APPROVAL_CALL_PREFIX = ${JSON.stringify(PI_MCP_APPROVAL_CALL_PREFIX)};
 const MCP_CAPABILITY_NOTICE_RECORD_TYPE = ${JSON.stringify(PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE)};
 const USER_INPUT_NOTIFICATION_TYPE = ${JSON.stringify(PI_USER_INPUT_NOTIFICATION_TYPE)};
-const BRIDGE_OUTPUT_MAX_BYTES = 1024 * 1024;
-const BRIDGE_OUTPUT_MAX_LINES = 4000;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 2000;
 const TOOL_OUTPUT_NOTICE_RESERVE_BYTES = 256;
@@ -186,29 +184,10 @@ function invoke(config, toolName, args, callId, signal, cwd) {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const createOutputCollector = () => {
-      const chunks = [];
-      let bytes = 0;
-      let lines = 1;
-      let limited = false;
-      return {
-        append(data) {
-          const chunk = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ""), "utf8");
-          lines += (chunk.toString("utf8").match(/\\n/g) ?? []).length;
-          const remaining = Math.max(0, BRIDGE_OUTPUT_MAX_BYTES - bytes);
-          if (remaining > 0) {
-            const accepted = chunk.subarray(0, remaining);
-            chunks.push(accepted);
-            bytes += accepted.length;
-          }
-          if (chunk.length > remaining || lines > BRIDGE_OUTPUT_MAX_LINES) limited = true;
-        },
-        text() { return Buffer.concat(chunks, bytes).toString("utf8"); },
-        get limited() { return limited; },
-      };
-    };
-    const stdout = createOutputCollector();
-    const stderr = createOutputCollector();
+    // Preserve the complete envelope until parsing; only the model projection is truncated.
+    const stdout = [];
+    // Diagnostics use the existing 500-character display allowance as a rolling tail.
+    let stderr = "";
     let settled = false;
     let killed = false;
     let forceKillTimer = null;
@@ -228,26 +207,18 @@ function invoke(config, toolName, args, callId, signal, cwd) {
     };
     if (signal?.aborted) abort();
     else signal?.addEventListener?.("abort", abort, { once: true });
-    child.stdout?.on("data", (chunk) => {
-      stdout.append(chunk);
-      if (stdout.limited) abort();
-    });
-    child.stderr?.on("data", (chunk) => {
-      stderr.append(chunk);
-      if (stderr.limited) abort();
-    });
+    child.stdout?.on("data", (chunk) => { stdout.push(chunk); });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => { stderr = (stderr + chunk).slice(-500); });
     child.once("error", (error) => finish({ ok: false, error: { code: "bridge_spawn_failed", message: String(error?.message || error) } }));
     child.once("close", (code) => {
-      if (stdout.limited || stderr.limited) {
-        finish({ ok: false, error: { code: "bridge_output_limit", message: "Happier tools bridge output exceeded its bounded transport limit" } });
-        return;
-      }
       if (killed) {
         finish({ ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } });
         return;
       }
-      if (!stdout.text().trim() && code !== 0) {
-        const diagnostic = stderr.text().trim().slice(0, 500);
+      const output = Buffer.concat(stdout).toString("utf8");
+      if (!output.trim() && code !== 0) {
+        const diagnostic = stderr.trim();
         const exit = code === null ? "unavailable" : String(code);
         finish({
           ok: false,
@@ -258,7 +229,7 @@ function invoke(config, toolName, args, callId, signal, cwd) {
         });
         return;
       }
-      finish(parseEnvelope(stdout.text()));
+      finish(parseEnvelope(output));
     });
   });
 }

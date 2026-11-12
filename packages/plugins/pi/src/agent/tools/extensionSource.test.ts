@@ -254,7 +254,6 @@ describe('Pi Happier tools extension', () => {
     expect(source).not.toContain('memory_search');
     expect(source).not.toContain('change_title');
     expect(source).not.toContain('TIMEOUT_MS');
-    expect(source).toContain('BRIDGE_OUTPUT_MAX_BYTES');
   });
 
   it('rejects malformed host manifests instead of partially registering them', async () => {
@@ -291,12 +290,11 @@ describe('Pi Happier tools extension', () => {
     }
   });
 
-  it('bounds oversized native tool results before returning them to Pi', async () => {
+  it.each(['stdout bytes', 'stdout lines', 'stderr bytes', 'stderr lines'])('preserves successful usage results beyond old %s cutoff with model truncation', async (overflow) => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-bounds-test-'));
     try {
       const extensionPath = join(root, 'extension.mjs');
       const configPath = join(root, 'config.json');
-      const payload = '😀'.repeat(20 * 1024);
       writeFileSync(extensionPath, buildPiHappierToolsExtensionSource());
       writeFileSync(configPath, JSON.stringify({
         v: 1,
@@ -311,7 +309,15 @@ describe('Pi Happier tools extension', () => {
         }],
         launch: {
           executablePath: process.execPath,
-          argsPrefix: ['-e', `process.stdout.write(JSON.stringify({ ok: true, data: { output: ${JSON.stringify(payload)} } }) + "\\n")`, '--'],
+          argsPrefix: ['-e', `
+            const overflow = ${JSON.stringify(overflow)};
+            const output = { totals: { tokens: { total: 121994962 } },
+              sessionEvidence: '😀'.repeat(overflow === 'stdout bytes' ? 300 * 1024 : 20 * 1024) };
+            if (overflow === 'stdout lines') process.stdout.write('diagnostic\\n'.repeat(4001));
+            if (overflow.startsWith('stderr')) process.stderr.write(
+              overflow === 'stderr bytes' ? 'x'.repeat(2 * 1024 * 1024) : 'diagnostic\\n'.repeat(4001));
+            process.stdout.write(JSON.stringify({ ok: true, data: { output } }) + "\\n");
+          `, '--'],
         },
       }));
       const module = await import(`${pathToFileURL(extensionPath).href}?${Math.random()}`);
@@ -340,13 +346,14 @@ describe('Pi Happier tools extension', () => {
       expect(Buffer.byteLength(result?.content[0]?.text ?? '', 'utf8')).toBeLessThanOrEqual(50 * 1024);
       expect(result?.content[0]?.text).not.toContain('�');
       expect(result?.content[0]?.text).toContain('[Happier tool output truncated');
-      expect(JSON.stringify(result?.details ?? {})).not.toContain(payload);
+      expect(result?.content[0]?.text).toContain('121994962');
+      expect(Buffer.byteLength(JSON.stringify(result?.details ?? {}), 'utf8')).toBeLessThan(51 * 1024);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('terminates a bridge process that stays alive after exceeding the transport limit', async () => {
+  it('cancels a bridge process that stays alive after emitting large output', async () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-transport-limit-test-'));
     try {
       const extensionPath = join(root, 'extension.mjs');
@@ -387,7 +394,7 @@ describe('Pi Happier tools extension', () => {
       const abortTimer = setTimeout(() => controller.abort(), 500);
       try {
         await expect(tools[0]?.execute('call-1', {}, controller.signal, undefined, { cwd: root }))
-          .rejects.toThrow('bridge_output_limit');
+          .rejects.toThrow('bridge_cancelled');
       } finally {
         clearTimeout(abortTimer);
       }
@@ -461,7 +468,7 @@ describe('Pi Happier tools extension', () => {
         }],
         launch: {
           executablePath: process.execPath,
-          argsPrefix: ['-e', 'process.stderr.write("deterministic bridge diagnostic"); process.exit(7)', '--'],
+          argsPrefix: ['-e', 'process.stderr.write("x".repeat(2 * 1024 * 1024) + "deterministic bridge diagnostic", () => process.exit(7))', '--'],
         },
       }));
       const module = await import(`${pathToFileURL(extensionPath).href}?${Math.random()}`);
