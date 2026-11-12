@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindCallerInput } from '@happier-dev/protocol/actions/executor/callerInput';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createHash } from 'node:crypto';
 import { projectExternalActionHttpError, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -69,6 +72,39 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each(['voice', 'api'] as const)('admits the R135 spawn through its sealed %s caller schema', async surface => {
+        account?.dispose();
+        // R135's payload after the existing catalog binder selected Codex.
+        const input = {
+            executionTarget: { serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN', machineId: 'ea391815-b2f8-4485-903c-145019cbe76d' },
+            directory: { kind: 'path', path: '.' },
+            initialInput: { text: 'Create a file named teal containing the text blue.' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        };
+        const serverUrl = 'https://r135-spawn.test';
+        serverId = await homes.addHome({ name: 'R135 spawn', serverUrl, serverIdentityId: input.executionTarget.serverId,
+            accountId: 'owner', currentAccount: true, active: false });
+        account = await captureLazyActionAccountContext(serverId);
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: input.executionTarget.machineId,
+            tokenEpoch: 0, actionId: 'session.spawn_new',
+            execute: async (received, context) => {
+                const bound = await bindCallerInput(getActionSpec('session.spawn_new'), received, {
+                    surface: context.invocation.surface, actionCaller: context.invocation.caller,
+                    serverId: input.executionTarget.serverId, externalActionTarget: context.target,
+                });
+                return bound.ok ? bound.input : bound;
+            },
+            failure: value => {
+                const parsed = ActionExecuteFailureSchema.safeParse(value);
+                return parsed.success ? parsed.data : null;
+            },
+        });
+        if (!account) throw new Error('Expected captured R135 Account');
+        const result = await executeOriginalAccountMachineAction({ account, input, actionId: 'session.spawn_new',
+            requestId: `r135-spawn-${surface}`, machineId: input.executionTarget.machineId,
+            authority: 'account_automation', invocation: { caller: { kind: 'host' }, surface, authority: 'account_automation' } });
+        expect(result, JSON.stringify(result)).toEqual({ ok: true, result: input });
+    });
     it.each([
         { creator: true, prepareCodec: true, accountMode: 'plain' }, { creator: true, prepareCodec: true, accountMode: 'e2ee' },
         { creator: false, prepareCodec: false, accountMode: 'plain' }, { creator: false, prepareCodec: false, accountMode: 'e2ee' },

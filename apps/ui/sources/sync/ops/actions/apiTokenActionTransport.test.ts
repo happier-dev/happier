@@ -106,7 +106,7 @@ describe('API-token Action transport', () => {
         expect(result.ok).toBe(true);
         expect(ceiling).toBeNull();
         expect(body).toMatchObject({ v: 1, target: { kind: 'machine', machineId: 'machine' }, input: { directory: { kind: 'managed' } } });
-        expect(body).not.toHaveProperty('input.executionTarget');
+        expect(body).toHaveProperty('input.executionTarget', { serverId: 'home', machineId: 'machine' });
         expect(body).not.toHaveProperty('authority');
     });
     it.each([

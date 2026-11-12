@@ -458,9 +458,8 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     return { kind: 'settled', result: actionFailure('target_unavailable') };
   }
   if (publicActionId.data === 'session.spawn_new') {
-    // The public API owns a distinct spawn-input projection: placement is
-    // envelope metadata and daemon-local server identity must never cross this
-    // boundary. Do not duplicate its projection in the CLI adapter.
+    // The shared spawn projection retains canonical input for every caller.
+    // API admission derives placement from the stamped envelope and Home.
     try {
       const projection = projectSessionSpawnNewApiRequest(params.input);
       return {

@@ -652,10 +652,12 @@ describe('ActionSpec-generated plugin action types', () => {
     expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse({
       ...apiSpawnInput,
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+    }).success).toBe(true);
+    expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse({
+      ...apiSpawnInput, unexpected: true,
     }).success).toBe(false);
     const callerSuppliedTarget: PublicActionInputById['session.spawn_new'] = {
       ...apiSpawnInput,
-      // @ts-expect-error API callers cannot supply host-owned execution placement.
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
     };
     // @ts-expect-error CLI and other canonical Action callers still supply executionTarget.

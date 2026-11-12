@@ -1074,6 +1074,13 @@ Workflow origin; it neither grants present-user authority nor permits general
 ordinary-Account bearer Session spawning. Plain V1 and protected V2 requests use
 the existing relay formats and current-row checks.
 
+In development source, Session spawn API input accepts an optional
+`executionTarget`. The shared projection retains it so sealed Voice, CLI and
+Agent invocations reach canonical admission with their selected target intact.
+API admission still binds placement from the stamped envelope target and Home;
+the input field does not grant placement authority. Unknown input keys remain
+rejected.
+
 Development source also accepts a genuine ordinary Account bearer for the managed-machine
 Action family, including `POST /v1/actions/machines.managed.acquire` and
 `machines.managed.bootstrap.retry`; this does not authorize arbitrary Actions

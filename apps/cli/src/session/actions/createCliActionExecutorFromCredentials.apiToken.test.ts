@@ -1613,6 +1613,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       target: { kind: 'machine', machineId: 'machine-selected' },
       input: {
         creationKey: 'manual:pat-spawn-1',
+        executionTarget: { serverId: 'daemon-profile-only', machineId: 'machine-selected' },
         directory: { kind: 'path', path: '/workspace/pat-project' },
         organizationPlacement: { sectionId: null, tagIds: [] },
         agentTarget: {

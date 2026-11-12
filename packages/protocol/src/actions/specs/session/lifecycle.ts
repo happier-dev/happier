@@ -116,10 +116,9 @@ export const SessionSpawnNewInputSchema = SessionSpawnNewActionInputV2Schema;
 export const SessionSpawnNewTerminalInputSchema = lazyZodSchema(() => z.omit(SessionSpawnNewActionInputV2BaseSchema, {
   observeSessionCommit: true,
 }).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1)));
-export const SessionSpawnNewApiInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.omit(SessionSpawnNewActionInputV2BaseSchema, {
-  executionTarget: true,
+export const SessionSpawnNewApiInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.partial(z.omit(SessionSpawnNewActionInputV2BaseSchema, {
   observeSessionCommit: true,
-})).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1)));
+}), { executionTarget: true })).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1)));
 export const SessionSpawnNewInputHints = {
   title: 'Create a new session',
   description: 'Start a session with an agent on one of your machines.',
@@ -128,6 +127,7 @@ export const SessionSpawnNewInputHints = {
     { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
     { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
     { path: 'directory', title: 'Directory intent', widget: 'json', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
+    { path: 'managedTargetPlacement', title: 'Managed target placement', description: 'Run the Agent inside one of your managed targets: {managedId,workspaceRoot}. The directory maps onto workspaceRoot inside the target. From an Agent this asks you first unless you allowed it in Action settings.', widget: 'json' },
     { path: 'machineSetupPlanInput', title: 'Machine software setup', description: 'Install the selected software on this Machine before starting the Agent. This spawn approval includes setup.', widget: 'json' },
     { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
     { path: 'agentTarget', title: 'Agent target', description: 'Copy the selected catalog row\'s complete agentTarget. A configured Agent uses {kind:"agent",identity:{pluginId,localId},definitionId}; definitionId belongs beside identity.', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
@@ -159,23 +159,23 @@ export const SessionSpawnNewApiInputHints = {
 
 /**
  * The sole canonical-to-public projection for a Session creation request that
- * was already admitted on a local Action surface. Execution placement remains
- * transport metadata: the public input cannot carry it, while the selected
- * machine reaches the API envelope as its exact target.
+ * was already admitted on a local Action surface. Preserve its exact execution
+ * target for original-caller admission; API admission still binds placement from
+ * the stamped envelope target and Home.
  */
 export function projectSessionSpawnNewApiRequest(
   value: unknown,
 ): Readonly<{
-  input: z.input<typeof SessionSpawnNewApiInputSchema>;
+  input: z.input<typeof SessionSpawnNewTerminalInputSchema>;
   target: Extract<ExternalActionTargetV1, { kind: 'machine' }>;
 }> {
   const canonicalInput = SessionSpawnNewActionInputV2Schema.parse(value);
-  const { executionTarget, observeSessionCommit: _observer, ...apiInput } = canonicalInput;
+  const { observeSessionCommit: _observer, ...input } = canonicalInput;
   return {
-    input: SessionSpawnNewApiInputSchema.parse(apiInput),
+    input,
     target: {
       kind: 'machine',
-      machineId: executionTarget.machineId,
+      machineId: input.executionTarget.machineId,
     },
   };
 }
@@ -701,7 +701,9 @@ function createSessionSpawnActionSpecs() {
       const serverId = readNonEmptyString(target.serverId);
       return machineId ? { target: { kind: 'machine', machineId }, ...(serverId ? { serverId } : {}) } : null;
     },
-    approvalPolicy: { uiConfirmation: 'direct' },
+    // Placing the Session inside one of the person's managed targets delivers their Agent
+    // credentials there, so an Agent (or MCP) asks first by default (owner 2026-11-12, W7).
+    approvalPolicy: { uiConfirmation: 'direct', agentDefaultForInput: input => readRecord(input).managedTargetPlacement !== undefined },
     operation: {
       version: 1,
       visibility: 'activity',

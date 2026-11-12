@@ -1444,14 +1444,22 @@ describe('voice tool handlers', () => {
     ['', 'named', 'configured-default'], ['', 'discovered', 'configured-default'],
     ['', 'named', 'remembered-default'], ['', 'discovered', 'remembered-default'],
     ['', 'named', 'signed-out-default'], ['', 'discovered', 'signed-out-default'],
+    ['', 'discovered', 'r135-default'],
   ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s, %s)', async (sourceSessionId, entry, agentChoice) => {
     state.settings.voice.canApproveRequests = false;
+    const r135Default = agentChoice === 'r135-default';
     const configuredDefault = agentChoice === 'configured-default';
     const selectedAgentTarget = configuredDefault
       ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'qa-c-exact-args' }
       : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
     const rememberedDefault = agentChoice === 'remembered-default';
     const signedOutDefault = agentChoice === 'signed-out-default';
+    if (r135Default) {
+      const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+      rememberLastUsedBackendSelection(storage.getState().settingsScope, {
+        lastUsedBackendTarget: selectedAgentTarget, lastUsedAgent: 'codex',
+      });
+    }
     if (signedOutDefault) {
       const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
       rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedBackendTarget: null, lastUsedAgent: 'claude' });
@@ -1489,20 +1497,21 @@ describe('voice tool handlers', () => {
       } },
     });
     const { resolveVoiceExecutionMachineSelectionFromState } = await import('@/voice/settings/executionMachine');
-    expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState())).toEqual({ kind: 'resolved', machineId: 'm1' });
+    if (!r135Default) expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState())).toEqual({ kind: 'resolved', machineId: 'm1' });
     const { resolveVoiceAgentInitialContexts } = await import('@/voice/agent/resolveVoiceAgentInitialContexts');
     const initial = resolveVoiceAgentInitialContexts(sourceSessionId).bootstrapInitialContext;
     const target = initial.match(/<voice_execution_target>\s*([^<]+)\s*<\/voice_execution_target>/)?.[1];
-    expect(target, 'Voice startup must supply the configured Machine and its Home without discovery').toBeDefined();
-    const executionTarget: unknown = JSON.parse(target!);
+    if (!r135Default) expect(target, 'Voice startup must supply the configured Machine and its Home without discovery').toBeDefined();
+    // R135 already captured its target at Start; this regression begins at the tool ingress.
+    const executionTarget: unknown = r135Default ? { serverId: 'srv_voice_tools_a', machineId: 'm1' } : JSON.parse(target!);
     expect(executionTarget).toEqual({ serverId: 'srv_voice_tools_a', machineId: 'm1' });
     const spawnInput = {
-      creationKey: 'manual:voice-v2-contract',
+      ...(!r135Default ? { creationKey: 'manual:voice-v2-contract' } : {}),
       executionTarget,
-      directory: signedOutDefault ? { kind: 'managed' } : { kind: 'path', path: '/tmp/s1' },
-      ...(!configuredDefault && !rememberedDefault && !signedOutDefault ? { agentTarget: selectedAgentTarget } : {}),
+      directory: signedOutDefault ? { kind: 'managed' } : { kind: 'path', path: r135Default ? '.' : '/tmp/s1' },
+      ...(!configuredDefault && !rememberedDefault && !signedOutDefault && !r135Default ? { agentTarget: selectedAgentTarget } : {}),
       initialInput: {
-        text: 'Inspect this project.',
+        text: r135Default ? 'Create a file named teal containing the text blue.' : 'Inspect this project.',
       },
     };
     const spawnResult = {
@@ -1588,10 +1597,16 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ currentServerId: homeA, onSetupRequired,
       currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
       resolveSessionId: () => sourceSessionId || null });
+    if (r135Default) {
+      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+      setVoiceSessionSnapshot({ adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs', sessionId: '__voice_agent__',
+        status: 'connected', mode: 'listening', canStop: true });
+      onTestFinished(resetVoiceSessionStoreForTests);
+    }
 
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
-    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault && !rememberedDefault && !signedOutDefault);
+    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault && !rememberedDefault && !signedOutDefault && !r135Default);
     if (configuredDefault) {
       // RUN100: the catalog supplied the right default; the model nested its
       // definition inside identity. Never silently repair an explicit operand.
