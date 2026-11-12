@@ -255,6 +255,30 @@ describe('usage recap Action composition', () => {
     expect(getActionSpec('usage.recap.private.export').outputSchema!.parse(result.result)).toEqual(result.result);
   });
 
+  it.each(['selectedFields', 'asOfMs'] as const)('rejects exported %s that differs from its compose result', async field => {
+    const result = await executeUsageAction('usage.recap.private.export', {
+      query, selectedFields: ['tokens', 'modelMix'],
+    }, {
+      query: async request => resolveUsagePageAggregation({ queries: request.queries,
+        accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }),
+      renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
+    }, {});
+    if (!result.ok) throw new Error('Expected exported recap');
+    const exported = UsageRecapExportResultSchema.parse(result.result);
+    if (exported.kind !== 'exported') throw new Error('Expected composed image');
+    const mismatches = field === 'selectedFields'
+      ? [['tokens'], ['tokens', 'cache'], ['tokens', 'modelMix', 'cache']]
+      : [901, null];
+    for (const mismatch of mismatches) {
+      const parsed = UsageRecapExportResultSchema.safeParse({ ...exported,
+        file: { ...exported.file, [field]: mismatch } });
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) expect(parsed.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'custom', path: ['file', field] }),
+      ]));
+    }
+  });
+
   it('accepts equivalent manifest ordering at the export boundary while keeping strict file and compose privacy shapes', async () => {
     const result = await executeUsageAction('usage.recap.private.export', {
       query, selectedFields: ['tokens', 'modelMix'],

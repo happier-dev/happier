@@ -137,11 +137,23 @@ export const UsageRecapImageResultSchema = lazyZodSchema(() => (<T extends z.Zod
 })));
 export type UsageRecapImageResult = z.infer<typeof UsageRecapImageResultSchema>;
 
-export const UsageRecapExportResultSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const UsageRecapExportResultBaseSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('exported'), compose: UsageRecapComposeResultSchema, file: UsageRecapImageResultSchema }),
   z.strictObject({ kind: z.literal('unavailable'), reason: z.enum(['render_target_unavailable', 'render_failed', 'compose_unavailable']),
     compose: UsageRecapComposeResultSchema }),
 ]));
+/** Export metadata describes the same admitted facts as the compose result. */
+export const UsageRecapExportResultSchema = lazyZodSchema(() => UsageRecapExportResultBaseSchema.check(z.superRefine((result, context) => {
+  if (result.kind !== 'exported' || result.compose.kind !== 'composed') return;
+  const selected = new Set(result.compose.selectedFields);
+  const exported = new Set(result.file.selectedFields);
+  if (selected.size !== exported.size || [...selected].some(field => !exported.has(field))) {
+    context.addIssue({ code: 'custom', path: ['file', 'selectedFields'], message: 'Export fields differ from the composed selection' });
+  }
+  if (result.file.asOfMs !== result.compose.asOfMs) {
+    context.addIssue({ code: 'custom', path: ['file', 'asOfMs'], message: 'Export timestamp differs from the composed timestamp' });
+  }
+})));
 export type UsageRecapExportResult = z.infer<typeof UsageRecapExportResultSchema>;
 
 export const UsageRecapDeliveryOutcomeSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
