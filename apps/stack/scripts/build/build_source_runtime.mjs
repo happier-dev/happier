@@ -187,7 +187,7 @@ async function readReusableSourceBundle({ outputDir, record, repoDir, component,
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sharedFiles = sharedManifest && new Set(sharedManifest.filesByComponent[component]);
   const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
-  if (!sourceRuntimeDependencyIdentityMatches(record.dependencyPublication, dependencyPublication)) return null;
+  if (!sourceRuntimeDependencyIdentityMatches(record.dependencyPublication, dependencyPublication, component)) return null;
   if (newestCompleted) {
     const { reuseFingerprint, sourceInputDigests, inputIdentity, ...built } = record;
     return { outputDir, built: { ...built, dependencyPublication: { ...record.dependencyPublication, ...dependencyPublication } } };

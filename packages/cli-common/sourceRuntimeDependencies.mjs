@@ -23,12 +23,23 @@ export function buildInputDependencyIdentityMatches(left, right) {
   return Boolean(left && right && left.writerActive === false && right.writerActive === false && left.identity === right.identity);
 }
 
+/** The publication vocabulary is classified once for all dependency consumers. */
+export function dependencyOutputAffectsComponent(output, component) {
+  return component === 'server' || output !== 'server-generated-client:prisma';
+}
+
+function componentGeneration(publication, component) {
+  return component === 'server' || publication.completedExpoGeneration === undefined
+    ? publication.generation : publication.completedExpoGeneration;
+}
+
 /** A new install invalidates captured topology even with identical manifests.
- * Launches without a runtime closure retain their installation-wide comparison. */
-export function sourceRuntimeDependencyIdentityMatches(captured, current) {
+ * Servers retain the global generation; other captures use the existing
+ * non-server output projection. Legacy captures without it stay conservative. */
+export function sourceRuntimeDependencyIdentityMatches(captured, current, component = 'daemon') {
   return typeof captured?.markerPath === 'string' && typeof captured?.generationPath === 'string'
     && buildInputDependencyIdentityMatches(captured, current)
-    && (current.generation === undefined || captured.generation === current.generation);
+    && (current.generation === undefined || componentGeneration(captured, component) === componentGeneration(current, component));
 }
 
 export class SourceRuntimeReloadRequiredError extends Error {
@@ -62,7 +73,7 @@ async function checkSourceRuntimeDependenciesCurrent({ entrypoint, record, compo
     const captured = record.dependencyPublication;
     // Older source captures cannot prove their installed-tree binding. An
     // explicit current-source reload publishes the locators with that identity.
-    if (!sourceRuntimeDependencyIdentityMatches(captured, captured)) {
+    if (!sourceRuntimeDependencyIdentityMatches(captured, captured, component)) {
       throw new SourceRuntimeReloadRequiredError(component, 'no_closure');
     }
     let generation = readOptionalJson(captured.generationPath);
@@ -84,13 +95,16 @@ async function checkSourceRuntimeDependenciesCurrent({ entrypoint, record, compo
     const writerActive = generation?.generation != null && generation.generation !== generation.completedGeneration;
     if (writerActive) throw new SourceRuntimeReloadRequiredError(component, 'writer_active');
     const closure = record.runtimeDependencyClosure;
-    const current = { identity, writerActive, ...(closure ? { generation: generation?.generation ?? null } : {}) };
-    if (!sourceRuntimeDependencyIdentityMatches(captured, current)) {
+    const compareGeneration = closure || (component === 'server' && captured.generation !== undefined);
+    const current = { identity, writerActive, ...(compareGeneration ? {
+      generation: generation?.generation ?? null, completedExpoGeneration: generation?.completedExpoGeneration,
+    } : {}) };
+    if (!sourceRuntimeDependencyIdentityMatches(captured, current, component)) {
       if (identity && closure) {
         const validated = validatedRuntimeDependencies.get(entrypoint);
         if (validated?.closureIdentity === closure.identity
           && validated.markerPath === captured.markerPath && validated.generationPath === captured.generationPath
-          && sourceRuntimeDependencyIdentityMatches(validated, current)) return;
+          && sourceRuntimeDependencyIdentityMatches(validated, current, component)) return;
         const installDir = dirname(dirname(captured.markerPath));
         const { readSourceRuntimeDependencyIdentity } = await import(pathToFileURL(join(installDir,
           'apps/stack/scripts/build/source_author_inputs.mjs')).href);

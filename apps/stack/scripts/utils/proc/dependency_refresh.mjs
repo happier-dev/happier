@@ -5,6 +5,7 @@ import { lstat, readFile, readdir, readlink, realpath, rm, unlink } from 'node:f
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { dependencyOutputAffectsComponent } from '../../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { pathExists } from '../fs/fs.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
@@ -118,7 +119,7 @@ export async function withDependencyRefreshLock({ installDir, env = process.env,
       && (!unfinishedAtEntry || writer.installationPublished)) {
       const outputsChanged = generation.outputsChanged ?? ['install'];
       await writeJsonAtomic(generationPath, { ...generation, completedGeneration: generation.generation,
-        completedExpoGeneration: outputsChanged.some(output => output !== 'server-generated-client:prisma')
+        completedExpoGeneration: outputsChanged.some(output => dependencyOutputAffectsComponent(output, 'expo'))
           ? generation.generation : readCompletedExpoGeneration(generation) });
     }
     return result;
