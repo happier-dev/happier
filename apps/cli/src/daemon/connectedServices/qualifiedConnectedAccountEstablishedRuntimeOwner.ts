@@ -2,7 +2,7 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { createConnectedAccountEstablishedRuntimeOwner, readQualifiedConnectedAccountCredentialMaterial as readCredentialMaterial, type ConnectedAccountEstablishedRuntimeRegistry, type QualifiedConnectedAccountEstablishedRuntimeOwner as PortableEstablishedRuntimeOwner, type QualifiedConnectedAccountScheduledReceipt as PortableScheduledReceipt, type QualifiedConnectedAccountMaterialSnapshot, type QualifiedConnectedAccountScheduledOperationOptions, type QualifiedConnectedAccountEstablishedInvocationBasis, type QualifiedConnectedAccountCredentialMutationPreparationInput, type QualifiedConnectedAccountCredentialReplacementPreparation } from '@happier-dev/cli-common/connectedAccounts';
-import { readQualifiedConnectedAccountConfigurationV4, readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { mutateQualifiedConnectedAccountCredentialHealthV4, readQualifiedConnectedAccountConfigurationV4, readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { requireConnectedAccountCryptoMaterial as requireCryptoMaterial, resolveConnectedAccountCryptoMaterial as resolveCryptoMaterial } from './accountScopedCryptoMaterial';
 import type { AccountEncryptionModeReadOptions, ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { StoredCredentials } from '@/persistence';
@@ -111,6 +111,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner<TRegistry
     getAccountEncryptionMode(signal?: AbortSignal, options?: AccountEncryptionModeReadOptions): Promise<ConnectedServiceAccountEncryptionMode>;
     readCredential?: CredentialSnapshotReader;
     readConfiguration?: ConfigurationSnapshotReader;
+    mutateCredentialHealth?: typeof mutateQualifiedConnectedAccountCredentialHealthV4;
     configuration: Pick<
       ConnectedAccountDaemonPersistence['configuration'],
       'read' | 'secrets'
@@ -118,13 +119,14 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner<TRegistry
     configurationOwner?: ConnectedAccountConfigurationOwner;
     randomBytes?: (length: number) => Uint8Array;
   }>,
-): QualifiedConnectedAccountEstablishedRuntimeOwner {
+): QualifiedConnectedAccountEstablishedRuntimeOwner & Pick<ReturnType<typeof createConnectedAccountEstablishedRuntimeOwner>, 'refreshExportProjection'> {
 
   const material = resolveCryptoMaterial(params.credentials);
   const randomBytes = params.randomBytes ?? ((length: number) => new Uint8Array(nodeRandomBytes(length)));
   return createConnectedAccountEstablishedRuntimeOwner<Quota, TRegistry>({
     ...params,
     readScope: createEstablishedAccountReadScope(params),
+    publishCredentialHealth: input => (params.mutateCredentialHealth ?? mutateQualifiedConnectedAccountCredentialHealthV4)({ ...input, token: params.credentials.token }),
     readCredential: input => (params.readCredential ?? readQualifiedConnectedAccountCredentialV4)({ ...input, token: params.credentials.token }),
     readConfiguration: input => (params.readConfiguration ?? readQualifiedConnectedAccountConfigurationV4)({ ...input, token: params.credentials.token }),
     openContent: input => openEnvelope({ ...input, credentials: params.credentials, material }),

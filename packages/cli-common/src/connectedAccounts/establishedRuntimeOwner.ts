@@ -1,3 +1,4 @@
+import { resolveConnectedAccountDirectExportContractV1, type ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountCredentialMetadataV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema, QualifiedConnectedAccountCredentialSecretUnavailableError } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
@@ -220,6 +221,8 @@ export type QualifiedConnectedAccountCredentialReplacementPreparation =
     authenticationModeId: string;
     content: QualifiedConnectedAccountCredentialSnapshotV4['content'];
     metadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'];
+    directExportContract?: ConnectedAccountDirectExportProjectionV1['directExportContract'];
+    contributionContractVersion?: string;
   }>;
 
 function sameService(
@@ -386,12 +389,19 @@ export function createConnectedAccountEstablishedRuntimeOwner<
   getAccountEncryptionMode(signal?: AbortSignal, options?: Readonly<{ usage?: 'fresh-authority' }>): Promise<ConnectedServiceAccountEncryptionMode>;
   readCredential: CredentialSnapshotReader;
   readConfiguration: ConfigurationSnapshotReader;
+  publishCredentialHealth?: (input: Readonly<{
+    patch: ReturnType<typeof import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4').QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse>;
+    signal?: AbortSignal;
+  }>) => Promise<Readonly<{ credentialRevision: string; configurationRevision: string | null }>>;
   configuration: Readonly<{ read(target: ConnectedAccountConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null>; secrets: ConnectedAccountConfigurationSecrets }>;
   configurationOwner?: ConnectedAccountConfigurationOwner;
   openContent(input: Readonly<{ kind: 'credential' | 'configuration'; accountMode: 'plain' | 'e2ee'; envelope: QualifiedConnectedAccountCredentialSnapshotV4['content'] }>): unknown;
   sealCredentialContent(accountMode: 'plain' | 'e2ee', plaintext: unknown): QualifiedConnectedAccountCredentialSnapshotV4['content'];
   observePhase?: ConnectedAccountEstablishedPhaseObserver;
-}>): QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota> {
+}>): QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota> & Readonly<{
+  /** Metadata-only startup/reload publication, independent of credential opening and provider activation. */
+  refreshExportProjection(input: Readonly<{ account: QualifiedConnectedAccountRef; signal?: AbortSignal }>): Promise<void>;
+}> {
   const observeMaterializationPhase: ConnectedAccountEstablishedPhaseObserver = params.observePhase ?? (async (_phase, work) => work());
   const { isAccountRuntimeCurrent, assertAccountRuntimeCurrent, runMaterialization, runCurrentAccountRead, runIndependentAccountRead } = params.readScope;
   const credentialSnapshotReader =
@@ -437,6 +447,41 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     }
     assertSnapshotPair({ credential, configuration });
     return Object.freeze({ credential, configuration });
+  }
+
+  async function publishExportProjection(
+    snapshot: RevisionedQualifiedConnectedAccountCredentialSnapshotV4,
+    exportProjection: ConnectedAccountDirectExportProjectionV1,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const previous = snapshot.exportProjection;
+    if (!params.publishCredentialHealth
+      || (previous?.directExportContract === exportProjection.directExportContract
+        && previous.contributionContractVersion === exportProjection.contributionContractVersion)
+      || (!previous && exportProjection.directExportContract === null)) return;
+    const result = await params.publishCredentialHealth({ patch: {
+      ref: snapshot.ref, expectedCredentialRevision: snapshot.credentialRevision,
+      expectedConfigurationRevision: snapshot.configurationRevision,
+      health: snapshot.health ?? { v: 1, status: 'connected', reconnectRequired: false }, exportProjection,
+    }, signal });
+    if (result.credentialRevision !== snapshot.credentialRevision
+      || result.configurationRevision !== snapshot.configurationRevision) {
+      throw new Error('Connected-account export projection settled against a different credential basis');
+    }
+  }
+
+  async function refreshColdExportProjection(snapshot: RevisionedQualifiedConnectedAccountCredentialSnapshotV4, signal?: AbortSignal): Promise<void> {
+    if (!params.publishCredentialHealth) return;
+    const lease = await params.reloadController.acquireRuntimeRegistry();
+    try {
+      const contribution = lease.registry.connectedAccountContributions?.describe(snapshot.ref.service);
+      if (!contribution || !contribution.isCurrent() || !params.reloadController.isRuntimeRegistryCurrent(lease.registry)) return;
+      const mode = contribution.descriptor.authentication.modes.find(candidate => candidate.id === snapshot.authenticationModeId);
+      await publishExportProjection(snapshot, {
+        directExportContract: mode ? resolveConnectedAccountDirectExportContractV1(mode, snapshot.metadata.kind) : null,
+        contributionContractVersion: contribution.occurrenceId,
+      }, signal);
+    } finally { await lease.release(); }
   }
 
   async function readCredentialRevision(input: Readonly<{
@@ -511,6 +556,11 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     } finally {
       await registryLease.release();
     }
+    const exportProjection = {
+      directExportContract: resolveConnectedAccountDirectExportContractV1(mode, snapshots.credential.metadata.kind),
+      contributionContractVersion,
+    };
+    await publishExportProjection(snapshots.credential, exportProjection, input.signal);
     const target = configurationTarget(input.account, mode);
     const descriptorConfiguration = 'configuration' in mode ? mode.configuration : undefined;
     async function readConfigurationRecord(current: Awaited<ReturnType<typeof readExactSnapshots>>) {
@@ -576,8 +626,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     return Object.freeze({
       credential,
       configuration,
-      ...(mode.accessOnlyExport ? { accessOnlyExport: mode.accessOnlyExport } : {}),
-      ...(mode.kind === 'manual' && mode.directExport ? { directExport: mode.directExport } : {}),
+      ...(exportProjection.directExportContract === mode.accessOnlyExport?.contractVersion ? { accessOnlyExport: mode.accessOnlyExport } : {}),
+      ...(mode.kind === 'manual' && exportProjection.directExportContract === mode.directExport?.contractVersion ? { directExport: mode.directExport } : {}),
       authenticationModeId,
       credentialRevision: snapshots.credential.credentialRevision,
       configurationRevision: snapshots.credential.configurationRevision,
@@ -714,6 +764,11 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         if (!mode) {
           throw new Error('Connected-account authentication mode is unavailable in the current descriptor');
         }
+        const exportProjection: ConnectedAccountDirectExportProjectionV1 = {
+          directExportContract: resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind),
+          contributionContractVersion: runtimeLease.occurrenceId,
+        };
+        await publishExportProjection(initial.credential, exportProjection, input.signal);
         const descriptorConfiguration =
           'configuration' in mode ? mode.configuration : undefined;
         if (
@@ -1038,6 +1093,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                 authenticationModeId,
                 content,
                 metadata,
+                directExportContract: resolveConnectedAccountDirectExportContractV1(mode, metadata.kind),
+                contributionContractVersion: exportProjection.contributionContractVersion,
               });
             },
           }),
@@ -1272,7 +1329,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     } finally { await lease.release(); }
   }
 
-  const owner: QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota> = {
+  const owner: ReturnType<typeof createConnectedAccountEstablishedRuntimeOwner<TQuota, TRegistry>> = {
     async invokeScheduledWithReceipts(input) {
       if (!input.status && !input.quota) return {};
       // This pair belongs only to this call. It is not retained by the owner or
@@ -1293,6 +1350,13 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     },
     recordScopeChallenge: input => runIndependentAccountRead(() => recordScopeChallenge(input), input.signal),
     readCredentialConfigurationRevision: (input) => runIndependentAccountRead(() => readCredentialConfigurationRevision(input), input.signal),
+    refreshExportProjection: input => runIndependentAccountRead(async () => {
+      const snapshot = await readCredential({ ref: input.account, requestPurpose: 'connected-accounts:qualification', signal: input.signal });
+      if (!snapshot) throw new QualifiedConnectedAccountMaterialError('credential_snapshot_unavailable', 'Connected-account credential snapshot is unavailable');
+      assertCredentialSnapshotIdentity(snapshot, input.account);
+      requireRevisionedCredentialSnapshot(snapshot);
+      await refreshColdExportProjection(snapshot, input.signal);
+    }, input.signal),
     readCredentialRevision: (input) => runIndependentAccountRead(() => readCredentialRevision(input), input.signal),
     // Direct delivery and MCP resource checks prepare one snapshot through the
     // same entry/publication fences as runtime materialization. Public reentry

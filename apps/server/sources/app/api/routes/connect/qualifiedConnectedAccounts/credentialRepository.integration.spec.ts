@@ -15,6 +15,7 @@ import {
     deleteQualifiedConnectedServiceCredential,
     isQualifiedConnectedAccountMigrationInventoryCompleteInTx,
     listQualifiedConnectedAccounts,
+    listQualifiedConnectedAccountSourceOffersInTx,
     mutateQualifiedConnectedAccountConfiguration,
     mutateQualifiedConnectedServiceCredentialHealth,
     mutateQualifiedConnectedServiceCredential,
@@ -973,6 +974,56 @@ describe("qualified Connected Account credential repository", () => {
         expect(JSON.stringify(stored.metadata)).not.toMatch(
             /accessToken|refreshToken|password|apiKey/i,
         );
+    });
+
+    it("refreshes a pre-declaration account's export support through health publication without reconnecting", async () => {
+        const owner = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" } });
+        const ref = { service, accountId: "pre-export-declaration" };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: owner.id, ref, authenticationModeId: "oauth", expectedCredentialRevision: null,
+            content: { t: "plain", v: { v: 1, values: { accessToken: "synthetic-access", refreshToken: "synthetic-refresh" } } },
+            metadata: { ...metadata, kind: "oauth" },
+        });
+        if (created.status !== "written") throw new Error("Expected credential create");
+        const before = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id } });
+        const offers = () => inTx(tx => listQualifiedConnectedAccountSourceOffersInTx(tx, { accountId: owner.id }));
+        expect(await offers()).toMatchObject([{ directExportSupport: "unsupported" }]);
+        const app = createAuthenticatedTestApp();
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        await app.ready();
+        try {
+            const exportProjection = {
+                directExportContract: "happier.team-credential-access-only-connected-account-direct.v1",
+                contributionContractVersion: "current-plugin-occurrence",
+            };
+            const patch = { ref, expectedCredentialRevision: created.credentialRevision,
+                expectedConfigurationRevision: created.configurationRevision,
+                health: { v: 1, status: "connected", reconnectRequired: false }, exportProjection };
+            const submit = (payload: unknown) => app.inject({ method: "PATCH",
+                url: "/v4/connect/qualified/credential/health", headers: { "x-test-user-id": owner.id }, payload });
+            expect((await submit(patch)).statusCode).toBe(200);
+            expect(await offers()).toMatchObject([{ directExportSupport: "supported", credentialIncarnation: before.id }]);
+            const opened = await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref });
+            expect(opened).toMatchObject({ status: "resolved", credential: {
+                credentialRevision: created.credentialRevision, exportProjection,
+            } });
+            const response = await app.inject({ method: "GET",
+                url: "/v4/connect/qualified/credential?ref=" + encodeURIComponent(JSON.stringify(ref)),
+                headers: { "x-test-user-id": owner.id } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toMatchObject({ exportProjection });
+            const after = await db.serviceAccountToken.findUniqueOrThrow({ where: { id: before.id } });
+            expect(after.token).toEqual(before.token);
+            const sequence = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
+            expect((await submit(patch)).statusCode).toBe(200);
+            expect((await db.serviceAccountToken.findUniqueOrThrow({ where: { id: before.id } })).updatedAt).toEqual(after.updatedAt);
+            expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(sequence);
+            expect((await submit({ ...patch, exportProjection: {
+                directExportContract: null, contributionContractVersion: "withdrawn-plugin-occurrence",
+            } })).statusCode).toBe(200);
+            expect(await offers()).toMatchObject([{ directExportSupport: "unsupported" }]);
+            expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBeGreaterThan(sequence);
+        } finally { await app.close(); }
     });
 
     it("normalizes health metadata once and suppresses identical admitted health without bypassing fences", async () => {

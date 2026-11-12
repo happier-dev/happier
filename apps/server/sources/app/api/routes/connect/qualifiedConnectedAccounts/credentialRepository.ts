@@ -1,3 +1,4 @@
+import { type ConnectedAccountDirectExportProjectionV1, ConnectedAccountDirectExportProjectionV1Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { randomBytes } from "node:crypto";
 import { humanizeConnectedServiceIdentity, resolveConnectedAccountPrimaryNameV1 } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
@@ -2133,6 +2134,7 @@ export async function listQualifiedConnectedAccounts(
 function withQualifiedCredentialHealthForStoredFormat(params: Readonly<{
     metadata: unknown;
     health: ConnectedServiceCredentialHealthV1;
+    exportProjection?: ConnectedAccountDirectExportProjectionV1;
 }>): Prisma.InputJsonValue | null {
     if (
         params.metadata
@@ -2145,6 +2147,7 @@ function withQualifiedCredentialHealthForStoredFormat(params: Readonly<{
                 params.metadata,
             ),
             params.health,
+            params.exportProjection,
         ) as unknown as Prisma.InputJsonValue;
     }
     if (isConnectedServiceCredentialMetadataV2(params.metadata)) {
@@ -2163,6 +2166,7 @@ function withQualifiedCredentialHealthForStoredFormat(params: Readonly<{
 }
 
 type QualifiedCredentialHealthMutationParams = Readonly<{
+    exportProjection?: ConnectedAccountDirectExportProjectionV1;
     accountId: string;
     ref: QualifiedConnectedAccountRef;
     health: ConnectedServiceCredentialHealthV1;
@@ -2180,6 +2184,7 @@ async function readQualifiedCredentialHealthMutationInTx(
     metadata: Prisma.InputJsonValue;
     credentialRevision: string;
     previousHealth: ConnectedServiceCredentialHealthV1 | null | undefined;
+    exportProjectionChanged: boolean;
 }>> {
     const accountModeResult =
         await readEffectiveAccountEncryptionMode(
@@ -2256,6 +2261,7 @@ async function readQualifiedCredentialHealthMutationInTx(
     const metadata = withQualifiedCredentialHealthForStoredFormat({
         metadata: current.metadata,
         health: canonical.health,
+        exportProjection: canonical.exportProjection,
     });
     if (!metadata) return { status: "unsupported_format" };
     if (sameStrictJsonValue(metadata, current.metadata)) {
@@ -2266,7 +2272,10 @@ async function readQualifiedCredentialHealthMutationInTx(
         };
     }
     return { status: "change_required", current, metadata, credentialRevision: projection.credentialRevision,
-        previousHealth: projection.health };
+        previousHealth: projection.health,
+        exportProjectionChanged: canonical.exportProjection !== undefined
+            && (projection.directExportContract !== canonical.exportProjection.directExportContract
+                || projection.contributionContractVersion !== canonical.exportProjection.contributionContractVersion) };
 }
 
 const CREDENTIAL_HEALTH_CLOCK_FIELDS = new Set<keyof ConnectedServiceCredentialHealthV1>([
@@ -2293,6 +2302,7 @@ export async function mutateQualifiedConnectedServiceCredentialHealth(
         ...params,
         ref: QualifiedConnectedAccountRefSchema.parse(params.ref),
         health: ConnectedServiceCredentialHealthV1Schema.parse(params.health),
+        ...(params.exportProjection ? { exportProjection: ConnectedAccountDirectExportProjectionV1Schema.parse(params.exportProjection) } : {}),
     };
     // An equal committed observation publishes no cursor. It can acknowledge
     // that coherent snapshot without joining unrelated Account writers.
@@ -2342,9 +2352,9 @@ export async function mutateQualifiedConnectedServiceCredentialHealth(
             };
         }
         await recheckAdmission();
-        // Refresh clocks are persisted for the next read; only a change in presented health
-        // (status, reconnect, failure kind, provider error) is worth waking every client.
-        if (!isSamePresentedCredentialHealth(admitted.previousHealth, canonical.health)) {
+        // Refresh clocks alone stay quiet; presented health and export support changes
+        // wake the existing Account and Team source consumers.
+        if (admitted.exportProjectionChanged || !isSamePresentedCredentialHealth(admitted.previousHealth, canonical.health)) {
             await recordConnectedServiceAccountProfileChange({
                 tx,
                 accountId: canonical.accountId,
@@ -2365,6 +2375,7 @@ type QualifiedConnectedServiceCredentialSnapshotBase = Readonly<{
     configurationRevision: string | null;
     content: StoredJsonContentEnvelope;
     metadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'];
+    exportProjection?: ConnectedAccountDirectExportProjectionV1;
     health?: ConnectedServiceCredentialHealthV1;
 }>;
 
@@ -2516,6 +2527,10 @@ async function readQualifiedConnectedServiceCredentialInTx(
         content,
         expiresAt: row.expiresAt?.getTime() ?? null,
         metadata: projection.presentation,
+        ...(!params.legacyReader && projection.contributionContractVersion !== null ? {
+            exportProjection: { directExportContract: projection.directExportContract,
+                contributionContractVersion: projection.contributionContractVersion },
+        } : {}),
         ...(projection.health ? { health: projection.health } : {}),
     };
     const revision =
@@ -2671,6 +2686,7 @@ export async function readQualifiedConnectedServiceCredential(params: Readonly<{
                 configurationRevision: credential.configurationRevision,
                 content: credential.content,
                 metadata: credential.metadata,
+                ...(credential.exportProjection ? { exportProjection: credential.exportProjection } : {}),
                 ...(credential.health ? { health: credential.health } : {}),
             },
         }
@@ -2683,6 +2699,7 @@ export async function readQualifiedConnectedServiceCredential(params: Readonly<{
                 configurationRevision: credential.configurationRevision,
                 content: credential.content,
                 metadata: credential.metadata,
+                ...(credential.exportProjection ? { exportProjection: credential.exportProjection } : {}),
                 ...(credential.health ? { health: credential.health } : {}),
             },
         };

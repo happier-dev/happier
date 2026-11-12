@@ -32,6 +32,7 @@ import {
   readQualifiedConnectedAccountCredentialMaterial,
   readQualifiedConnectedAccountCredentialIdentity,
 } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createQualifiedConnectedAccountDaemonPersistence } from './qualifiedConnectedAccountDaemonPersistence';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { createConnectedAccountContributionRegistry } from '@/plugins/runtime/connectedAccounts/contributionRegistry';
@@ -133,6 +134,84 @@ function plainEnvelope(kind: 'credential' | 'configuration', payload: unknown) {
 }
 
 describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
+  it('repairs a pre-declaration OAuth account on metadata-only startup/reload and natural acquisition', async () => {
+    const ref = { pluginId: 'external.oauth', localId: 'subscription' };
+    const target = { service: ref, accountId: 'older-account' };
+    const accessOnlyExport = { contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+      accessTokenKey: 'accessToken', expiresAtMsKey: 'expiresAtMs', metadataKeys: [] };
+    let current = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: ref.localId, title: 'OAuth', authentication: { defaultModeId: 'oauth', modes: [{
+        id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
+        pkce: 'required', outcomeReconciliation: 'none', accessOnlyExport,
+      }] },
+    });
+    let occurrence = 'declaration-1';
+    let stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: target, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: requestAuthCredentialRevision, configurationRevision: null,
+      content: plainEnvelope('credential', { v: 1, values: { accessToken: 'dummy-access', refreshToken: 'dummy-refresh', expiresAtMs: '9999999999999' } }),
+      metadata: { scopes: [], kind: 'oauth' }, health: { v: 1, status: 'connected', reconnectRequired: false },
+    });
+    let publications = 0;
+    let allowCredentialOpening = false;
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      // The cold plugin registry and Home HTTP persistence are system boundaries. No plugin runtime is activated.
+      reloadController: {
+        acquireRuntimeRegistry: async () => ({ registry: { connectedAccountContributions: {
+          describe: () => ({ ref, descriptor: current, occurrenceId: occurrence, sourceCustody: { kind: 'host' as const }, isCurrent: () => true }),
+        } }, release: async () => {} }), isRuntimeRegistryCurrent: () => true,
+      },
+      credentials: { token: 'dummy-account-token', encryption: null }, getAccountEncryptionMode: async () => {
+        if (!allowCredentialOpening) throw new Error('Metadata-only publication must not open Account credential content');
+        return 'plain';
+      },
+      readCredential: async () => stored, readConfiguration: async () => { throw new Error('No configuration expected'); },
+      mutateCredentialHealth: async input => {
+        const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input.patch);
+        expect(patch.expectedCredentialRevision).toBe(requestAuthCredentialRevision);
+        expect(patch.health).toEqual(stored.health);
+        publications += 1;
+        stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored, exportProjection: patch.exportProjection });
+        return { success: true, credentialRevision: patch.expectedCredentialRevision, configurationRevision: null };
+      },
+      configuration: { read: async () => null, secrets: {
+        admit: async () => { throw new Error('Metadata projection must not open Saved Secrets'); },
+        has: async () => false, read: async () => { throw new Error('Metadata projection must not read Saved Secrets'); },
+      } },
+    });
+    // Startup enumerates existing accounts and uses this credential-only preparation.
+    await owner.refreshExportProjection({ account: target });
+    expect(stored.exportProjection).toEqual({ directExportContract: accessOnlyExport.contractVersion, contributionContractVersion: occurrence });
+    expect(publications).toBe(1);
+    await owner.refreshExportProjection({ account: target });
+    expect(publications).toBe(1);
+    // Reload changes the current declaration occurrence without reconnecting or rotating credentials.
+    occurrence = 'declaration-2';
+    await owner.refreshExportProjection({ account: target });
+    expect(stored.exportProjection?.contributionContractVersion).toBe(occurrence);
+    expect(publications).toBe(2);
+    // The next ordinary acquisition also repairs an older stored projection.
+    occurrence = 'declaration-3';
+    allowCredentialOpening = true;
+    await owner.readMaterialSnapshot({ account: target });
+    expect(stored.exportProjection?.contributionContractVersion).toBe(occurrence);
+    expect(publications).toBe(3);
+    allowCredentialOpening = false;
+    current = PluginConnectedAccountDescriptorContributionV2Schema.parse({ ...current, authentication: { ...current.authentication,
+      modes: current.authentication.modes.map(({ accessOnlyExport: _removed, ...mode }) => mode) } });
+    occurrence = 'declaration-4';
+    await owner.refreshExportProjection({ account: target });
+    expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: occurrence });
+    expect(publications).toBe(4);
+    // A declaration does not export a credential of the wrong actual kind.
+    current = PluginConnectedAccountDescriptorContributionV2Schema.parse({ ...current, authentication: { ...current.authentication,
+      modes: current.authentication.modes.map(mode => ({ ...mode, accessOnlyExport })) } });
+    occurrence = 'declaration-5';
+    stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored, metadata: { ...stored.metadata, kind: 'token' } });
+    await owner.refreshExportProjection({ account: target });
+    expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: occurrence });
+    expect(publications).toBe(5);
+  });
   it.each([['host', false], ['plugin', false], ['host', true], ['plugin', true]] as const)('verifies requester currentness at materialization boundaries rather than for every field (%s, configured=%s)', async (kind, configured) => {
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const ref = kind === 'host' ? HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 : { pluginId: 'external.accounts', localId: 'token' };
@@ -140,6 +219,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const definition = PluginConnectedAccountDescriptorContributionV2Schema.parse({
       id: ref.localId, title: 'Token', authentication: { defaultModeId: 'token', modes: [{
         id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+        directExport: { contractVersion: 'happier.team-credential-manual-connected-account-direct.v1' },
         fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
         ...(configured ? { configuration: {
           scope: 'account', changeBehavior: 'reconnect', fields: [
@@ -238,8 +318,11 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: target, authenticationModeId: 'token', revisionSemantics: 'revisioned',
       credentialRevision: requestAuthCredentialRevision, configurationRevision: configured ? 'fixture-configuration' : null,
-      content: plainEnvelope('credential', { v: 1, values: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`token${index}`, 'native-token'])) }), metadata: { scopes: [] },
+      content: plainEnvelope('credential', { v: 1, values: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`token${index}`, 'native-token'])) }), metadata: { scopes: [], kind: 'token' },
+      health: { v: 1, status: 'connected', reconnectRequired: false },
     });
+    let storedExportProjection: QualifiedConnectedAccountCredentialSnapshotV4['exportProjection'];
+    let exportPublications = 0;
     let holdReads = false;
     let credentialRevision = requestAuthCredentialRevision;
     let configurationRevision: string | null = snapshot.configurationRevision;
@@ -280,6 +363,12 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         // Machine admission is the external authority; all requester Account/Session verification stays real.
         verifyMachineAdmissionCurrent: async () => true,
       }),
+      mutateCredentialHealth: async input => {
+        const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input.patch);
+        storedExportProjection = patch.exportProjection;
+        exportPublications += 1;
+        return { success: true, credentialRevision: patch.expectedCredentialRevision, configurationRevision: patch.expectedConfigurationRevision };
+      },
       readCredential: async () => {
         const startedAt = performance.now();
         credentialReads += 1;
@@ -288,11 +377,11 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         await new Promise<void>(resolve => { setTimeout(resolve, 10); });
         credentialReadMs += performance.now() - startedAt;
         if (revokeDuringSnapshot) accountCurrent = false;
-        return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...snapshot, credentialRevision, configurationRevision });
+        return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...snapshot, credentialRevision, configurationRevision, exportProjection: storedExportProjection });
       },
       readConfiguration: async () => ({
         target: { kind: 'account', ref: target }, authenticationModeId: 'token', revisionSemantics: 'revisioned',
-        credentialRevision, configurationRevision: 'fixture-configuration',
+        credentialRevision, configurationRevision,
         configurationContent: plainEnvelope('configuration', { values: { endpoint: 'https://provider.example' }, secretRefs: {} }),
       }),
       configuration: { read: async () => null, secrets: {
@@ -326,6 +415,12 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     // Initial snapshot, one context admission and one detached-result
     // qualification before the materialized credential leaves the host.
     expect(credentialReads).toBe(3);
+    // Acquisition repairs the pre-declaration account despite its already healthy status.
+    expect(storedExportProjection).toEqual({
+      directExportContract: 'happier.team-credential-manual-connected-account-direct.v1',
+      contributionContractVersion: runtimeLease.occurrenceId,
+    });
+    expect(exportPublications).toBe(1);
     const beforeConnectionTest = { account: accountCurrentnessChecks, credential: credentialReads };
     await expect(owner.invoke({ account: target, operation: { kind: 'testConnection' } }))
       .resolves.toEqual({ status: 'ok' });
@@ -420,7 +515,10 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       rotateAfterMaterialFields = rotation;
       await expect(owner.invoke({ account: target,
         operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
-      })).rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
+      })).rejects.toMatchObject({ code: configured
+        // A configured row must still match its admitted credential/configuration pair.
+        ? 'connected_account_configuration_unavailable'
+        : 'connected_account_producer_result_stale' });
       credentialRevision = requestAuthCredentialRevision;
       configurationRevision = snapshot.configurationRevision;
     }
@@ -484,7 +582,9 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
       // The bearer revision can remain unchanged while its configuration linkage changes.
       beforeInvoke: () => { configurationRevision = 'configuration-after-admission'; },
-    })).rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
+    })).rejects.toMatchObject({ code: configured
+      ? 'connected_account_configuration_unavailable'
+      : 'connected_account_producer_result_stale' });
     expect(nativeEntered).toBe(false);
     configurationRevision = snapshot.configurationRevision;
     revokeAfterFields = true;
@@ -1015,6 +1115,10 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       >,
       credentials: { token: 'token-1', encryption: null },
       getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      mutateCredentialHealth: async input => {
+        const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input.patch);
+        return { success: true, credentialRevision: patch.expectedCredentialRevision, configurationRevision: patch.expectedConfigurationRevision };
+      },
       readCredential: vi.fn(async () => credentialSnapshot()),
       readConfiguration: vi.fn(async () => configurationSnapshot()),
       configuration: {

@@ -30,6 +30,7 @@ import {
   QualifiedConnectedAccountRefSchema,
   sameQualifiedConnectedAccountRef,
 } from './qualifiedConnectedAccountPersistence.js';
+import { ConnectedAccountDirectExportProjectionV1Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import type { PluginConnectedAccountAuthenticationV2 } from './pluginConnectedAccountAuthenticationV2.js';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from './qualifiedConnectedAccountsV4.js';
 
@@ -227,6 +228,7 @@ export const QualifiedConnectedAccountCredentialSnapshotV4Schema =
     // contains descriptive credential facts; health mutations use the fenced health endpoint.
     metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
     health: z.optional(ConnectedServiceCredentialHealthV1Schema),
+    exportProjection: z.optional(ConnectedAccountDirectExportProjectionV1Schema),
   });
 
 export const QualifiedConnectedAccountGroupMemberV4Schema = lazyZodSchema(() => z.strictObject({

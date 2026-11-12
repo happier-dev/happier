@@ -22,7 +22,7 @@ import {
 import type { ConnectedServiceQuotaGetInputV1 } from './providerAccountUsageHistory.js';
 import type { ConnectedServicePoolSelectionGetRequestV1 } from './connectedServicePoolSelection.js';
 import { classifyHomeDomainHttpMutationFailureV1 } from '../actions/homeDomainHttpBinding.js';
-import { isAccountDirectConnectedAccountModeV1, isConnectedAccountApiKeyModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
+import { resolveConnectedAccountDirectExportContractV1, isAccountDirectConnectedAccountModeV1, isConnectedAccountApiKeyModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema } from './qualifiedConnectedAccountContentEnvelope.js';
@@ -261,11 +261,11 @@ export async function executeConnectedServiceConfigurationActionV1(
       }
       const body = args.expectedCredentialRevision === undefined
         ? QualifiedConnectedAccountCredentialCreateV4Schema.parse({ ref: args.account, authenticationModeId: mode.id,
-          expectedCredentialRevision: null, content, directExportContract: mode.directExport?.contractVersion ?? null,
+          expectedCredentialRevision: null, content, directExportContract: resolveConnectedAccountDirectExportContractV1(mode),
           metadata, ...selectedRevisions, ...(references.length ? { savedSecretResourceIds } : {}) })
         : QualifiedConnectedAccountCredentialMutationV4Schema.parse({ ref: args.account, authenticationModeId: mode.id,
           expectedCredentialRevision: args.expectedCredentialRevision, expectedConfigurationRevision: null, content,
-          directExportContract: mode.directExport?.contractVersion ?? null, metadata,
+          directExportContract: resolveConnectedAccountDirectExportContractV1(mode), metadata,
           ...selectedRevisions, savedSecretResourceIds });
       if (rotations.length && host.rotateAccountCredentialSecrets) {
         const outcome = await host.rotateAccountCredentialSecrets({ secrets: rotations.map(({ resourceId, value }) => ({ resourceId, value })) });

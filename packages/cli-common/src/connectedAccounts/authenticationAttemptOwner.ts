@@ -15,7 +15,7 @@ import type {
 } from './authenticationTypes.js';
 import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner } from './configurationOwner.js';
 import { resolveConnectedAccountAttemptTransactionExpiry, type ConnectedAccountAttemptTransactionRecord, type PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
-import { type ConnectedAccountDirectExportContractV1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { type ConnectedAccountDirectExportContractV1, resolveConnectedAccountDirectExportContractV1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -2099,11 +2099,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             ...(result.credentialKind ? { credentialKind: result.credentialKind } : {}),
             ...(result.includesApiKey ? { includesApiKey: result.includesApiKey } : {}),
             ...(accessMode ? { accessMode } : {}),
-            directExportContract:
-                attempt.admission.descriptor.accessOnlyExport?.contractVersion
-                ?? (attempt.admission.descriptor.kind === 'manual'
-                    ? attempt.admission.descriptor.directExport?.contractVersion ?? null
-                    : null),
+            directExportContract: resolveConnectedAccountDirectExportContractV1(attempt.admission.descriptor, result.credentialKind),
             expectedCredentialRevision: attempt.expectedCredentialRevision,
             expectedCredentialConfigurationRevision:
                 attempt.expectedCredentialConfigurationRevision,

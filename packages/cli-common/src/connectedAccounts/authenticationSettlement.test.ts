@@ -60,11 +60,11 @@ describe('admitted authentication settlement', () => {
             } finally { await owner.dispose(); }
         }
     });
-    it.each([
+    it.each(([
         ['connect', 'none'], ['reconnect', 'none'], ['connect', 'lost-write-ack'],
         ['reconnect', 'lost-write-ack'], ['reconnect', 'lost-health-ack'], ['connect', 'configuration-offline'],
         ['reconnect', 'credential-replaced'], ['connect', 'publication-failed'],
-    ] as const)('%s recovers %s without replaying provider work', async (intent, fault) => {
+    ] as const).flatMap(([intent, fault]) => (['token', 'oauth'] as const).map(credentialKind => [intent, fault, credentialKind] as const)))('%s recovers %s without replaying provider work (%s)', async (intent, fault, credentialKind) => {
         const service = { pluginId: 'acme.review', localId: 'account' };
         const account = { service, accountId: 'account-one' };
         const before = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -74,6 +74,10 @@ describe('admitted authentication settlement', () => {
         const publications: Parameters<NonNullable<Parameters<typeof createConnectedAccountCredentialSettlement>[0]['onSettled']>>[0][] = [];
         const descriptor = PluginConnectedAccountAuthenticationModeV2Schema.parse({
             id: 'manual', kind: 'manual', credentialOrigin: 'authentication', outcomeReconciliation: 'none',
+            ...(credentialKind === 'oauth' ? { accessOnlyExport: {
+                contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+                accessTokenKey: 'token', expiresAtMsKey: 'expiresAtMs', metadataKeys: [],
+            } } : { directExport: { contractVersion: 'happier.team-credential-manual-connected-account-direct.v1' } }),
             fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: false }],
             configuration: { scope: 'service', changeBehavior: 'reconnect', fields: [
                 { id: 'tenant', title: 'Tenant', schema: { type: 'string' }, required: true, secret: false },
@@ -95,6 +99,9 @@ describe('admitted authentication settlement', () => {
             parseConfigurationContent: value => value,
             mutateCredential: async mutation => {
                 counts.writes++;
+                expect(mutation.directExportContract).toBe(credentialKind === 'oauth'
+                    ? 'happier.team-credential-access-only-connected-account-direct.v1'
+                    : 'happier.team-credential-manual-connected-account-direct.v1');
                 if (stored && mutation.expectedCredentialRevision !== stored.credentialRevision) {
                     throw Object.assign(new Error('superseded'), { status: 409, code: 'connect_credential_mutation_superseded' });
                 }
@@ -145,7 +152,7 @@ describe('admitted authentication settlement', () => {
                     mode: { kind: 'manual', complete: async (_input, callbackContext) => {
                         counts.providerCalls++;
                         await callbackContext.attemptCredentials.set('token', 'verified');
-                        return { status: 'connected', credentialKind: 'token', accountId: account.accountId,
+                        return { status: 'connected', credentialKind, accountId: account.accountId,
                             displayName: 'Review', scopes: [], completionObservation,
                             rawResponse: { access_token: 'private-provider-response' } };
                     } },
@@ -166,7 +173,7 @@ describe('admitted authentication settlement', () => {
             expect(await owner.reconcile({ attemptId: 'attempt-one' })).toMatchObject(fault === 'credential-replaced'
                 ? { status: 'conflict', code: 'connect_credential_mutation_superseded' } : { status: 'connected', account });
             if (fault === 'credential-replaced') expect(stored?.content).toEqual({ t: 'plain', v: { v: 1, values: { token: 'old' } } });
-            else expect(stored?.metadata).toMatchObject({ kind: 'token' });
+            else expect(stored?.metadata).toMatchObject({ kind: credentialKind });
             expect(counts.providerCalls).toBe(1);
             expect(counts.writes).toBe(1);
             expect(counts.configurationReads).toBe(admittedReads.configuration);

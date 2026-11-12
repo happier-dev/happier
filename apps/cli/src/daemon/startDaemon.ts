@@ -1,4 +1,5 @@
 import { readRequesterAccountActionContext } from './sessionEncryption/requesterAccountActionContext';
+import { enableLocalSessionRpcCalls } from '@/session/transport/rpc/localSessionRpcChannel';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
 import { createServiceExportMachineForward } from './peer/iroh/serviceExportMachineForward';
@@ -146,6 +147,7 @@ import { startAutomationWorker, type AutomationWorkerHandle } from './automation
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from './voiceInference/voiceInferenceWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
+import { sanitizeConnectedServiceDiagnosticError } from './connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import type { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { ConnectedServiceRuntimeRegistry } from './connectedServices/runtimeRegistry/registry';
@@ -274,7 +276,7 @@ import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocati
 import { DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY } from '@/plugins/runtime/context/daemonDatabaseLimitsPolicy';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { createDaemonPluginRegistryProjectionInvalidation } from './pluginRegistryProjectionInvalidation';
-import { withTrackedSessionRpc } from './sessionEncryption/withTrackedSessionRpc';
+import { withTrackedSessionRpc, withTrackedSessionRpcContext } from './sessionEncryption/withTrackedSessionRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import { resolveConnectedServiceQuotaFetcherDescriptors } from '@/plugins/projection/registry/connectedServiceQuotaFetchers';
@@ -283,6 +285,10 @@ import {
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { createConnectedAccountActionTeamResourceCatalogReader } from './connectedServices/purposeBindings/actionTeamResourceCatalog';
+import { createTeamCredentialBrokerActionExecutor } from '@/providers/broker/teamCredentialActionExecution';
+import { createTeamCredentialBrokerActionPurposeExecutor } from '@/providers/broker/teamCredentialActionClient';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   createDaemonTeamCredentialDirectMaterialReconciler,
   subscribeTeamCredentialDirectMaterialAccountChanges,
@@ -401,6 +407,8 @@ export async function startDaemon(
 ): Promise<void> {
   process.env[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
     owner: { kind: 'happier' } });
+  // This process is the daemon its Session hosts admit on the same-machine Session RPC channel.
+  enableLocalSessionRpcCalls();
   // We don't have cleanup function at the time of server construction
   // Control flow is:
   // 1. Create promise that will resolve when shutdown is requested
@@ -1129,6 +1137,21 @@ export async function startDaemon(
     const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
     const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
     let hasPendingRunnerRestarts = () => false;
+    // One plugin-runtime retirement for every daemon exit: ordinary shutdown drains through it, and a
+    // self-restart runs it after handover so daemon-custody managed services never outlive their owner.
+    const disposePluginRuntimeRegistry = async (options?: Readonly<{ retainProjectServices?: boolean }>) => {
+      await pluginReloadController.shutdown({
+        timeoutMs: resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_PLUGIN_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+          5_000,
+          { min: 0, max: 60_000 },
+        ),
+        ...(options?.retainProjectServices ? { retainProjectServices: true } : {}),
+      });
+    };
+    // Project services keep serving across a handover; what the successor cannot adopt retires.
+    const retireRuntimeForSelfRestartHandover = async () =>
+      await disposePluginRuntimeRegistry({ retainProjectServices: true });
     const beforeShutdown = createBeforeShutdownDrain({
       hasPendingRunnerRestarts: () => hasPendingRunnerRestarts(),
       admissionDrain,
@@ -1206,15 +1229,7 @@ export async function startDaemon(
         await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(2_000);
         await daemonServerWorkScheduler?.flushAll(2_000);
       },
-      disposePluginRuntimeRegistry: async () => {
-        await pluginReloadController.shutdown({
-          timeoutMs: resolvePositiveIntEnv(
-            process.env.HAPPIER_DAEMON_PLUGIN_RUNTIME_SHUTDOWN_TIMEOUT_MS,
-            5_000,
-            { min: 0, max: 60_000 },
-          ),
-        });
-      },
+      disposePluginRuntimeRegistry: async () => await disposePluginRuntimeRegistry(),
     });
     const {
       loadLocalSessionMetadataForHandoff,
@@ -1497,6 +1512,7 @@ export async function startDaemon(
             { min: 0, max: 5_000 },
           ),
           ...(onReplacementConfirmed ? { onReplacementConfirmed } : {}),
+          retireOwnedRuntimeBeforeExit: retireRuntimeForSelfRestartHandover,
           ...withMachineConnectionHandover(successorServerUrls?.serverUrl),
           takeover: true,
           env: resolveDaemonSelfRestartEnvironment(
@@ -1569,12 +1585,30 @@ export async function startDaemon(
         };
       },
     });
+    const executeTeamCredentialBrokerAction = createTeamCredentialBrokerActionPurposeExecutor({
+      initiatorMachineId: machineId,
+      openBroker: async (request, signal, requestHeaders) => await runWithServerHttpBaseUrl(
+        readDaemonHomeServerHttpBaseUrl(), () => api.openTeamCredentialProviderBroker(request, { signal, requestHeaders })),
+      openTunnel: async request => {
+        const runtime = machineIrohRuntime;
+        if (!runtime) throw new PluginError({ code: 'broker_unavailable', message: 'The Machine carrier is unavailable' });
+        return await createProviderBrokerMachineCarrierTunnelOpen({
+          accountId: request.brokerOpen.authority.payload.initiator.accountId,
+          localMachineId: machineId, runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
+        })(request);
+      },
+    });
     const connectedAccountPurposeBindingRuntime = createDaemonConnectedAccountPurposeBindingRuntime({
       credentialOwnerAccountId: readAccountIdFromToken(credentials.token) ?? undefined,
       coordinatorInventoryIsObserved: () => apiMachine?.hasCurrentAccountChangesObserver() === true,
       workerMachineId: machineId,
       establishedRuntimeOwner: establishedConnectedAccountRuntimeOwner,
       openTeamDirect: teamCredentialDirectMaterialClient.open,
+      executeTeamCredentialBrokerAction,
+      listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({
+        homeDomainAction: (...args) => createAccountServerActionDeps({ token: credentials.token, credentials,
+          serverId: configuration.activeServerId, serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl() }).homeDomainAction!(...args),
+      }),
       resolveQualifiedConnectedAccountV4Support: () =>
         resolveQualifiedConnectedAccountAtomicV4Negotiation(
           serverFeaturesSnapshotStore.getSnapshot(),
@@ -1648,10 +1682,7 @@ export async function startDaemon(
           'providers',
           'managed-operation-auth',
         ),
-        purposeBindingOwner: {
-          activatePurposeBindings:
-            connectedAccountPurposeBindingRuntime.activatePurposeBindings,
-        },
+        purposeBindingOwner: connectedAccountPurposeBindingRuntime,
         listActionFormConnectedAccountOptions:
           connectedAccountPurposeBindingRuntime.listActionFormConnectedAccountOptions,
         requestAuthRegistry: connectedAccountRequestAuthRegistry,
@@ -1898,6 +1929,8 @@ export async function startDaemon(
       }),
       connectedAccounts: connectedAccountPurposeBindingRuntime.owner,
       actionFormConnectedAccounts: Object.freeze({
+        admitActionPurposeBindings:
+          connectedAccountPurposeBindingRuntime.admitActionPurposeBindings,
         resolveBindingIntent:
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
         resolveBindingIntentSelection:
@@ -1927,8 +1960,24 @@ export async function startDaemon(
       managedProviderOperationAuthority,
       qualifiedConnectedAccountEstablishedRuntimeOwner:
         establishedConnectedAccountRuntimeOwner,
-      reconcileConnectedAccountPurposePublication:
-        connectedAccountPurposeBindingRuntime.reconcileRegistryPublication,
+      reconcileConnectedAccountPurposePublication: async input => {
+        await connectedAccountPurposeBindingRuntime.reconcileRegistryPublication(input);
+        // Registry publication is the startup/reload boundary for existing account metadata.
+        // Reuse the coordinator inventory and the ordinary credential owner, without provider work.
+        try {
+          const accounts = await connectedAccountPurposeBindingRuntime.listCoordinatorAccounts(homeTransportCancellation.signal);
+          for (const profile of accounts) {
+            if (profile.revisionSemantics !== 'revisioned') continue;
+            try {
+              await establishedConnectedAccountRuntimeOwner.refreshExportProjection({ account: profile.ref, signal: homeTransportCancellation.signal });
+            } catch (error) {
+              logger.warn('[DAEMON RUN] Connected Account export metadata publication unavailable', { service: profile.ref.service, error: sanitizeConnectedServiceDiagnosticError(error, { redactedValues: [credentials.token] }) });
+            }
+          }
+        } catch (error) {
+          logger.warn('[DAEMON RUN] Connected Account export metadata inventory unavailable', { error: sanitizeConnectedServiceDiagnosticError(error, { redactedValues: [credentials.token] }) });
+        }
+      },
       runtimeActionExecute: browserRuntimeActionExecute,
       managedEndpointRead: async (input) => {
         const host = managedServiceEndpointReadHost;
@@ -2304,7 +2353,7 @@ export async function startDaemon(
         void (async () => {
           const requester = await resolveRequesterSessionRuntimeContext(tracked.happySessionId!, tracked.requesterWorkAttributionV1);
           try {
-            const result = await withTrackedSessionRpc({
+            const result = await withTrackedSessionRpcContext({
               tracked, credentials, custodianAccountId: externalActionAccountId,
               serverId: requesterRuntimeServerId, machineId,
               serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
@@ -2405,6 +2454,7 @@ export async function startDaemon(
       projectManagedServiceActivity: serviceActivity,
       machineId,
       managedProviderOperationAuthority,
+      executeTeamCredentialBrokerAction,
       prepareTeamCredentialNativeSource: async (request, signal) => {
         const producer = providerOperationsProducer;
         if (!producer || isDaemonQuiescing() || homeTransportCancellation.signal.aborted) {
@@ -3692,6 +3742,20 @@ export async function startDaemon(
                 }, input.signal ? { signal: input.signal } : undefined);
                 const runtimeInput: Parameters<typeof startDaemonProviderBrokerRuntimeWithCustody>[0]['runtime'] = {
                   machineId: registeredMachineId,
+                  actionOperations: {
+                    admit: async (request, signal) => await api.admitTeamCredentialProviderBrokerRequest(request, { signal }),
+                    execute: createTeamCredentialBrokerActionExecutor({
+                      purposeBindings: connectedAccountPurposeBindingRuntime,
+                      withRuntime: async read => {
+                        const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+                          happyHomeDir: configuration.happyHomeDir,
+                          controller: pluginReloadController,
+                        });
+                        try { return await read(lease.registry); }
+                        finally { await lease.release(); }
+                      },
+                    }),
+                  },
                   ...(managedPolicyHomeId && externalActionAccountId ? {
                     accountConnection: {
                       homeId: managedPolicyHomeId,
@@ -4493,7 +4557,11 @@ export async function startDaemon(
           releaseDaemonLock,
           acquireDaemonLock: () => acquireDaemonLock(5, 200),
           requestShutdown,
-          selfRestartParams: { ...selfRestartParams, ...withMachineConnectionHandover() },
+          selfRestartParams: {
+            ...selfRestartParams,
+            retireOwnedRuntimeBeforeExit: retireRuntimeForSelfRestartHandover,
+            ...withMachineConnectionHandover(),
+          },
         }),
     });
 

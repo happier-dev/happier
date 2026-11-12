@@ -1,3 +1,4 @@
+import { ConnectedAccountDirectExportProjectionV1Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export { ConnectedAccountAccessModeV1Schema, type ConnectedAccountAccessModeV1 } from './connectedAccountAccessModeV1.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -192,6 +193,7 @@ export const QualifiedConnectedAccountCredentialHealthPatchV4Schema = lazyZodSch
     ConnectedServiceCredentialRevisionV1Schema,
   expectedConfigurationRevision: z.nullable(RevisionSchema),
   health: ConnectedServiceCredentialHealthV1Schema,
+  exportProjection: z.optional(ConnectedAccountDirectExportProjectionV1Schema),
 }));
 
 export const QualifiedConnectedAccountRefreshLeaseV4Schema = lazyZodSchema(() => z.strictObject({

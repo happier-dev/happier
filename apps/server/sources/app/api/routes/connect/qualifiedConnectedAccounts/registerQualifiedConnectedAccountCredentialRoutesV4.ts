@@ -429,6 +429,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     accountId: request.userId,
                     ref: request.body.ref,
                     health: request.body.health,
+                    exportProjection: request.body.exportProjection,
                     expectedCredentialRevision:
                         request.body.expectedCredentialRevision,
                     expectedConfigurationRevision:

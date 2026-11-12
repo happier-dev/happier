@@ -2196,6 +2196,17 @@ existing code and may include `diagnostics.reconnectCause`: `credential_missing`
 exact stored-health refusal; an otherwise unclassified provider rejection does
 not acquire that cause.
 
+In 0.3 development, Team native export support is a refreshable public projection
+of the current connected-account authentication declaration and the account's
+observed credential kind. The custodian daemon refreshes it through the existing
+fenced credential-health writer at registry startup/reload and natural credential
+acquisition. Home source lists and disclosure checks consume that stored
+projection. An account connected before an export declaration appeared does not
+need to reconnect. Declaration withdrawal clears export support; this metadata
+publication preserves credential content and its revision and does not refresh
+or disclose OAuth tokens. The UI portable runtime does not publish a competing
+projection from its descriptor copy.
+
 Qualified refresh settlement records the attempt time and the observed success
 or failure time through the existing health writer. Codex token-endpoint
 failures also carry their numeric HTTP status into that writer. Status-only
@@ -2314,14 +2325,19 @@ credential needs upstream SDK support. It supplies no executable purpose or
 request-auth slot.
 The development Muse service owns device sign-in, explicit selected-Machine
 native import and manual key credentials in the existing qualified account
-lifecycle. Device sign-in mints once at connection; launch, status and quota
-reads do not acquire credentials. Its runtime chooses applicable purpose leaves:
-device/import supplies the complete native file, while manual keys supply the
-environment key. Only a returned native file activates the selected native home.
+lifecycle. Device sign-in mints once at connection. Each native Session requests
+one nonblocking subscription-usage refresh on its existing MSP host; native Muse
+may mint an inference key for that refresh. Status and standalone quota reads
+acquire nothing. Selected native launches use the private credential file for
+both OAuth and API-key modes and remove the inherited `META_API_KEY` override,
+so an inference key cannot hide the account login needed for usage refresh.
+Other model-source consumers retain their declared environment/header outputs.
 The existing native-home owner prepares the private XDG overlay and removes it
 through local account cleanup. Initial normalized mint usage is transient until
-successful settlement delivers it to the existing usage writer; absent safe
-refresh sources remain unavailable. Contributor variants are model ids chosen
+successful settlement delivers it to the existing usage writer; subsequent
+native refresh and notification samples use the same parser and writer. Missing
+observations stay unknown; `no_usage_observed` reads project to the existing
+not-loaded quota state. Contributor variants are model ids chosen
 through the existing picker, with no account observation or setting. This
 integration is unreleased; see [Muse accounts](../apps/docs/content/docs/accounts/connected-services.mdx#muse-accounts-in-03-development)
 for user-facing behavior and the single terms notice.
@@ -2486,8 +2502,11 @@ In development source, a selected Team Connected Account binding (brokered or
 direct), or a Team Provider model for the current Agent, uses this Team catalog
 instead of native model discovery. The shared model preflight hook suppresses
 the native request and its cached rows/failure state; native and Account
-selections retain native probing. The CLI still refuses Team operation probes
+selections retain native probing. The CLI still refuses Team model operation probes
 without admitted Session authority, and browsing never materializes Team credentials.
+Finite managed provisioner and SCM hosting Actions use their separate admitted
+Action consumer at the shared Team operation owner; that contract preserves
+the resource's brokered or direct mode (see [Teams](teams.md#brokered-provider-credentials)).
 The runtime's entitled-catalog read derives its applications from the worker's
 leased Agent requirements and uses the same paginated Session catalog transport
 as launch normalization. The composed recipient Pool → Action/CLI spawn →
