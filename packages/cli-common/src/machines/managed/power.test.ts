@@ -2,6 +2,8 @@ import type { JsonValue } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { executeManagedMachinePowerIntent } from './power.js';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
 const machine = ManagedMachineV1Schema.parse({
     id: 'retained', homeId: 'home', custodianAccountId: 'owner',
@@ -42,12 +44,12 @@ describe('shared admitted native power', () => {
         { observedAt: 5, availability: 'present' as const, power: 'unknown' as const },
         { observedAt: 5, availability: 'present' as const, power: 'stopped' as const, storage: 'lost' as const },
     ];
-    it.each(unavailableInspectResponses)('observes vendor power without dispatching a wake when Inspect cannot confirm power ($availability)', async observation => {
+    it.each(unavailableInspectResponses)('retains the native observation when Inspect refuses a wake ($availability)', async observation => {
         const calls: string[] = [];
         await expect(executeManagedMachinePowerIntent({ machine, invoke: async (role): Promise<JsonValue> => {
             calls.push(role);
             return role === 'inspect' ? observation : { kind: 'confirmed' };
-        } })).rejects.toMatchObject({ code: 'provider_unavailable' });
+        } })).resolves.toEqual({ result: { kind: 'refused', code: 'provider_unavailable' }, observation });
         expect(calls).toEqual(['inspect']);
     });
 
@@ -98,7 +100,12 @@ describe('shared admitted native power', () => {
         expect(JSON.stringify(calls.at(-1)?.body)).not.toContain('auth');
     });
 
-    it('keeps the confirmed power observation when the retained daemon cannot start', async () => {
+    it.each(['native', 'systemTask'] as const)('keeps confirmed power and safe startup failure facts (%s)', async source => {
+        const privateText = 'PRIVATE_NATIVE_STARTUP_OUTPUT';
+        const native = Object.assign(new Error(privateText), { code: 'EACCES', status: 403 });
+        const details = { kind: 'managedNative', nativeCause: { localCause: 'native_options_changed' } } as const;
+        const failure = source === 'native' ? native
+            : new SystemTaskExecutionError('provider_unavailable', privateText, { cause: native, details });
         const value = await executeManagedMachinePowerIntent({
             machine: { ...machine, enrolledMachineId: 'same-machine', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } },
             guestStartup: { channel: 'dev', transport: { kind: 'native', exec: 'exec', putFile: 'put-file' } },
@@ -107,12 +114,18 @@ describe('shared admitted native power', () => {
                 if (role === 'inspect') return { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' };
                 if (role === 'bootstrap') return { kind: 'native', transport: { contributionRef: machine.resource!.contributionRef, schemaVersion: 1 },
                     guestHome: { homeDir: '/root', happyHomeDir: '/root/.happier', daemonStartup: 'native-process' } };
-                throw new Error('Native startup transport unavailable');
+                throw failure;
             },
         });
         expect(value.result).toEqual({ kind: 'confirmed' });
         expect(value.observation).toMatchObject({ power: 'running' });
         expect(value.guestStartupError).toMatchObject({ code: 'native_boot_unconfirmed' });
+        const projected = normalizeActionExecutorThrownError(value.guestStartupError);
+        expect(projected).toMatchObject({ errorCode: 'native_boot_unconfirmed',
+            failureCause: { phase: 'machines.managed.power.set', errorCode: source === 'native' ? 'EACCES' : 'provider_unavailable',
+                httpStatus: source === 'native' ? 403 : null },
+            ...(source === 'systemTask' ? { details } : {}) });
+        expect(JSON.stringify(projected)).not.toContain(privateText);
     });
 
     it('starts guest-process carriers without a provider-owned persistent home through the same installed CLI', async () => {

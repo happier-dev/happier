@@ -6,6 +6,8 @@ import { ManagedMachineControllerError } from './controllerErrors.js';
 import { createManagedNativeBootstrapIO, startManagedNativeGuestDaemon } from './nativeBootstrap.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../systemTasks/ssh/remoteFirstPartyInstallPath.js';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
 export async function executeManagedMachinePowerIntent(input: Readonly<{
     machine: ManagedMachineV1;
@@ -27,7 +29,10 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
         : undefined;
     if (beforeWake && (beforeWake.availability !== 'present' || beforeWake.storage === 'lost'
         || beforeWake.power !== 'running' && beforeWake.power !== 'stopped' && beforeWake.power !== 'suspended')) {
-        throw new ManagedMachineControllerError('provider_unavailable');
+        // No power effect was dispatched. Report the refusing observation so
+        // Home settles this submission and retains native absence or loss.
+        return { result: { kind: 'refused', code: 'provider_unavailable',
+            ...(beforeWake.nativeCause ? { nativeCause: beforeWake.nativeCause } : {}) }, observation: beforeWake };
     }
     const result = beforeWake?.power === 'running' ? { kind: 'confirmed' as const }
         : MachineProvisionerPowerResultV1Schema.parse(await invoke('power', {
@@ -51,7 +56,9 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
             return power;
         } catch (error) {
             return { ...power, guestStartupError: error instanceof ManagedMachineControllerError ? error
-                : new ManagedMachineControllerError(io?.signal?.aborted ? 'cancelled' : 'native_boot_unconfirmed') };
+                : new ManagedMachineControllerError(io?.signal?.aborted ? 'cancelled' : 'native_boot_unconfirmed', undefined,
+                    error instanceof SystemTaskExecutionError ? error.details : undefined,
+                    projectActionFailureCauseV1(error, 'machines.managed.power.set'), error) };
         }
     };
     if (beforeWake?.power === 'running') return await complete(beforeWake);
