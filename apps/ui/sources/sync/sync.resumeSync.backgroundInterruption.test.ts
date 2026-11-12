@@ -19,6 +19,11 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
+// Cold transformation of the real app graph belongs to collection, before
+// per-case recovery lifetimes start. Install its transport boundary first.
+const preloadNetwork = await installSessionOpsNetworkBoundary();
+try { await loadSyncSingletonForTests(); } finally { await preloadNetwork.dispose(); }
+
 describe('sync resumeSync background interruption', () => {
     let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
     let home: Awaited<ReturnType<typeof network.addHome>>;
@@ -393,6 +398,42 @@ describe('sync resumeSync background interruption', () => {
             releaseOld(); releaseFresh();
             await Promise.allSettled([acquisition, repair]);
         }
+    }, 60_000);
+
+    it('a throttled Machines refresh borrows a fresh canonical full read instead of reading the list again', async () => {
+        const { sync } = await import('./sync');
+        const owner = sync as unknown as { fetchMachines(): Promise<void> };
+        let reads = 0;
+        onMachineListRead = async () => { reads += 1; return Response.json([]); };
+        await owner.fetchMachines();
+        expect(reads).toBe(1);
+        // A screen focus asks for "no older than 15 s": the startup read just answered it.
+        await sync.refreshMachinesThrottled({ staleMs: 15_000 });
+        expect(reads).toBe(1);
+        // A focus whose refresh ran late (interactions settled 30 s later) is still answered
+        // by a read that was fresh when the screen asked.
+        const focusedAt = now;
+        now += 30_000;
+        await sync.refreshMachinesThrottled({ staleMs: 15_000, asOf: focusedAt });
+        expect(reads).toBe(1);
+        // An explicit forced refresh still reads.
+        await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+        expect(reads).toBe(2);
+    }, 60_000);
+
+    it('a throttled Machines refresh issued during the bootstrap census joins it instead of reading again', async () => {
+        const { sync } = await import('./sync');
+        const owner = sync as unknown as { fetchMachines(): Promise<void> };
+        let reads = 0;
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        onMachineListRead = async () => { reads += 1; await held; return Response.json([]); };
+        const census = owner.fetchMachines();
+        await vi.waitFor(() => expect(reads).toBe(1));
+        const focus = sync.refreshMachinesThrottled({ staleMs: 15_000, asOf: now });
+        release();
+        await Promise.all([census, focus]);
+        expect(reads).toBe(1);
     }, 60_000);
 
     it('does not checkpoint an in-flight changes cursor after the server scope is reset', async () => {
