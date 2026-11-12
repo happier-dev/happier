@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { RpcError } from '../rpc/errors.js';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from './actionExecutionResult.js';
 import { createPromptDocInLibrary, createPromptBundleInLibrary, updatePromptDocInLibrary, updatePromptBundleInLibrary, installPromptRegistryItemInLibrary, listPromptLibrary, setPromptDocFavorite, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from './actionSettings.js';
@@ -123,6 +125,57 @@ function fetchedRegistrySkill() {
 }
 
 describe('createActionExecutor (prompt library actions)', () => {
+  it.each([
+    ['coded Error', Object.assign(new Error('Memory transport failed'), { code: 'memory_transport_failed', details: { secret: 'x' } })],
+    ['RpcError', Object.assign(new RpcError('Memory transport failed', 'RPC_FORBIDDEN'), { details: { secret: 'x' } })],
+  ] as const)('keeps private exception details out of memory admission (%s)', async (_kind, error) => {
+    const { store } = createStoredLibrary();
+    // Artifact persistence is the boundary; the Memory admission owner stays real.
+    const executor = createExecutor({ memoryLibrary: { serverId: 'home', randomId: () => 'unused',
+      store: { ...store, read: async () => { throw error; } },
+      readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'person', access: 'owner', grants: [] },
+        publicShares: { publicShares: [] } }),
+    } });
+    const result = await executor.execute('memory.remember', {
+      ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' },
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text: 'Remember this',
+    }, { surface: 'ui', serverId: 'home', authority: 'present_user' });
+    expect(result).not.toHaveProperty('details');
+    expect(result).toMatchObject({ ok: false, errorCode: 'code' in error ? error.code : error.rpcErrorCode });
+  });
+
+  it('retains a public Action failure diagnostic through memory admission', async () => {
+    const failure = { ok: false as const, errorCode: 'RPC_TRANSPORT_UNAVAILABLE', error: 'Transport unavailable',
+      requestId: 'memory-request', details: { requiredFact: 'connected_account_machine_online' }, effectAttempted: false,
+      failureCause: projectActionFailureCauseV1(new RpcError('Transport unavailable', 'RPC_TRANSPORT_UNAVAILABLE'), 'memory.admission') };
+    const { store } = createStoredLibrary();
+    const executor = createExecutor({ memoryLibrary: { serverId: 'home', randomId: () => 'unused',
+      store: { ...store, read: async () => { throw createActionExecuteFailureError(failure); } },
+      readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'person', access: 'owner', grants: [] },
+        publicShares: { publicShares: [] } }),
+    } });
+    expect(await executor.execute('memory.remember', {
+      ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' },
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text: 'Remember this',
+    }, { surface: 'ui', serverId: 'home', authority: 'present_user' })).toMatchObject(failure);
+  });
+
+  it('keeps cancelled memory admission free of private exception details', async () => {
+    const controller = new AbortController();
+    const { store } = createStoredLibrary();
+    const executor = createExecutor({ memoryLibrary: { serverId: 'home', randomId: () => 'unused',
+      store: { ...store, read: async () => { controller.abort(); throw Object.assign(new RpcError('Failed', 'RPC_FORBIDDEN'), { details: { secret: 'x' } }); } },
+      readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'person', access: 'owner', grants: [] },
+        publicShares: { publicShares: [] } }),
+    } });
+    const result = await executor.execute('memory.remember', {
+      ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' },
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text: 'Remember this',
+    }, { surface: 'ui', serverId: 'home', authority: 'present_user', signal: controller.signal });
+    expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(result).not.toHaveProperty('details');
+  });
+
   it('keeps memory admission, writes and reads in the invoking Account Artifact store', async () => {
     let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
       header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' },

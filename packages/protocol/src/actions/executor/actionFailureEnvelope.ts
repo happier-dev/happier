@@ -35,9 +35,7 @@ export function readMachineActionRpcResult<T>(result: T): T {
   const failure = readActionFailureEnvelope({ ...record, ok: false, errorCode: record.errorCode ?? 'action_failed' })!;
   // Throw at this boundary so a typed adapter cannot parse the refusal as its
   // successful payload. The Action executor already preserves RpcError codes.
-  throw Object.assign(new RpcError(failure.error, failure.errorCode, failure.failureCause),
-    failure.details === undefined ? {} : { details: failure.details },
-    failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {});
+  throw Object.assign(new RpcError(failure.error, failure.errorCode, failure.failureCause), failure);
 }
 
 export function readFailureEnvelopeDetails(record: Readonly<Record<string, unknown>>): unknown | undefined {

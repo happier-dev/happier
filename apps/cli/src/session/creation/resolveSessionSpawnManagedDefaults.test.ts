@@ -22,6 +22,9 @@ import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { resolveSessionSpawnManagedDefaults } from './resolveSessionSpawnManagedDefaults';
 
 const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const targetKey = 'agent:happier.agent.codex/codex';
@@ -45,6 +48,26 @@ const initialPolicy = configuration.organizationPolicy;
 afterEach(() => { Object.defineProperty(configuration, 'organizationPolicy', { value: initialPolicy, configurable: true }); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Session spawn defaults at admission', () => {
+  it.each(['home', 'team'] as const)('retains an admitted %s governance refusal and public diagnostic', async scope => {
+    const details = { requiredFact: 'governance_access', remedy: 'request_access' };
+    const failureCause = projectActionFailureCauseV1({ name: 'Error', code: 'permission_denied', status: 403 },
+      scope === 'home' ? 'home.governance.get' : 'teams.get');
+    // These adapters are the Home/Team HTTP read boundaries; defaults resolution
+    // and its thrown failure projection remain real.
+    const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'permission_denied',
+      error: 'Governance access refused', details, failureCause, effectAttempted: false });
+    const refuse = async () => failure;
+    let thrown: unknown;
+    try {
+      await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,
+        ...(scope === 'team' ? { primaryTeamId: 'team' } : {}) }, {
+        agentId: 'codex', accountSettings: accountSettingsParse({}), organizationPolicy: initialPolicy,
+        readTeam: refuse, readHome: refuse,
+      });
+    } catch (error) { thrown = error; }
+    expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'permission_denied', details, failureCause, effectAttempted: false });
+  });
+
   it.each([
     { name: 'cross-Account signed spawn uses only acting Account settings and credentials', surface: 'mcp' as const, layer: 'requester', permission: 'read-only', modelId: 'member-model' },
     { name: 'unadmitted cross-Account request refuses', surface: 'mcp' as const, layer: 'unadmitted', permission: 'read-only', modelId: 'member-model' },

@@ -8,25 +8,52 @@ import { buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtif
 import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema } from '../machines/managed/actionsV1.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
+import { readMachineActionRpcResult } from './executor/actionFailureEnvelope.js';
 import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { MachineProvisionerContributionV1Schema } from '../plugins/contributions/machineProvisioners.js';
 import { ACTION_IDS } from './actionIds.js';
+import { createRpcCallError, RpcError } from '../rpc/errors.js';
 
 const agentTarget = { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } as const;
 
 describe('unexpected Action failure diagnostics', () => {
+  it('preserves admitted public RPC failure details through thrown-error normalization', () => {
+    const details = { field: 'encryptionMode' };
+    let thrown: unknown;
+    try {
+      readMachineActionRpcResult({ error: 'RPC client temporarily unavailable', errorCode: 'RPC_CLIENT_NOT_AVAILABLE', details });
+    } catch (error) { thrown = error; }
+    expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'RPC_CLIENT_NOT_AVAILABLE', details });
+  });
+  it('preserves schema-validated Machine availability diagnostics from the RPC boundary', () => {
+    const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+    const failure = normalizeActionExecutorThrownError(createRpcCallError({ error: 'target_unavailable', errorCode: 'target_unavailable', details }));
+    expect(failure).toMatchObject({ errorCode: 'target_unavailable', details });
+    const malformed = normalizeActionExecutorThrownError(createRpcCallError({ error: 'target_unavailable', errorCode: 'target_unavailable',
+      details: { ...details, token: 'PRIVATE_TOKEN' } }));
+    expect(malformed).not.toHaveProperty('details');
+    expect(JSON.stringify(malformed)).not.toContain('PRIVATE_TOKEN');
+  });
+  it('does not give arbitrary RpcError details public diagnostic authority', () => {
+    const failure = normalizeActionExecutorThrownError(Object.assign(new RpcError('token=PRIVATE_TOKEN', 'RPC_FORBIDDEN'), {
+      details: { token: 'PRIVATE_TOKEN' },
+    }));
+    expect(failure).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+    expect(failure).not.toHaveProperty('details');
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE_TOKEN');
+  });
   it('retains a closed child failureCause and enrollment phase while redacting the message and dropping opaque details', () => {
     const error = Object.assign(new Error('token=PRIVATE_TOKEN'), { name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN',
       details: { token: 'PRIVATE_TOKEN' },
       failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN',
         httpStatus: null, phase: 'machines.agentIsolation.preview' } });
     const failure = normalizeActionExecutorThrownError(error);
-    expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: error.failureCause });
+    expect(failure).toMatchObject({ errorCode: 'RPC_FORBIDDEN', failureCause: error.failureCause });
     expect(failure).not.toHaveProperty('details');
     expect(JSON.stringify(failure)).not.toContain('PRIVATE_TOKEN');
     expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
     const privateFields = normalizeActionExecutorThrownError(Object.assign(new TypeError('token=PRIVATE_TOKEN'), {
-      code: 'PRIVATE_TOKEN', details: { token: 'PRIVATE_TOKEN', phase: 'PRIVATE_PHASE' },
+      code: 'token=PRIVATE_TOKEN', details: { token: 'PRIVATE_TOKEN', phase: 'PRIVATE_PHASE' },
     }));
     expect(privateFields).toMatchObject({ errorCode: 'action_failed',
       failureCause: { errorClass: 'TypeError', errorCode: null, httpStatus: null } });
@@ -192,7 +219,7 @@ describe('managed Machine Action executor', () => {
     const failure = normalizeActionExecutorThrownError({ code: 'HOME_AUTHORITY_MISMATCH', message,
       url: 'https://private', token: 'private' });
     expect(ActionOperationFailureV1Schema.parse(failure)).toEqual({ errorCode: 'HOME_AUTHORITY_MISMATCH', error: message,
-      failureCause: { phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null },
+      failureCause: { phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'HOME_AUTHORITY_MISMATCH', httpStatus: null },
       details: { kind: 'homeAuthorityMismatch', authorityReason: 'descriptor', authorityPhase: 'controller_approval',
         authorityCarrier: 'https', authorityDescriptorPresent: false } });
     const rejected = normalizeActionExecutorThrownError({ code: 'HOME_AUTHORITY_MISMATCH', message: message + ' token=PRIVATE_TOKEN' });
@@ -211,7 +238,7 @@ describe('managed Machine Action executor', () => {
     expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
       presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
       .toEqual({ ok: false, errorCode: code, error: message,
-        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: code, httpStatus: null } });
   });
   it.each([
     { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 1; signal unknown; stdoutPresent true; stderrPresent true; elapsedBucket at_least_600s; requestEventSeen true; finalResultEventSeen false; guestCliCode AUTH_ENROLL_REMOTE_TIMEOUT; guestAuthCategory deadline_elapsed; controllerAbortCategory none)', valid: true },
@@ -232,7 +259,7 @@ describe('managed Machine Action executor', () => {
     expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
       presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
       .toEqual({ ok: false, errorCode: 'remote_command_failed', error: valid ? message : 'Remote command failed.',
-        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: 'remote_command_failed', httpStatus: null } });
   });
 
   it.each([
@@ -261,7 +288,7 @@ describe('managed Machine Action executor', () => {
     expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
       presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
       .toEqual({ ok: false, errorCode: 'ssh_command_failed', error: valid ? message : 'The SSH command failed.',
-        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: 'ssh_command_failed', httpStatus: null } });
   });
 
   it('retains the unreachable Home address without exposing native enrollment diagnostics', async () => {
@@ -294,11 +321,11 @@ describe('managed Machine Action executor', () => {
       presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } } as const;
     const result = await executor.execute('machines.managed.bootstrap.retry', input, context);
     expect(result).toEqual({ ok: false, errorCode: 'bootstrap_effect_unconfirmed', error: 'bootstrap_effect_unconfirmed', details,
-      failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: null, httpStatus: null } });
+      failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: 'bootstrap_effect_unconfirmed', httpStatus: null } });
     expect(JSON.stringify(result)).not.toContain('private interpreter stderr');
     details = { ...diagnostic, stderr: 'private interpreter stderr' };
     const invalid = await executor.execute('machines.managed.bootstrap.retry', input, context);
-    expect(invalid).toMatchObject({ errorCode: 'action_failed', failureCause: { errorClass: 'Error' } });
+    expect(invalid).toMatchObject({ errorCode: 'bootstrap_effect_unconfirmed', failureCause: { errorClass: 'Error', errorCode: 'bootstrap_effect_unconfirmed' } });
     expect(invalid).not.toHaveProperty('details');
     expect(JSON.stringify(invalid)).not.toContain('PRIVATE_BOOTSTRAP_TOKEN');
   });
@@ -312,7 +339,7 @@ describe('managed Machine Action executor', () => {
       { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } });
     expect(entered).toBe(true);
     expect(result).toEqual({ ok: false, errorCode: code, error: code,
-      failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: null, httpStatus: null } });
+      failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: code, httpStatus: null } });
   });
 
   it.each([
@@ -328,7 +355,7 @@ describe('managed Machine Action executor', () => {
     expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
       presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
       .toEqual({ ok: false, errorCode: code, error: message,
-        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: code, httpStatus: null } });
   });
   it.each([
     { code: 'provider_unavailable', nativeCause: { httpStatusClass: '4xx', code: 'uniqueness_error' } },
@@ -346,7 +373,7 @@ describe('managed Machine Action executor', () => {
       presentUserConfirmation: { actionId: 'machines.managed.acquire' } } as const;
     expect(await executor.execute('machines.managed.acquire', acquireInput, context))
       .toEqual({ ok: false, errorCode: code, error: code, details,
-        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: code, httpStatus: null } });
     details = { kind: 'managedNative', nativeCause: { ...nativeCause, message: 'private native response' } };
     const invalid = await executor.execute('machines.managed.acquire', acquireInput, context);
     expect(invalid).not.toHaveProperty('details.nativeCause');
@@ -682,6 +709,6 @@ describe('managed Machine Action executor', () => {
     } } as unknown as ActionExecutorDeps);
     expect(await unavailable.execute('machines.managed.list', { homeId: 'home' }, { surface: 'cli' }))
       .toEqual({ ok: false, errorCode: 'controller_unavailable', error: 'Controller unavailable at /repo/workspace',
-        failureCause: { phase: 'machines.managed.list', errorClass: 'Error', errorCode: null, httpStatus: null } });
+        failureCause: { phase: 'machines.managed.list', errorClass: 'Error', errorCode: 'controller_unavailable', httpStatus: null } });
   });
 });

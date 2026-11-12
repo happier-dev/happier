@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { RpcError } from '../rpc/errors.js';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from './actionExecutionResult.js';
 import { getActionSpec } from './actionSpecs.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
@@ -10,6 +12,36 @@ import { formatSharedSavedSecretRefV1, listAccountSettingsSavedSecretReferences 
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '../providers/connections/connectionRowsV1.js';
 
 describe('personal Saved Secret Action boundary', () => {
+  it.each([
+    ['coded Error', Object.assign(new Error('Secret store unavailable'), { code: 'secret_store_unavailable', details: { secret: 'x' } })],
+    ['RpcError', Object.assign(new RpcError('Secret store unavailable', 'RPC_FORBIDDEN'), { details: { secret: 'x' } })],
+    ['coded RpcError', Object.assign(new RpcError('Secret store unavailable', 'RPC_FORBIDDEN'), { code: 'RPC_FORBIDDEN', details: { secret: 'x' } })],
+  ] as const)('keeps private exception details out of Saved Secret refusals (%s)', async (_kind, error) => {
+    // The private-resource persistence port is the boundary, not the family owner.
+    const execute = createPersonalSavedSecretActionExecuteV1({ list: async () => { throw error; },
+      create: async () => ({ secretId: 'unused', secretRef: 'unused' }), update: async () => ({ revision: 2 }), delete: async () => {} });
+    const result = await execute('secrets.list', {});
+    expect(result).not.toHaveProperty('details');
+    expect(result).toMatchObject({ ok: false, errorCode: 'code' in error ? error.code : error.rpcErrorCode });
+  });
+
+  it('retains a public Action failure diagnostic through Saved Secret refusals', async () => {
+    const failure = { ok: false as const, errorCode: 'RPC_TRANSPORT_UNAVAILABLE', error: 'Transport unavailable',
+      requestId: 'secret-request', details: { requiredFact: 'connected_account_machine_online' }, effectAttempted: false,
+      failureCause: projectActionFailureCauseV1(new RpcError('Transport unavailable', 'RPC_TRANSPORT_UNAVAILABLE'), 'secrets.list') };
+    const execute = createPersonalSavedSecretActionExecuteV1({ list: async () => { throw createActionExecuteFailureError(failure); },
+      create: async () => ({ secretId: 'unused', secretRef: 'unused' }), update: async () => ({ revision: 2 }), delete: async () => {} });
+    await expect(execute('secrets.list', {})).resolves.toMatchObject(failure);
+  });
+
+  it.each([new Error('Uncoded failure'), { code: 'plain_object_failure', details: { secret: 'x' } }])(
+    'keeps non-carrier Saved Secret throws unchanged (%s)', async error => {
+      const execute = createPersonalSavedSecretActionExecuteV1({ list: async () => { throw error; },
+        create: async () => ({ secretId: 'unused', secretRef: 'unused' }), update: async () => ({ revision: 2 }), delete: async () => {} });
+      await expect(execute('secrets.list', {})).rejects.toBe(error);
+    },
+  );
+
   it('describes one secret with its value-free census and leaves ordinary lists census-free', async () => {
     const requested: string[] = [];
     const selected: (string | undefined)[] = [];

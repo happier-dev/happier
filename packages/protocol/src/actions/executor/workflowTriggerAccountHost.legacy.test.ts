@@ -5,7 +5,7 @@ import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/a
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '../../crypto/accountScopedCipher.js';
 import { createAccountWorkflowTriggerActions } from './workflowTriggerAccountHost.js';
 import { createActionExecutor } from '../actionExecutor.js';
-import type { ActionExecutorContext } from './types.js';
+import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
 import { createWorkflowDefinitionActions } from './workflowDefinitions.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
@@ -84,6 +84,7 @@ async function conversionApprovalFixture(surface: 'agent' | 'mcp' | 'cli' = 'mcp
   const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
   f.row().enabled = false;
   const observations: ActionExecutorContext[] = [];
+  const deliveries: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
   const agentStartContext = {
     caller: { kind: 'session' as const, sessionId: 'session-old', starterDepth: 0, turnDepth: 0 },
     baseline: { machineId: 'machine-one', directory: '/repo', configuration: {
@@ -100,7 +101,7 @@ async function conversionApprovalFixture(surface: 'agent' | 'mcp' | 'cli' = 'mcp
     },
     resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
   });
-  const human = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-one',
+  const human = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-one', runtimeAccountId: 'account-one',
     presentUserConfirmation: { actionId: 'workflow.trigger.update' } } as const;
   const { sets } = await host.list({ automationId: 'legacy-one', review: true }, human);
   const input = WorkflowTriggerUpdateRequestV1Schema.parse({ automationId: 'legacy-one', expectedRevision: 3,
@@ -134,15 +135,19 @@ async function conversionApprovalFixture(surface: 'agent' | 'mcp' | 'cli' = 'mcp
     isActionApprovalRequired: (actionId, context, actionInput) =>
       isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, actionInput),
     observeActionExecution: async ({ context }) => { observations.push(context); },
+    sessionSendMessage: async input => {
+      deliveries.push(input);
+      return { status: 'accepted', localId: input.localId };
+    },
   });
-  const context: ActionExecutorContext = { surface, authority: 'account_automation', serverId: 'home-one',
+  const context: ActionExecutorContext = { surface, authority: 'account_automation', serverId: 'home-one', runtimeAccountId: 'account-one',
     actionRequestId: 'conversion-request', actionsSettings: settings, defaultSessionMachineId: 'machine-one',
     ...(surface === 'agent' ? { actionCaller: agentStartContext.caller, defaultSessionId: 'session-old',
       sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, agentStartContext,
       approvalOrigin: { kind: 'transcript_tool_call' as const, sessionId: 'session-old', toolCallId: 'convert-tool' } }
       : { actionCaller: { kind: 'host' as const } }),
   };
-  return { ...f, host, executor: reloadExecutor(), reloadExecutor, input, context, human, observations,
+  return { ...f, host, executor: reloadExecutor(), reloadExecutor, input, context, human, observations, deliveries,
     waiveApproval: () => { settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
       'workflow.trigger.update': [surface],
     } }); },
@@ -179,10 +184,18 @@ describe('0.2 Automation Account trigger host', () => {
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(f.request().status).toBe('open');
     expect(f.writes()).toBe(0);
-    expect(await f.reloadExecutor().execute('approval.request.decide', { artifactId: 'conversion-approval', decision: 'approve' }, f.human))
+    const humanDecision = await f.reloadExecutor().execute('approval.request.decide', { artifactId: 'conversion-approval', decision: 'approve' }, f.human);
+    expect(humanDecision, JSON.stringify({ humanDecision, request: f.request(), writes: f.writes() }))
       .toMatchObject({ ok: true });
     expect(f.request()).toMatchObject({ status: 'executed', decision: { kind: 'approve', authority: 'present_user' }, execution: { ok: true } });
     expect(f.writes()).toBe(1);
+    if (surface === 'agent') {
+      expect(f.deliveries).toMatchObject([{ sessionId: 'session-old', serverId: 'home-one',
+        localId: 'approval-result:conversion-approval', reply: 'none', requestedAction: { kind: 'enqueue' },
+        context: { runtimeAccountId: 'account-one', serverId: 'home-one', authority: 'account_automation' } }]);
+      expect(JSON.parse(f.deliveries[0]!.message)).toMatchObject({ artifactId: 'conversion-approval',
+        actionId: 'workflow.trigger.update', status: 'executed', execution: { ok: true } });
+    } else expect(f.deliveries).toHaveLength(0);
     expect(f.row().templateCiphertext).toBeUndefined();
     expect(f.row().executionRecipe).toMatchObject({ v: 2, workflow: { t: 'plain', v: {
       workspace: { directory: '/repo' }, inlineDefinition: f.input.patch.target?.kind === 'inline' ? f.input.patch.target.definition : undefined,
@@ -195,6 +208,17 @@ describe('0.2 Automation Account trigger host', () => {
       .toMatchObject({ surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, actionRequestId: 'conversion-request',
         presentUserApproval: { actionId: 'workflow.trigger.update' } });
+  });
+  it('refuses an automation-stamped CLI decision before settlement without converting retained content', async () => {
+    const f = await conversionApprovalFixture('cli');
+    expect(await f.executor.execute('workflow.trigger.update', f.input, f.context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await f.executor.execute('approval.request.decide', { artifactId: 'conversion-approval', decision: 'approve' }, f.context))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(f.request().status).toBe('open');
+    expect(f.writes()).toBe(0);
+    expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
+    expect(f.deliveries).toHaveLength(0);
   });
   it('leaves denied conversion requests unchanged', async () => {
     const f = await conversionApprovalFixture();

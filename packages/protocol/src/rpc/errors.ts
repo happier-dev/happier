@@ -33,6 +33,8 @@ export const RPC_ERROR_CODES = {
   /** Dispatch occurred, but currentness was lost before a result could be admitted. */
   OUTCOME_UNKNOWN: 'RPC_OUTCOME_UNKNOWN',
   FORBIDDEN: 'RPC_FORBIDDEN',
+  /** The Machine does not run the role that owns this method (its handlers are not registered). */
+  MACHINE_ROLE_INACTIVE: 'machine_role_inactive',
   SESSION_MACHINE_CONTROL_UNAVAILABLE: 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE',
   /**
    * The Session is reachable but the caller's Team policy is not satisfied by
@@ -98,7 +100,7 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
   const failure = typeof opts.errorCode === 'string' && opts.errorCode.length > 0
     ? new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined)
     : Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
-  return details?.success ? Object.assign(failure, { details: details.data }) : failure;
+  return details?.success ? Object.assign(failure, { ok: false, errorCode: 'target_unavailable', error: opts.error, details: details.data }) : failure;
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {

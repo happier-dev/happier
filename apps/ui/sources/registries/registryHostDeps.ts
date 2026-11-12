@@ -176,7 +176,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 source: { kind: 'plugin', registryItem, contributionId },
             });
             account.assertCurrent(); context.signal?.throwIfAborted();
-            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
+            if (!result.ok) throw Object.assign(new Error(result.error), result, { code: result.errorCode });
             const preview = BotTemplatePreviewResultV1Schema.parse(result.result);
             return { release: preview.release, source: preview.source };
         },
@@ -187,7 +187,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
             const checkOnMachine = async (target: string, selection: typeof filter) => {
                 const result = await executeOnMachine(target, 'registries.updates.check', selection ?? {});
                 account.assertCurrent(); context.signal?.throwIfAborted();
-                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
+                if (!result.ok) throw Object.assign(new Error(result.error), result, { code: result.errorCode });
                 const checked = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(result.result);
                 return { ...checked, results: checked.results.map(item => item.kind === 'browserExtension'
                     ? { ...item, machineId: target } : item) };
@@ -227,7 +227,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
             const machineId=carrierForSource();
             if(!machineId)throw new RegistryFetchErrorV1({state:'needs_machine'});
             const result=await executeOnMachine(machineId,'registries.sources.create',input);
-            if(!result.ok)throw Object.assign(new Error(result.error),{code:result.errorCode,details:result.details});
+            if(!result.ok)throw Object.assign(new Error(result.error),result,{code:result.errorCode});
             const created=REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.sources.create'].parse(result.result);
             // The daemon wrote the Account row; a write from this client revalidates its own copy, this one must too.
             await invalidatePromptLibraryCatalogAfterAcknowledgedMutation({serverId:account.serverId,accountId:account.accountId},()=>account.assertCurrent());
@@ -251,7 +251,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                         ...(request.version === undefined ? {} : { version: request.version }) };
                 const result = await executeOnMachine(machineId, actionId, input);
                 account.assertCurrent(); context.signal?.throwIfAborted();
-                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
+                if (!result.ok) throw Object.assign(new Error(result.error), result, { code: result.errorCode });
                 if (actionId === 'registries.items.list') {
                     const page = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(result.result).pages.find(page => page.sourceId === request.sourceId);
                     if (!page) throw new RegistryFetchErrorV1({ state: 'invalid_source' });

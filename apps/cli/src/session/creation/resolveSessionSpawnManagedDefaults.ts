@@ -11,7 +11,7 @@ import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAcco
 import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveManagedSessionDefaults, type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
@@ -22,7 +22,7 @@ type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,
 
 function readGovernanceResult(raw: unknown): unknown {
   const failure = ActionExecuteFailureSchema.safeParse(raw);
-  if (failure.success) throw Object.assign(new Error(failure.data.errorCode), { code: failure.data.errorCode, details: failure.data.details });
+  if (failure.success) throw createActionExecuteFailureError(failure.data);
   return raw;
 }
 

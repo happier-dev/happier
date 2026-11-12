@@ -1,5 +1,6 @@
 import { isRpcError } from '../../rpc/errors.js';
 import { isPluginError } from '../../plugins/errors.js';
+import { readPluginActionError, readPluginActionFailureAuthorPayload } from '../../plugins/actions/invocation.js';
 import { ApprovalRequestInvalid } from '../../approvals/creation.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
 import { readRegistrySourceUrlErrorCodeV1 } from '../../registries/registryRpcV1.js';
@@ -13,7 +14,7 @@ import { readSshCommandFailure, readRemoteEnrollmentCommandFailure, readHomeAuth
 import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedGuestHomeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
-import { isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, ActionFailureCauseV1Schema,
+import { ActionOperationAcceptedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, ActionFailureCauseV1Schema,
   projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -59,7 +60,12 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
     return withCredentialUses(result);
   }
   if (isDeferredApprovalResult(result)) return result;
-  const outputSchema = getActionSpec(actionId).outputSchema;
+  const spec = getActionSpec(actionId);
+  if (spec.operation) {
+    const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
+    if (accepted.success) return withCredentialUses({ ok: true, result: accepted.data });
+  }
+  const outputSchema = spec.outputSchema;
   if (!outputSchema) return result;
   const invalidOutput = (): ActionExecuteResult => actionId === 'projects.open'
     ? completeUnknownProjectOpenResult()
@@ -126,6 +132,13 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
   }
   if (error instanceof SessionOrganizationContentUnavailableError) {
     return { errorCode: error.code, error: error.message };
+  }
+  const pluginFailure = readPluginActionError(error);
+  if (pluginFailure) {
+    const { diagnostics: _diagnostics, ...authorPayload } = readPluginActionFailureAuthorPayload(pluginFailure.data);
+    return { errorCode: pluginFailure.code, error: pluginFailure.message,
+      details: { name: 'PluginError', code: pluginFailure.code, message: pluginFailure.message,
+        retryable: pluginFailure.retryable, ...authorPayload } };
   }
   const errorRecord = readRecord(error);
   if (errorRecord.code === 'action_account_scope_changed') {
@@ -222,7 +235,7 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     return {
       errorCode: normalizedCode,
       error: message || normalizedCode,
-      ...((details ?? rawDetails) === undefined ? {} : { details: details ?? rawDetails }),
+      ...(details === undefined ? {} : { details }),
       ...(isRpcError(error) && typeof errorRecord.effectAttempted === 'boolean' ? { effectAttempted: errorRecord.effectAttempted } : {}),
     };
   }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -15,6 +16,19 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 afterEach(() => vi.restoreAllMocks());
 
 describe('Machine capability observation during unsigned approval replay', () => {
+  it('preserves a confirmed original-account refusal through thrown Action normalization', async () => {
+    // Legacy token provenance can select the bridge, but the receiving admission
+    // owner refuses it before any HTTP request or effect.
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.fixture`;
+    const transport = createCliMachineActionTransport({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+      serverId: 'home', serverHttpBaseUrl: 'https://home.example.test' });
+    let thrown: unknown;
+    try {
+      await transport.callMachineAction({ machineId: 'machine', method: 'fixture.stop', effectActionId: 'localServices.actions.stopManaged', request: {},
+        context: { surface: 'cli', authority: 'present_user', actionRequestId: 'stop-request' } });
+    } catch (error) { thrown = error; }
+    expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'admission_unavailable', effectAttempted: false });
+  });
   it('preserves which combined target refused planning and its original typed cause', async () => {
     const params = { credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const },
       serverId: 'home', serverIdentityId: 'home' };

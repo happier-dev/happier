@@ -4,6 +4,7 @@ import {
   type BrowserContextSnapshotV1,
 } from '@happier-dev/protocol/browser/context/v1';
 import { describe, expect, it, vi } from 'vitest';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import type { BrowserContextSource } from './capture';
 import { createBrowserContextRoutes } from './routes';
@@ -52,6 +53,15 @@ const validInput = {
 } as const;
 
 describe('browser context routes', () => {
+  it('preserves public capture retryability and the typed cause at the Action boundary', async () => {
+    const failureCause = { errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null, phase: 'browser.capture' } as const;
+    const source = { ...fakeSource(), captureSelectedElement: async () => ({ ok: false as const, reason: 'capture_failed' as const,
+      disabledReason: 'browser_capture_unavailable', failure: { errorCode: 'browser_capture_unavailable', failureCause, retryable: true } }) };
+    let thrown: unknown;
+    try { await routes(source).dispatch('browser.context.captureSelectedElement', validInput); }
+    catch (error) { thrown = error; }
+    expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'browser_capture_unavailable', details: { retryable: true }, failureCause });
+  });
   it('refuses host-only annotation start and cancel instead of reporting a daemon no-op success', async () => {
     const route = routes();
     for (const actionId of ['browser.context.annotation.start', 'browser.context.annotation.cancel'] as const) {

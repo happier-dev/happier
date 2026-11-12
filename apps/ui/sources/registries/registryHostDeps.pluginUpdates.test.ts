@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -82,5 +83,27 @@ it.each([true, false])('keeps Account catalog checks across carriers (first unav
             expect.objectContaining({ kind: 'agent', key: 'retained-agent' }),
             expect.objectContaining({ kind: 'skill', key: 'retained-skill' }),
         ]));
+    } finally { captured.dispose(); }
+});
+
+it('preserves an admitted registry failure diagnostic through the UI host and Action boundary', async () => {
+    const machineId = 'registry-refused-machine';
+    const scope = await account.restore({ currentAccount: true, serverIdentityId: 'srv_registry_refusal', machines: [
+        createMachineFixture({ id: machineId, activeAt: Date.now() }),
+    ] });
+    await account.publishMachines(scope.serverId, [createMachineFixture({ id: machineId, activeAt: Date.now() })]);
+    const details = { requiredFact: 'registry_access', remedy: 'request_access' };
+    await answerExternalActionAccountForHome(account.home, scope.serverId, {
+        machineId, actionId: 'registries.updates.check', tokenEpoch: 0, requesterInvocation: 'none',
+        execute: () => ({}), failure: () => ({ errorCode: 'permission_denied', error: 'Registry access refused', details }),
+    });
+    const captured = await captureLazyActionAccountContext(scope.serverId);
+    try {
+        const port = createUiPromptLibraryArtifactStore(captured.workflowArtifacts, captured).organization!;
+        const host = await createUiRegistryHostV1(captured, port, {}, { explicitRefresh: true });
+        let thrown: unknown;
+        try { await host.execute('registries.updates.check', {}); }
+        catch (error) { thrown = error; }
+        expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'permission_denied', details });
     } finally { captured.dispose(); }
 });

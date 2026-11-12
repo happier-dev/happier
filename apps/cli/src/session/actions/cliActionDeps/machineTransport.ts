@@ -183,8 +183,7 @@ export function createCliMachineActionTransport(
         credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         ...(serverIdentityId ? { serverIdentityId } : {}), authority: invocation.authority, invocation,
         ...(input.signal ? { signal: input.signal } : {}) });
-      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode),
-        execution.details === undefined ? {} : { details: execution.details });
+      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
       return execution.result;
     }
     const workflowCaller = input.context?.actionCaller;
@@ -203,8 +202,7 @@ export function createCliMachineActionTransport(
         installedWorkflow: { context: input.context, machineId: publisherMachineId,
           installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey },
         ...(input.signal ? { signal: input.signal } : {}) });
-      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode),
-        execution.details === undefined ? {} : { details: execution.details });
+      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
       return execution.result;
     }
     const direct = params.machineActionDirectTargetTransport;

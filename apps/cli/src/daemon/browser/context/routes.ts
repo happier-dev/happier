@@ -160,8 +160,9 @@ function mapCaptureResult(
   if (result.status === 'denied') return disabled('browser_context_denied');
   if (result.status === 'unavailable' && result.failure) {
     const failure = result.failure;
-    throw Object.assign(new RpcError(result.item.disabledReason ?? failure.errorCode, failure.errorCode, failure.failureCause), {
-      details: { retryable: failure.retryable },
+    const error = result.item.disabledReason ?? failure.errorCode;
+    throw Object.assign(new RpcError(error, failure.errorCode, failure.failureCause), {
+      ok: false, errorCode: failure.errorCode, error, details: { retryable: failure.retryable },
     });
   }
   if (options?.record?.(result.item, result.status === 'captured' ? result.profileId : undefined) === false) {

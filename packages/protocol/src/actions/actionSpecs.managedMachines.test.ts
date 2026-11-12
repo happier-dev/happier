@@ -228,7 +228,7 @@ describe('managed Machine host Action contracts', () => {
     });
     expect(resolveActionApprovalRouting({ actionId: 'machines.managed.cancel', spec, input,
       context: { surface: 'ui', authority: 'present_user' },
-    })).toMatchObject({ required: true, flow: 'deferred' });
+    })).toMatchObject({ required: false, uiConfirmationRequired: true, flow: 'blocking' });
   });
   it('requires immediate currentness and permits only selected deferred stop/delete inputs', () => {
     const power = getActionSpec('machines.managed.power.set').inputSchema;
@@ -236,7 +236,8 @@ describe('managed Machine host Action contracts', () => {
     expect(power.safeParse({ ...target, when: 'now', intent: 'stop' }).success).toBe(false);
     expect(power.safeParse({ ...target, when: 'now', expectedRevision: 2, intent: 'stop', afterMs: 1 }).success).toBe(false);
     expect(power.safeParse({ ...target, when: 'after-idle', intent: 'start' }).success).toBe(false);
-    expect(power.safeParse({ ...target, when: 'after-idle', intent: 'stop', afterMs: 0 }).success).toBe(false);
+    expect(power.safeParse({ ...target, when: 'after-idle', intent: 'stop', afterMs: -1 }).success).toBe(false);
+    expect(power.safeParse({ ...target, when: 'after-idle', intent: 'stop', afterMs: 0 }).success).toBe(true);
     expect(power.safeParse({ ...target, when: 'after-idle', intent: 'stop', afterMs: 17 }).success).toBe(true);
     const deletion = getActionSpec('machines.managed.delete').inputSchema;
     expect(deletion.safeParse({ ...target, when: 'after-idle', intent: 'delete', reviewedDependencies: true }).success).toBe(true);

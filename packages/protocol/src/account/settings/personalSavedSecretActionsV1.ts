@@ -4,7 +4,7 @@ export { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretAction
 import { z } from '../../zodRuntimePolicy.js';
 import { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference } from './savedSecretReferenceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
+import { isRpcError } from '../../rpc/errors.js';
 import { SavedSecretResourceSourceV1Schema, SavedSecretExternalSourceV1Schema, type SavedSecretExternalSourceV1 } from './savedSecretResourceContentSchemaV1.js';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -141,12 +141,12 @@ export function createPersonalSavedSecretActionExecuteV1(port: PersonalSavedSecr
         return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ deleted: true });
     }
     } catch (error) {
-      // Hosts report typed private-resource refusals. Preserve their admitted
-      // code/details at this family owner, not in separate client adapters.
-      const refusal = error instanceof Error && 'code' in error && typeof error.code === 'string'
-        ? ActionExecuteFailureSchema.safeParse({ ok: false, errorCode: error.code, error: error.message || error.code,
-            ...('details' in error && error.details !== undefined ? { details: error.details } : {}) }) : null;
-      if (refusal?.success) return refusal.data;
+      // Preserve public failure carriers through the canonical classifier;
+      // arbitrary private-resource exception details are not an Action contract.
+      if (isRpcError(error) || error instanceof Error && 'code' in error && typeof error.code === 'string') {
+        const { normalizeActionExecutorThrownError } = await import('../../actions/executor/resultProjection.js');
+        return { ok: false, ...normalizeActionExecutorThrownError(error) };
+      }
       throw error;
     }
   };
