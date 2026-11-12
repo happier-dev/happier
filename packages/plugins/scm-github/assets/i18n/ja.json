@@ -1146,5 +1146,16 @@
   "plugins.github.ui.preview.history": "履歴",
   "plugins.github.ui.checkRerunFailed": "失敗したジョブを再実行",
   "plugins.github.ui.checkRerunWorkflow": "ワークフローを再実行",
-  "plugins.github.ui.checkRerunSubject": "この再実行"
+  "plugins.github.ui.checkRerunSubject": "この再実行",
+  "plugins.github.ui.preview.chooseController": "別のコントローラーを選択",
+  "plugins.github.ui.preview.controllerPaused": "コントローラーは一時停止中",
+  "plugins.github.ui.preview.controllerRecovery": "コントローラーをオンラインにするか、別のマシンを選択してください。",
+  "plugins.github.ui.preview.controllerUnknown": "コントローラーの利用状況は不明です",
+  "plugins.github.ui.preview.prUpdatePending": "PRの更新待ち",
+  "plugins.github.ui.preview.prUpdateUnavailable": "PRを更新できません",
+  "plugins.github.ui.preview.prUpdateUnconfirmed": "PRの更新は未確認です",
+  "plugins.github.ui.preview.prUpdated": "PRを更新しました",
+  "plugins.github.ui.preview.prUpdating": "PRを更新中…",
+  "plugins.github.ui.preview.retryPrUpdate": "PRの更新を再試行",
+  "plugins.github.releases.published.refreshWarning": "公開しました。最新のリリース詳細を更新できませんでした。リリースを開き直して更新してください。({code})"
 }

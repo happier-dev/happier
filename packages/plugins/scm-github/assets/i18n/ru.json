@@ -1146,5 +1146,16 @@
   "plugins.github.ui.preview.history": "История",
   "plugins.github.ui.checkRerunFailed": "Перезапустить неудачные задания",
   "plugins.github.ui.checkRerunWorkflow": "Перезапустить workflow",
-  "plugins.github.ui.checkRerunSubject": "этот перезапуск"
+  "plugins.github.ui.checkRerunSubject": "этот перезапуск",
+  "plugins.github.ui.preview.chooseController": "Выбрать другой контроллер",
+  "plugins.github.ui.preview.controllerPaused": "Контроллер приостановлен",
+  "plugins.github.ui.preview.controllerRecovery": "Подключите контроллер к сети или выберите другую машину.",
+  "plugins.github.ui.preview.controllerUnknown": "Доступность контроллера неизвестна",
+  "plugins.github.ui.preview.prUpdatePending": "Обновление PR ожидается",
+  "plugins.github.ui.preview.prUpdateUnavailable": "Обновление PR недоступно",
+  "plugins.github.ui.preview.prUpdateUnconfirmed": "Обновление PR не подтверждено",
+  "plugins.github.ui.preview.prUpdated": "PR обновлён",
+  "plugins.github.ui.preview.prUpdating": "Обновление PR…",
+  "plugins.github.ui.preview.retryPrUpdate": "Повторить обновление PR",
+  "plugins.github.releases.published.refreshWarning": "Опубликовано. Не удалось обновить сведения о релизе. Откройте релиз снова, чтобы обновить их. ({code})"
 }

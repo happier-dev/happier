@@ -1146,5 +1146,16 @@
   "plugins.github.ui.preview.history": "Cronologia",
   "plugins.github.ui.checkRerunFailed": "Riesegui i job non riusciti",
   "plugins.github.ui.checkRerunWorkflow": "Riesegui il workflow",
-  "plugins.github.ui.checkRerunSubject": "questa riesecuzione"
+  "plugins.github.ui.checkRerunSubject": "questa riesecuzione",
+  "plugins.github.ui.preview.chooseController": "Scegli un altro controller",
+  "plugins.github.ui.preview.controllerPaused": "Controller in pausa",
+  "plugins.github.ui.preview.controllerRecovery": "Riporta online il controller o scegli un’altra macchina.",
+  "plugins.github.ui.preview.controllerUnknown": "Disponibilità del controller sconosciuta",
+  "plugins.github.ui.preview.prUpdatePending": "Aggiornamento della PR in attesa",
+  "plugins.github.ui.preview.prUpdateUnavailable": "Aggiornamento della PR non disponibile",
+  "plugins.github.ui.preview.prUpdateUnconfirmed": "Aggiornamento della PR non confermato",
+  "plugins.github.ui.preview.prUpdated": "PR aggiornata",
+  "plugins.github.ui.preview.prUpdating": "Aggiornamento della PR…",
+  "plugins.github.ui.preview.retryPrUpdate": "Riprova l’aggiornamento della PR",
+  "plugins.github.releases.published.refreshWarning": "Pubblicato. Impossibile aggiornare i dettagli della versione. Riapri la versione per aggiornarli. ({code})"
 }

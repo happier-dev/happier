@@ -1146,5 +1146,16 @@
   "plugins.github.ui.preview.history": "Historial",
   "plugins.github.ui.checkRerunFailed": "Torna a executar les tasques fallides",
   "plugins.github.ui.checkRerunWorkflow": "Torna a executar el flux de treball",
-  "plugins.github.ui.checkRerunSubject": "aquesta reexecució"
+  "plugins.github.ui.checkRerunSubject": "aquesta reexecució",
+  "plugins.github.ui.preview.chooseController": "Tria un altre controlador",
+  "plugins.github.ui.preview.controllerPaused": "Controlador en pausa",
+  "plugins.github.ui.preview.controllerRecovery": "Connecta el controlador o tria una altra màquina.",
+  "plugins.github.ui.preview.controllerUnknown": "Disponibilitat del controlador desconeguda",
+  "plugins.github.ui.preview.prUpdatePending": "Actualització de la PR pendent",
+  "plugins.github.ui.preview.prUpdateUnavailable": "Actualització de la PR no disponible",
+  "plugins.github.ui.preview.prUpdateUnconfirmed": "Actualització de la PR sense confirmar",
+  "plugins.github.ui.preview.prUpdated": "PR actualitzada",
+  "plugins.github.ui.preview.prUpdating": "S’està actualitzant la PR…",
+  "plugins.github.ui.preview.retryPrUpdate": "Torna a provar d’actualitzar la PR",
+  "plugins.github.releases.published.refreshWarning": "Publicat. No s’han pogut actualitzar els detalls de la versió. Torna a obrir-la per actualitzar-los. ({code})"
 }

@@ -1146,5 +1146,16 @@
   "plugins.github.ui.preview.history": "Historia",
   "plugins.github.ui.checkRerunFailed": "Uruchom ponownie nieudane zadania",
   "plugins.github.ui.checkRerunWorkflow": "Uruchom ponownie przepływ pracy",
-  "plugins.github.ui.checkRerunSubject": "to ponowne uruchomienie"
+  "plugins.github.ui.checkRerunSubject": "to ponowne uruchomienie",
+  "plugins.github.ui.preview.chooseController": "Wybierz inny kontroler",
+  "plugins.github.ui.preview.controllerPaused": "Kontroler wstrzymany",
+  "plugins.github.ui.preview.controllerRecovery": "Przywróć kontroler online lub wybierz inną maszynę.",
+  "plugins.github.ui.preview.controllerUnknown": "Dostępność kontrolera nieznana",
+  "plugins.github.ui.preview.prUpdatePending": "Aktualizacja PR oczekuje",
+  "plugins.github.ui.preview.prUpdateUnavailable": "Aktualizacja PR niedostępna",
+  "plugins.github.ui.preview.prUpdateUnconfirmed": "Aktualizacja PR niepotwierdzona",
+  "plugins.github.ui.preview.prUpdated": "PR zaktualizowany",
+  "plugins.github.ui.preview.prUpdating": "Aktualizowanie PR…",
+  "plugins.github.ui.preview.retryPrUpdate": "Ponów aktualizację PR",
+  "plugins.github.releases.published.refreshWarning": "Opublikowano. Nie udało się odświeżyć szczegółów wydania. Otwórz wydanie ponownie, aby je odświeżyć. ({code})"
 }

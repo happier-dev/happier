@@ -1146,5 +1146,16 @@
   "plugins.github.ui.preview.history": "歷史",
   "plugins.github.ui.checkRerunFailed": "重新執行失敗的工作",
   "plugins.github.ui.checkRerunWorkflow": "重新執行工作流程",
-  "plugins.github.ui.checkRerunSubject": "這次重新執行"
+  "plugins.github.ui.checkRerunSubject": "這次重新執行",
+  "plugins.github.ui.preview.chooseController": "選擇其他控制器",
+  "plugins.github.ui.preview.controllerPaused": "控制器已暫停",
+  "plugins.github.ui.preview.controllerRecovery": "讓控制器上線或選擇其他機器。",
+  "plugins.github.ui.preview.controllerUnknown": "控制器可用性未知",
+  "plugins.github.ui.preview.prUpdatePending": "PR 更新待處理",
+  "plugins.github.ui.preview.prUpdateUnavailable": "PR 更新無法使用",
+  "plugins.github.ui.preview.prUpdateUnconfirmed": "PR 更新尚未確認",
+  "plugins.github.ui.preview.prUpdated": "PR 已更新",
+  "plugins.github.ui.preview.prUpdating": "正在更新 PR…",
+  "plugins.github.ui.preview.retryPrUpdate": "重試 PR 更新",
+  "plugins.github.releases.published.refreshWarning": "已發佈。無法重新整理最新的發佈詳細資料。請重新開啟此發佈以重新整理。({code})"
 }
