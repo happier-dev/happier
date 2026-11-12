@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { McpServerConfig } from '@/agent';
 import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { SESSION_MCP_CONTEXT_RELATIVE_PATH } from '@/daemon/agentIsolation/agentLaunchMaterials';
@@ -346,8 +347,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     && accountSnapshot.scopeKey !== accountScopeKey) {
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
+  const nativeDiscoveryNotices: SessionCapabilityNoticeV1['items'] = [];
   const publishCapabilityNotice = async (items: SessionCapabilityNoticeV1['items']) => {
-    const notice = SessionCapabilityNoticeV1Schema.parse({ v: 1, items });
+    const notice = SessionCapabilityNoticeV1Schema.parse({ v: 1, items: [...nativeDiscoveryNotices, ...items] });
+    items = notice.items;
     const previous = SessionCapabilityNoticeV1Schema.safeParse(
       (params.session.getMetadataSnapshot?.() ?? params.sessionMetadata)?.mcpCapabilityNoticeV1,
     );
@@ -472,7 +475,12 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     // discovery; an empty profile needs no native host configuration.
     const discoverySignal = run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined;
     const nativeServers = params.detectedMcpServers ?? (daemonPluginPreparation
-      ? await daemonPluginPreparation.discoverNativeServers()
+      ? await daemonPluginPreparation.discoverNativeServers().catch(error => {
+        if (!isPluginError(error) || error.code !== 'requester_native_discovery_unavailable') throw error;
+        nativeDiscoveryNotices.push({ kind: 'mcp_server', name: 'Native MCP discovery', code: error.code,
+          detail: 'Native MCP configuration cannot be discovered as this member. Selected MCP servers remain available.' });
+        return [];
+      })
       : pluginRegistry?.discoverMcpServersForDetection && params.agentId
         ? (await detectProviderMcpServers({ directory: params.directory, providers: [params.agentId], env,
           sessionId: params.session.sessionId, signal: discoverySignal, runtimeRegistry: pluginRegistry })).servers : []);

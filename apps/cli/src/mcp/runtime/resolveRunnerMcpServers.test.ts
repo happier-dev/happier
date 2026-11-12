@@ -102,6 +102,24 @@ function resolve(input: Readonly<{ snapshot: ActiveAccountSettingsSnapshot | nul
 }
 
 describe('resolveRunnerMcpServers catalog admission', () => {
+  it('keeps selected MCP servers and publishes a notice when requester native discovery is unavailable', async () => {
+    const notices: unknown[] = [];
+    const captured = snapshot([server('selected')]);
+    const profile = await resolveRunnerMcpServers({ session: { ...session(),
+      enqueueSessionEventCommitted: async event => { notices.push(event); return { persisted: true, delivered: true }; },
+      getPluginMcpPort: () => ({ prepare: async () => ({ items: [],
+        discoverNativeServers: async () => { throw new (await import('@happier-dev/plugin-sdk')).PluginError({ code: 'requester_native_discovery_unavailable', message: 'Native discovery unavailable' }); },
+        materialize: async servers => servers, dispose: async () => {},
+      }) }),
+    }, credentials, accountSettings: captured.settings, accountSettingsSnapshot: captured,
+      machineId: 'machine-1', directory: '/tmp/repo', agentId: 'claude', agentAcceptsUserMcp: true,
+      includeHappierMcpServer: false });
+    try {
+      expect(Object.keys(profile.mcpServers)).toEqual(['selected']);
+      expect(notices.map(readSessionCapabilityNoticeV1)).toContainEqual(expect.objectContaining({ items: [expect.objectContaining({ code: 'requester_native_discovery_unavailable' })] }));
+    } finally { await profile.happierMcpServer.stop(); }
+  });
+
   it.each([false, true])('keeps a birth-unavailable resume MCP-free only for a canonically empty explicit selection (forced include: %s)', async forced => {
     let catalogReads = 0;
     const captured = { ...snapshot([server('selected')]), get mcpServerCatalog(): ActiveAccountSettingsSnapshot['mcpServerCatalog'] {

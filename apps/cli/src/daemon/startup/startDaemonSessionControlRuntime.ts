@@ -12493,6 +12493,12 @@ export async function startDaemonSessionControlRuntime(
     }, undefined, shutdownCancellationDomains.daemonWorkSignal);
   };
   const runnerPluginMcp = createDaemonRunnerPluginMcp({ acquireRegistry: acquireDaemonPluginRuntimeRegistryLease,
+    readAllowNativeAccountState: async context => {
+      const attribution = context.trackedSession?.requesterWorkAttributionV1 ?? context.trackedSession?.spawnOptions?.requesterWorkAttributionV1;
+      return await withSessionAccountContext(context.sessionId, async requester =>
+        requester ? requester.bootstrap.allowNativeAccountCredentials === true : true,
+        attribution, context.signal);
+    },
     trackedSessions: params.pidToTrackedSession, spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
     signal: shutdownCancellationDomains.daemonWorkSignal });
   let runtimeAuthFailureReportIntake: RuntimeAuthFailureReportIntake | null = null;

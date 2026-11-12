@@ -20,6 +20,8 @@ type Context = Readonly<{
  * preparation handle over the incumbent authenticated service channel. */
 export function createDaemonRunnerPluginMcp(input: Readonly<{
   acquireRegistry(): Promise<PluginRuntimeRegistryLease>;
+  /** Resolve private Session birth once at preparation, including cold recovery. */
+  readAllowNativeAccountState(context: Context): Promise<boolean>;
   trackedSessions: Map<number, TrackedSession>;
   spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
   signal: AbortSignal;
@@ -28,6 +30,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
     sessionId: string;
     tracked: TrackedSession;
     directory: string;
+    allowNativeAccountState: boolean;
     lease: PluginRuntimeRegistryLease;
     lifetime: AbortController;
     attachments: Disposable[];
@@ -56,6 +59,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
       const tracked = await active(context);
       if (operation.kind === 'mcp.plugin.prepare') {
         if (preparations.has(operation.preparationId)) throw unavailable();
+        const allowNativeAccountState = await input.readAllowNativeAccountState(context);
         const lease = context.runtimeRegistryLease ?? await input.acquireRegistry();
         const lifetime = new AbortController();
         const attachments: Disposable[] = [];
@@ -77,7 +81,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
           })().catch(error => { disposePromise = null; throw error; });
           return disposePromise;
         };
-        const preparation = { sessionId: context.sessionId, tracked, directory: operation.directory, lease, lifetime, attachments, pending, dispose };
+        const preparation = { sessionId: context.sessionId, tracked, directory: operation.directory, allowNativeAccountState, lease, lifetime, attachments, pending, dispose };
         preparations.set(operation.preparationId, preparation);
         try {
           await active(context);
@@ -108,6 +112,13 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
       context.signal?.addEventListener('abort', onRequestAbort, { once: true });
       try {
         if (operation.kind === 'mcp.plugin.discover') {
+          // The plugin registry executes in the daemon process. The native
+          // worker has no plugin discovery operation, so it cannot read a
+          // requester's HOME. Never substitute daemon ambient config.
+          if (!preparation.allowNativeAccountState) return {
+            kind: 'mcp.plugin.discovered', detectedServers: [],
+            unavailableReason: 'requester_native_discovery_unavailable',
+          };
           const discovering = detectProviderMcpServers({ directory: preparation.directory, providers: [context.agentId],
             sessionId: context.sessionId, signal, runtimeRegistry: preparation.lease.registry });
           preparation.pending.value = discovering;

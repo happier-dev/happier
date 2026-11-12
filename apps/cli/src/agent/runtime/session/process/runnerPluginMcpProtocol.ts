@@ -32,7 +32,8 @@ export const RUNNER_PLUGIN_MCP_RESULTS = [
     itemId: McpPluginItemMetadataV1Schema.shape.id, name: z.string(), title: z.optional(z.string()),
     config: McpServerCatalogEntryV1Schema, rules: z.array(McpServerRuleV1Schema),
   })) }),
-  z.strictObject({ kind: z.literal('mcp.plugin.discovered'), detectedServers: z.array(DetectedMcpServerV1Schema) }),
+  z.strictObject({ kind: z.literal('mcp.plugin.discovered'), detectedServers: z.array(DetectedMcpServerV1Schema),
+    unavailableReason: z.optional(z.literal('requester_native_discovery_unavailable')) }),
   z.strictObject({ kind: z.literal('mcp.plugin.materialized'), servers: z.array(Server) }),
   z.strictObject({ kind: z.literal('mcp.plugin.closed') }),
 ] as const;
